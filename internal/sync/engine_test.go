@@ -5048,8 +5048,8 @@ func TestExportResourceFor_HydrateErrorAbortsExport(t *testing.T) {
 		return nil, nil
 	}
 	marker := errors.New("db busy")
-	hydrate := func(context.Context, *Engine, *event.Event) error {
-		return marker
+	hydrate := func(context.Context, *Engine, *event.Event) ([]string, error) {
+		return nil, marker
 	}
 	exportCalled := false
 	hydrated := func([]event.Event, string) ([]byte, error) {
@@ -5057,7 +5057,7 @@ func TestExportResourceFor_HydrateErrorAbortsExport(t *testing.T) {
 		return []byte("BEGIN:VCALENDAR"), nil
 	}
 
-	_, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
+	_, _, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
 		get, listOverrides, hydrate, hydrated)
 	if err == nil {
 		t.Fatal("expected hydration error to propagate, got nil")
@@ -5085,14 +5085,14 @@ func TestExportResourceFor_MasterReadErrorAbortsExport(t *testing.T) {
 	listOverrides := func(context.Context, string) ([]event.Event, error) {
 		return []event.Event{{UID: "uid-1", ID: 2, RecurrenceID: "20260401T100000Z"}}, nil
 	}
-	hydrate := func(context.Context, *Engine, *event.Event) error { return nil }
+	hydrate := func(context.Context, *Engine, *event.Event) ([]string, error) { return nil, nil }
 	exportCalled := false
 	export := func([]event.Event, string) ([]byte, error) {
 		exportCalled = true
 		return []byte("BEGIN:VCALENDAR"), nil
 	}
 
-	_, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
+	_, _, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
 		get, listOverrides, hydrate, export)
 	if err == nil {
 		t.Fatal("expected the master read error to propagate, got nil")
@@ -5116,14 +5116,14 @@ func TestExportResourceFor_MissingMasterExportsOverrides(t *testing.T) {
 	listOverrides := func(context.Context, string) ([]event.Event, error) {
 		return []event.Event{{UID: "uid-1", ID: 2, RecurrenceID: "20260401T100000Z"}}, nil
 	}
-	hydrate := func(context.Context, *Engine, *event.Event) error { return nil }
+	hydrate := func(context.Context, *Engine, *event.Event) ([]string, error) { return nil, nil }
 	var exported int
 	export := func(rows []event.Event, _ string) ([]byte, error) {
 		exported = len(rows)
 		return []byte("BEGIN:VCALENDAR"), nil
 	}
 
-	if _, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
+	if _, _, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
 		get, listOverrides, hydrate, export); err != nil {
 		t.Fatalf("orphan instance must still export: %v", err)
 	}

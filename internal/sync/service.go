@@ -67,8 +67,8 @@ func (s *Service) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]Wed
 // omits every relation in dropped. The caller must obtain explicit user
 // confirmation first; this is the one path that knowingly pushes an
 // incomplete record (issue #568).
-func (s *Service) DoctorPush(ctx context.Context, calendarID int64, uid string) ([]string, error) {
-	return s.engine.DoctorPush(ctx, calendarID, uid)
+func (s *Service) DoctorPush(ctx context.Context, calendarID int64, uid string, diagnosed []string) ([]string, error) {
+	return s.engine.DoctorPush(ctx, calendarID, uid, diagnosed)
 }
 
 // SyncStatus returns the current sync status for a calendar.

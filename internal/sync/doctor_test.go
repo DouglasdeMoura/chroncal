@@ -3,12 +3,15 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/douglasdemoura/chroncal/internal/hydrate"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
@@ -141,7 +144,7 @@ func TestDiagnoseAndDoctorPushRecoverWedgedResource(t *testing.T) {
 		t.Errorf("unexpected diagnosis: %+v", wedged[0])
 	}
 
-	dropped, err := engine.DoctorPush(context.Background(), cal.ID, "wedged-doctor")
+	dropped, err := engine.DoctorPush(context.Background(), cal.ID, "wedged-doctor", []string{"alarms"})
 	if err != nil {
 		t.Fatalf("DoctorPush: %v", err)
 	}
@@ -265,7 +268,7 @@ func TestPushRecordsFailureAndDoctorResetsCounter(t *testing.T) {
 
 	// A successful doctor push resets the bookkeeping.
 	failWrites.Store(false)
-	if _, err := engine.DoctorPush(ctx, cal.ID, "wedge-count"); err != nil {
+	if _, err := engine.DoctorPush(ctx, cal.ID, "wedge-count", []string{"alarms"}); err != nil {
 		t.Fatalf("DoctorPush: %v", err)
 	}
 	res, err = q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: cal.ID, Uid: "wedge-count"})
@@ -337,7 +340,7 @@ func TestDoctorPushRecoversLostPutResponse(t *testing.T) {
 	}
 	breakEventAlarms(t, db)
 
-	dropped, err := engine.DoctorPush(ctx, cal.ID, "doctor-lost-put")
+	dropped, err := engine.DoctorPush(ctx, cal.ID, "doctor-lost-put", []string{"alarms"})
 	if err != nil {
 		t.Fatalf("DoctorPush: %v", err)
 	}
@@ -356,5 +359,118 @@ func TestDoctorPushRecoversLostPutResponse(t *testing.T) {
 	}
 	if res.Dirty != 0 {
 		t.Fatalf("Dirty = %d, want 0", res.Dirty)
+	}
+}
+
+// wedgeShaped must reject context-driven failures: a cancelled or timed-out
+// context fails every relation load at once, and listing every dirty
+// resource as wedged would invite a destructive confirmation on a healthy
+// database.
+func TestWedgeShapedRejectsContextCauses(t *testing.T) {
+	t.Parallel()
+
+	plain := &hydrate.HydrationError{
+		Err: errors.New("event 1 alarms: db busy"),
+		Failures: []hydrate.RelFailure{
+			{Kind: "event", ID: 1, Relation: "alarms", Cause: errors.New("db busy")},
+		},
+	}
+	if !wedgeShaped(plain) {
+		t.Error("a non-context hydration failure must stay wedge-shaped")
+	}
+	if wedgeShaped(errors.New("not a hydration error")) {
+		t.Error("a non-hydration error is not a wedge shape")
+	}
+	if wedgeShaped(nil) {
+		t.Error("nil is not a wedge shape")
+	}
+	cancelled := &hydrate.HydrationError{
+		Err: errors.New("event 1 alarms: context canceled"),
+		Failures: []hydrate.RelFailure{
+			{Kind: "event", ID: 1, Relation: "alarms", Cause: context.Canceled},
+		},
+	}
+	if wedgeShaped(cancelled) {
+		t.Error("a cancellation cause must not read as a deterministic wedge")
+	}
+	mixed := &hydrate.HydrationError{
+		Err: errors.Join(errors.New("a"), errors.New("b")),
+		Failures: []hydrate.RelFailure{
+			{Kind: "event", ID: 1, Relation: "alarms", Cause: context.DeadlineExceeded},
+			{Kind: "event", ID: 1, Relation: "alarms", Cause: errors.New("db busy")},
+		},
+	}
+	if wedgeShaped(mixed) {
+		t.Error("a cancelled load taints the whole report; the retry must decide, not the classifier")
+	}
+}
+
+// The user confirms one loss set. A push that would drop a different set
+// must fail closed instead of silently covering more than the user accepted.
+func TestDoctorPushRefusesChangedRelationSet(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	engine, db, q, cal := newDoctorTestEnv(t, srv.URL, "changed-set")
+	ctx := context.Background()
+	seedWedgedEvent(t, engine, db, q, cal.ID, "wedged-set")
+
+	dropped, err := engine.DoctorPush(ctx, cal.ID, "wedged-set", []string{"attendees"})
+	if err == nil {
+		t.Fatalf("DoctorPush succeeded with a mismatched diagnosis, dropped = %v", dropped)
+	}
+	if !strings.Contains(err.Error(), "changed since diagnosis") {
+		t.Errorf("error = %v, want it to name the changed set", err)
+	}
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: cal.ID, Uid: "wedged-set"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Errorf("resource left the dirty state after a refused push")
+	}
+}
+
+// The regular push skips resources with an open conflict because a PUT under
+// an open conflict desynchronizes the recorded snapshots (issue #104). The
+// doctor must refuse them for the same reason.
+func TestDoctorPushRefusesOpenConflict(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	engine, db, q, cal := newDoctorTestEnv(t, srv.URL, "conflicted")
+	ctx := context.Background()
+	seedWedgedEvent(t, engine, db, q, cal.ID, "wedged-conflict")
+
+	evt, err := q.GetEventByUID(ctx, "wedged-conflict")
+	if err != nil {
+		t.Fatalf("GetEventByUID: %v", err)
+	}
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: cal.ID,
+		OwnerType:  "event",
+		OwnerID:    evt.ID,
+		Uid:        "wedged-conflict",
+		LocalIcal:  "BEGIN:VCALENDAR",
+		ServerIcal: "BEGIN:VCALENDAR",
+		ServerEtag: `"stale"`,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	if _, err := engine.DoctorPush(ctx, cal.ID, "wedged-conflict", []string{"alarms"}); err == nil {
+		t.Fatal("DoctorPush succeeded under an open sync conflict")
+	} else if !strings.Contains(err.Error(), "open sync conflict") {
+		t.Errorf("error = %v, want it to name the open conflict", err)
 	}
 }

@@ -2,9 +2,10 @@ package sync
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/event"
@@ -32,7 +33,9 @@ type WedgedResource struct {
 
 // DiagnoseCalendar exports every dirty resource of one calendar and returns
 // the ones that fail on unreadable relations. Transient export failures are
-// not wedges; they stay out of the list.
+// not wedges; they stay out of the list. A resource enters the list only
+// when its export names unreadable relations twice in a row, so a busy or
+// cancelled database read never reads as a wedge.
 func (e *Engine) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]WedgedResource, error) {
 	dirty, err := e.q.ListDirtySyncResources(ctx, calendarID)
 	if err != nil {
@@ -40,23 +43,63 @@ func (e *Engine) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]Wedg
 	}
 	var wedged []WedgedResource
 	for _, res := range dirty {
-		_, err := e.exportResource(ctx, res.OwnerType, res.Uid)
-		var hErr *hydrate.HydrationError
-		if err != nil && errors.As(err, &hErr) && len(hErr.Failures) > 0 {
-			rels := make([]string, 0, len(hErr.Failures))
-			for _, f := range hErr.Failures {
-				rels = append(rels, f.Relation)
-			}
-			wedged = append(wedged, WedgedResource{
-				CalendarID:    calendarID,
-				UID:           res.Uid,
-				OwnerType:     res.OwnerType,
-				Relations:     rels,
-				PushFailCount: res.PushFailCount,
-			})
+		rels, ok := e.diagnoseWedge(ctx, res.OwnerType, res.Uid)
+		if !ok {
+			continue
 		}
+		wedged = append(wedged, WedgedResource{
+			CalendarID:    calendarID,
+			UID:           res.Uid,
+			OwnerType:     res.OwnerType,
+			Relations:     rels,
+			PushFailCount: res.PushFailCount,
+		})
 	}
 	return wedged, nil
+}
+
+// diagnoseWedge reports the unreadable relations when the export fails on
+// them twice in a row. One failure is not proof of a wedge: SQLITE_BUSY
+// after the busy timeout, an I/O error, or context cancellation all reach
+// the collector like a corrupt row does. The retry separates a transient
+// load failure from a deterministic one, so the destructive confirmation
+// never fires on a false diagnosis.
+func (e *Engine) diagnoseWedge(ctx context.Context, ownerType, uid string) ([]string, bool) {
+	_, err := e.exportResource(ctx, ownerType, uid)
+	if !wedgeShaped(err) {
+		return nil, false
+	}
+	_, err = e.exportResource(ctx, ownerType, uid)
+	if !wedgeShaped(err) {
+		return nil, false
+	}
+	var hErr *hydrate.HydrationError
+	errors.As(err, &hErr)
+	rels := make([]string, 0, len(hErr.Failures))
+	for _, f := range hErr.Failures {
+		rels = append(rels, f.Relation)
+	}
+	return rels, true
+}
+
+// wedgeShaped reports whether err is a hydration failure that names broken
+// relations and has no cancellation cause. A done context makes every load
+// fail; those failures vanish on the next attempt and never describe a
+// deterministic wedge.
+func wedgeShaped(err error) bool {
+	if err == nil {
+		return false
+	}
+	var hErr *hydrate.HydrationError
+	if !errors.As(err, &hErr) || len(hErr.Failures) == 0 {
+		return false
+	}
+	for _, f := range hErr.Failures {
+		if errors.Is(f.Cause, context.Canceled) || errors.Is(f.Cause, context.DeadlineExceeded) {
+			return false
+		}
+	}
+	return true
 }
 
 // DoctorPush pushes one wedged resource with best-effort hydration. The PUT
@@ -70,7 +113,12 @@ func (e *Engine) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]Wedg
 // the regular push enforces. The doctor exists to move resources the regular
 // push cannot move. A foreign-organized meeting with an unreadable relation
 // stays wedged without this bypass.
-func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string) (dropped []string, err error) {
+//
+// diagnosed holds the relation set the user confirmed. The push re-runs the
+// best-effort export under the lifecycle lock and refuses to send anything
+// when the actual drop set differs: consent for one loss set must not
+// silently cover another.
+func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string, diagnosed []string) (dropped []string, err error) {
 	// Hold the calendar lifecycle lock across the dirty snapshot, the PUT,
 	// and the finalize, like SyncCalendar and PushLocalEdits do. A concurrent
 	// sync run must not interleave between them (issue #647).
@@ -103,10 +151,30 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string) (
 		return nil, fmt.Errorf("no dirty sync resource for uid %q on calendar %d", uid, calendarID)
 	}
 
+	open, err := e.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{
+		CalendarID: calendarID,
+		Uid:        res.Uid,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("count open sync conflicts %s: %w", uid, err)
+	}
+	if open > 0 {
+		// The regular push skips conflicted resources because a PUT under an
+		// open conflict desynchronizes the recorded conflict snapshots (issue
+		// #104). The doctor must not converge the server around them either.
+		return nil, fmt.Errorf("uid %s has an open sync conflict; resolve it first with chroncal sync resolve", uid)
+	}
+
 	icalData, dropped, err := e.exportResourceBestEffortFor(ctx, res.OwnerType, res.Uid)
 	if err != nil {
 		return nil, fmt.Errorf("best-effort export %s: %w", uid, err)
 	}
+	if !sameRelationSet(dropped, diagnosed) {
+		return nil, fmt.Errorf(
+			"the unreadable relation(s) changed since diagnosis: diagnosed [%s], now [%s]; re-run chroncal sync doctor",
+			strings.Join(diagnosed, ", "), strings.Join(dropped, ", "))
+	}
+
 	body, parseErr := parseICalData(icalData)
 	if parseErr != nil {
 		return nil, fmt.Errorf("parse ical for %s: %w", uid, parseErr)
@@ -182,51 +250,6 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string) (
 	return dropped, nil
 }
 
-// exportResourceBestEffort bundles a UID's rows like exportResourceFor, but it
-// hydrates best-effort and reports the relations it had to drop. The payload
-// is incomplete by construction; only DoctorPush may send it.
-func exportResourceBestEffort[T any](
-	ctx context.Context,
-	e *Engine,
-	uid, kind string,
-	get func(context.Context, string) (T, error),
-	listOverrides func(context.Context, string) ([]T, error),
-	hydrateBestEffort func(context.Context, *Engine, *T) ([]string, error),
-	export func([]T, string) ([]byte, error),
-) ([]byte, []string, error) {
-	var rows []T
-	switch row, err := get(ctx, uid); {
-	case err == nil:
-		rows = append(rows, row)
-	case !errors.Is(err, sql.ErrNoRows):
-		return nil, nil, fmt.Errorf("get %s master uid %s: %w", kind, uid, err)
-	}
-	overrides, err := listOverrides(ctx, uid)
-	if err != nil {
-		return nil, nil, fmt.Errorf("list overrides for %s uid %s: %w", kind, uid, err)
-	}
-	rows = append(rows, overrides...)
-	if len(rows) == 0 {
-		return nil, nil, fmt.Errorf("%w: %s uid %s", errResourceMissing, kind, uid)
-	}
-	seen := make(map[string]struct{})
-	var dropped []string
-	for i := range rows {
-		rels, err := hydrateBestEffort(ctx, e, &rows[i])
-		if err != nil {
-			return nil, nil, fmt.Errorf("hydrate %s uid %s: %w", kind, uid, err)
-		}
-		for _, r := range rels {
-			if _, ok := seen[r]; !ok {
-				seen[r] = struct{}{}
-				dropped = append(dropped, r)
-			}
-		}
-	}
-	data, err := export(rows, "")
-	return data, dropped, err
-}
-
 // The per-type best-effort hydrate adapters return the dropped relation names
 // in structured form. HydrateBestEffort returns a *hydrate.HydrationError, so
 // the names come from the collector and no text parsing is involved.
@@ -261,20 +284,33 @@ func droppedRelations(err error) ([]string, error) {
 	return rels, nil
 }
 
-// exportResourceBestEffortFor dispatches on owner type. It mirrors the
-// ownerOpsByType export entries with the best-effort hydrators.
+// exportResourceBestEffortFor dispatches on owner type. It runs the shared
+// bundling path in exportResourceFor with the best-effort hydrators, so the
+// doctor's payload assembly cannot drift from the regular push's.
 func (e *Engine) exportResourceBestEffortFor(ctx context.Context, ownerType, uid string) ([]byte, []string, error) {
 	switch ownerType {
 	case ownerTypeEvent:
-		return exportResourceBestEffort(ctx, e, uid, ownerTypeEvent,
+		return exportResourceFor(ctx, e, uid, ownerTypeEvent,
 			e.events.GetByUID, e.events.ListOverridesByUID, hydrateEventBestEffort, icalPkg.ExportEvents)
 	case ownerTypeTodo:
-		return exportResourceBestEffort(ctx, e, uid, ownerTypeTodo,
+		return exportResourceFor(ctx, e, uid, ownerTypeTodo,
 			e.todos.GetByUID, e.todos.ListOverridesByUID, hydrateTodoBestEffort, icalPkg.ExportTodos)
 	case ownerTypeJournal:
-		return exportResourceBestEffort(ctx, e, uid, ownerTypeJournal,
+		return exportResourceFor(ctx, e, uid, ownerTypeJournal,
 			e.journals.GetByUID, e.journals.ListOverridesByUID, hydrateJournalBestEffort, icalPkg.ExportJournals)
 	default:
 		return nil, nil, fmt.Errorf("%w: %q", errUnknownOwnerType, ownerType)
 	}
+}
+
+// sameRelationSet compares two relation sets order-insensitively.
+func sameRelationSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sa := slices.Clone(a)
+	sb := slices.Clone(b)
+	slices.Sort(sa)
+	slices.Sort(sb)
+	return slices.Equal(sa, sb)
 }

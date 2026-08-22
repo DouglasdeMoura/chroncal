@@ -52,8 +52,9 @@ var ownerOpsByType = map[string]ownerOps{
 			return row.ID, nil
 		},
 		export: func(ctx context.Context, e *Engine, uid string) ([]byte, error) {
-			return exportResourceFor(ctx, e, uid, ownerTypeEvent,
+			data, _, err := exportResourceFor(ctx, e, uid, ownerTypeEvent,
 				e.events.GetByUID, e.events.ListOverridesByUID, hydrateEvent, icalPkg.ExportEvents)
+			return data, err
 		},
 	},
 	ownerTypeTodo: {
@@ -68,8 +69,9 @@ var ownerOpsByType = map[string]ownerOps{
 			return row.ID, nil
 		},
 		export: func(ctx context.Context, e *Engine, uid string) ([]byte, error) {
-			return exportResourceFor(ctx, e, uid, ownerTypeTodo,
+			data, _, err := exportResourceFor(ctx, e, uid, ownerTypeTodo,
 				e.todos.GetByUID, e.todos.ListOverridesByUID, hydrateTodo, icalPkg.ExportTodos)
+			return data, err
 		},
 	},
 	ownerTypeJournal: {
@@ -84,8 +86,9 @@ var ownerOpsByType = map[string]ownerOps{
 			return row.ID, nil
 		},
 		export: func(ctx context.Context, e *Engine, uid string) ([]byte, error) {
-			return exportResourceFor(ctx, e, uid, ownerTypeJournal,
+			data, _, err := exportResourceFor(ctx, e, uid, ownerTypeJournal,
 				e.journals.GetByUID, e.journals.ListOverridesByUID, hydrateJournal, icalPkg.ExportJournals)
+			return data, err
 		},
 	},
 }
@@ -94,6 +97,11 @@ var ownerOpsByType = map[string]ownerOps{
 // iCal payload. CalDAV tracks one resource per UID. Recurring resources are
 // stored as a master row plus override rows that share the UID. We normally
 // bundle master plus overrides so instance edits round-trip to the server.
+//
+// The hydrator decides the failure mode. The strict adapters return an error
+// and nil dropped, so one unreadable relation aborts the export. The
+// best-effort adapters (the sync doctor path) return the relation names they
+// had to drop; the caller owns the decision to send the incomplete payload.
 //
 // Google sometimes serves a single orphan instance under a UID like
 // `<master>_R<recurrence-id>@google.com` with a RECURRENCE-ID property and no
@@ -107,9 +115,9 @@ func exportResourceFor[T any](
 	uid, kind string,
 	get func(context.Context, string) (T, error),
 	listOverrides func(context.Context, string) ([]T, error),
-	hydrate func(context.Context, *Engine, *T) error,
+	hydrate func(context.Context, *Engine, *T) ([]string, error),
 	export func([]T, string) ([]byte, error),
-) ([]byte, error) {
+) ([]byte, []string, error) {
 	var rows []T
 	switch row, err := get(ctx, uid); {
 	case err == nil:
@@ -120,18 +128,21 @@ func exportResourceFor[T any](
 		// I/O error — the same way would export the overrides alone, PUT a
 		// resource with the master VEVENT and its recurrence rule amputated,
 		// then clear the dirty flag so nothing ever retries.
-		return nil, fmt.Errorf("get %s master uid %s: %w", kind, uid, err)
+		return nil, nil, fmt.Errorf("get %s master uid %s: %w", kind, uid, err)
 	}
 	overrides, err := listOverrides(ctx, uid)
 	if err != nil {
-		return nil, fmt.Errorf("list overrides for %s uid %s: %w", kind, uid, err)
+		return nil, nil, fmt.Errorf("list overrides for %s uid %s: %w", kind, uid, err)
 	}
 	rows = append(rows, overrides...)
 	if len(rows) == 0 {
-		return nil, fmt.Errorf("%w: %s uid %s", errResourceMissing, kind, uid)
+		return nil, nil, fmt.Errorf("%w: %s uid %s", errResourceMissing, kind, uid)
 	}
+	var dropped []string
+	seenRel := make(map[string]struct{})
 	for i := range rows {
-		if err := hydrate(ctx, e, &rows[i]); err != nil {
+		rels, err := hydrate(ctx, e, &rows[i])
+		if err != nil {
 			// A hydration failure means the exported iCal would silently omit
 			// alarms/attendees/attachments/... and the PUT would strip them
 			// from the server copy. Abort instead: the dirty flag stays set, so
@@ -148,14 +159,22 @@ func exportResourceFor[T any](
 				for _, f := range hErr.Failures {
 					rels = append(rels, f.Relation)
 				}
-				return nil, fmt.Errorf(
+				return nil, nil, fmt.Errorf(
 					"hydrate %s uid %s: unreadable relation(s) %s; the resource is stuck and no edit reaches the server until it is resolved (see chroncal sync doctor): %w",
 					kind, uid, strings.Join(rels, ", "), err)
 			}
-			return nil, fmt.Errorf("hydrate %s uid %s: %w", kind, uid, err)
+			return nil, nil, fmt.Errorf("hydrate %s uid %s: %w", kind, uid, err)
+		}
+		for _, r := range rels {
+			if _, ok := seenRel[r]; ok {
+				continue
+			}
+			seenRel[r] = struct{}{}
+			dropped = append(dropped, r)
 		}
 	}
-	return export(rows, "")
+	data, err := export(rows, "")
+	return data, dropped, err
 }
 
 // ownerOpsFor resolves the dispatch table for an owner type. It returns
@@ -212,14 +231,14 @@ func (e *Engine) exportResource(ctx context.Context, ownerType string, uid strin
 // methods to the ownerOps export signature. The relation list itself lives in
 // the services (event.Service.Hydrate and friends). Sync, file export, and
 // the CLI then cannot drift apart on what a complete record contains.
-func hydrateEvent(ctx context.Context, e *Engine, evt *event.Event) error {
-	return e.events.Hydrate(ctx, evt)
+func hydrateEvent(ctx context.Context, e *Engine, evt *event.Event) ([]string, error) {
+	return nil, e.events.Hydrate(ctx, evt)
 }
 
-func hydrateTodo(ctx context.Context, e *Engine, t *todo.Todo) error {
-	return e.todos.Hydrate(ctx, t)
+func hydrateTodo(ctx context.Context, e *Engine, t *todo.Todo) ([]string, error) {
+	return nil, e.todos.Hydrate(ctx, t)
 }
 
-func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) error {
-	return e.journals.Hydrate(ctx, j)
+func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) ([]string, error) {
+	return nil, e.journals.Hydrate(ctx, j)
 }
