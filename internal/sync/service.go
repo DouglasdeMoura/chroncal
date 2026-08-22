@@ -364,13 +364,7 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 	if pick == "local" {
 		resolution = ResolutionLocal
 	}
-	resolvedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	if err := qtx.MarkSyncConflictResolved(ctx, storage.MarkSyncConflictResolvedParams{
-		ResolvedAt: &resolvedAt,
-		Resolution: &resolution,
-		CalendarID: conflict.CalendarID,
-		Uid:        conflict.Uid,
-	}); err != nil {
+	if err := markConflictResolvedOn(ctx, qtx, conflict.CalendarID, conflict.Uid, resolution); err != nil {
 		return nil, fmt.Errorf("mark conflict resolved: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
