@@ -72,7 +72,7 @@ func (e *Engine) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]Wedg
 // stays wedged without this bypass.
 func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string) (dropped []string, err error) {
 	// Hold the calendar lifecycle lock across the dirty snapshot, the PUT,
-	// and the finalize, like SyncCalendar and PushCalendar do. A concurrent
+	// and the finalize, like SyncCalendar and PushLocalEdits do. A concurrent
 	// sync run must not interleave between them (issue #647).
 	release, err := e.lockCalendarLifecycle(ctx, calendarID)
 	if err != nil {

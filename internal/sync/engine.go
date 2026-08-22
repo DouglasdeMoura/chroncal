@@ -123,17 +123,29 @@ const (
 	ResolutionServerAuto = "server-auto"
 )
 
-// markConflictResolved stamps the recorded conflict as resolved. The row
-// stays in place so its local body remains recoverable through
-// ResolveConflict.
-func (e *Engine) markConflictResolved(ctx context.Context, calendarID int64, uid, resolution string) error {
-	resolvedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	return e.q.MarkSyncConflictResolved(ctx, storage.MarkSyncConflictResolvedParams{
+// resolvedAtFormat stamps every resolution with the same shape. One format
+// keeps the timestamps comparable across engine and service paths.
+const resolvedAtFormat = "2006-01-02T15:04:05Z"
+
+// markConflictResolvedOn stamps the recorded conflict as resolved through
+// q. The row stays in place so its local body remains recoverable through
+// ResolveConflict. Pass e.q for the engine paths or a transaction-bound
+// handle for the service path; the stamp must commit with the caller's
+// other writes.
+func markConflictResolvedOn(ctx context.Context, q *storage.Queries, calendarID int64, uid, resolution string) error {
+	resolvedAt := time.Now().UTC().Format(resolvedAtFormat)
+	return q.MarkSyncConflictResolved(ctx, storage.MarkSyncConflictResolvedParams{
 		ResolvedAt: &resolvedAt,
 		Resolution: &resolution,
 		CalendarID: calendarID,
 		Uid:        uid,
 	})
+}
+
+// markConflictResolved stamps the recorded conflict as resolved on the
+// engine's query handle.
+func (e *Engine) markConflictResolved(ctx context.Context, calendarID int64, uid, resolution string) error {
+	return markConflictResolvedOn(ctx, e.q, calendarID, uid, resolution)
 }
 
 func (e *Engine) hasTombstone(ctx context.Context, calendarID int64, uid string) (bool, error) {
@@ -949,8 +961,7 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 		errs = append(errs, fmt.Errorf("import server resource %s: %w", res.Uid, err))
 		return putConflictLeftOpen, nil, errs
 	}
-	warnings := make([]ImportWarning, 0, len(importWarnings))
-	warnings = append(warnings, importWarnings...)
+	warnings := importWarnings
 	if !imported {
 		// The server's 412 body carried no importable VEVENT/VTODO/VJOURNAL,
 		// so nothing was applied. Clearing dirty and stamping the server

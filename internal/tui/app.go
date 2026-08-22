@@ -240,14 +240,15 @@ type syncTarget struct {
 
 // syncTotals accumulates per-calendar SyncResult counts across a SyncAll run.
 type syncTotals struct {
-	pushed       int
-	pulled       int
-	deleted      int
-	conflicts    int
-	autoResolved int
-	warnings     int
-	errCount     int
-	firstErr     error
+	pushed           int
+	pulled           int
+	deleted          int
+	conflicts        int
+	autoResolved     int
+	skippedConflicts int
+	warnings         int
+	errCount         int
+	firstErr         error
 }
 
 // syncAllPlannedMsg is emitted by runSyncAllPlan after a list of the connected
@@ -1350,12 +1351,13 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 			label = "calendar"
 		}
 		summary := syncSummary(label, syncTotals{
-			pushed:       result.Pushed,
-			pulled:       result.Pulled,
-			deleted:      result.Deleted,
-			conflicts:    result.Conflicts,
-			autoResolved: result.AutoResolved,
-			warnings:     len(result.Warnings),
+			pushed:           result.Pushed,
+			pulled:           result.Pulled,
+			deleted:          result.Deleted,
+			conflicts:        result.Conflicts,
+			autoResolved:     result.AutoResolved,
+			skippedConflicts: result.SkippedConflicts,
+			warnings:         len(result.Warnings),
 		})
 		var firstErr error
 		if len(result.Errors) > 0 {
@@ -1387,6 +1389,7 @@ func (m Model) runSyncAccount(accountID int64, name string) tea.Cmd {
 			totals.deleted += result.Deleted
 			totals.conflicts += result.Conflicts
 			totals.autoResolved += result.AutoResolved
+			totals.skippedConflicts += result.SkippedConflicts
 			totals.warnings += len(result.Warnings)
 			if totals.firstErr == nil && len(result.Errors) > 0 {
 				totals.firstErr = result.Errors[0]
@@ -1970,7 +1973,8 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 			return opportunisticPushFinishedMsg{err: err}
 		}
 		if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 && len(result.Warnings) == 0 &&
-			result.Conflicts == 0 && result.AutoResolved == 0 {
+			result.Conflicts == 0 && result.AutoResolved == 0 &&
+			result.SkippedConflicts == 0 {
 			return opportunisticPushFinishedMsg{}
 		}
 		label := name
@@ -1978,11 +1982,12 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 			label = "calendar"
 		}
 		summary := syncSummary(label, syncTotals{
-			pushed:       result.Pushed,
-			deleted:      result.Deleted,
-			conflicts:    result.Conflicts,
-			autoResolved: result.AutoResolved,
-			warnings:     len(result.Warnings),
+			pushed:           result.Pushed,
+			deleted:          result.Deleted,
+			conflicts:        result.Conflicts,
+			autoResolved:     result.AutoResolved,
+			skippedConflicts: result.SkippedConflicts,
+			warnings:         len(result.Warnings),
 		})
 		var firstErr error
 		if len(result.Errors) > 0 {
@@ -2015,6 +2020,9 @@ func syncSummary(label string, t syncTotals) string {
 	}
 	if t.autoResolved > 0 {
 		parts = append(parts, fmt.Sprintf("%d auto-resolved", t.autoResolved))
+	}
+	if t.skippedConflicts > 0 {
+		parts = append(parts, fmt.Sprintf("%d held by conflicts", t.skippedConflicts))
 	}
 	if t.warnings > 0 {
 		parts = append(parts, importWarningsSegment(t.warnings))
@@ -4199,6 +4207,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncTotals.deleted += msg.result.Deleted
 			m.syncTotals.conflicts += msg.result.Conflicts
 			m.syncTotals.autoResolved += msg.result.AutoResolved
+			m.syncTotals.skippedConflicts += msg.result.SkippedConflicts
 			m.syncTotals.warnings += len(msg.result.Warnings)
 			m.syncTotals.errCount += len(msg.result.Errors)
 			if m.syncTotals.firstErr == nil && len(msg.result.Errors) > 0 {
