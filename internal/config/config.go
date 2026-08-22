@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -16,7 +17,7 @@ import (
 // SMTPConfig holds SMTP connection settings for EMAIL action alarms.
 type SMTPConfig struct {
 	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
+	Port     int `mapstructure:"port"`
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
 	From     string `mapstructure:"from"`
@@ -38,6 +39,10 @@ type SMTPConfig struct {
 	TLSMode string `mapstructure:"tls"`
 }
 
+// errSMTPPasswordConflict reports a config that sets both smtp.password and
+// smtp.password_cmd. The source of the secret must stay unambiguous.
+var errSMTPPasswordConflict = errors.New("smtp.password and smtp.password_cmd are mutually exclusive; set one of them")
+
 // ResolvePassword returns the SMTP password for this configuration.
 // A set PasswordCommand runs at call time and its stdout becomes the
 // password. The output loses one trailing newline. The command runs through
@@ -47,13 +52,22 @@ type SMTPConfig struct {
 func (c SMTPConfig) ResolvePassword() (string, error) {
 	switch {
 	case c.Password != "" && c.PasswordCommand != "":
-		return "", errors.New("smtp.password and smtp.password_cmd are mutually exclusive; set one of them")
+		return "", errSMTPPasswordConflict
 	case c.PasswordCommand != "":
 		return runPasswordCommand(c.PasswordCommand)
 	default:
 		return c.Password, nil
 	}
 }
+
+// defaultPasswordCmdTimeout bounds how long smtp.password_cmd may run. A
+// helper that blocks must not stop the alarm email forever. notify.Email
+// runs from `alarm check` and from the installed service tick.
+const defaultPasswordCmdTimeout = 30 * time.Second
+
+// passwordCmdTimeout holds the active bound. A test sets it to a shorter
+// value.
+var passwordCmdTimeout = defaultPasswordCmdTimeout
 
 // runPasswordCommand executes a password-retrieval command and returns its
 // stdout. The error message omits stderr on purpose. Helper programs such as
@@ -63,7 +77,9 @@ func runPasswordCommand(command string) (string, error) {
 	if runtime.GOOS == "windows" {
 		shell, flag = "cmd", "/c"
 	}
-	out, err := exec.CommandContext(context.Background(), shell, flag, command).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), passwordCmdTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, shell, flag, command).Output()
 	if err != nil {
 		return "", fmt.Errorf("run smtp.password_cmd %q: %w", command, err)
 	}
@@ -148,6 +164,12 @@ func Load() (Config, error) {
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config file: %w", err)
+	}
+	// Reject an ambiguous password source at load time. The error would
+	// otherwise surface only at send time, when an alarm fires. The check
+	// in ResolvePassword stays as a second guard.
+	if cfg.SMTP.Password != "" && cfg.SMTP.PasswordCommand != "" {
+		return Config{}, errSMTPPasswordConflict
 	}
 	if cfg.SMTP.Port == 0 {
 		cfg.SMTP.Port = DefaultSMTPPort

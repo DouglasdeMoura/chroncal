@@ -1,10 +1,12 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 // mustLoad calls Load and fails the test on error. Use it in tests that
@@ -137,6 +139,32 @@ func TestLoad_SMTPPasswordCmdFromEnv(t *testing.T) {
 	}
 }
 
+// TestLoad_SMTPPasswordAndPasswordCmdBothSetIsError checks that Load rejects
+// a config with both password sources. The error must surface at load time,
+// not at send time when an alarm fires.
+func TestLoad_SMTPPasswordAndPasswordCmdBothSetIsError(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`
+[smtp]
+password = "literal-secret"
+password_cmd = "pass show smtp/app-password"
+`), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_SMTP_PASSWORD", "")
+	t.Setenv("CHRONCAL_SMTP_PASSWORD_CMD", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want an error when both password sources are set")
+	}
+	if !errors.Is(err, errSMTPPasswordConflict) {
+		t.Errorf("Load() error = %v, want the mutual-exclusion error", err)
+	}
+}
+
 func TestSMTPConfig_ResolvePassword_Literal(t *testing.T) {
 	cfg := SMTPConfig{Password: "secret123"}
 	got, err := cfg.ResolvePassword()
@@ -185,6 +213,29 @@ func TestSMTPConfig_ResolvePassword_BothSetIsError(t *testing.T) {
 	cfg := SMTPConfig{Password: "literal", PasswordCommand: "echo from-cmd"}
 	if _, err := cfg.ResolvePassword(); err == nil {
 		t.Fatal("ResolvePassword() error = nil, want an error when both password sources are set")
+	}
+}
+
+// TestRunPasswordCommandTimeout checks that a helper which blocks cannot
+// hold the alarm email forever. The test shortens passwordCmdTimeout, so it
+// stays fast and deterministic.
+func TestRunPasswordCommandTimeout(t *testing.T) {
+	oldTimeout := passwordCmdTimeout
+	passwordCmdTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { passwordCmdTimeout = oldTimeout })
+
+	command := "sleep 60"
+	if runtime.GOOS == "windows" {
+		command = "ping -n 60 127.0.0.1"
+	}
+
+	start := time.Now()
+	_, err := runPasswordCommand(command)
+	if err == nil {
+		t.Fatal("runPasswordCommand error = nil, want a timeout error")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("runPasswordCommand took %v, want a return before the command ends", elapsed)
 	}
 }
 
