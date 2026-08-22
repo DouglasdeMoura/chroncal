@@ -1,8 +1,6 @@
 package event
 
 import (
-	"context"
-	"log"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -57,37 +55,4 @@ func fromStorageSlice(rows []storage.Event) []Event {
 		events[i] = FromStorage(r)
 	}
 	return events
-}
-
-func (s *Service) populateSingleCategories(ctx context.Context, e *Event) {
-	cats, err := s.ListCategories(ctx, e.ID)
-	if err != nil {
-		log.Printf("populateSingleCategories failed for event %d: %v", e.ID, err)
-		return
-	}
-	e.Categories = timeutil.JoinCategoryList(cats)
-}
-
-func (s *Service) populateCategories(ctx context.Context, events []Event) {
-	if len(events) == 0 {
-		return
-	}
-	ids := make([]int64, len(events))
-	for i := range events {
-		ids[i] = events[i].ID
-	}
-	rows, err := s.q.ListCategoriesByEventIDs(ctx, ids)
-	if err != nil {
-		log.Printf("populateCategories failed for %d events: %v", len(events), err)
-		return
-	}
-	catMap := make(map[int64][]string, len(events))
-	for _, r := range rows {
-		catMap[r.EventID] = append(catMap[r.EventID], r.Category)
-	}
-	for i := range events {
-		if cats, ok := catMap[events[i].ID]; ok {
-			events[i].Categories = timeutil.JoinCategoryList(cats)
-		}
-	}
 }
