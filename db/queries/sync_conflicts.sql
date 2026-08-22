@@ -37,3 +37,10 @@ DELETE FROM sync_conflicts WHERE id = ?;
 
 -- name: DeleteSyncConflictsByCalendar :exec
 DELETE FROM sync_conflicts WHERE calendar_id = ?;
+
+-- name: UpdateSyncConflictServerBody :execrows
+UPDATE sync_conflicts
+SET server_ical = ?,
+    server_etag = ?,
+    detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL;

@@ -236,7 +236,7 @@ func TestPushRecordsFailureAndDoctorResetsCounter(t *testing.T) {
 		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		return nil, nil
 	})
-	result, err := engine.push(ctx, client, cal.ID, srv.URL, "", ConflictPrompt)
+	result, err := engine.push(ctx, client, cal.ID, srv.URL, "", ConflictPrompt, false)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}

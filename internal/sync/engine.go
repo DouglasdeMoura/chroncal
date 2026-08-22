@@ -164,6 +164,25 @@ func (e *Engine) hasOpenConflict(ctx context.Context, calendarID int64, uid stri
 	return open > 0
 }
 
+// refreshConflictServerBody records the freshest server body on the open
+// conflict row. Pull does not import over an open conflict, so the row
+// would hold the server version from conflict time. A resolve must then
+// pick current data, not stale data. The update touches only rows that
+// are still open. See issue #610.
+func (e *Engine) refreshConflictServerBody(ctx context.Context, calendarID int64, uid, serverIcal, serverEtag string) {
+	n, err := e.q.UpdateSyncConflictServerBody(ctx, storage.UpdateSyncConflictServerBodyParams{
+		ServerIcal: serverIcal,
+		ServerEtag: serverEtag,
+		CalendarID: calendarID,
+		Uid:        uid,
+	})
+	if err != nil {
+		e.logger.Warn("refresh conflict server body", "uid", uid, "error", err)
+	} else if n > 0 {
+		e.logger.Debug("refreshed conflict server body", "uid", uid)
+	}
+}
+
 // Engine orchestrates push and pull of CalDAV resources.
 type Engine struct {
 	db        *sql.DB
@@ -191,7 +210,7 @@ var (
 //
 // Concurrent push runs for the same calendar must not both read the same
 // dirty, never-pushed sync_resource (RemoteUrl=""). One example is a
-// save-time PushCalendar that races a periodic SyncCalendar. Each run would
+// save-time PushLocalEdits that races a periodic SyncCalendar. Each run would
 // mint a distinct random href and PUT it without an If-Match precondition.
 // The server would then hold two objects for one UID.
 //
@@ -1232,6 +1251,9 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 		}
 		if e.hasOpenConflict(ctx, calendarID, uid) {
 			e.logger.Debug("skip pull: open conflict pending resolution", "uid", uid)
+			// The fetched body is newer than the recorded one. Record it so
+			// a later resolve picks current server data.
+			e.refreshConflictServerBody(ctx, calendarID, uid, buf.String(), res.ETag)
 			continue
 		}
 
@@ -1551,6 +1573,10 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			}
 			if e.hasOpenConflict(ctx, calendarID, uid) {
 				e.logger.Debug("skip pull: open conflict pending resolution", "uid", uid)
+				// The fetched body is newer than the recorded one. Record it so
+				// a later resolve picks current server data. The sync-token may
+				// then advance: the row, not the token, carries the obligation.
+				e.refreshConflictServerBody(ctx, calendarID, uid, buf.String(), res.ETag)
 				continue
 			}
 			ownerType := detectOwnerType(importResult)

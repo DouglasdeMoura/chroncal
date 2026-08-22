@@ -279,3 +279,31 @@ func (q *Queries) MarkSyncConflictResolved(ctx context.Context, arg MarkSyncConf
 	)
 	return err
 }
+
+const updateSyncConflictServerBody = `-- name: UpdateSyncConflictServerBody :execrows
+UPDATE sync_conflicts
+SET server_ical = ?,
+    server_etag = ?,
+    detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL
+`
+
+type UpdateSyncConflictServerBodyParams struct {
+	ServerIcal string
+	ServerEtag string
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) UpdateSyncConflictServerBody(ctx context.Context, arg UpdateSyncConflictServerBodyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSyncConflictServerBody,
+		arg.ServerIcal,
+		arg.ServerEtag,
+		arg.CalendarID,
+		arg.Uid,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

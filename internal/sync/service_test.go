@@ -591,7 +591,7 @@ func TestService_ResolveConflict_ServerDoesNotResurrectDeleted(t *testing.T) {
 }
 
 // TestService_ResolveConflict_Local restores the recorded local version
-// (INV5). The current row holds the server body after a server-wins pass.
+// (issue #610). The current row holds the server body after a server-wins pass.
 // The conflict row keeps the captured local edit. Picking local must import
 // that recorded body over the current row, mark the resource dirty with the
 // recorded server etag, and mark the conflict resolved "local" instead of
