@@ -17,7 +17,7 @@ import (
 // SMTPConfig holds SMTP connection settings for EMAIL action alarms.
 type SMTPConfig struct {
 	Host     string `mapstructure:"host"`
-	Port     int `mapstructure:"port"`
+	Port     int    `mapstructure:"port"`
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
 	From     string `mapstructure:"from"`
@@ -79,7 +79,12 @@ func runPasswordCommand(command string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), passwordCmdTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, shell, flag, command).Output()
+	cmd := exec.CommandContext(ctx, shell, flag, command)
+	// A killed shell can leave a helper child that holds the output pipe.
+	// WaitDelay bounds that wait, so the deadline holds even when the
+	// shell forked its command instead of replacing itself.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("run smtp.password_cmd %q: %w", command, err)
 	}

@@ -741,6 +741,8 @@ from = "you@example.com"
 
 The environment variable is `CHRONCAL_SMTP_PASSWORD_CMD`.
 
+Do not put a literal `password` in a Nix-managed config through the Home Manager module. The generated file lands in the world-readable Nix store. Use `password_cmd` there instead.
+
 ### Desktop notification backends
 
 `chroncal alarm check` records fired alarms even in headless environments. `DISPLAY` and `AUDIO` notifications still need an OS notification backend. On Linux that backend is a D-Bus notification daemon. GNOME and KDE include one. Lighter setups can use a standalone daemon such as `mako` or `dunst`.

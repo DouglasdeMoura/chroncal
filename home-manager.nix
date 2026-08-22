@@ -50,6 +50,8 @@ in
         Settings for chroncal's config.toml.
         The module writes them to {file}`$XDG_CONFIG_HOME/chroncal/config.toml`.
         See the chroncal README for the supported keys.
+        Do not put a literal smtp.password here. The Nix store is
+        world-readable; use password_cmd for the secret instead.
       '';
       example = {
         ui = {
