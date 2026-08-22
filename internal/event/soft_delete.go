@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
@@ -502,4 +503,370 @@ func parseStorageTime(s string) time.Time {
 		t, _ = time.Parse(time.RFC3339, s)
 	}
 	return t
+}
+
+// ErrHasOverrides is returned when a delete targets a recurring master
+// event that has override instances. Use DeleteSeries instead.
+var ErrHasOverrides = fmt.Errorf("event has overrides: use DeleteSeries to delete the entire series")
+
+func (s *Service) Delete(ctx context.Context, id int64) error {
+	r, err := s.q.GetEvent(ctx, id)
+	if err != nil {
+		return err
+	}
+	evt := FromStorage(r)
+
+	if err := calendaraccess.EnsureWritable(ctx, s.q, evt.CalendarID, "VEVENT"); err != nil {
+		return err
+	}
+
+	// If this is a recurring master, check for overrides. RDATE-only masters
+	// (no RRULE) are recurring too, so guard on either rule or RDATEs (#415).
+	if (evt.RecurrenceRule != "" || evt.RDates != "") && evt.RecurrenceID == "" {
+		overrides, err := s.q.ListOverridesByUID(ctx, evt.UID)
+		if err != nil {
+			return fmt.Errorf("check overrides: %w", err)
+		}
+		if len(overrides) > 0 {
+			return ErrHasOverrides
+		}
+	}
+
+	// If this is a standalone event (no recurrence or a solo master), create
+	// a tombstone so the sync engine can send a DELETE to the server. The
+	// tombstone and the soft-delete commit together: if the tombstone write
+	// fails the soft-delete rolls back, so the next sync can never DELETE a
+	// still-live event from the server (issue #107).
+	if evt.RecurrenceID == "" {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		qtx := s.q.WithTx(tx)
+		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, evt.CalendarID, evt.UID); err != nil {
+			return fmt.Errorf("create tombstone: %w", err)
+		}
+		if err := qtx.SoftDeleteEvent(ctx, id); err != nil {
+			return fmt.Errorf("soft-delete event: %w", err)
+		}
+		return tx.Commit()
+	}
+
+	// If this is an override, add EXDATE to the master so the instance
+	// doesn't reappear on next expansion. The master's sync resource
+	// becomes dirty (modified EXDATE), not the override.
+	if evt.RecurrenceID != "" {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		qtx := s.q.WithTx(tx)
+
+		master, err := qtx.GetEventByUID(ctx, evt.UID)
+		// A genuine lookup error (e.g. SQLITE_BUSY) must not collapse into the
+		// "no master" path: that would soft-delete the override while skipping
+		// its EXDATE/provenance bookkeeping, resurrecting the occurrence via
+		// series expansion (issue #412). Only a missing master (ErrNoRows)
+		// legitimately skips the bookkeeping.
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get master: %w", err)
+		}
+		if err == nil {
+			existing := ParseTimeList(storage.NullableToString(master.Exdates))
+			recIDTime, parseErr := timeutil.ParseRecurrenceID(evt.RecurrenceID)
+			if parseErr != nil {
+				// A malformed recurrence_id can't be excluded from the
+				// master, so soft-deleting the override would resurrect the
+				// occurrence via series expansion. Fail loudly instead — the
+				// restore path treats the same parse failure as fatal.
+				return fmt.Errorf("parse recurrence_id %q: %w", evt.RecurrenceID, parseErr)
+			}
+			// All-day masters store recurrence_ids as full RFC 3339, so
+			// ParseRecurrenceID yields a UTC-located time. Re-tag it as
+			// date-only so the EXDATE serializes as VALUE=DATE matching
+			// DTSTART;VALUE=DATE on export (RFC 5545 §3.8.5.1, issue #221).
+			if master.AllDay == 1 {
+				recIDTime = timeutil.AsDateOnly(recIDTime)
+			}
+			existing = append(existing, recIDTime)
+			if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
+				Exdates: storage.StringToNullable(SerializeTimeList(existing)),
+				ID:      master.ID,
+			}); err != nil {
+				return fmt.Errorf("update exdates: %w", err)
+			}
+			// Record provenance so restore knows this EXDATE was
+			// delete-added (and may be stripped) rather than imported.
+			if err := qtx.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{
+				CalendarID:   master.CalendarID,
+				Uid:          evt.UID,
+				RecurrenceID: evt.RecurrenceID,
+			}); err != nil {
+				return fmt.Errorf("record exdate delete: %w", err)
+			}
+		}
+
+		if err := qtx.SoftDeleteEvent(ctx, id); err != nil {
+			return fmt.Errorf("soft-delete event: %w", err)
+		}
+		// Mark the master dirty — its EXDATE was modified — inside the same
+		// transaction so a failed mark rolls the EXDATE change back rather than
+		// committing a change that is never pushed (issue #107).
+		if err := storage.MarkResourceDirty(ctx, tx, evt.CalendarID, evt.UID, "event"); err != nil {
+			return fmt.Errorf("mark resource dirty: %w", err)
+		}
+		return tx.Commit()
+	}
+
+	// Unreachable: RecurrenceID is either "" (handled above) or non-empty.
+	return s.q.SoftDeleteEvent(ctx, id)
+}
+
+// DeleteInstance excludes a single occurrence of a recurring event by adding
+// an EXDATE to the master. instanceTime is the StartTime of the occurrence.
+func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	// Read the master inside the transaction so the EXDATE list we recompute
+	// reflects a concurrent writer's changes (issue #116). Reading outside the
+	// tx let a second instance-delete clobber the first one's EXDATE.
+	master, err := qtx.GetEventByUID(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("get master: %w", err)
+	}
+	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
+		return err
+	}
+
+	existing := ParseTimeList(storage.NullableToString(master.Exdates))
+	exdate := instanceTime.UTC()
+	// For an all-day master, tag the EXDATE as date-only so it serializes as
+	// VALUE=DATE matching DTSTART;VALUE=DATE on export; otherwise a strict
+	// CalDAV server ignores the mismatched DATE-TIME EXDATE and the deleted
+	// occurrence reappears (RFC 5545 §3.8.5.1, issue #221).
+	if master.AllDay == 1 {
+		exdate = timeutil.AsDateOnly(exdate)
+	}
+	existing = append(existing, exdate)
+	if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
+		Exdates: storage.StringToNullable(SerializeTimeList(existing)),
+		ID:      master.ID,
+	}); err != nil {
+		return fmt.Errorf("update exdates: %w", err)
+	}
+
+	recID := instanceTime.UTC().Format(time.RFC3339)
+	override, oErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+		Uid:          uid,
+		RecurrenceID: recID,
+	})
+	if oErr == nil {
+		if err := qtx.SoftDeleteEvent(ctx, override.ID); err != nil {
+			return fmt.Errorf("soft-delete override: %w", err)
+		}
+	}
+
+	// Log the EXDATE-based delete so the trash view can surface it.
+	// ON CONFLICT upserts deleted_at, so deleting the same instance twice
+	// keeps exactly one log row with the latest timestamp.
+	if err := qtx.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{
+		CalendarID:   master.CalendarID,
+		Uid:          uid,
+		RecurrenceID: recID,
+	}); err != nil {
+		return fmt.Errorf("record exdate delete: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
+	return nil
+}
+
+// DeleteFromInstance truncates a recurring series so that instances at or
+// after instanceTime are removed. It sets UNTIL on the RRULE. It soft-deletes
+// any overrides at or after the cutoff. It records the pre-truncation
+// RRULE in event_truncate_deletes so the trash view can restore it atomically.
+func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) error {
+	_, err := s.deleteFromInstance(ctx, uid, instanceTime)
+	return err
+}
+
+// softDeleteOverridesAndRecordTruncation trims the master's post-cutoff RDATEs.
+// It hides every live override at or after cutoff. It records the truncation
+// so the trash view can restore it. It captures the recurrence_ids it hides
+// and the RDATEs it drops BEFORE it removes them. Restore then re-shows
+// exactly those overrides and re-adds exactly those RDATEs.
+//
+// It does not restore an override the user deleted on its own (issue #287).
+// It does not leave a post-cutoff RDATE to reappear on the next expansion
+// (issue #463, since rrule-go expands RDATEs independently of the RRULE UNTIL
+// bound). Pairs with restoreTruncatedOverrides / restoreTruncatedRDates.
+//
+// prevRRule is the master's pre-truncation RRULE. The caller passes it because
+// it overwrote the master's recurrence_rule in the DB before this runs.
+func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time, prevRRule string) error {
+	uid := master.Uid
+	cutoff := instanceTime.UTC().Format(time.RFC3339)
+
+	removedRDates, err := trimMasterRDatesAtOrAfter(ctx, qtx, master, instanceTime)
+	if err != nil {
+		return err
+	}
+
+	hidden, err := qtx.ListLiveOverrideRecurrenceIDsAtOrAfter(ctx, storage.ListLiveOverrideRecurrenceIDsAtOrAfterParams{
+		Uid:          uid,
+		RecurrenceID: cutoff,
+	})
+	if err != nil {
+		return fmt.Errorf("list future overrides: %w", err)
+	}
+	hiddenList := strings.Join(hidden, ",")
+
+	if err := qtx.SoftDeleteOverridesAtOrAfter(ctx, storage.SoftDeleteOverridesAtOrAfterParams{
+		Uid:          uid,
+		RecurrenceID: cutoff,
+	}); err != nil {
+		return fmt.Errorf("soft-delete future overrides: %w", err)
+	}
+
+	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{
+		CalendarID:      master.CalendarID,
+		Uid:             uid,
+		CutoffTime:      cutoff,
+		PreviousRrule:   prevRRule,
+		HiddenOverrides: &hiddenList,
+		RemovedRdates:   &removedRDates,
+	}); err != nil {
+		return fmt.Errorf("record truncate: %w", err)
+	}
+	return nil
+}
+
+// trimMasterRDatesAtOrAfter rewrites the master's rdates column to keep only the
+// occurrences strictly before instanceTime, and returns the dropped ones
+// serialized for the truncation log. It only issues an UPDATE when something
+// changes, so a master with no post-cutoff RDATEs is left untouched.
+func trimMasterRDatesAtOrAfter(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time) (string, error) {
+	rdates := ParseTimeList(storage.NullableToString(master.Rdates))
+	if len(rdates) == 0 {
+		return "", nil
+	}
+	kept := make([]time.Time, 0, len(rdates))
+	var removed []time.Time
+	for _, rd := range rdates {
+		if rd.Before(instanceTime) {
+			kept = append(kept, rd)
+		} else {
+			removed = append(removed, rd)
+		}
+	}
+	if len(removed) == 0 {
+		return "", nil
+	}
+	if err := qtx.UpdateEventRdates(ctx, storage.UpdateEventRdatesParams{
+		Rdates: storage.StringToNullable(SerializeTimeList(kept)),
+		ID:     master.ID,
+	}); err != nil {
+		return "", fmt.Errorf("trim rdates: %w", err)
+	}
+	return SerializeTimeList(removed), nil
+}
+
+// deleteFromInstance performs the truncation and returns the master's
+// updated_at as written by this operation, read back inside the same
+// transaction. The in-tx value (rather than a post-commit read) closes a
+// TOCTOU window. A concurrent writer that edits the master after our commit
+// but before a separate read would otherwise have its updated_at captured as
+// the undo baseline. RestoreUndo would then clobber that edit.
+func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	// Read the master inside the transaction so the RRULE we truncate reflects
+	// a concurrent writer's edits rather than a pre-transaction snapshot
+	// (issue #116).
+	master, err := qtx.GetEventByUID(ctx, uid)
+	if err != nil {
+		return "", fmt.Errorf("get master: %w", err)
+	}
+	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
+		return "", err
+	}
+
+	// An RDATE-only master (no RRULE) has no recurrence rule to truncate.
+	// Synthesizing an "UNTIL=..." here would be an invalid bare RRULE that fails
+	// to parse, collapsing the whole series to its DTSTART (issue #414). Leave
+	// the rule NULL; the future-override soft-delete and truncation record below
+	// still apply.
+	prevRRule := storage.NullableToString(master.RecurrenceRule)
+	if prevRRule != "" {
+		until := instanceTime.UTC().Add(-time.Second)
+		rule := setRRuleUntil(prevRRule, until, master.AllDay == 1)
+		if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
+			RecurrenceRule: storage.StringToNullable(rule),
+			ID:             master.ID,
+		}); err != nil {
+			return "", fmt.Errorf("update rrule: %w", err)
+		}
+	}
+
+	if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master, instanceTime, prevRRule); err != nil {
+		return "", err
+	}
+
+	// Read the master's updated_at back inside the transaction so the value we
+	// return reflects exactly this truncation's write, with no chance of an
+	// interleaved external edit in between.
+	truncated, err := qtx.GetEventByUID(ctx, uid)
+	if err != nil {
+		return "", fmt.Errorf("read back master: %w", err)
+	}
+	postUpdated := truncated.UpdatedAt
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
+	return postUpdated, nil
+}
+
+// DeleteSeries deletes a recurring master event and all its overrides.
+func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
+	if err := s.ensureSeriesWritable(ctx, uid); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+
+	// Look up the master to get calendarID for tombstone creation. The
+	// tombstone and the soft-delete commit together so a failed tombstone
+	// write can't leave a tombstone for a still-live series whose next sync
+	// would DELETE it from the server (issue #107).
+	if master, err := qtx.GetEventByUID(ctx, uid); err == nil {
+		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
+			return fmt.Errorf("create tombstone: %w", err)
+		}
+	}
+
+	if err := qtx.SoftDeleteEventsByUID(ctx, uid); err != nil {
+		return fmt.Errorf("soft-delete series: %w", err)
+	}
+	return tx.Commit()
 }
