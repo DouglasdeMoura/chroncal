@@ -244,8 +244,7 @@ func (q *Queries) MarkSyncConflictResolved(ctx context.Context, arg MarkSyncConf
 const updateSyncConflictServerBody = `-- name: UpdateSyncConflictServerBody :execrows
 UPDATE sync_conflicts
 SET server_ical = ?,
-    server_etag = ?,
-    detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    server_etag = ?
 WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL
 `
 
@@ -256,6 +255,8 @@ type UpdateSyncConflictServerBodyParams struct {
 	Uid        string
 }
 
+// The update leaves detected_at alone. A refresh records fresher server
+// data; it does not re-date how old the divergence is.
 func (q *Queries) UpdateSyncConflictServerBody(ctx context.Context, arg UpdateSyncConflictServerBodyParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateSyncConflictServerBody,
 		arg.ServerIcal,
