@@ -227,7 +227,8 @@ func TestRunPasswordCommandTimeout(t *testing.T) {
 	// The background job forces the shell to fork instead of replace
 	// itself, so the killed shell leaves a helper child behind. That child
 	// holds the output pipe, which is the exact shape the deadline must
-	// survive (it hung the ubuntu CI runner once).
+	// survive (it hung the ubuntu CI runner once). The Windows variant has
+	// no pipe-holding grandchild; it exercises the plain deadline only.
 	command := "sleep 60 & wait"
 	if runtime.GOOS == "windows" {
 		command = "ping -n 60 127.0.0.1"
