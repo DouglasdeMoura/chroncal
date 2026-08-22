@@ -818,6 +818,9 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 					result.conflicts++
 				case putConflictAutoResolved:
 					result.autoResolved++
+				case putConflictRecordFailed:
+					// No row exists, so nothing is counted. errs already
+					// carries the failure to the caller.
 				}
 				continue
 			}
@@ -897,13 +900,12 @@ const (
 // row resolved; every failure on that path leaves the row open so the user
 // can still resolve it by hand. See issue #610.
 func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, calendarID int64, res storage.SyncResource, putPath string, icalData []byte, strategy ConflictStrategy, opportunistic bool) (putConflictOutcome, []ImportWarning, []error) {
-	var warnings []ImportWarning
 	var errs []error
 
 	serverRes, fetchErr := client.GetResource(ctx, putPath)
 	if fetchErr != nil {
 		e.logger.Warn("re-fetch server resource failed", "uid", res.Uid, "error", fetchErr)
-		return putConflictRecordFailed, warnings, append(errs, fmt.Errorf("conflict re-fetch %s: %w", res.Uid, fetchErr))
+		return putConflictRecordFailed, nil, append(errs, fmt.Errorf("conflict re-fetch %s: %w", res.Uid, fetchErr))
 	}
 	serverIcal, encodeErr := caldav.EncodeCalendar(serverRes.Data)
 	if encodeErr != nil {
@@ -923,14 +925,14 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 		ServerEtag: serverRes.ETag,
 	}); err != nil {
 		e.logger.Error("record conflict", "uid", res.Uid, "error", err)
-		return putConflictRecordFailed, warnings, append(errs, fmt.Errorf("record conflict %s: %w", res.Uid, err))
+		return putConflictRecordFailed, nil, append(errs, fmt.Errorf("record conflict %s: %w", res.Uid, err))
 	}
 
 	// Prompt mode and the opportunistic push stop here. The conflict row
 	// holds both bodies and the local row stays dirty until the user
 	// resolves it with ResolveConflict.
 	if strategy != ConflictServerWins || opportunistic {
-		return putConflictLeftOpen, warnings, errs
+		return putConflictLeftOpen, nil, errs
 	}
 
 	// ServerWins: adopt the server version and mark the recorded conflict
@@ -939,14 +941,15 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 	e.logger.Info("resolving conflict: server wins", "uid", res.Uid)
 	if encodeErr != nil {
 		errs = append(errs, fmt.Errorf("encode server resource %s: %w", res.Uid, encodeErr))
-		return putConflictLeftOpen, warnings, errs
+		return putConflictLeftOpen, nil, errs
 	}
 	imported, revs, importWarnings, err := e.importICal(ctx, calendarID, string(serverIcal))
 	if err != nil {
 		e.logger.Error("import server resource failed", "uid", res.Uid, "error", err)
 		errs = append(errs, fmt.Errorf("import server resource %s: %w", res.Uid, err))
-		return putConflictLeftOpen, warnings, errs
+		return putConflictLeftOpen, nil, errs
 	}
+	warnings := make([]ImportWarning, 0, len(importWarnings))
 	warnings = append(warnings, importWarnings...)
 	if !imported {
 		// The server's 412 body carried no importable VEVENT/VTODO/VJOURNAL,
