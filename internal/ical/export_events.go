@@ -2,7 +2,6 @@ package ical
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -308,18 +307,8 @@ func setEventTimes(vevent *ical.Event, e event.Event) {
 			if xp.Name != xpropOriginalDTEND {
 				continue
 			}
-			p := &ical.Prop{Name: ical.PropDateTimeEnd, Params: make(ical.Params)}
-			p.Value = xp.Value
-			if xp.Params != "" && xp.Params != "{}" {
-				var params map[string][]string
-				if err := json.Unmarshal([]byte(xp.Params), &params); err == nil {
-					for k, vals := range params {
-						for _, v := range vals {
-							p.Params.Add(k, v)
-						}
-					}
-				}
-			}
+			p := propFromXProperty(xp)
+			p.Name = ical.PropDateTimeEnd
 			vevent.Props.Set(p)
 			break
 		}

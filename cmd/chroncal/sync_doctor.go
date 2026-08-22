@@ -60,7 +60,7 @@ before the push and asks for confirmation.`,
 }
 
 // doctorEntry pairs one wedged resource with the calendar that holds it, so
-// both render functions print the calendar name next to the UID.
+// every view prints the calendar name next to the UID.
 type doctorEntry struct {
 	calendarName string
 	wedged       syncPkg.WedgedResource
@@ -127,27 +127,29 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 // loss, asks for confirmation, and pushes the incomplete record.
 func runDoctorPush(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Calendar, uid string) error {
 	ctx := context.Background()
-	for _, cal := range cals {
-		wedged, err := svc.DiagnoseCalendar(ctx, cal.ID)
+	entries, err := diagnoseAll(ctx, svc, cals)
+	if err != nil {
+		return err
+	}
+	for _, en := range entries {
+		w := en.wedged
+		if w.UID != uid {
+			continue
+		}
+		question := fmt.Sprintf(
+			"Push %s from calendar %q without relation(s) %s? The server copy loses those fields",
+			uid, en.calendarName, strings.Join(w.Relations, ", "))
+		if err := confirmDestructive(cmd, question); err != nil {
+			return err
+		}
+		// The confirmed relation set rides along. DoctorPush re-runs the
+		// export under the lifecycle lock and refuses the push when the
+		// actual drop set differs from what the user accepted.
+		dropped, err := svc.DoctorPush(ctx, w.CalendarID, uid, w.Relations)
 		if err != nil {
-			return fmt.Errorf("diagnose calendar %q: %w", cal.Name, err)
+			return err
 		}
-		for _, w := range wedged {
-			if w.UID != uid {
-				continue
-			}
-			question := fmt.Sprintf(
-				"Push %s from calendar %q without relation(s) %s? The server copy loses those fields",
-				uid, cal.Name, strings.Join(w.Relations, ", "))
-			if err := confirmDestructive(cmd, question); err != nil {
-				return err
-			}
-			dropped, err := svc.DoctorPush(ctx, cal.ID, uid)
-			if err != nil {
-				return err
-			}
-			return renderDoctorPush(cmd, uid, dropped)
-		}
+		return renderDoctorPush(cmd, uid, dropped)
 	}
 	return &cliError{
 		Code: "not_found",

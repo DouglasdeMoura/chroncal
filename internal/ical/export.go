@@ -252,6 +252,26 @@ func splitNonEmpty(s string) []string {
 	return out
 }
 
+// propFromXProperty converts one stored X-property into a wire property,
+// decoding its JSON-serialized parameters. The DTEND override in setEventTimes
+// and emitXProperties share it, so the wire encoding of the stored params has
+// one definition.
+func propFromXProperty(xp model.XProperty) *ical.Prop {
+	p := &ical.Prop{Name: xp.Name, Params: make(ical.Params)}
+	p.Value = xp.Value
+	if xp.Params != "" && xp.Params != "{}" {
+		var params map[string][]string
+		if err := json.Unmarshal([]byte(xp.Params), &params); err == nil {
+			for k, vals := range params {
+				for _, v := range vals {
+					p.Params.Add(k, v)
+				}
+			}
+		}
+	}
+	return p
+}
+
 // emitXProperties writes X-properties (and other unhandled properties) onto an
 // iCal component for round-trip preservation. libical-internal annotations
 // (X-LIC-ERROR / X-LIC-ERRORTYPE) are skipped. Those are diagnostic markers
@@ -269,19 +289,7 @@ func emitXProperties(comp *ical.Component, xprops []model.XProperty) {
 		if xp.Name == xpropOriginalDTEND {
 			continue
 		}
-		p := &ical.Prop{Name: xp.Name, Params: make(ical.Params)}
-		p.Value = xp.Value
-		if xp.Params != "" && xp.Params != "{}" {
-			var params map[string][]string
-			if err := json.Unmarshal([]byte(xp.Params), &params); err == nil {
-				for k, vals := range params {
-					for _, v := range vals {
-						p.Params.Add(k, v)
-					}
-				}
-			}
-		}
-		comp.Props.Add(p)
+		comp.Props.Add(propFromXProperty(xp))
 	}
 }
 
