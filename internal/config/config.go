@@ -1,12 +1,15 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -18,6 +21,11 @@ type SMTPConfig struct {
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
 	From     string `mapstructure:"from"`
+	// PasswordCommand is a shell command whose stdout is the SMTP password.
+	// It is an alternative to a hardcoded Password in the config file. The
+	// command runs at send time, not at load time. Set one of the two
+	// fields, never both. Example: "pass show smtp/app-password".
+	PasswordCommand string `mapstructure:"password_cmd"`
 	// TLSMode controls how TLS is established for the SMTP connection.
 	// Valid values:
 	//   ""           – auto-detect: port 465 uses implicit TLS (SMTPS), all
@@ -29,6 +37,59 @@ type SMTPConfig struct {
 	//   "none"       – skip implicit TLS; delegates to smtp.SendMail which
 	//                  still negotiates STARTTLS when the server offers it.
 	TLSMode string `mapstructure:"tls"`
+}
+
+// errSMTPPasswordConflict reports a config that sets both smtp.password and
+// smtp.password_cmd. The source of the secret must stay unambiguous.
+var errSMTPPasswordConflict = errors.New("smtp.password and smtp.password_cmd are mutually exclusive; set one of them")
+
+// ResolvePassword returns the SMTP password for this configuration.
+// A set PasswordCommand runs at call time and its stdout becomes the
+// password. The output loses one trailing newline. The command runs through
+// the system shell, so it accepts arguments and pipes. Setting both
+// Password and PasswordCommand is an error: the source of the secret must
+// stay unambiguous.
+func (c SMTPConfig) ResolvePassword() (string, error) {
+	switch {
+	case c.Password != "" && c.PasswordCommand != "":
+		return "", errSMTPPasswordConflict
+	case c.PasswordCommand != "":
+		return runPasswordCommand(c.PasswordCommand)
+	default:
+		return c.Password, nil
+	}
+}
+
+// defaultPasswordCmdTimeout bounds how long smtp.password_cmd may run. A
+// helper that blocks must not stop the alarm email forever. notify.Email
+// runs from `alarm check` and from the installed service tick.
+const defaultPasswordCmdTimeout = 30 * time.Second
+
+// passwordCmdTimeout holds the active bound. A test sets it to a shorter
+// value.
+var passwordCmdTimeout = defaultPasswordCmdTimeout
+
+// runPasswordCommand executes a password-retrieval command and returns its
+// stdout. The error message omits stderr on purpose. Helper programs such as
+// password managers can print secrets there.
+func runPasswordCommand(command string) (string, error) {
+	shell, flag := "sh", "-c"
+	if runtime.GOOS == "windows" {
+		shell, flag = "cmd", "/c"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), passwordCmdTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, shell, flag, command)
+	// A killed shell can leave a helper child that holds the output pipe.
+	// WaitDelay bounds that wait, so the deadline holds even when the
+	// shell forked its command instead of replacing itself.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("run smtp.password_cmd %q: %w", command, err)
+	}
+	password := strings.TrimSuffix(string(out), "\n")
+	return strings.TrimSuffix(password, "\r"), nil
 }
 
 type SyncConfig struct {
@@ -109,6 +170,12 @@ func Load() (Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config file: %w", err)
 	}
+	// Reject an ambiguous password source at load time. The error would
+	// otherwise surface only at send time, when an alarm fires. The check
+	// in ResolvePassword stays as a second guard.
+	if cfg.SMTP.Password != "" && cfg.SMTP.PasswordCommand != "" {
+		return Config{}, errSMTPPasswordConflict
+	}
 	if cfg.SMTP.Port == 0 {
 		cfg.SMTP.Port = DefaultSMTPPort
 	}
@@ -139,6 +206,7 @@ func newViper() *viper.Viper {
 	v.BindEnv("smtp.port")
 	v.BindEnv("smtp.username")
 	v.BindEnv("smtp.password")
+	v.BindEnv("smtp.password_cmd")
 	v.BindEnv("smtp.from")
 	v.BindEnv("smtp.tls")
 	v.BindEnv("sync.interval")

@@ -149,7 +149,27 @@ Build the package from a clone:
 nix build .#chroncal
 ```
 
-The flake exposes `packages.default`, `packages.chroncal`, `apps.default`, and a developer shell with Go, GoReleaser, golangci-lint, govulncheck, and sqlc.
+The flake exposes `packages.default`, `packages.chroncal`, `apps.default`, a developer shell with Go, GoReleaser, golangci-lint, govulncheck, and sqlc, and a Home Manager module under `homeModules.default` (also aliased as `homeManagerModules.default`).
+
+The Home Manager module installs chroncal and writes `$XDG_CONFIG_HOME/chroncal/config.toml` from `programs.chroncal.settings`. Import it and set options:
+
+```nix
+# In your flake inputs:
+# chroncal.url = "github:DouglasdeMoura/chroncal";
+
+# In your Home Manager modules:
+imports = [ inputs.chroncal.homeManagerModules.default ];
+
+programs.chroncal = {
+  enable = true;
+  settings = {
+    ui.week_start = "monday";
+    smtp.password_cmd = "pass show smtp/app-password";
+  };
+};
+```
+
+chroncal stores accounts in its database and the OS keyring. The module has no account options for that reason. Use `settings` for every documented config key.
 
 ### Scoop (Windows)
 
@@ -708,6 +728,20 @@ from = "you@example.com"
 ```
 
 Or via environment: `CHRONCAL_SMTP_HOST`, `CHRONCAL_SMTP_PORT`, `CHRONCAL_SMTP_USERNAME`, `CHRONCAL_SMTP_PASSWORD`, `CHRONCAL_SMTP_FROM`.
+
+To avoid a hardcoded password, set `password_cmd` instead of `password`. chroncal runs the command at send time and reads the password from its stdout. The output loses one trailing newline. Set one of the two keys, never both:
+
+```toml
+[smtp]
+host = "smtp.example.com"
+username = "you@example.com"
+password_cmd = "pass show smtp/app-password"
+from = "you@example.com"
+```
+
+The environment variable is `CHRONCAL_SMTP_PASSWORD_CMD`.
+
+Do not put a literal `password` in a Nix-managed config through the Home Manager module. The generated file lands in the world-readable Nix store. Use `password_cmd` there instead.
 
 ### Desktop notification backends
 

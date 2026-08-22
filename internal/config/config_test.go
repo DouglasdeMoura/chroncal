@@ -1,9 +1,12 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 // mustLoad calls Load and fails the test on error. Use it in tests that
@@ -103,6 +106,140 @@ from = "noreply@example.com"
 	}
 	if cfg.SMTP.From != "noreply@example.com" {
 		t.Errorf("SMTP.From = %q, want %q", cfg.SMTP.From, "noreply@example.com")
+	}
+}
+
+func TestLoad_SMTPPasswordCmdFromFile(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`
+[smtp]
+host = "smtp.example.com"
+password_cmd = "pass show smtp/app-password"
+`), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_SMTP_HOST", "")
+	t.Setenv("CHRONCAL_SMTP_PASSWORD", "")
+	t.Setenv("CHRONCAL_SMTP_PASSWORD_CMD", "")
+
+	cfg := mustLoad(t)
+	if cfg.SMTP.PasswordCommand != "pass show smtp/app-password" {
+		t.Errorf("SMTP.PasswordCommand = %q, want %q", cfg.SMTP.PasswordCommand, "pass show smtp/app-password")
+	}
+}
+
+func TestLoad_SMTPPasswordCmdFromEnv(t *testing.T) {
+	t.Setenv("CHRONCAL_SMTP_PASSWORD_CMD", "secret-tool lookup smtp host")
+
+	cfg := mustLoad(t)
+	if cfg.SMTP.PasswordCommand != "secret-tool lookup smtp host" {
+		t.Errorf("SMTP.PasswordCommand = %q, want %q", cfg.SMTP.PasswordCommand, "secret-tool lookup smtp host")
+	}
+}
+
+// TestLoad_SMTPPasswordAndPasswordCmdBothSetIsError checks that Load rejects
+// a config with both password sources. The error must surface at load time,
+// not at send time when an alarm fires.
+func TestLoad_SMTPPasswordAndPasswordCmdBothSetIsError(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`
+[smtp]
+password = "literal-secret"
+password_cmd = "pass show smtp/app-password"
+`), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_SMTP_PASSWORD", "")
+	t.Setenv("CHRONCAL_SMTP_PASSWORD_CMD", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want an error when both password sources are set")
+	}
+	if !errors.Is(err, errSMTPPasswordConflict) {
+		t.Errorf("Load() error = %v, want the mutual-exclusion error", err)
+	}
+}
+
+func TestSMTPConfig_ResolvePassword_Literal(t *testing.T) {
+	cfg := SMTPConfig{Password: "secret123"}
+	got, err := cfg.ResolvePassword()
+	if err != nil {
+		t.Fatalf("ResolvePassword() error = %v", err)
+	}
+	if got != "secret123" {
+		t.Errorf("ResolvePassword() = %q, want %q", got, "secret123")
+	}
+}
+
+func TestSMTPConfig_ResolvePassword_CommandTrimsTrailingNewline(t *testing.T) {
+	command := "printf 'from-cmd\\n'"
+	if runtime.GOOS == "windows" {
+		command = "echo from-cmd"
+	}
+	cfg := SMTPConfig{PasswordCommand: command}
+	got, err := cfg.ResolvePassword()
+	if err != nil {
+		t.Fatalf("ResolvePassword() error = %v", err)
+	}
+	if got != "from-cmd" {
+		t.Errorf("ResolvePassword() = %q, want %q (trailing newline must be trimmed)", got, "from-cmd")
+	}
+}
+
+func TestSMTPConfig_ResolvePassword_CommandError(t *testing.T) {
+	command := "exit 3"
+	if runtime.GOOS == "windows" {
+		command = "exit /b 3"
+	}
+	cfg := SMTPConfig{PasswordCommand: command}
+	if _, err := cfg.ResolvePassword(); err == nil {
+		t.Fatal("ResolvePassword() error = nil, want an error for a failing password command")
+	}
+}
+
+func TestSMTPConfig_ResolvePassword_MissingCommand(t *testing.T) {
+	cfg := SMTPConfig{PasswordCommand: "chroncal-definitely-not-a-real-binary-1234"}
+	if _, err := cfg.ResolvePassword(); err == nil {
+		t.Fatal("ResolvePassword() error = nil, want an error for a missing password command")
+	}
+}
+
+func TestSMTPConfig_ResolvePassword_BothSetIsError(t *testing.T) {
+	cfg := SMTPConfig{Password: "literal", PasswordCommand: "echo from-cmd"}
+	if _, err := cfg.ResolvePassword(); err == nil {
+		t.Fatal("ResolvePassword() error = nil, want an error when both password sources are set")
+	}
+}
+
+// TestRunPasswordCommandTimeout checks that a helper which blocks cannot
+// hold the alarm email forever. The test shortens passwordCmdTimeout, so it
+// stays fast and deterministic.
+func TestRunPasswordCommandTimeout(t *testing.T) {
+	oldTimeout := passwordCmdTimeout
+	passwordCmdTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { passwordCmdTimeout = oldTimeout })
+
+	// The background job forces the shell to fork instead of replace
+	// itself, so the killed shell leaves a helper child behind. That child
+	// holds the output pipe, which is the exact shape the deadline must
+	// survive (it hung the ubuntu CI runner once).
+	command := "sleep 60 & wait"
+	if runtime.GOOS == "windows" {
+		command = "ping -n 60 127.0.0.1"
+	}
+
+	start := time.Now()
+	_, err := runPasswordCommand(command)
+	if err == nil {
+		t.Fatal("runPasswordCommand error = nil, want a timeout error")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("runPasswordCommand took %v, want a return before the command ends", elapsed)
 	}
 }
 

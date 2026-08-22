@@ -81,6 +81,21 @@ jobs:
       - name: Build via the flake
         run: nix build .#chroncal --no-link --print-build-logs
 
+  flake-eval:
+    name: Nix flake eval
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      # Verify that the flake outputs and the Home Manager module still
+      # evaluate. Do not build anything. The flake job builds the package.
+      - name: Evaluate flake outputs
+        run: |
+          nix flake check --no-build
+          nix eval .#homeModules.default
+
   release-config:
     name: Release config
     runs-on: ubuntu-latest
