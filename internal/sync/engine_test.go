@@ -681,6 +681,8 @@ func TestEnginePullSkipsOpenConflict(t *testing.T) {
   <d:sync-token>https://example.com/sync/abc</d:sync-token>
 </d:multistatus>`
 
+	// The multiget serves a server version that is newer than the recorded
+	// one. The skip must refresh the open row with this body (issue #610).
 	const fetchBody = `BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//chroncal//tests//EN
@@ -689,7 +691,7 @@ UID:open-conflict-uid
 DTSTAMP:20260403T120000Z
 DTSTART:20260403T120000Z
 DTEND:20260403T130000Z
-SUMMARY:Server version
+SUMMARY:Server version v2
 END:VEVENT
 END:VCALENDAR
 `
@@ -711,7 +713,7 @@ END:VCALENDAR
     <d:href>/calendar/open-conflict.ics</d:href>
     <d:propstat>
       <d:prop>
-        <d:getetag>&quot;etag-server&quot;</d:getetag>
+        <d:getetag>&quot;etag-server-v2&quot;</d:getetag>
         <cal:calendar-data>` + fetchBody + `</cal:calendar-data>
       </d:prop>
       <d:status>HTTP/1.1 200 OK</d:status>
@@ -756,6 +758,19 @@ END:VCALENDAR
 	}
 	if len(open) != 1 {
 		t.Fatalf("open conflicts = %d, want 1", len(open))
+	}
+
+	// The row holds the freshest server version, not the one from conflict
+	// time. A later "sync resolve" then picks current server data, and the
+	// sync-token may advance because the row carries the obligation.
+	if open[0].ServerEtag != "etag-server-v2" {
+		t.Fatalf("conflict ServerEtag = %q, want the refreshed etag-server-v2", open[0].ServerEtag)
+	}
+	if !strings.Contains(open[0].ServerIcal, "SUMMARY:Server version v2") {
+		t.Fatalf("conflict ServerIcal = %q, want the refreshed v2 body", open[0].ServerIcal)
+	}
+	if open[0].LocalIcal != "local body" {
+		t.Fatalf("conflict LocalIcal = %q, want the untouched recorded local body", open[0].LocalIcal)
 	}
 }
 
@@ -1137,7 +1152,7 @@ func TestEngineSyncCalendarRecordsHealthOnEarlyClientFailure(t *testing.T) {
 
 // TestEnginePushSerializesConcurrentNewResourceCreate is the regression test
 // for issue #225. Two concurrent push runs for the same calendar (e.g. an
-// opportunistic save-time PushCalendar racing a periodic SyncCalendar) must not
+// opportunistic save-time PushLocalEdits racing a periodic SyncCalendar) must not
 // both create a server object for the same never-pushed, etag-less resource.
 // Before the per-calendar push lock, each run read the same dirty
 // sync_resource (RemoteUrl=""). Each minted a distinct random href. Each PUT
@@ -1570,7 +1585,8 @@ END:VCALENDAR
 
 	// Second sync: the conflict is still unresolved, so the resource must be
 	// skipped entirely — no second PUT, no duplicate conflict row. The skip
-	// is counted so callers can report it (INV4).
+	// is counted so callers can report it. Issue #610, invariant: the
+	// count must equal the open rows this pass produced.
 	result, err := engine.push(ctx, client, calendarID, "", "", ConflictPrompt, false)
 	if err != nil {
 		t.Fatalf("second push: %v", err)
@@ -1594,7 +1610,7 @@ END:VCALENDAR
 	}
 }
 
-// TestEnginePushLocalEditsRefreshesOpenConflict guards INV3 for the
+// TestEnginePushLocalEditsRefreshesOpenConflict guards issue #610:
 // opportunistic save-time push. A dirty row with an open conflict must not be
 // skipped: the PUT runs, and the 412 it earns refreshes the recorded local
 // body to the newest edit instead of leaving a stale capture behind. Without
@@ -1730,7 +1746,7 @@ END:VCALENDAR
 	}
 }
 
-// TestEnginePushConflictRecordFailureSurfacesError guards INV4: a failed
+// TestEnginePushConflictRecordFailureSurfacesError guards issue #610: a failed
 // conflict insert must surface as an error and count nothing. The old code
 // discarded the insert error with "_ =" and still counted the conflict, so
 // callers printed notes about conflict rows that did not exist.
@@ -1906,7 +1922,8 @@ END:VCALENDAR
 	}
 	// A server-wins full pass records the conflict row and then resolves it
 	// in favor of the server. AutoResolved counts it; Conflicts counts only
-	// rows recorded and left open (INV4).
+	// rows recorded and left open. Issue #610, invariant: Conflicts equals
+	// the open rows.
 	if result.autoResolved != 1 {
 		t.Fatalf("autoResolved = %d, want 1", result.autoResolved)
 	}
@@ -2118,7 +2135,8 @@ func TestEngineProcessTombstonesTreatsGoneAsSuccess(t *testing.T) {
 // TestEngineProcessTombstonesConflictCountsAutoResolved guards the 412 path
 // of a tombstone delete. The remote edit wins (the tombstone is abandoned),
 // so the outcome is an auto-resolution in favor of the server — not an open
-// conflict row. SyncResult.AutoResolved counts it (INV4).
+// conflict row. SyncResult.AutoResolved counts it. Issue #610,
+// invariant: AutoResolved equals the rows a pass settled on its own.
 func TestEngineProcessTombstonesConflictCountsAutoResolved(t *testing.T) {
 	t.Parallel()
 
@@ -4941,7 +4959,7 @@ func TestEnginePushLocalEditsReadOnlyIsNoOpWithoutServerContact(t *testing.T) {
 	ctx := context.Background()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("read-only PushCalendar must not contact the server: %s %s", r.Method, r.URL.Path)
+		t.Errorf("read-only PushLocalEdits must not contact the server: %s %s", r.Method, r.URL.Path)
 		http.Error(w, "read-only push must be a no-op", http.StatusForbidden)
 	}))
 	defer server.Close()
