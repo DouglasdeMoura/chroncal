@@ -36,8 +36,9 @@ DELETE FROM sync_conflicts WHERE id = ?;
 DELETE FROM sync_conflicts WHERE calendar_id = ?;
 
 -- name: UpdateSyncConflictServerBody :execrows
+-- The update leaves detected_at alone. A refresh records fresher server
+-- data; it does not re-date how old the divergence is.
 UPDATE sync_conflicts
 SET server_ical = ?,
-    server_etag = ?,
-    detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    server_etag = ?
 WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL;
