@@ -3,33 +3,16 @@ package journal
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
-	"github.com/douglasdemoura/chroncal/internal/hydrate"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
-
-type SearchParams struct {
-	Query      string
-	CalendarID int64  // 0 = all
-	Status     string // empty = all
-}
-
-type ExportParams struct {
-	CalendarID int64  // 0 = all
-	From       string // date-only ("YYYY-MM-DD") or empty
-	To         string // date-only ("YYYY-MM-DD") or empty
-	Category   string // empty = all
-	Status     string // empty = all
-}
 
 type Service struct {
 	db *sql.DB
@@ -152,36 +135,6 @@ func (p *CreateParams) applyDefaults() {
 
 func (p *UpsertParams) applyDefaults() {
 	p.Status, p.Class = defaults(p.Status, p.Class)
-}
-
-func (s *Service) Search(ctx context.Context, p SearchParams) ([]Journal, error) {
-	ftsQuery := storage.FTSQuery(p.Query)
-	if ftsQuery == "" {
-		return nil, nil
-	}
-	rows, err := s.q.SearchJournalsFTS(ctx, ftsQuery, p.CalendarID, p.Status)
-	if err != nil {
-		return nil, fmt.Errorf("search journals: %w", err)
-	}
-	journals := fromStorageSlice(rows)
-	s.populateCategories(ctx, journals)
-	return journals, nil
-}
-
-func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Journal, error) {
-	rows, err := s.q.ListJournalsForExport(ctx, storage.ListJournalsForExportParams{
-		CalendarID:   p.CalendarID,
-		FromDate:     p.From,
-		ToDate:       p.To,
-		Category:     p.Category,
-		FilterStatus: p.Status,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("export journals: %w", err)
-	}
-	journals := fromStorageSlice(rows)
-	s.populateCategories(ctx, journals)
-	return journals, nil
 }
 
 func (s *Service) List(ctx context.Context) ([]Journal, error) {
@@ -463,175 +416,6 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Journal, err
 	return j, nil
 }
 
-// ErrHasOverrides is returned when a delete targets a recurring master
-// journal that has override instances. Use DeleteSeries instead.
-var ErrHasOverrides = fmt.Errorf("journal has overrides: use DeleteSeries to delete the entire series")
-
-// Delete soft-deletes a journal by ID. For a standalone journal it flips
-// deleted_at. For an override it adds EXDATE to the master and
-// soft-deletes the override in the same transaction. A recurring master with
-// live overrides is rejected. Callers must use DeleteSeries.
-func (s *Service) Delete(ctx context.Context, id int64) error {
-	j, err := s.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := s.ensureWritable(ctx, j.CalendarID); err != nil {
-		return err
-	}
-
-	// If this is a recurring master, check for overrides. RDATE-only masters
-	// (no RRULE) are recurring too, so guard on either rule or RDATEs (#471).
-	if (j.RecurrenceRule != "" || j.RDates != "") && j.RecurrenceID == "" {
-		overrides, err := s.q.ListJournalOverridesByUID(ctx, j.UID)
-		if err != nil {
-			return fmt.Errorf("check overrides: %w", err)
-		}
-		if len(overrides) > 0 {
-			return ErrHasOverrides
-		}
-	}
-
-	if j.RecurrenceID == "" {
-		// Tombstone and soft-delete commit together. A failed tombstone write
-		// cannot leave a soft-deleted row whose next sync DELETEs a still-live
-		// server resource (issue #107).
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("begin tx: %w", err)
-		}
-		defer tx.Rollback()
-		qtx := s.q.WithTx(tx)
-		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, j.CalendarID, j.UID); err != nil {
-			return fmt.Errorf("create tombstone: %w", err)
-		}
-		if err := qtx.SoftDeleteJournal(ctx, id); err != nil {
-			return fmt.Errorf("soft-delete journal: %w", err)
-		}
-		if err := storage.MarkResourceDirty(ctx, tx, j.CalendarID, j.UID, "journal"); err != nil {
-			return fmt.Errorf("mark resource dirty: %w", err)
-		}
-		return tx.Commit()
-	}
-
-	if j.RecurrenceID != "" {
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("begin tx: %w", err)
-		}
-		defer tx.Rollback()
-		qtx := s.q.WithTx(tx)
-
-		master, err := qtx.GetJournalByUID(ctx, j.UID)
-		// A genuine lookup error (for example SQLITE_BUSY) must not collapse
-		// into the "no master" path. That path would soft-delete the override
-		// and skip its EXDATE/provenance records. Series expansion would then
-		// restore the occurrence (issue #290). Only a missing master (ErrNoRows)
-		// may skip those records.
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("get master: %w", err)
-		}
-		if err == nil {
-			existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
-			recIDTime, parseErr := timeutil.ParseRecurrenceID(j.RecurrenceID)
-			if parseErr != nil {
-				// A malformed recurrence_id cannot be excluded from the
-				// master. A soft-delete of the override would then restore the
-				// occurrence via series expansion. Return an error. The restore
-				// path treats the same parse failure as fatal.
-				return fmt.Errorf("parse recurrence_id %q: %w", j.RecurrenceID, parseErr)
-			}
-			existing = append(existing, recIDTime)
-			if err := qtx.UpdateJournalExdates(ctx, storage.UpdateJournalExdatesParams{
-				Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
-				ID:      master.ID,
-			}); err != nil {
-				return fmt.Errorf("update exdates: %w", err)
-			}
-			// Record provenance so restore knows this EXDATE was
-			// delete-added (and may be stripped) rather than imported.
-			if err := qtx.RecordJournalExdateDelete(ctx, storage.RecordJournalExdateDeleteParams{
-				CalendarID:   master.CalendarID,
-				Uid:          j.UID,
-				RecurrenceID: j.RecurrenceID,
-			}); err != nil {
-				return fmt.Errorf("record exdate delete: %w", err)
-			}
-		}
-
-		if err := qtx.SoftDeleteJournal(ctx, id); err != nil {
-			return fmt.Errorf("soft-delete journal: %w", err)
-		}
-		// Mark the master dirty — its EXDATE was modified — inside the same
-		// transaction. A failed mark then rolls the EXDATE change back. The
-		// path does not commit a change that is never pushed (issue #107).
-		if err := storage.MarkResourceDirty(ctx, tx, j.CalendarID, j.UID, "journal"); err != nil {
-			return fmt.Errorf("mark resource dirty: %w", err)
-		}
-		return tx.Commit()
-	}
-
-	// Unreachable: RecurrenceID is either "" (handled above) or non-empty.
-	if err := s.q.SoftDeleteJournal(ctx, id); err != nil {
-		return err
-	}
-	_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
-	return nil
-}
-
-// DeleteSeries soft-deletes a recurring master journal and every override
-// with its UID. A tombstone is queued when the master is synced so the
-// next push sends DELETE to the server. The local rows stay in place
-// until purge so the user can restore them.
-func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
-	// Resolve every calendar that owns a row with this UID: master,
-	// override, or series-tail. A read-only or VJOURNAL-unsupported
-	// collection is then refused even when the master has been purged and
-	// only orphaned overrides remain. The transaction body re-resolves the
-	// master for tombstone records.
-	calIDs, err := s.calendarIDsForUID(ctx, uid)
-	if err != nil {
-		return err
-	}
-	if err := s.ensureAllWritable(ctx, calIDs); err != nil {
-		return err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
-
-	// Tombstone, dirty-mark, and soft-delete commit together. A failed
-	// sync-track write cannot leave a tombstone for a still-live series
-	// whose next sync would DELETE it from the server (issue #107). No
-	// master means there is nothing to track.
-	master, mErr := qtx.GetJournalByUID(ctx, uid)
-	// Only ErrNoRows means "no master to track". A genuine lookup error must
-	// abort. Otherwise the series is soft-deleted locally without a tombstone
-	// or dirty mark. It would then resurface on the next pull (issue #290).
-	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
-		return fmt.Errorf("get master: %w", mErr)
-	}
-	haveMaster := mErr == nil
-	if haveMaster {
-		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
-			return fmt.Errorf("create tombstone: %w", err)
-		}
-	}
-
-	if err := qtx.SoftDeleteJournalsByUID(ctx, uid); err != nil {
-		return fmt.Errorf("soft-delete series: %w", err)
-	}
-	if haveMaster {
-		if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, uid, "journal"); err != nil {
-			return fmt.Errorf("mark resource dirty: %w", err)
-		}
-	}
-	return tx.Commit()
-}
-
 // ListOverridesByUID returns all override instances for a given UID.
 func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Journal, error) {
 	rows, err := s.q.ListJournalOverridesByUID(ctx, uid)
@@ -639,83 +423,6 @@ func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Journal
 		return nil, err
 	}
 	return fromStorageSlice(rows), nil
-}
-
-// Attendee CRUD
-
-func (s *Service) ListAttendees(ctx context.Context, journalID int64) ([]model.Attendee, error) {
-	rows, err := s.q.ListJournalAttendeesByJournalID(ctx, journalID)
-	if err != nil {
-		return nil, err
-	}
-	attendees := make([]model.Attendee, len(rows))
-	for i, r := range rows {
-		attendees[i] = model.Attendee{
-			ID: r.ID, EventID: r.JournalID,
-			Email: r.Email, Name: storage.NullableToString(r.Name),
-			RSVPStatus: r.RsvpStatus, Role: r.Role,
-			Organizer:     r.Organizer == 1,
-			CUType:        storage.NullableToString(r.Cutype),
-			RSVPRequested: strings.EqualFold(storage.NullableToString(r.Rsvp), "TRUE"),
-			SentBy:        storage.NullableToString(r.SentBy),
-			DelegatedTo:   storage.NullableToString(r.DelegatedTo),
-			DelegatedFrom: storage.NullableToString(r.DelegatedFrom),
-			Member:        storage.NullableToString(r.Member),
-			Dir:           storage.NullableToString(r.Dir),
-			Language:      storage.NullableToString(r.Language),
-		}
-	}
-	return attendees, nil
-}
-
-func (s *Service) ReplaceAttendees(ctx context.Context, journalID int64, attendees []model.Attendee) error {
-	// Prepare before the transaction opens. A standalone call then
-	// rejects a bad attendee without a write lock. See
-	// model.PrepareAttendeesForWrite.
-	attendees, err := model.PrepareAttendeesForWrite(model.TaskAttendee, attendees)
-	if err != nil {
-		return err
-	}
-	qtx, commit, rollback, err := s.txscope(ctx)
-	if err != nil {
-		return err
-	}
-	defer rollback()
-
-	if err := qtx.DeleteJournalAttendeesByJournalID(ctx, journalID); err != nil {
-		return fmt.Errorf("delete attendees: %w", err)
-	}
-	for _, a := range attendees {
-		org := storage.BoolToInt(a.Organizer)
-		rsvp := ""
-		if a.RSVPRequested {
-			rsvp = "TRUE"
-		}
-		_, err := qtx.CreateJournalAttendee(ctx, storage.CreateJournalAttendeeParams{
-			JournalID:     journalID,
-			Email:         a.Email,
-			Name:          storage.StringToNullable(a.Name),
-			RsvpStatus:    a.RSVPStatus,
-			Role:          a.Role,
-			Organizer:     org,
-			Cutype:        storage.StringToNullable(a.CUType),
-			Rsvp:          storage.StringToNullable(rsvp),
-			SentBy:        storage.StringToNullable(a.SentBy),
-			DelegatedTo:   storage.StringToNullable(a.DelegatedTo),
-			DelegatedFrom: storage.StringToNullable(a.DelegatedFrom),
-			Member:        storage.StringToNullable(a.Member),
-			Dir:           storage.StringToNullable(a.Dir),
-			Language:      storage.StringToNullable(a.Language),
-		})
-		if err != nil {
-			return fmt.Errorf("create attendee: %w", err)
-		}
-	}
-	if err := commit(); err != nil {
-		return err
-	}
-	s.markDirtyByID(ctx, journalID)
-	return nil
 }
 
 // Category CRUD
@@ -768,44 +475,6 @@ func replaceCategoriesTx(ctx context.Context, qtx *storage.Queries, journalID in
 			return fmt.Errorf("create category: %w", err)
 		}
 	}
-	return nil
-}
-
-// Attachment CRUD
-
-func (s *Service) ListAttachments(ctx context.Context, journalID int64) ([]model.Attachment, error) {
-	rows, err := s.q.ListJournalAttachmentsByJournalID(ctx, journalID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]model.Attachment, len(rows))
-	for i, r := range rows {
-		out[i] = model.Attachment{ID: r.ID, URI: storage.NullableToString(r.Uri), FmtType: storage.NullableToString(r.Fmttype), Data: r.Data, Filename: storage.NullableToString(r.Filename)}
-	}
-	return out, nil
-}
-
-func (s *Service) ReplaceAttachments(ctx context.Context, journalID int64, attachments []model.Attachment) error {
-	qtx, commit, rollback, err := s.txscope(ctx)
-	if err != nil {
-		return err
-	}
-	defer rollback()
-	if err := qtx.DeleteJournalAttachmentsByJournalID(ctx, journalID); err != nil {
-		return fmt.Errorf("delete attachments: %w", err)
-	}
-	for _, a := range attachments {
-		_, err := qtx.CreateJournalAttachment(ctx, storage.CreateJournalAttachmentParams{
-			JournalID: journalID, Uri: storage.StringToNullable(a.URI), Fmttype: storage.StringToNullable(a.FmtType), Data: a.Data, Filename: storage.StringToNullable(a.Filename),
-		})
-		if err != nil {
-			return fmt.Errorf("create attachment: %w", err)
-		}
-	}
-	if err := commit(); err != nil {
-		return err
-	}
-	s.markDirtyByID(ctx, journalID)
 	return nil
 }
 
@@ -1040,48 +709,4 @@ func fromStorageSlice(rows []storage.Journal) []Journal {
 		journals[i] = fromStorage(r)
 	}
 	return journals
-}
-
-// Hydrate loads the transient relation slices onto j. See event.Service.Hydrate
-// for the contract. VJOURNAL has no alarms or resources, so the set is smaller
-// than the event and todo ones.
-func (s *Service) Hydrate(ctx context.Context, j *Journal) error {
-	return s.hydrate(ctx, j, true)
-}
-
-// HydrateBestEffort populates every relation it can and returns the joined
-// errors for the ones it could not. It does not stop at the first failure.
-//
-// This is for read-only display paths. One unreadable relation should degrade
-// that field alone. An early stop would leave every relation after it nil.
-// A caller that renders JSON cannot tell that apart from "there are none".
-// Anything that writes iCal must use Hydrate. A partial record pushed to a
-// server overwrites the complete copy there.
-func (s *Service) HydrateBestEffort(ctx context.Context, j *Journal) error {
-	return s.hydrate(ctx, j, false)
-}
-
-// HydrateSkipUnreadable populates every relation it can and returns the names
-// of the relations it could not load. It never fails. See
-// event.Service.HydrateSkipUnreadable for the contract.
-func (s *Service) HydrateSkipUnreadable(ctx context.Context, j *Journal) []string {
-	return s.collect(ctx, j, false).Failed()
-}
-
-// collect loads every relation onto j through one Collector. Hydrate,
-// HydrateBestEffort, and HydrateSkipUnreadable share it, so the relation set
-// stays a single definition.
-func (s *Service) collect(ctx context.Context, j *Journal, failFast bool) *hydrate.Collector {
-	c := &hydrate.Collector{Kind: "journal", ID: j.ID, FailFast: failFast}
-	hydrate.Rel(ctx, c, &j.Attendees, "attendees", s.ListAttendees)
-	hydrate.Rel(ctx, c, &j.Attachments, "attachments", s.ListAttachments)
-	hydrate.Rel(ctx, c, &j.Comments, "comments", s.ListComments)
-	hydrate.Rel(ctx, c, &j.Contacts, "contacts", s.ListContacts)
-	hydrate.Rel(ctx, c, &j.Relations, "relations", s.ListRelations)
-	hydrate.Rel(ctx, c, &j.XProperties, "x-properties", s.ListXProperties)
-	return c
-}
-
-func (s *Service) hydrate(ctx context.Context, j *Journal, failFast bool) error {
-	return s.collect(ctx, j, failFast).Err()
 }
