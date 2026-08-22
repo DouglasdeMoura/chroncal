@@ -142,45 +142,6 @@ func (q *Queries) ListResolvedSyncConflicts(ctx context.Context) ([]SyncConflict
 	return items, nil
 }
 
-const listResolvedSyncConflictsByCalendar = `-- name: ListResolvedSyncConflictsByCalendar :many
-SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE calendar_id = ? AND resolved_at IS NOT NULL ORDER BY resolved_at DESC
-`
-
-func (q *Queries) ListResolvedSyncConflictsByCalendar(ctx context.Context, calendarID int64) ([]SyncConflict, error) {
-	rows, err := q.db.QueryContext(ctx, listResolvedSyncConflictsByCalendar, calendarID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SyncConflict
-	for rows.Next() {
-		var i SyncConflict
-		if err := rows.Scan(
-			&i.ID,
-			&i.CalendarID,
-			&i.OwnerType,
-			&i.OwnerID,
-			&i.Uid,
-			&i.LocalIcal,
-			&i.ServerIcal,
-			&i.ServerEtag,
-			&i.DetectedAt,
-			&i.ResolvedAt,
-			&i.Resolution,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listSyncConflicts = `-- name: ListSyncConflicts :many
 SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE resolved_at IS NULL ORDER BY detected_at DESC
 `

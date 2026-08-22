@@ -23,9 +23,6 @@ SELECT * FROM sync_conflicts WHERE calendar_id = ? AND resolved_at IS NULL ORDER
 -- name: ListResolvedSyncConflicts :many
 SELECT * FROM sync_conflicts WHERE resolved_at IS NOT NULL ORDER BY resolved_at DESC;
 
--- name: ListResolvedSyncConflictsByCalendar :many
-SELECT * FROM sync_conflicts WHERE calendar_id = ? AND resolved_at IS NOT NULL ORDER BY resolved_at DESC;
-
 -- name: MarkSyncConflictResolved :exec
 UPDATE sync_conflicts SET resolved_at = ?, resolution = ? WHERE calendar_id = ? AND uid = ?;
 
