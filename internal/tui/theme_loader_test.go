@@ -3,9 +3,12 @@ package tui
 import (
 	"io"
 	"os"
+	"strconv"
 	"testing"
 
 	lipgloss "charm.land/lipgloss/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
 
 func TestLoadBuiltinDefault(t *testing.T) {
@@ -133,32 +136,82 @@ func TestResolveStringHonorsActivePalette(t *testing.T) {
 	pal[4] = lipgloss.Color("#123456")
 	SetActivePalette(&pal)
 
-	got := resolveString("4")
+	got := resolveString("4", true)
 	r, g, b, _ := got.RGBA()
 	if r>>8 != 0x12 || g>>8 != 0x34 || b>>8 != 0x56 {
 		t.Errorf("expected palette[4] hex #123456, got rgb(%02x, %02x, %02x)", r>>8, g>>8, b>>8)
 	}
+	// The palette wins in both polarities.
+	got = resolveString("4", false)
+	r, g, b, _ = got.RGBA()
+	if r>>8 != 0x12 || g>>8 != 0x34 || b>>8 != 0x56 {
+		t.Errorf("light mode: expected palette[4] hex #123456, got rgb(%02x, %02x, %02x)", r>>8, g>>8, b>>8)
+	}
 
 	// Out-of-range ANSI indices fall through to lipgloss.
-	if c := resolveString("240"); c == nil {
+	if c := resolveString("240", true); c == nil {
 		t.Errorf("ANSI 240 should fall through to lipgloss, not panic or return nil")
 	}
 	// Hex strings always fall through to lipgloss regardless of palette.
-	hex := resolveString("#abcdef")
+	hex := resolveString("#abcdef", true)
 	hr, hg, hb, _ := hex.RGBA()
 	if hr>>8 != 0xab || hg>>8 != 0xcd || hb>>8 != 0xef {
 		t.Errorf("hex string should not be palette-translated, got rgb(%02x, %02x, %02x)", hr>>8, hg>>8, hb>>8)
 	}
 }
 
-func TestResolveStringWithoutPaletteFallsBack(t *testing.T) {
+// A terminal that does not answer OSC 4 (older terminals, tmux without
+// passthrough) must still get readable accent pairs. Index 8 used to fall
+// through to lipgloss's VGA gray #808080. That gray sits at OKLCh L 0.60,
+// so ContrastingFg picked a dark foreground while themed terminals render
+// slot 8 on the dark side. The button pair then read 1.62:1.
+func TestResolveStringWithoutPaletteKeepsContrastPolarity(t *testing.T) {
 	prev := ActivePalette()
 	t.Cleanup(func() { SetActivePalette(prev) })
 	SetActivePalette(nil)
 
-	if c := resolveString("4"); c == nil {
-		t.Fatal("nil palette must not turn ANSI 4 into a nil color")
+	t.Run("reported bug: dark-mode slot 8", func(t *testing.T) {
+		bg := resolveString("8", true)
+		r, g, b, _ := bg.RGBA()
+		if r>>8 == 0x80 && g>>8 == 0x80 && b>>8 == 0x80 {
+			t.Fatal("slot 8 resolved to the VGA default #808080; want an assumed dark Base16 hex")
+		}
+		bgL, _, _, ok := oklch.FromColor(bg)
+		if !ok || bgL >= 0.55 {
+			t.Fatalf("dark-mode slot 8 L=%.3f, want < 0.550 so the pill reads dark", bgL)
+		}
+		fg := oklch.ContrastingFg(bg)
+		if ratio := oklch.ContrastRatio(bg, fg); ratio < 4.5 {
+			t.Errorf("slot 8 pair reads %.2f:1, want >= 4.50:1", ratio)
+		}
+	})
+
+	// Every ANSI reference a theme may carry, in both polarities. A slot
+	// with a computed foreground must stay readable in degraded mode.
+	for _, tc := range []struct {
+		mode string
+		dark bool
+	}{
+		{"dark", true},
+		{"light", false},
+	} {
+		for idx := range assumedPaletteDark {
+			bg := resolveString(strconv.Itoa(idx), tc.dark)
+			fg := oklch.ContrastingFg(bg)
+			if ratio := oklch.ContrastRatio(bg, fg); ratio < 4.5 {
+				t.Errorf("%s mode: slot %d pair reads %.2f:1, want >= 4.50:1", tc.mode, idx, ratio)
+			}
+		}
 	}
+
+	t.Run("non-ANSI strings still fall through", func(t *testing.T) {
+		if c := resolveString("4", true); c == nil {
+			t.Fatal("nil palette must not turn ANSI 4 into a nil color")
+		}
+		if c := resolveString("240", true); c == nil {
+			t.Error("ANSI 240 should fall through to lipgloss, not panic or return nil")
+		}
+	})
 }
 
 func TestAutoSentinelDerivesFromTextAndSurface(t *testing.T) {

@@ -13,10 +13,12 @@
 #     rather than guessed from lipgloss's default ANSI table.
 #
 # When the terminal doesn't answer OSC 4 (older terminals, tmux without
-# passthrough), lipgloss renders the ANSI references directly — still
-# correct, just without the OKLCh-on-real-hex precision. Text-on-accent
-# foregrounds are computed at render time via oklch.ContrastingFg, so we
-# no longer ship button_text / badge_text tokens.
+# passthrough), the loader substitutes static Base16-style hexes for the
+# ANSI references. The terminal then renders the exact value the OKLCh
+# contrast math used, so a background and its computed foreground cannot
+# disagree about polarity. Text-on-accent foregrounds are computed at
+# render time via oklch.ContrastingFg, so we no longer ship
+# button_text / badge_text tokens.
 #
 # Base16-aligned palette assumptions (de-facto standard across Omarchy,
 # Catppuccin, Gruvbox, Tokyo Night, Nord, etc.):
