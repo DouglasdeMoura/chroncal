@@ -713,3 +713,39 @@ func TestPlaintextFileStore_WarningsRouteToInjectedWriter(t *testing.T) {
 		t.Errorf("missing OAuth-secret warning; got %q", out)
 	}
 }
+
+// TestPlaintextFileStore_SetTightensLoosePermissions guards the contract
+// that every Set enforces 0600. os.WriteFile keeps the mode of an existing
+// file, so a file created loose once stayed loose forever before the
+// temp-file rename.
+func TestPlaintextFileStore_SetTightensLoosePermissions(t *testing.T) {
+	dir := t.TempDir()
+	store := &PlaintextFileStore{dir: dir, warn: io.Discard}
+
+	path := filepath.Join(dir, "account_7.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("seed loose file: %v", err)
+	}
+
+	if err := store.Set(Credential{AccountID: 7, Username: "bob", Password: "pw"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat credential file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("file permissions after Set = %o, want 0600", perm)
+	}
+
+	// The atomic rename must leave no temp files behind.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".credential-") {
+			t.Errorf("temp file %s survived Set", e.Name())
+		}
+	}
+}
