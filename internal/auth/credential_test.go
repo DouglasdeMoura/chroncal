@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -237,7 +238,9 @@ func TestNewCredentialStore_IncludesKeyringProbeError(t *testing.T) {
 	prevUnavailableReason := keyringUnavailableReasonFn
 	prevGet := keyringGetFn
 
-	probeErr := errors.New("dbus: org.freedesktop.secrets unavailable")
+	// A plain "not found" text reports a broken backend, not an absent
+	// item. The probe must surface it instead of scraping the text.
+	probeErr := errors.New("dbus: secret service not found")
 	keyringGetFn = func(service, user string) (string, error) {
 		return "", probeErr
 	}
@@ -749,7 +752,8 @@ func TestPlaintextFileStore_SetTightensLoosePermissions(t *testing.T) {
 // availability probe. The probe reads a nonexistent item; a backend that
 // answers with ErrNotFound proves it is reachable. A write-based probe left
 // residue in the production keyring when the process died between the set
-// and the delete.
+// and the delete. The probe still deletes the residue item that the older
+// write-based probe left behind. It writes nothing.
 func TestKeyringProbeNeverWrites(t *testing.T) {
 	prevGet := keyringGetFn
 	prevSet := keyringSetFn
@@ -760,13 +764,14 @@ func TestKeyringProbeNeverWrites(t *testing.T) {
 		keyringDeleteFn = prevDelete
 	})
 
-	writes, deletes := 0, 0
+	writes := 0
+	var deleted []string
 	keyringSetFn = func(service, user string, value string) error {
 		writes++
 		return nil
 	}
 	keyringDeleteFn = func(service, user string) error {
-		deletes++
+		deleted = append(deleted, service+"/"+user)
 		return nil
 	}
 
@@ -788,26 +793,35 @@ func TestKeyringProbeNeverWrites(t *testing.T) {
 			t.Error("probe = nil, want the backend error")
 		}
 	})
-	if writes != 0 || deletes != 0 {
-		t.Errorf("probe wrote %d items and deleted %d; it must not write at all", writes, deletes)
+	if writes != 0 {
+		t.Errorf("probe wrote %d items; it must not write at all", writes)
+	}
+	wantCleanup := []string{"chroncal/__chroncal_probe__"}
+	if !slices.Equal(deleted, wantCleanup) {
+		t.Errorf("probe deleted %v; want only the legacy residue %v", deleted, wantCleanup)
 	}
 }
 
-// TestKeyringProbeAcceptsAbsenceVariants pins the tolerant matcher. Some
-// Secret Service paths answer a missing item with a raw "object does not
-// exist" error instead of ErrNotFound. The probe must treat every absence
-// shape as a reachable backend.
+// TestKeyringProbeAcceptsAbsenceVariants pins the narrow matcher. Some
+// Secret Service paths answer a missing item with a raw DBus error instead
+// of ErrNotFound. The probe must treat a DBus error identity as an absent
+// item. The probe must reject a plain "not found" text: such a text can also
+// report a broken backend, and a broad match reads that backend as reachable.
 func TestKeyringProbeAcceptsAbsenceVariants(t *testing.T) {
 	prevGet := keyringGetFn
+	prevDelete := keyringDeleteFn
 	prevUnavailableReason := keyringUnavailableReasonFn
 	t.Cleanup(func() {
 		keyringGetFn = prevGet
+		keyringDeleteFn = prevDelete
 		keyringUnavailableReasonFn = prevUnavailableReason
 	})
 
+	keyringDeleteFn = func(service, user string) error { return nil }
+
 	for _, msg := range []string{
-		"secret not found in keyring",
-		"Object does not exist at path /org/freedesktop/secrets/collection/Default_keyring/49405",
+		"org.freedesktop.Secret.Error.NoSuchObject: object does not exist at path /org/freedesktop/secrets/collection/Default_keyring/49405",
+		"org.freedesktop.DBus.Error.UnknownObject: no such item",
 	} {
 		keyringGetFn = func(service, user string) (string, error) {
 			return "", errors.New(msg)
@@ -815,6 +829,19 @@ func TestKeyringProbeAcceptsAbsenceVariants(t *testing.T) {
 		keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
 		if err := keyringUnavailableReason(); err != nil {
 			t.Errorf("probe rejected absence answer %q: %v", msg, err)
+		}
+	}
+
+	for _, msg := range []string{
+		"secret not found in keyring",
+		"the name was not provided by any .service files",
+	} {
+		keyringGetFn = func(service, user string) (string, error) {
+			return "", errors.New(msg)
+		}
+		keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
+		if err := keyringUnavailableReason(); err == nil {
+			t.Errorf("probe accepted broad answer %q; it must surface it", msg)
 		}
 	}
 }
