@@ -32,6 +32,7 @@ var eventResource = resource{
 		}
 		return row{Summary: e.Title}, e.DeletedAt != nil, nil
 	},
+	purgeByID: func(ctx context.Context, a *app.App, id int64) error { return a.Events.PurgeByID(ctx, id) },
 	purgeDeleted: func(ctx context.Context, a *app.App, cutoff time.Time) (int64, error) {
 		n, err := a.Events.PurgeDeleted(ctx, cutoff)
 		return int64(n), err

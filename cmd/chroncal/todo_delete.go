@@ -31,6 +31,7 @@ var todoResource = resource{
 		}
 		return row{Summary: td.Summary}, td.DeletedAt != nil, nil
 	},
+	purgeByID: func(ctx context.Context, a *app.App, id int64) error { return a.Todos.PurgeByID(ctx, id) },
 	purgeDeleted: func(ctx context.Context, a *app.App, cutoff time.Time) (int64, error) {
 		n, err := a.Todos.PurgeDeleted(ctx, cutoff)
 		return int64(n), err
