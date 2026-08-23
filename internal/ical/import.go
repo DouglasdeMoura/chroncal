@@ -109,6 +109,11 @@ func importFile(r io.Reader, remote bool) (ImportResult, error) {
 	if len(data) > maxImportBytes {
 		return result, fmt.Errorf("ical payload exceeds %d bytes", maxImportBytes)
 	}
+
+	// A UTF-8 BOM prefixes the stream in files that Windows editors write.
+	// The decoder reads the BOM bytes as part of the first BEGIN line and
+	// rejects the whole file. Strip the BOM first.
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	data = stripCommentLines(data)
 
 	dec := ical.NewDecoder(bytes.NewReader(data))

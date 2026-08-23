@@ -142,6 +142,24 @@ func TestImport_MinimalEvent(t *testing.T) {
 	}
 }
 
+// TestImport_UTF8BOMPrefix guards a file that starts with a UTF-8 BOM.
+// Some Windows editors write the BOM before the first BEGIN:VCALENDAR
+// line. The decoder then sees the BOM bytes as part of that line and
+// rejects the whole file.
+func TestImport_UTF8BOMPrefix(t *testing.T) {
+	t.Parallel()
+	result, err := ImportFile(strings.NewReader("\ufeff" + minimalEventICS))
+	if err != nil {
+		t.Fatalf("ImportFile error: %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(result.Events))
+	}
+	if result.Events[0].UID != "test-uid-1" {
+		t.Errorf("UID = %q, want %q", result.Events[0].UID, "test-uid-1")
+	}
+}
+
 func TestImport_FullEvent(t *testing.T) {
 	t.Parallel()
 	result, err := ImportFile(strings.NewReader(fullEventICS))
