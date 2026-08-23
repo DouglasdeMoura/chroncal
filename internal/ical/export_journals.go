@@ -170,27 +170,7 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 		// X-Properties (round-trip preservation)
 		emitXProperties(vjournal, j.XProperties)
 
-		// ATTENDEE / ORGANIZER
-		for _, att := range j.Attendees {
-			if att.Organizer {
-				org := &ical.Prop{Name: ical.PropOrganizer, Params: make(ical.Params)}
-				org.Value = "mailto:" + att.Email
-				if att.Name != "" {
-					org.Params.Set(ical.ParamCommonName, safeParamValue(att.Name))
-				}
-				setOrganizerParams(org, att)
-				vjournal.Props.Set(org)
-			}
-			attendee := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
-			attendee.Value = "mailto:" + att.Email
-			if att.Name != "" {
-				attendee.Params.Set(ical.ParamCommonName, safeParamValue(att.Name))
-			}
-			attendee.Params.Set(ical.ParamParticipationStatus, att.RSVPStatus)
-			attendee.Params.Set(ical.ParamRole, att.Role)
-			setAttendeeParams(attendee, att)
-			vjournal.Props.Add(attendee)
-		}
+		emitAttendees(vjournal.Props, j.Attendees)
 
 		cal.Children = append(cal.Children, vjournal)
 	}

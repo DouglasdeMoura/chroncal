@@ -237,27 +237,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			}
 		}
 
-		// ATTENDEE / ORGANIZER
-		for _, att := range t.Attendees {
-			if att.Organizer {
-				org := &ical.Prop{Name: ical.PropOrganizer, Params: make(ical.Params)}
-				org.Value = "mailto:" + att.Email
-				if att.Name != "" {
-					org.Params.Set(ical.ParamCommonName, safeParamValue(att.Name))
-				}
-				setOrganizerParams(org, att)
-				vtodo.Props.Set(org)
-			}
-			attendee := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
-			attendee.Value = "mailto:" + att.Email
-			if att.Name != "" {
-				attendee.Params.Set(ical.ParamCommonName, safeParamValue(att.Name))
-			}
-			attendee.Params.Set(ical.ParamParticipationStatus, att.RSVPStatus)
-			attendee.Params.Set(ical.ParamRole, att.Role)
-			setAttendeeParams(attendee, att)
-			vtodo.Props.Add(attendee)
-		}
+		emitAttendees(vtodo.Props, t.Attendees)
 
 		cal.Children = append(cal.Children, vtodo)
 	}
