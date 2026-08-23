@@ -163,8 +163,12 @@ imports = [ inputs.chroncal.homeManagerModules.default ];
 programs.chroncal = {
   enable = true;
   settings = {
-    ui.week_start = "monday";
-    smtp.password_cmd = "pass show smtp/app-password";
+    ui = {
+      week_start = "monday";
+    };
+    smtp = {
+      password_cmd = "pass show smtp/app-password";
+    };
   };
 };
 ```
@@ -379,11 +383,11 @@ Journal flags: `--date`, `--description`, `--calendar`, `--status`, `--class`, `
 ### CalDAV accounts
 
 ```
-chroncal account add              "<name>" --server URL --username USER [--auth {basic,bearer,oauth2}] [--oauth-client-id ID] [--allow-insecure]
+chroncal account add              "<name>" --server URL --username USER [--auth {basic,bearer,oauth2}] [--oauth-client-id ID] [--password-cmd CMD] [--allow-insecure]
 chroncal account get              <name|id>
 chroncal account list
 chroncal account update           <name|id> --name NAME
-chroncal account credentials      <name|id>
+chroncal account credentials      <name|id> [--password-cmd CMD]
 chroncal account reauth           <name|id> [--oauth-client-id ID]
 chroncal account calendars list   <name|id>
 chroncal account calendars add    <name|id> (--calendar NAME_OR_URL ... | --all)
@@ -399,7 +403,7 @@ An account stores one credential. It discovers every CalDAV calendar collection 
 
 If you select none, the command also removes the empty account and credential. `account remove` deletes the credential and remote links. It keeps downloaded calendars as local copies.
 
-`account credentials` rotates the stored secret of a basic or bearer account. It reads the new value from `CHRONCAL_PASSWORD` (basic) or `CHRONCAL_BEARER_TOKEN` (bearer). `account reauth` repeats the Google OAuth consent flow for an oauth2 account; the client secret comes from `GOOGLE_CLIENT_SECRET` or the stored value, and `--oauth-client-id` replaces the stored client ID. Neither command accepts a secret as a CLI flag.
+`account credentials` rotates the stored secret of a basic or bearer account. For basic auth it reads `CHRONCAL_PASSWORD`, or it stores `--password-cmd` / `CHRONCAL_PASSWORD_CMD` and runs that command at request time. The secret is the first stdout line. The command has a 30-second deadline. Stderr is discarded. For bearer auth it reads `CHRONCAL_BEARER_TOKEN`. `account reauth` repeats the Google OAuth consent flow for an oauth2 account; the client secret comes from `GOOGLE_CLIENT_SECRET` or the stored value, and `--oauth-client-id` replaces the stored client ID. Neither command accepts the password itself as a CLI flag.
 
 You can open read-only collections locally and sync them pull-only. Chroncal does not send metadata changes, resources, or tombstones to them.
 
@@ -427,10 +431,11 @@ You can still use remote flags with `create` or `update` to attach one local cal
 --username <user>
 --auth {basic,bearer,oauth2}
 --oauth-client-id <id>
+--password-cmd <command>
 --allow-insecure
 ```
 
-For script setup, the commands read credentials from environment variables, not from prompts: `CHRONCAL_PASSWORD` (basic), `CHRONCAL_BEARER_TOKEN` (bearer), and `GOOGLE_CLIENT_SECRET` (oauth2). The commands do not accept these values as CLI flags.
+For script setup, the commands read credentials from environment variables, not from prompts: `CHRONCAL_PASSWORD` or `CHRONCAL_PASSWORD_CMD` (basic), `CHRONCAL_BEARER_TOKEN` (bearer), and `GOOGLE_CLIENT_SECRET` (oauth2). `--password-cmd` stores the command. The commands do not accept the password itself as a CLI flag.
 
 Pass `--disconnect-remote` on `update` to remove the remote link of a calendar.
 
@@ -729,7 +734,7 @@ from = "you@example.com"
 
 Or via environment: `CHRONCAL_SMTP_HOST`, `CHRONCAL_SMTP_PORT`, `CHRONCAL_SMTP_USERNAME`, `CHRONCAL_SMTP_PASSWORD`, `CHRONCAL_SMTP_FROM`.
 
-To avoid a hardcoded password, set `password_cmd` instead of `password`. chroncal runs the command at send time and reads the password from its stdout. The output loses one trailing newline. Set one of the two keys, never both:
+To avoid a hardcoded password, set `password_cmd` instead of `password`. chroncal runs the command at send time. The secret is the first stdout line. The command has a 30-second deadline. Stderr is discarded. Set one of the two keys, never both:
 
 ```toml
 [smtp]

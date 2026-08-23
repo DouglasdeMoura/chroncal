@@ -48,6 +48,7 @@ func accountAddCmd() *cobra.Command {
 		username      string
 		authType      string
 		oauthClientID string
+		passwordCmd   string
 		allowInsecure bool
 	)
 	cmd := &cobra.Command{
@@ -70,6 +71,7 @@ exposes, import every usable collection, and complete their initial sync.`,
 			}
 			cred, err := buildCalendarCredential(ctx, calendarRemoteFlags{
 				Username: username, AuthType: authType, OAuthClientID: oauthClientID,
+				PasswordCommand: passwordCmd,
 			})
 			if err != nil {
 				return err
@@ -123,6 +125,7 @@ exposes, import every usable collection, and complete their initial sync.`,
 	cmd.Flags().StringVar(&username, "username", "", "username or account email (required)")
 	cmd.Flags().StringVar(&authType, "auth", "basic", "authentication type: basic, bearer, oauth2")
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "Google OAuth desktop client ID")
+	cmd.Flags().StringVar(&passwordCmd, "password-cmd", "", "command whose first stdout line is the basic-auth password")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "allow an HTTP endpoint for local development")
 	_ = cmd.MarkFlagRequired("server")
 	_ = cmd.MarkFlagRequired("username")
@@ -230,6 +233,7 @@ authentication type, or stored credential.`,
 }
 
 func accountCredentialsCmd() *cobra.Command {
+	var passwordCmd string
 	cmd := &cobra.Command{
 		Use:   "credentials <name|id>",
 		Short: "Rotate a basic or bearer account secret",
@@ -238,13 +242,14 @@ func accountCredentialsCmd() *cobra.Command {
 The server URL, username, and authentication type stay the same. OAuth
 accounts must use "chroncal account reauth" instead.
 
-Secrets come from the environment, never from flags:
-  basic   CHRONCAL_PASSWORD
+Do not pass the password as a CLI flag.
+  basic   CHRONCAL_PASSWORD, --password-cmd, or CHRONCAL_PASSWORD_CMD
   bearer  CHRONCAL_BEARER_TOKEN
 
 A missing or identity-mismatched keyring entry is repaired. Other
 backend failures leave the previous secret unchanged.`,
 		Example: `  CHRONCAL_PASSWORD=... chroncal account credentials Work --output json
+  chroncal account credentials Work --password-cmd "pass show caldav_password"
   CHRONCAL_BEARER_TOKEN=... chroncal account credentials 3 --output json`,
 		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -260,7 +265,7 @@ backend failures leave the previous secret unchanged.`,
 			}
 
 			authType := strings.ToLower(strings.TrimSpace(configured.AuthType))
-			var secret string
+			var secret, passwordCmdValue string
 			switch authType {
 			case "oauth2":
 				return errInvalidInputf(
@@ -270,7 +275,7 @@ backend failures leave the previous secret unchanged.`,
 			case "bearer":
 				secret, err = readBearerToken()
 			case "basic", "":
-				secret, err = readBasicPassword()
+				secret, passwordCmdValue, err = readBasicSecret(passwordCmd)
 			default:
 				return errInvalidInputf("unsupported auth type %q", configured.AuthType)
 			}
@@ -292,8 +297,12 @@ backend failures leave the previous secret unchanged.`,
 			}
 			if authType == "bearer" {
 				cred.AccessToken = secret
+			} else if passwordCmdValue != "" {
+				cred.Password = ""
+				cred.PasswordCommand = passwordCmdValue
 			} else {
 				cred.Password = secret
+				cred.PasswordCommand = ""
 			}
 			if err := a.Accounts.StoreCredential(ctx, configured.ID, fingerprint, cred, store); err != nil {
 				return err
@@ -307,6 +316,7 @@ backend failures leave the previous secret unchanged.`,
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&passwordCmd, "password-cmd", "", "command whose first stdout line is the basic-auth password")
 	return cmd
 }
 

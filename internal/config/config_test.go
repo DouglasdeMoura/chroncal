@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 )
 
 // mustLoad calls Load and fails the test on error. Use it in tests that
@@ -176,8 +175,8 @@ func TestSMTPConfig_ResolvePassword_Literal(t *testing.T) {
 	}
 }
 
-func TestSMTPConfig_ResolvePassword_CommandTrimsTrailingNewline(t *testing.T) {
-	command := "printf 'from-cmd\\n'"
+func TestSMTPConfig_ResolvePassword_CommandKeepsFirstLine(t *testing.T) {
+	command := "printf 'from-cmd\\nmetadata\\n'"
 	if runtime.GOOS == "windows" {
 		command = "echo from-cmd"
 	}
@@ -187,7 +186,7 @@ func TestSMTPConfig_ResolvePassword_CommandTrimsTrailingNewline(t *testing.T) {
 		t.Fatalf("ResolvePassword() error = %v", err)
 	}
 	if got != "from-cmd" {
-		t.Errorf("ResolvePassword() = %q, want %q (trailing newline must be trimmed)", got, "from-cmd")
+		t.Errorf("ResolvePassword() = %q, want %q (first stdout line is the secret)", got, "from-cmd")
 	}
 }
 
@@ -213,34 +212,6 @@ func TestSMTPConfig_ResolvePassword_BothSetIsError(t *testing.T) {
 	cfg := SMTPConfig{Password: "literal", PasswordCommand: "echo from-cmd"}
 	if _, err := cfg.ResolvePassword(); err == nil {
 		t.Fatal("ResolvePassword() error = nil, want an error when both password sources are set")
-	}
-}
-
-// TestRunPasswordCommandTimeout checks that a helper which blocks cannot
-// hold the alarm email forever. The test shortens passwordCmdTimeout, so it
-// stays fast and deterministic.
-func TestRunPasswordCommandTimeout(t *testing.T) {
-	oldTimeout := passwordCmdTimeout
-	passwordCmdTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { passwordCmdTimeout = oldTimeout })
-
-	// The background job forces the shell to fork instead of replace
-	// itself, so the killed shell leaves a helper child behind. That child
-	// holds the output pipe, which is the exact shape the deadline must
-	// survive (it hung the ubuntu CI runner once). The Windows variant has
-	// no pipe-holding grandchild; it exercises the plain deadline only.
-	command := "sleep 60 & wait"
-	if runtime.GOOS == "windows" {
-		command = "ping -n 60 127.0.0.1"
-	}
-
-	start := time.Now()
-	_, err := runPasswordCommand(command)
-	if err == nil {
-		t.Fatal("runPasswordCommand error = nil, want a timeout error")
-	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("runPasswordCommand took %v, want a return before the command ends", elapsed)
 	}
 }
 

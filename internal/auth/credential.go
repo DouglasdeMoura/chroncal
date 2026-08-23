@@ -12,14 +12,20 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/douglasdemoura/chroncal/internal/secretcmd"
 	"github.com/zalando/go-keyring"
 )
 
 // Credential holds authentication secrets for an account.
 type Credential struct {
-	AccountID          int64  `json:"account_id"`
-	Username           string `json:"username,omitempty"`
-	Password           string `json:"password,omitempty"`
+	AccountID int64  `json:"account_id"`
+	Username  string `json:"username,omitempty"`
+	Password  string `json:"password,omitempty"`
+	// PasswordCommand is a shell command whose first stdout line is the
+	// CalDAV basic-auth password. It is an alternative to a stored
+	// Password. The command runs at request time, not at store time. Set
+	// one of the two fields, never both. Example: "pass show caldav_password".
+	PasswordCommand    string `json:"password_cmd,omitempty"`
 	AccessToken        string `json:"access_token,omitempty"`
 	RefreshToken       string `json:"refresh_token,omitempty"`
 	TokenExpiry        string `json:"token_expiry,omitempty"` // RFC 3339
@@ -27,6 +33,28 @@ type Credential struct {
 	// OAuth client config (stored with credential, not in DB)
 	OAuthClientID     string `json:"oauth_client_id,omitempty"`
 	OAuthClientSecret string `json:"oauth_client_secret,omitempty"`
+}
+
+// errPasswordConflict reports a credential that sets both Password and
+// PasswordCommand. The source of the secret must stay unambiguous.
+var errPasswordConflict = errors.New("password and password_cmd are mutually exclusive; set one of them")
+
+// ResolvePassword returns the CalDAV basic-auth password for this credential.
+// A set PasswordCommand runs at call time. The secret is the first line of
+// stdout. Setting both Password and PasswordCommand is an error.
+func (c Credential) ResolvePassword() (string, error) {
+	switch {
+	case c.Password != "" && c.PasswordCommand != "":
+		return "", errPasswordConflict
+	case c.PasswordCommand != "":
+		secret, err := secretcmd.Run(c.PasswordCommand)
+		if err != nil {
+			return "", fmt.Errorf("password_cmd: %w", err)
+		}
+		return secret, nil
+	default:
+		return c.Password, nil
+	}
 }
 
 // CredentialStore provides read/write access to account credentials.

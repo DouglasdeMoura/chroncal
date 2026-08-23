@@ -213,8 +213,42 @@ func TestAccountCredentialsDialogBasicCollectsPassword(t *testing.T) {
 		t.Fatal("basic credential form did not submit")
 	}
 	msg, ok := cmd().(AccountCredentialsUpdateSubmittedMsg)
-	if !ok || msg.AccountID != 7 || msg.Secret != "hunter2" {
+	if !ok || msg.AccountID != 7 || msg.Secret != "hunter2" || msg.PasswordCommand != "" {
 		t.Fatalf("basic submission = %#v, want account 7 secret hunter2", cmd())
+	}
+}
+
+func TestAccountCredentialsDialogBasicCollectsPasswordCmd(t *testing.T) {
+	m := NewAccountCredentialsDialogModel(7, "Work", "basic", "alice@example.com", NewTheme(true)).
+		SetSize(80, 30)
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Password cmd") {
+		t.Fatalf("basic dialog missing Password cmd field:\n%s", view)
+	}
+	m.form.Field(1).(*TextField).SetValue("pass show caldav_password")
+	if m.form.onRebuild != nil {
+		m.form.onRebuild(&m.form)
+	}
+	form, cmd := m.form.Submit()
+	m.form = form
+	if cmd == nil {
+		t.Fatal("password cmd form did not submit")
+	}
+	msg, ok := cmd().(AccountCredentialsUpdateSubmittedMsg)
+	if !ok || msg.AccountID != 7 || msg.Secret != "" || msg.PasswordCommand != "pass show caldav_password" {
+		t.Fatalf("password cmd submission = %#v", cmd())
+	}
+}
+
+func TestAccountCredentialsDialogRejectsPasswordAndCmd(t *testing.T) {
+	m := NewAccountCredentialsDialogModel(7, "Work", "basic", "alice@example.com", NewTheme(true)).
+		SetSize(80, 30)
+	m.form.Field(0).(*TextField).SetValue("hunter2")
+	m.form.Field(1).(*TextField).SetValue("pass show caldav_password")
+	form, cmd := m.form.Submit()
+	m.form = form
+	if cmd != nil {
+		t.Fatalf("submit should reject password and password cmd together, got %T", cmd())
 	}
 }
 
@@ -224,6 +258,9 @@ func TestAccountCredentialsDialogBearerCollectsToken(t *testing.T) {
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "Token") || !strings.Contains(view, "New token for API Token Account") {
 		t.Fatalf("bearer dialog missing Token field/context:\n%s", view)
+	}
+	if strings.Contains(view, "Password cmd") {
+		t.Fatalf("bearer dialog should not collect a password cmd:\n%s", view)
 	}
 	m.form.Field(0).(*TextField).SetValue("abc123")
 	form, cmd := m.form.Submit()

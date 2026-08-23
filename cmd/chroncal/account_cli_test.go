@@ -565,6 +565,46 @@ func TestAccountCredentialsRotatesBearerAndBasic(t *testing.T) {
 	}
 }
 
+func TestAccountCredentialsStoresPasswordCmd(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/dav/",
+		Username: "bob", AuthType: "basic",
+	}, auth.Credential{Password: "old-password"}, store)
+	if err != nil {
+		t.Fatalf("create basic account: %v", err)
+	}
+	a.Close()
+
+	t.Setenv("CHRONCAL_PASSWORD", "")
+	t.Setenv("CHRONCAL_PASSWORD_CMD", "")
+	stdout, _, err := runChroncalCommand(t,
+		"account", "credentials", "Work",
+		"--password-cmd", "pass show caldav_password",
+		"--output", "json", "--allow-plaintext",
+	)
+	if err != nil {
+		t.Fatalf("account credentials password-cmd: %v", err)
+	}
+	assertAccountJSONWithoutSecrets(t, stdout, "Work", "basic")
+	if strings.Contains(stdout, "old-password") {
+		t.Fatalf("json leaked a password: %s", stdout)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if got.Password != "" || got.PasswordCommand != "pass show caldav_password" {
+		t.Fatalf("credential = %+v, want password_cmd stored and password cleared", got)
+	}
+}
+
 func TestAccountCredentialsRefusesOAuth(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	ctx := context.Background()

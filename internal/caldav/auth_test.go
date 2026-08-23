@@ -2,9 +2,11 @@ package caldav
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
+	"runtime"
 	"testing"
 	"time"
 
@@ -214,5 +216,60 @@ func TestNewClientFromCredential_UsesBoundedHTTPClient(t *testing.T) {
 	}
 	if oauthClient.inner.Timeout != defaultHTTPTimeout {
 		t.Fatalf("inner timeout = %s, want %s", oauthClient.inner.Timeout, defaultHTTPTimeout)
+	}
+}
+
+func TestNewClientFromCredential_RunsPasswordCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX password command")
+	}
+
+	prevDefaultClient := defaultHTTPClient
+	var gotAuth string
+	defaultHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotAuth = r.Header.Get("Authorization")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(http.NoBody),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		}),
+	}
+	t.Cleanup(func() { defaultHTTPClient = prevDefaultClient })
+
+	client, err := NewClientFromCredential("https://example.com", auth.Credential{
+		Username:        "alice",
+		PasswordCommand: "printf 'from-cmd\\nmetadata\\n'",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewClientFromCredential: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/resource", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext: %v", err)
+	}
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	resp.Body.Close()
+
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("alice:from-cmd"))
+	if gotAuth != want {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, want)
+	}
+}
+
+func TestNewClientFromCredential_PasswordCommandConflict(t *testing.T) {
+	_, err := NewClientFromCredential("https://example.com", auth.Credential{
+		Username:        "alice",
+		Password:        "literal",
+		PasswordCommand: "echo from-cmd",
+	}, nil)
+	if err == nil {
+		t.Fatal("NewClientFromCredential error = nil, want mutual-exclusion error")
 	}
 }

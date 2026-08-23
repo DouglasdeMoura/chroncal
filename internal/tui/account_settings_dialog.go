@@ -373,8 +373,9 @@ func (m AccountOAuthConfigDialogModel) View() string {
 // StoreCredential writes; the account identity (server URL, username) is
 // preserved untouched.
 type AccountCredentialsUpdateSubmittedMsg struct {
-	AccountID int64
-	Secret    string
+	AccountID       int64
+	Secret          string
+	PasswordCommand string
 }
 
 // AccountCredentialsUpdateClosedMsg reports a cancel from the credential
@@ -398,7 +399,7 @@ type AccountCredentialsDialogModel struct {
 
 // NewAccountCredentialsDialogModel builds the credential-rotation form for one
 // account. Bearer auth collects a token. Every other basic-or-bearer type
-// collects a password. That matches the field the calendar connect flow uses.
+// collects a password or a password command.
 func NewAccountCredentialsDialogModel(
 	accountID int64,
 	accountName, authType, username string,
@@ -406,23 +407,47 @@ func NewAccountCredentialsDialogModel(
 ) AccountCredentialsDialogModel {
 	var fieldLabel string
 	secret := newPasswordField()
+	var items []FormItem
 	if accountAuthIsBearer(authType) {
 		fieldLabel = "Token"
 		secret.SetPlaceholder("paste your API token")
+		items = []FormItem{{Label: fieldLabel, Field: secret, Required: true}}
 	} else {
 		fieldLabel = "Password"
+		items = []FormItem{
+			{Label: fieldLabel, Field: secret, Required: true},
+			{Label: "Password cmd", Field: newPasswordCmdField("")},
+		}
 	}
 	styles := DefaultFormStyles()
 	styles.LabelLayout = LabelTop
 	form := NewForm(
 		"Update",
 		styles,
-		FormItem{Label: fieldLabel, Field: secret, Required: true},
+		items...,
 	)
+	form.OnRebuild(func(f *Form) {
+		if accountAuthIsBearer(authType) {
+			return
+		}
+		cmdVal := strings.TrimSpace(f.Field(1).(*TextField).Value())
+		f.SetItemRequired(0, cmdVal == "")
+	})
 	form.OnSubmit(func(f *Form) tea.Cmd {
 		msg := AccountCredentialsUpdateSubmittedMsg{
 			AccountID: accountID,
 			Secret:    strings.TrimSpace(f.Field(0).(*TextField).Value()),
+		}
+		if !accountAuthIsBearer(authType) {
+			msg.PasswordCommand = strings.TrimSpace(f.Field(1).(*TextField).Value())
+			if msg.Secret != "" && msg.PasswordCommand != "" {
+				f.SetError(1, "Set password or password cmd, not both")
+				return nil
+			}
+			if msg.Secret == "" && msg.PasswordCommand == "" {
+				f.SetError(0, "Credential is required")
+				return nil
+			}
 		}
 		return func() tea.Msg { return msg }
 	})

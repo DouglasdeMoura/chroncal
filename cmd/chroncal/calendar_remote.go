@@ -23,28 +23,30 @@ var newCalendarCredentialStore = auth.NewCredentialStore
 var runGoogleOAuthFlow = auth.GoogleOAuthFlow
 
 type calendarRemoteFlags struct {
-	RemoteURL     string
-	Username      string
-	AuthType      string
-	OAuthClientID string
-	AllowInsecure bool
+	RemoteURL       string
+	Username        string
+	AuthType        string
+	OAuthClientID   string
+	PasswordCommand string
+	AllowInsecure   bool
 }
 
-func validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID string, allowInsecure, disconnectRemote bool) error {
+func validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID, passwordCmd string, allowInsecure, disconnectRemote bool) error {
 	remoteURL = strings.TrimSpace(remoteURL)
 	username = strings.TrimSpace(username)
 	authType = strings.ToLower(strings.TrimSpace(authType))
 	oauthClientID = strings.TrimSpace(oauthClientID)
+	passwordCmd = strings.TrimSpace(passwordCmd)
 
 	if disconnectRemote {
-		if remoteURL != "" || username != "" || oauthClientID != "" || allowInsecure || authType != "" && authType != "basic" {
+		if remoteURL != "" || username != "" || oauthClientID != "" || passwordCmd != "" || allowInsecure || authType != "" && authType != "basic" {
 			return fmt.Errorf("--disconnect-remote cannot be combined with remote connection flags like --remote-url")
 		}
 		return nil
 	}
 
 	if remoteURL == "" {
-		if username != "" || oauthClientID != "" || allowInsecure || authType != "" && authType != "basic" {
+		if username != "" || oauthClientID != "" || passwordCmd != "" || allowInsecure || authType != "" && authType != "basic" {
 			return fmt.Errorf("remote flags require --remote-url")
 		}
 		return nil
@@ -85,6 +87,10 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 	metaPassword := cred.Password
 	if cred.AccessToken != "" {
 		metaPassword = cred.AccessToken
+	} else if cred.PasswordCommand != "" {
+		if resolved, resolveErr := cred.ResolvePassword(); resolveErr == nil {
+			metaPassword = resolved
+		}
 	}
 	metaCtx, metaCancel := context.WithTimeout(ctx, 10*time.Second)
 	meta, _ := caldav.FetchCalendarMetadata(metaCtx, flags.RemoteURL, flags.Username, metaPassword, flags.AuthType, flags.AllowInsecure)
@@ -122,11 +128,15 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 		}
 		return auth.Credential{Username: flags.Username, AccessToken: token}, nil
 	case "basic":
-		password, err := readBasicPassword()
+		password, passwordCmd, err := readBasicSecret(flags.PasswordCommand)
 		if err != nil {
 			return auth.Credential{}, err
 		}
-		return auth.Credential{Username: flags.Username, Password: password}, nil
+		return auth.Credential{
+			Username:        flags.Username,
+			Password:        password,
+			PasswordCommand: passwordCmd,
+		}, nil
 	case "oauth2":
 		clientSecret, err := readGoogleClientSecret()
 		if err != nil {
@@ -153,18 +163,39 @@ func normalizeAuthType(authType string) string {
 	return calendarpkg.NormalizeAuthType(authType)
 }
 
-// readBasicPassword obtains the password for --auth basic. We never accept it
-// as a CLI flag. That keeps secrets out of /proc/<pid>/cmdline and shell
-// history. Sources, in order:
+// readBasicSecret obtains the basic-auth secret. We never accept the
+// password itself as a CLI flag. That keeps secrets out of
+// /proc/<pid>/cmdline and shell history. Sources, in order:
 //
-//  1. CHRONCAL_PASSWORD env var (handy for scripted/CI setup).
-//  2. Interactive prompt via terminal (echo disabled).
+//  1. --password-cmd flag (the command is not a secret).
+//  2. CHRONCAL_PASSWORD_CMD env var.
+//  3. CHRONCAL_PASSWORD env var.
+//  4. Interactive prompt via terminal (echo disabled).
+//
+// A password command and CHRONCAL_PASSWORD together are an error.
+func readBasicSecret(passwordCmdFlag string) (password, passwordCmd string, err error) {
+	cmd := strings.TrimSpace(passwordCmdFlag)
+	if cmd == "" {
+		cmd = strings.TrimSpace(os.Getenv("CHRONCAL_PASSWORD_CMD"))
+	}
+	envPassword := os.Getenv("CHRONCAL_PASSWORD")
+	if cmd != "" && envPassword != "" {
+		return "", "", fmt.Errorf("CHRONCAL_PASSWORD and password_cmd are mutually exclusive; set one of them")
+	}
+	if cmd != "" {
+		return "", cmd, nil
+	}
+	password, err = readBasicPassword()
+	return password, "", err
+}
+
+// readBasicPassword obtains a literal password for --auth basic.
 func readBasicPassword() (string, error) {
 	if s := os.Getenv("CHRONCAL_PASSWORD"); s != "" {
 		return s, nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return "", fmt.Errorf("a password is required: set CHRONCAL_PASSWORD or run interactively")
+		return "", fmt.Errorf("a password is required: set CHRONCAL_PASSWORD, CHRONCAL_PASSWORD_CMD, --password-cmd, or run interactively")
 	}
 	fmt.Fprint(os.Stderr, "Password: ")
 	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))

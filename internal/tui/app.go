@@ -1537,11 +1537,11 @@ func (m Model) finishOAuthCredentialStore(msg oauthCredentialStoredMsg) (Model, 
 
 // updateAccountCredentials rotates one account's secret in place. The stored
 // credential is loaded so its non-secret identity (username, client config) is
-// kept. Only the password (basic) or access token (bearer) is replaced.
+// kept. Only the password, password command, or access token is replaced.
 // StoreCredential re-checks the account fingerprint under the lifecycle lock.
 // A concurrent rename or removal then aborts the write instead of a corrupt
 // write.
-func (m Model) updateAccountCredentials(configured account.Account, secret string) tea.Cmd {
+func (m Model) updateAccountCredentials(configured account.Account, secret, passwordCmd string) tea.Cmd {
 	storedMsg := func(err error) accountCredentialStoredMsg {
 		return accountCredentialStoredMsg{
 			accountID: configured.ID,
@@ -1562,8 +1562,12 @@ func (m Model) updateAccountCredentials(configured account.Account, secret strin
 		}
 		if accountAuthIsBearer(configured.AuthType) {
 			cred.AccessToken = secret
+		} else if strings.TrimSpace(passwordCmd) != "" {
+			cred.Password = ""
+			cred.PasswordCommand = strings.TrimSpace(passwordCmd)
 		} else {
 			cred.Password = secret
+			cred.PasswordCommand = ""
 		}
 		err = m.app.Accounts.StoreCredential(ctx, configured.ID, fingerprint, cred, credStore)
 		return storedMsg(err)
@@ -3461,7 +3465,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncStatus = "Updating credentials…"
 		return m, tea.Batch(
 			m.syncSpinner.Tick,
-			m.updateAccountCredentials(configured, msg.Secret),
+			m.updateAccountCredentials(configured, msg.Secret, msg.PasswordCommand),
 		)
 
 	case AccountCredentialsUpdateClosedMsg:
@@ -3527,6 +3531,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cred.AccessToken = msg.Secret
 		} else {
 			cred.Password = msg.Secret
+			cred.PasswordCommand = strings.TrimSpace(msg.PasswordCommand)
 		}
 		m.syncing = true
 		m.syncStatus = "Adding account…"
@@ -4046,7 +4051,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 
-			meta, err := caldav.VerifyCalendarURL(ctx, req.URL, req.Username, req.Password, req.AuthType, req.AllowInsecure)
+			password := req.Password
+			if strings.TrimSpace(req.PasswordCommand) != "" {
+				resolved, resolveErr := auth.Credential{PasswordCommand: req.PasswordCommand}.ResolvePassword()
+				if resolveErr != nil {
+					return CalendarTestResultMsg{Message: resolveErr.Error()}
+				}
+				password = resolved
+			}
+			meta, err := caldav.VerifyCalendarURL(ctx, req.URL, req.Username, password, req.AuthType, req.AllowInsecure)
 			if err != nil {
 				return CalendarTestResultMsg{Message: err.Error()}
 			}

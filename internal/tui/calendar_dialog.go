@@ -79,6 +79,7 @@ type CalendarDiscoveryRequestedMsg struct {
 	Username          string
 	AuthType          string
 	Secret            string
+	PasswordCommand   string
 	OAuthClientID     string
 	OAuthClientSecret string
 	AllowInsecure     bool
@@ -124,11 +125,12 @@ type CalendarKeepLocalRequestedMsg struct {
 // CalendarTestRequestedMsg is emitted when the user presses Test. The parent
 // runs a CalDAV authenticated ping and replies with CalendarTestResultMsg.
 type CalendarTestRequestedMsg struct {
-	URL           string
-	Username      string
-	AuthType      string
-	Password      string
-	AllowInsecure bool
+	URL             string
+	Username        string
+	AuthType        string
+	Password        string
+	PasswordCommand string
+	AllowInsecure   bool
 }
 
 // CalendarTestResultMsg is the outcome of a CalendarTestRequestedMsg.
@@ -168,13 +170,14 @@ const (
 	calDAVIdxUsername
 	calDAVIdxAuth
 	calDAVIdxSecret
+	calDAVIdxPasswordCmd
 	calDAVIdxAllowInsecure
 )
 
 const (
 	calDAVIdxOAuthClientID      = calDAVIdxSecret
-	calDAVIdxOAuthClientSecret  = calDAVIdxAllowInsecure
-	calDAVIdxOAuthAllowInsecure = calDAVIdxAllowInsecure + 1
+	calDAVIdxOAuthClientSecret  = calDAVIdxPasswordCmd
+	calDAVIdxOAuthAllowInsecure = calDAVIdxAllowInsecure
 )
 
 var authOptions = []SelectOption{
@@ -520,6 +523,7 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 		FormItem{Label: "Username", Field: newUsernameField(usernamePrefill), Required: true},
 		FormItem{Label: "Auth", Field: newAuthField("basic"), Required: true},
 		FormItem{Label: "Password", Field: newPasswordField(), Required: true},
+		FormItem{Label: "Password cmd", Field: newPasswordCmdField("")},
 		FormItem{Label: "HTTP", Field: insecure},
 	)
 	form.SetActionButton("Test", Button, func() tea.Msg {
@@ -530,8 +534,8 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 	})
 
 	var snapshot struct {
-		secret, clientID, clientSecret string
-		allowInsecure                  bool
+		secret, passwordCmd, clientID, clientSecret string
+		allowInsecure                               bool
 	}
 	oauthLayout := new(bool)
 	snapshotTail := func(f *Form) {
@@ -542,6 +546,7 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 			return
 		}
 		snapshot.secret = f.Field(calDAVIdxSecret).(*TextField).Value()
+		snapshot.passwordCmd = f.Field(calDAVIdxPasswordCmd).(*TextField).Value()
 		snapshot.allowInsecure = f.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
 	}
 	appendTail := func(f *Form, authType string) {
@@ -560,8 +565,10 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 		}
 		secret := newPasswordField()
 		secret.SetValue(snapshot.secret)
+		cmdField := newPasswordCmdField(snapshot.passwordCmd)
 		f.AppendItems(
 			FormItem{Label: "Password", Field: secret, Required: true},
+			FormItem{Label: "Password cmd", Field: cmdField},
 			FormItem{Label: "HTTP", Field: allow},
 		)
 		*oauthLayout = false
@@ -576,12 +583,17 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 		}
 		if !*oauthLayout {
 			secret := f.Field(calDAVIdxSecret).(*TextField)
+			cmdField := f.Field(calDAVIdxPasswordCmd).(*TextField)
 			if authType == "bearer" {
 				f.SetItemLabel(calDAVIdxSecret, "Token")
 				secret.SetPlaceholder("paste your API token")
+				cmdField.SetDisabled(true)
+				f.SetItemRequired(calDAVIdxSecret, true)
 			} else {
 				f.SetItemLabel(calDAVIdxSecret, "Password")
 				secret.SetPlaceholder("your password")
+				cmdField.SetDisabled(false)
+				f.SetItemRequired(calDAVIdxSecret, strings.TrimSpace(cmdField.Value()) == "")
 			}
 		}
 
@@ -640,8 +652,18 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 			}
 		} else {
 			msg.Secret = f.Field(calDAVIdxSecret).(*TextField).Value()
+			msg.PasswordCommand = strings.TrimSpace(f.Field(calDAVIdxPasswordCmd).(*TextField).Value())
 			msg.AllowInsecure = f.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
-			if strings.TrimSpace(msg.Secret) == "" {
+			if accountAuthIsBearer(msg.AuthType) {
+				msg.PasswordCommand = ""
+				if strings.TrimSpace(msg.Secret) == "" {
+					f.SetError(calDAVIdxSecret, "Credential is required")
+					return nil
+				}
+			} else if strings.TrimSpace(msg.Secret) != "" && msg.PasswordCommand != "" {
+				f.SetError(calDAVIdxPasswordCmd, "Set password or password cmd, not both")
+				return nil
+			} else if strings.TrimSpace(msg.Secret) == "" && msg.PasswordCommand == "" {
 				f.SetError(calDAVIdxSecret, "Credential is required")
 				return nil
 			}
@@ -763,6 +785,13 @@ func newPasswordField() *TextField {
 	f := NewTextField("your password")
 	f.SetCharLimit(256)
 	f.SetEchoPassword(true)
+	return f
+}
+
+func newPasswordCmdField(value string) *TextField {
+	f := NewTextField("pass show caldav_password")
+	f.SetValue(value)
+	f.SetCharLimit(512)
 	return f
 }
 
@@ -1235,11 +1264,20 @@ func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) 
 	user := strings.TrimSpace(m.form.Field(calDAVIdxUsername).(*TextField).Value())
 	auth := m.form.Field(calDAVIdxAuth).(*SelectField).Value()
 	pass := m.form.Field(calDAVIdxSecret).(*TextField).Value()
+	passwordCmd := strings.TrimSpace(m.form.Field(calDAVIdxPasswordCmd).(*TextField).Value())
 	ins := m.form.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
+	if accountAuthIsBearer(auth) {
+		passwordCmd = ""
+	}
 
-	if url == "" || user == "" || pass == "" {
+	if url == "" || user == "" || (strings.TrimSpace(pass) == "" && passwordCmd == "") {
 		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
 			Render("✗ Fill URL, Username, and Password first")
+		return m, nil
+	}
+	if strings.TrimSpace(pass) != "" && passwordCmd != "" {
+		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
+			Render("✗ Set password or password cmd, not both")
 		return m, nil
 	}
 
@@ -1247,11 +1285,12 @@ func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) 
 		Render("Testing…")
 	return m, func() tea.Msg {
 		return CalendarTestRequestedMsg{
-			URL:           url,
-			Username:      user,
-			AuthType:      auth,
-			Password:      pass,
-			AllowInsecure: ins,
+			URL:             url,
+			Username:        user,
+			AuthType:        auth,
+			Password:        pass,
+			PasswordCommand: passwordCmd,
+			AllowInsecure:   ins,
 		}
 	}
 }

@@ -2253,6 +2253,14 @@ func (f *Form) SetItemLabel(i int, label string) {
 	f.applyFieldWidths()
 }
 
+// SetItemRequired updates the required flag of the item at index i.
+func (f *Form) SetItemRequired(i int, required bool) {
+	if i < 0 || i >= len(f.items) {
+		return
+	}
+	f.items[i].Required = required
+}
+
 func (f Form) ItemCount() int { return len(f.items) }
 func (f Form) Focused() int   { return f.focused }
 func (f Form) HasError() bool { return f.error != "" }
