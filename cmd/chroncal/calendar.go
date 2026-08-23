@@ -544,7 +544,13 @@ to stderr.`,
 			if getErr != nil {
 				return notFoundErr(getErr, "calendar", id)
 			}
-			eventCount, _ := a.Queries.CountEventsByCalendar(ctx, id)
+			eventCount, err := a.Queries.CountEventsByCalendar(ctx, id)
+			if err != nil {
+				// The confirm prompt quotes this count. Abort when it is
+				// unknown: a prompt that says "0 event(s)" in error would
+				// understate a destructive action.
+				return fmt.Errorf("count events: %w", err)
+			}
 
 			var (
 				newDefaultID   int64
