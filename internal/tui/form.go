@@ -451,12 +451,6 @@ func (f Form) BodyView() string {
 	return lipgloss.JoinVertical(lipgloss.Left, f.fieldParts()...)
 }
 
-// ActionsView renders the form action separator and buttons without the
-// blank line at the start used by the full form view.
-func (f Form) ActionsView() string {
-	return lipgloss.JoinVertical(lipgloss.Left, f.buttonParts()...)
-}
-
 // ButtonRowView renders only the form buttons. Scrollable dialogs use this
 // with their own separator so they can include scroll state in the rule.
 func (f Form) ButtonRowView() string {

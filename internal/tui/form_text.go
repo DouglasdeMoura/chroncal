@@ -19,7 +19,6 @@ type TextField struct {
 	filter   func(tea.Key) bool
 	suffix   string
 	disabled bool
-	dimStyle lipgloss.Style
 	validate func(string) string
 }
 
@@ -119,7 +118,7 @@ func (f *TextField) View() string {
 		if val == "" {
 			val = f.input.Placeholder
 		}
-		out := f.dimStyle.Render(val)
+		out := val
 		if f.suffix != "" {
 			out += " " + f.suffix
 		}
@@ -166,8 +165,6 @@ func (f *TextField) SetDisabled(v bool) {
 
 // SetDimStyle sets the style used to render the value when disabled.
 // Defaults to the zero style (no visual change beyond a skip of the cursor).
-func (f *TextField) SetDimStyle(s lipgloss.Style) { f.dimStyle = s }
-
 // FilterDigits allows only digit characters (0-9).
 // Every rune in the key text must be a digit; a multi-rune event (e.g. a
 // paste) is rejected if any rune fails the check.
