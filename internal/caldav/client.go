@@ -189,7 +189,7 @@ func propfindCalendarCollections(ctx context.Context, httpClient webdav.HTTPClie
 		return nil, httpError(resp)
 	}
 
-	var ms verifyMultiStatus
+	var ms davMultiStatus[verifyProps]
 	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
 		return nil, fmt.Errorf("decode discovery PROPFIND response: %w", err)
 	}
@@ -201,30 +201,29 @@ func propfindCalendarCollections(ctx context.Context, httpClient webdav.HTTPClie
 		}
 		isCalendar := false
 		remote := RemoteCalendar{}
-		for _, ps := range r.PropStats {
-			if code := parseStatusCode(ps.Status); code < 200 || code >= 300 {
-				continue
-			}
-			if remote.Name == "" {
-				remote.Name = strings.TrimSpace(ps.Prop.DisplayName)
-			}
-			if remote.Description == "" {
-				remote.Description = strings.TrimSpace(ps.Prop.CalendarDescription)
-			}
-			if remote.Color == "" {
-				remote.Color = NormalizeCalendarColor(ps.Prop.CalendarColor)
-			}
-			if len(remote.SupportedComponentSet) == 0 {
-				remote.SupportedComponentSet = componentNames(ps.Prop.SupportedComponents)
-			}
-			// calendarAccessFromPrivileges never returns "", so the first
-			// successful propstat wins — matching the verify path.
-			if remote.Access == "" {
-				remote.Access = calendarAccessFromPrivileges(ps.Prop.CurrentPrivileges)
-			}
-			if ps.Prop.ResourceType.Calendar != nil {
-				isCalendar = true
-			}
+		ps, ok := firstOKPropstat(r)
+		if !ok {
+			continue
+		}
+		if remote.Name == "" {
+			remote.Name = strings.TrimSpace(ps.DisplayName)
+		}
+		if remote.Description == "" {
+			remote.Description = strings.TrimSpace(ps.CalendarDescription)
+		}
+		if remote.Color == "" {
+			remote.Color = NormalizeCalendarColor(ps.CalendarColor)
+		}
+		if len(remote.SupportedComponentSet) == 0 {
+			remote.SupportedComponentSet = componentNames(ps.SupportedComponents)
+		}
+		// calendarAccessFromPrivileges never returns "", so the first
+		// successful propstat wins — matching the verify path.
+		if remote.Access == "" {
+			remote.Access = calendarAccessFromPrivileges(ps.CurrentPrivileges)
+		}
+		if ps.ResourceType.Calendar != nil {
+			isCalendar = true
 		}
 		if !isCalendar {
 			continue

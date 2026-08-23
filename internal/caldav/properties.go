@@ -11,19 +11,9 @@ import (
 	"github.com/emersion/go-webdav"
 )
 
-type calendarColorMultiStatus struct {
-	Responses []calendarColorResponse `xml:"DAV: response"`
-}
-
-type calendarColorResponse struct {
-	PropStats []calendarColorPropStat `xml:"DAV: propstat"`
-}
-
-type calendarColorPropStat struct {
-	Status string `xml:"DAV: status"`
-	Prop   struct {
-		CalendarColor string `xml:"http://apple.com/ns/ical/ calendar-color"`
-	} `xml:"DAV: prop"`
+// calendarColorProps is the DAV: prop payload of the calendar-color PROPFIND.
+type calendarColorProps struct {
+	CalendarColor string `xml:"http://apple.com/ns/ical/ calendar-color"`
 }
 
 // GetCalendarColor fetches the current calendar-color property for a calendar.
@@ -55,7 +45,7 @@ func GetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 		return "", fmt.Errorf("PROPFIND calendar-color: %w", httpError(resp))
 	}
 
-	var ms calendarColorMultiStatus
+	var ms davMultiStatus[calendarColorProps]
 	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
 		return "", fmt.Errorf("decode PROPFIND response: %w", err)
 	}
@@ -146,7 +136,7 @@ func SetCalendarColor(ctx context.Context, httpClient webdav.HTTPClient, calenda
 	case http.StatusOK, http.StatusNoContent:
 		return nil
 	case http.StatusMultiStatus:
-		var ms calendarColorMultiStatus
+		var ms davMultiStatus[calendarColorProps]
 		if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
 			return fmt.Errorf("decode PROPPATCH response: %w", err)
 		}

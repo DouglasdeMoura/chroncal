@@ -57,7 +57,7 @@ func (c *Client) MultiGetTolerant(ctx context.Context, calendarPath string, href
 		return nil, fmt.Errorf("REPORT calendar-multiget: %w", httpError(resp))
 	}
 
-	var ms multiGetMultiStatus
+	var ms davMultiStatus[multiGetProps]
 	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
 		return nil, fmt.Errorf("decode multiget response: %w", err)
 	}
@@ -73,20 +73,9 @@ func (c *Client) MultiGetTolerant(ctx context.Context, calendarPath string, href
 			result.Missing = append(result.Missing, href)
 			continue
 		}
-		var etag, data string
-		var ok bool
-		for _, ps := range r.PropStats {
-			code := parseStatusCode(ps.Status)
-			if code == http.StatusNotFound {
-				continue
-			}
-			if code >= 200 && code < 300 {
-				etag = normalizeETag(ps.Prop.ETag)
-				data = ps.Prop.CalendarData
-				ok = true
-				break
-			}
-		}
+		ps, ok := firstOKPropstat(r)
+		etag := normalizeETag(ps.ETag)
+		data := ps.CalendarData
 		if !ok || data == "" {
 			result.Missing = append(result.Missing, href)
 			continue
@@ -123,21 +112,8 @@ func buildMultiGetBody(hrefs []string) string {
 %s</c:calendar-multiget>`, hrefXML.String())
 }
 
-type multiGetMultiStatus struct {
-	XMLName   xml.Name           `xml:"DAV: multistatus"`
-	Responses []multiGetResponse `xml:"DAV: response"`
-}
-
-type multiGetResponse struct {
-	Href      string             `xml:"DAV: href"`
-	Status    string             `xml:"DAV: status"`
-	PropStats []multiGetPropStat `xml:"DAV: propstat"`
-}
-
-type multiGetPropStat struct {
-	Status string `xml:"DAV: status"`
-	Prop   struct {
-		ETag         string `xml:"DAV: getetag"`
-		CalendarData string `xml:"urn:ietf:params:xml:ns:caldav calendar-data"`
-	} `xml:"DAV: prop"`
+// multiGetProps is the DAV: prop payload of a calendar-multiget REPORT.
+type multiGetProps struct {
+	ETag         string `xml:"DAV: getetag"`
+	CalendarData string `xml:"urn:ietf:params:xml:ns:caldav calendar-data"`
 }
