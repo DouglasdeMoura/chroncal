@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/calendar"
@@ -33,6 +34,32 @@ func TestFindCalendarByRef(t *testing.T) {
 		if got.ID != tt.wantID {
 			t.Fatalf("findCalendarByRef(%q) ID = %d, want %d", tt.ref, got.ID, tt.wantID)
 		}
+	}
+}
+
+// TestFindCalendarByRefErrorTaxonomy locks the error codes: an unknown
+// reference (numeric or by name) is not_found, and an ambiguous name is
+// invalid_input. Every caller then reports the same code without
+// re-wrapping, so --output json consumers can dispatch on it.
+func TestFindCalendarByRefErrorTaxonomy(t *testing.T) {
+	cals := []calendar.Calendar{
+		{ID: 1, Name: "Work"},
+		{ID: 2, Name: "Work"},
+		{ID: 3, Name: "Personal"},
+	}
+
+	for _, ref := range []string{"999", "Ghost"} {
+		_, err := findCalendarByRef(cals, ref)
+		var ce *cliError
+		if !errors.As(err, &ce) || ce.Code != "not_found" {
+			t.Fatalf("findCalendarByRef(%q) = %#v, want a not_found cliError", ref, err)
+		}
+	}
+
+	_, err := findCalendarByRef(cals, "work")
+	var ce *cliError
+	if !errors.As(err, &ce) || ce.Code != "invalid_input" {
+		t.Fatalf("findCalendarByRef(%q) = %#v, want an invalid_input cliError for an ambiguous name", "work", err)
 	}
 }
 

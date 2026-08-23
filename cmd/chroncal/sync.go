@@ -163,7 +163,7 @@ linked to one CalDAV account. The two flags are mutually exclusive.`,
 			if calendarName != "" {
 				target, err := findCalendarByRef(cals, calendarName)
 				if err != nil {
-					return &cliError{Code: "not_found", Msg: err.Error()}
+					return err
 				}
 				targetCalendarID = target.ID
 			} else if accountName != "" {
@@ -451,14 +451,14 @@ This does not delete your local calendars or entries.`,
 
 			var connected, failed int
 			// Resolve --calendar by ID or case-insensitive name via the shared
-			// findCalendarByRef helper. It already reports not_found for an
-			// unknown reference, so a non-zero targetID is guaranteed to match a
+			// findCalendarByRef helper. It reports not_found for an unknown
+			// reference, so a non-zero targetID is guaranteed to match a
 			// calendar below.
 			var targetID int64
 			if calendarName != "" {
 				target, err := findCalendarByRef(cals, calendarName)
 				if err != nil {
-					return &cliError{Code: "not_found", Msg: err.Error()}
+					return err
 				}
 				targetID = target.ID
 			}

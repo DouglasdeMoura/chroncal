@@ -374,7 +374,7 @@ func TestCalendarHideShowJSON(t *testing.T) {
 	}
 }
 
-func TestCalendarHideUnknownIDIsInvalidInput(t *testing.T) {
+func TestCalendarHideUnknownIDIsNotFound(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
 	_, stderr, err := runChroncalCommand(t, "calendar", "hide", "99999", "--output", "json")
@@ -388,11 +388,51 @@ func TestCalendarHideUnknownIDIsInvalidInput(t *testing.T) {
 	if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
 		t.Fatalf("decode error payload %q: %v", stderr, jerr)
 	}
-	if payload.Code != "invalid_input" {
-		t.Fatalf("code = %q, want invalid_input", payload.Code)
+	// findCalendarByRef tags an unknown reference not_found itself, so
+	// calendar hide/show, set-default, sync run/reset, and the --calendar
+	// flag of every write command report the same code.
+	if payload.Code != "not_found" {
+		t.Fatalf("code = %q, want not_found", payload.Code)
 	}
 	if !strings.Contains(payload.Error, "99999") {
 		t.Fatalf("error = %q, want it to mention the unknown id", payload.Error)
+	}
+}
+
+// TestCalendarRefNotFoundCodeUniform guards the unified taxonomy: the same
+// unknown calendar reference must report one code on every surface that
+// resolves a reference. Before the fix, calendar hide/show re-tagged it
+// invalid_input, sync re-tagged it not_found, and calendar set-default and
+// the --calendar flag of write commands left it the generic error code.
+func TestCalendarRefNotFoundCodeUniform(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	for _, args := range [][]string{
+		{"calendar", "hide", "Ghost"},
+		{"calendar", "set-default", "Ghost"},
+		{"sync", "reset", "--calendar", "Ghost"},
+		{"event", "add", "Title", "--calendar", "Ghost"},
+	} {
+		_, stderr, err := runChroncalCommand(t, append(args, "--output", "json")...)
+		if err == nil {
+			t.Fatalf("%s accepted an unknown calendar", strings.Join(args, " "))
+		}
+		var payload struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
+		if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+			t.Fatalf("%s: decode error payload %q: %v", strings.Join(args, " "), stderr, jerr)
+		}
+		if payload.Code != "not_found" {
+			t.Fatalf("%s: code = %q, want not_found", strings.Join(args, " "), payload.Code)
+		}
+		if !strings.Contains(payload.Error, "Ghost") {
+			t.Fatalf("%s: error = %q, want it to name the unknown reference", strings.Join(args, " "), payload.Error)
+		}
 	}
 }
 
