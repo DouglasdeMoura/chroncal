@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -239,7 +240,7 @@ func systemdUserDir() (string, error) {
 	return filepath.Join(home, ".config", "systemd", "user"), nil
 }
 
-func installLinuxService(ctx context.Context, w interface{ Write([]byte) (int, error) }, data map[string]string) error {
+func installLinuxService(ctx context.Context, w io.Writer, data map[string]string) error {
 	dir, err := systemdUserDir()
 	if err != nil {
 		return fmt.Errorf("resolve systemd user dir: %w", err)
@@ -283,7 +284,7 @@ func installLinuxService(ctx context.Context, w interface{ Write([]byte) (int, e
 	return nil
 }
 
-func installDarwinService(ctx context.Context, w interface{ Write([]byte) (int, error) }, data map[string]string) error {
+func installDarwinService(ctx context.Context, w io.Writer, data map[string]string) error {
 	home := data["HomeDir"]
 	dir := filepath.Join(home, "Library", "LaunchAgents")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -334,7 +335,7 @@ func serviceUninstallCmd() *cobra.Command {
 	return cmd
 }
 
-func uninstallLinuxService(ctx context.Context, w interface{ Write([]byte) (int, error) }) error {
+func uninstallLinuxService(ctx context.Context, w io.Writer) error {
 	dir, err := systemdUserDir()
 	if err != nil {
 		return fmt.Errorf("resolve systemd user dir: %w", err)
@@ -386,7 +387,7 @@ const windowsWrapperTmpl = `@echo off
 {{end}}"{{.BinaryPath}}" service run
 `
 
-func installWindowsService(ctx context.Context, w interface{ Write([]byte) (int, error) }, data map[string]string) error {
+func installWindowsService(ctx context.Context, w io.Writer, data map[string]string) error {
 	wrapperPath, err := windowsWrapperPath()
 	if err != nil {
 		return fmt.Errorf("resolve wrapper path: %w", err)
@@ -423,7 +424,7 @@ func installWindowsService(ctx context.Context, w interface{ Write([]byte) (int,
 	return nil
 }
 
-func uninstallWindowsService(ctx context.Context, w interface{ Write([]byte) (int, error) }) error {
+func uninstallWindowsService(ctx context.Context, w io.Writer) error {
 	out, err := exec.CommandContext(ctx, "schtasks", "/Delete", "/F", "/TN", windowsTaskName).CombinedOutput()
 	if len(out) > 0 {
 		fmt.Fprint(w, string(out))
@@ -446,7 +447,7 @@ func uninstallWindowsService(ctx context.Context, w interface{ Write([]byte) (in
 	return nil
 }
 
-func uninstallDarwinService(ctx context.Context, w interface{ Write([]byte) (int, error) }) error {
+func uninstallDarwinService(ctx context.Context, w io.Writer) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("get home dir: %w", err)
