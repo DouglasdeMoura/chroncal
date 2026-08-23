@@ -31,20 +31,12 @@ func batchEmits(cmd tea.Cmd, pred func(tea.Msg) bool) (found bool) {
 		}()
 		done <- cmd()
 	}()
-	deadline := time.Now().Add(50 * time.Millisecond)
 	var msg tea.Msg
-	for {
-		select {
-		case msg = <-done:
-			goto got
-		default:
-			if time.Now().After(deadline) {
-				return false
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
+	select {
+	case msg = <-done:
+	case <-time.After(200 * time.Millisecond):
+		return false
 	}
-got:
 	if msg == nil {
 		return false
 	}
