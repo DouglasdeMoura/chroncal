@@ -200,7 +200,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 			}
 
 			instances := recurrence.ExpandTodo(td, windowStart, windowEnd)
-			if td.RecurrenceRule != "" && td.RecurrenceID == "" {
+			if isRecurringTodoMaster(td) {
 				if suppressed := overrideKeys[td.UID]; len(suppressed) > 0 {
 					kept := instances[:0]
 					for _, inst := range instances {
