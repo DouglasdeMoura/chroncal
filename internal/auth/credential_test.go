@@ -235,22 +235,17 @@ func TestNewCredentialStore_NoKeyring_NoPlaintext(t *testing.T) {
 
 func TestNewCredentialStore_IncludesKeyringProbeError(t *testing.T) {
 	prevUnavailableReason := keyringUnavailableReasonFn
-	prevSet := keyringSetFn
-	prevDelete := keyringDeleteFn
+	prevGet := keyringGetFn
 
 	probeErr := errors.New("dbus: org.freedesktop.secrets unavailable")
-	keyringSetFn = func(service, user, value string) error {
-		return probeErr
-	}
-	keyringDeleteFn = func(service, user string) error {
-		return nil
+	keyringGetFn = func(service, user string) (string, error) {
+		return "", probeErr
 	}
 	keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
 
 	t.Cleanup(func() {
 		keyringUnavailableReasonFn = prevUnavailableReason
-		keyringSetFn = prevSet
-		keyringDeleteFn = prevDelete
+		keyringGetFn = prevGet
 	})
 
 	_, err := NewCredentialStore("test", nil, true, false)
@@ -746,6 +741,80 @@ func TestPlaintextFileStore_SetTightensLoosePermissions(t *testing.T) {
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".credential-") {
 			t.Errorf("temp file %s survived Set", e.Name())
+		}
+	}
+}
+
+// TestKeyringProbeNeverWrites guards the no-write contract of the
+// availability probe. The probe reads a nonexistent item; a backend that
+// answers with ErrNotFound proves it is reachable. A write-based probe left
+// residue in the production keyring when the process died between the set
+// and the delete.
+func TestKeyringProbeNeverWrites(t *testing.T) {
+	prevGet := keyringGetFn
+	prevSet := keyringSetFn
+	prevDelete := keyringDeleteFn
+	t.Cleanup(func() {
+		keyringGetFn = prevGet
+		keyringSetFn = prevSet
+		keyringDeleteFn = prevDelete
+	})
+
+	writes, deletes := 0, 0
+	keyringSetFn = func(service, user string, value string) error {
+		writes++
+		return nil
+	}
+	keyringDeleteFn = func(service, user string) error {
+		deletes++
+		return nil
+	}
+
+	t.Run("not found means available", func(t *testing.T) {
+		keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
+		keyringGetFn = func(service, user string) (string, error) {
+			return "", errCredentialNotFound
+		}
+		if err := keyringUnavailableReason(); err != nil {
+			t.Errorf("probe = %v, want nil on ErrNotFound", err)
+		}
+	})
+	t.Run("backend failure surfaces", func(t *testing.T) {
+		keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
+		keyringGetFn = func(service, user string) (string, error) {
+			return "", errors.New("dbus broken")
+		}
+		if err := keyringUnavailableReason(); err == nil {
+			t.Error("probe = nil, want the backend error")
+		}
+	})
+	if writes != 0 || deletes != 0 {
+		t.Errorf("probe wrote %d items and deleted %d; it must not write at all", writes, deletes)
+	}
+}
+
+// TestKeyringProbeAcceptsAbsenceVariants pins the tolerant matcher. Some
+// Secret Service paths answer a missing item with a raw "object does not
+// exist" error instead of ErrNotFound. The probe must treat every absence
+// shape as a reachable backend.
+func TestKeyringProbeAcceptsAbsenceVariants(t *testing.T) {
+	prevGet := keyringGetFn
+	prevUnavailableReason := keyringUnavailableReasonFn
+	t.Cleanup(func() {
+		keyringGetFn = prevGet
+		keyringUnavailableReasonFn = prevUnavailableReason
+	})
+
+	for _, msg := range []string{
+		"secret not found in keyring",
+		"Object does not exist at path /org/freedesktop/secrets/collection/Default_keyring/49405",
+	} {
+		keyringGetFn = func(service, user string) (string, error) {
+			return "", errors.New(msg)
+		}
+		keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
+		if err := keyringUnavailableReason(); err != nil {
+			t.Errorf("probe rejected absence answer %q: %v", msg, err)
 		}
 	}
 }

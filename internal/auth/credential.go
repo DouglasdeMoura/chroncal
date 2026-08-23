@@ -457,6 +457,11 @@ func keyringAccountName(namespace string, accountID int64) string {
 	return fmt.Sprintf("db_%s_account_%d", namespace, accountID)
 }
 
+// newKeyringAvailabilityProbe builds a one-shot probe for the OS keyring.
+// The probe only reads a nonexistent item. A backend that answers proves it
+// is reachable. A write-based probe leaves a probe item in the production
+// keyring when the process dies between the set and the delete, so this
+// probe never writes.
 func newKeyringAvailabilityProbe() func() error {
 	var (
 		once     sync.Once
@@ -464,13 +469,19 @@ func newKeyringAvailabilityProbe() func() error {
 	)
 	return func() error {
 		once.Do(func() {
-			probeUser := "__chroncal_probe__"
-			probeValue := "ok"
-			if err := keyringSetFn(keyringService, probeUser, probeValue); err != nil {
-				probeErr = err
+			_, err := keyringGetFn(keyringService, "__chroncal_probe__")
+			if err == nil {
 				return
 			}
-			_ = keyringDeleteFn(keyringService, probeUser)
+			// Backends disagree on the shape of an "item absent" answer:
+			// go-keyring maps it to ErrNotFound, but some Secret Service
+			// paths surface a raw "object does not exist" error instead.
+			// Any absence-shaped answer proves the backend is reachable.
+			if errors.Is(err, keyring.ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "does not exist") ||
+				strings.Contains(strings.ToLower(err.Error()), "not found") {
+				return
+			}
+			probeErr = err
 		})
 		return probeErr
 	}
