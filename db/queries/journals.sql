@@ -72,6 +72,10 @@ UPDATE journals SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? RETURNING *;
 
+-- NOTE: ON CONFLICT UPDATE clears deleted_at. Callers outside the sync engine
+-- pull path should be aware this resurrects soft-deleted rows. The sync pull
+-- path is safe because tombstoned UIDs are filtered out before this runs
+-- (engine.go loads tombstones first and skips them during pull).
 -- name: UpsertJournalByUID :one
 INSERT INTO journals (
     uid, calendar_id, summary, description,

@@ -1173,6 +1173,10 @@ type UpsertTodoByUIDParams struct {
 	Dtstamp         *string
 }
 
+// NOTE: ON CONFLICT UPDATE clears deleted_at. Callers outside the sync engine
+// pull path should be aware this resurrects soft-deleted rows. The sync pull
+// path is safe because tombstoned UIDs are filtered out before this runs
+// (engine.go loads tombstones first and skips them during pull).
 func (q *Queries) UpsertTodoByUID(ctx context.Context, arg UpsertTodoByUIDParams) (Todo, error) {
 	row := q.db.QueryRowContext(ctx, upsertTodoByUID,
 		arg.Uid,
