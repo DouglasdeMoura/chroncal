@@ -393,9 +393,10 @@ func parseDateListFromProps(props ical.Props, propName string, fallback *time.Lo
 	return strings.Join(dates, ",")
 }
 
-// parseAttendeesFromProps reads the attendees of a VTODO or a VJOURNAL.
-// Those two tables accept the wider PARTSTAT set, so the caller passes
-// model.TaskAttendee. The second return value lists the clamps.
+// parseAttendeesFromProps reads the attendees of a VEVENT, a VTODO, or a
+// VJOURNAL. The kind parameter selects the PARTSTAT set that is valid for
+// the component: model.EventAttendee for a VEVENT, model.TaskAttendee for a
+// VTODO and a VJOURNAL. The second return value lists the clamps.
 func parseAttendeesFromProps(props ical.Props, kind model.AttendeeKind) ([]model.Attendee, []string) {
 	var attendees []model.Attendee
 	var warns []string
