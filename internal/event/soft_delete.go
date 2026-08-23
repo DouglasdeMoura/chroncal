@@ -335,6 +335,20 @@ func (s *Service) restoreSeries(ctx context.Context, uid string) error {
 	if err == nil {
 		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid)
 	}
+	// The master row is gone (it was purged on its own). Reconcile on every
+	// calendar the restored rows live on, the same way RestoreByUID does.
+	// Without this, a pending tombstone survives the undo-series. The next
+	// sync would then DELETE the series from the server right after a
+	// successful undo.
+	ids, rErr := s.distinctCalendarIDsByUID(ctx, uid)
+	if rErr != nil {
+		return rErr
+	}
+	for _, id := range ids {
+		if err := s.reconcileSyncAfterRestore(ctx, id, uid); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
