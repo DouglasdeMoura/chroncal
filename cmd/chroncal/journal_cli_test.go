@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -77,5 +78,46 @@ func TestJournalListHidesCancelledByDefault(t *testing.T) {
 	}
 	if strings.Contains(stdoutStatus, "Active note") {
 		t.Fatalf("--status CANCELLED list = %q, should not contain FINAL entry %q", stdoutStatus, "Active note")
+	}
+}
+
+// TestJournalExdateParseFailureIsInvalidInput guards the error taxonomy. A
+// bad --exdate value in journal add/update used to surface as a generic
+// error. It must report invalid_input like the event and todo commands.
+func TestJournalExdateParseFailureIsInvalidInput(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	_, stderr, err := runChroncalCommand(t, "journal", "add", "Note",
+		"--calendar", "Work", "--exdate", "not-a-date", "--output", "json")
+	if err == nil {
+		t.Fatal("journal add accepted a bad --exdate value")
+	}
+	var payload struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+		t.Fatalf("decode error payload %q: %v", stderr, jerr)
+	}
+	if payload.Code != "invalid_input" {
+		t.Fatalf("code = %q, want invalid_input", payload.Code)
+	}
+
+	if _, _, err := runChroncalCommand(t, "journal", "add", "Note", "--calendar", "Work"); err != nil {
+		t.Fatalf("journal add: %v", err)
+	}
+	_, stderr, err = runChroncalCommand(t, "journal", "update", "1",
+		"--exdate", "not-a-date", "--output", "json")
+	if err == nil {
+		t.Fatal("journal update accepted a bad --exdate value")
+	}
+	if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+		t.Fatalf("decode error payload %q: %v", stderr, jerr)
+	}
+	if payload.Code != "invalid_input" {
+		t.Fatalf("journal update: code = %q, want invalid_input", payload.Code)
 	}
 }

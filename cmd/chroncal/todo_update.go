@@ -220,14 +220,14 @@ a --progress value other than 100.`,
 			if cmd.Flags().Changed("exception-date-times") || cmd.Flags().Changed("exdate") {
 				parsed, err := parseDateFlags(exdates, "", time.Time{})
 				if err != nil {
-					return fmt.Errorf("--exdate: %w", err)
+					return errInvalidInputf("--exception-date-times: %v", err)
 				}
 				p.ExDates = parsed
 			}
 			if cmd.Flags().Changed("recurrence-date-times") || cmd.Flags().Changed("rdate") {
 				parsed, err := parseDateFlags(rdates, "", time.Time{})
 				if err != nil {
-					return fmt.Errorf("--rdate: %w", err)
+					return errInvalidInputf("--recurrence-date-times: %v", err)
 				}
 				p.RDates = parsed
 			}
