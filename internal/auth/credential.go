@@ -473,6 +473,12 @@ func keyringAccountName(namespace string, accountID int64) string {
 	return fmt.Sprintf("db_%s_account_%d", namespace, accountID)
 }
 
+// newKeyringAvailabilityProbe builds a one-shot probe for the OS keyring.
+// The probe only reads a nonexistent item. A backend that answers proves it
+// is reachable. A write-based probe leaves a probe item in the production
+// keyring when the process dies between the set and the delete, so this
+// probe never writes. When the backend answers, the probe removes the probe
+// item that an older, write-based probe left behind.
 func newKeyringAvailabilityProbe() func() error {
 	var (
 		once     sync.Once
@@ -480,14 +486,27 @@ func newKeyringAvailabilityProbe() func() error {
 	)
 	return func() error {
 		once.Do(func() {
-			probeUser := "__chroncal_probe__"
-			probeValue := "ok"
-			if err := keyringSetFn(keyringService, probeUser, probeValue); err != nil {
-				probeErr = err
+			_, err := keyringGetFn(keyringService, "__chroncal_probe__")
+			if err == nil || errors.Is(err, keyring.ErrNotFound) || secretServiceReportsAbsentItem(err) {
+				// Remove the residue of the older write-based probe.
+				// The cleanup is best effort: no error from it changes
+				// the availability answer. An absent item answers with
+				// ErrNotFound, which the cleanup ignores.
+				_ = keyringDeleteFn(keyringService, "__chroncal_probe__")
 				return
 			}
-			_ = keyringDeleteFn(keyringService, probeUser)
+			probeErr = err
 		})
 		return probeErr
 	}
+}
+
+// secretServiceReportsAbsentItem reports whether err carries a Secret Service
+// or DBus error identity. Some Secret Service paths answer a missing item
+// with such a raw error instead of ErrNotFound. The match stays narrow: a
+// broad text match reads a broken backend as an absent item.
+func secretServiceReportsAbsentItem(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "org.freedesktop.secret") ||
+		strings.Contains(msg, "org.freedesktop.dbus.error")
 }
