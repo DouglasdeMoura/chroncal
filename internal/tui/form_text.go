@@ -163,8 +163,6 @@ func (f *TextField) SetDisabled(v bool) {
 	}
 }
 
-// SetDimStyle sets the style used to render the value when disabled.
-// Defaults to the zero style (no visual change beyond a skip of the cursor).
 // FilterDigits allows only digit characters (0-9).
 // Every rune in the key text must be a digit; a multi-rune event (e.g. a
 // paste) is rejected if any rune fails the check.
