@@ -291,6 +291,10 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 // returned as a warning rather than only logged. Callers can then show
 // partial child-data loss in the import summary. The function does not
 // report success in silence.
+//
+// Replace every child collection unconditionally. A re-import of a UID
+// must remove a child that the new file omits. This mirrors the CalDAV
+// pull path in internal/sync (engine_persist.go).
 func importEventFields(ctx context.Context, svc *event.Service, id int64, e event.Event) []string {
 	var warns []string
 	add := func(field string, err error) {
@@ -298,30 +302,14 @@ func importEventFields(ctx context.Context, svc *event.Service, id int64, e even
 			warns = append(warns, fmt.Sprintf("import event %d: replace %s: %v", id, field, err))
 		}
 	}
-	if len(e.Alarms) > 0 {
-		add("alarms", svc.ReplaceAlarms(ctx, id, e.Alarms))
-	}
-	if len(e.Attendees) > 0 {
-		add("attendees", svc.ReplaceAttendees(ctx, id, e.Attendees))
-	}
-	if len(e.Attachments) > 0 {
-		add("attachments", svc.ReplaceAttachments(ctx, id, e.Attachments))
-	}
-	if len(e.Comments) > 0 {
-		add("comments", svc.ReplaceComments(ctx, id, e.Comments))
-	}
-	if len(e.Contacts) > 0 {
-		add("contacts", svc.ReplaceContacts(ctx, id, e.Contacts))
-	}
-	if len(e.Resources) > 0 {
-		add("resources", svc.ReplaceResources(ctx, id, e.Resources))
-	}
-	if len(e.Relations) > 0 {
-		add("relations", svc.ReplaceRelations(ctx, id, e.Relations))
-	}
-	if len(e.XProperties) > 0 {
-		add("x-properties", svc.ReplaceXProperties(ctx, id, e.XProperties))
-	}
+	add("alarms", svc.ReplaceAlarms(ctx, id, e.Alarms))
+	add("attendees", svc.ReplaceAttendees(ctx, id, e.Attendees))
+	add("attachments", svc.ReplaceAttachments(ctx, id, e.Attachments))
+	add("comments", svc.ReplaceComments(ctx, id, e.Comments))
+	add("contacts", svc.ReplaceContacts(ctx, id, e.Contacts))
+	add("resources", svc.ReplaceResources(ctx, id, e.Resources))
+	add("relations", svc.ReplaceRelations(ctx, id, e.Relations))
+	add("x-properties", svc.ReplaceXProperties(ctx, id, e.XProperties))
 	return warns
 }
 
@@ -333,30 +321,14 @@ func importTodoFields(ctx context.Context, svc *todo.Service, id int64, t todo.T
 			warns = append(warns, fmt.Sprintf("import todo %d: replace %s: %v", id, field, err))
 		}
 	}
-	if len(t.Alarms) > 0 {
-		add("alarms", svc.ReplaceAlarms(ctx, id, t.Alarms))
-	}
-	if len(t.Attendees) > 0 {
-		add("attendees", svc.ReplaceAttendees(ctx, id, t.Attendees))
-	}
-	if len(t.Attachments) > 0 {
-		add("attachments", svc.ReplaceAttachments(ctx, id, t.Attachments))
-	}
-	if len(t.Comments) > 0 {
-		add("comments", svc.ReplaceComments(ctx, id, t.Comments))
-	}
-	if len(t.Contacts) > 0 {
-		add("contacts", svc.ReplaceContacts(ctx, id, t.Contacts))
-	}
-	if len(t.Resources) > 0 {
-		add("resources", svc.ReplaceResources(ctx, id, t.Resources))
-	}
-	if len(t.Relations) > 0 {
-		add("relations", svc.ReplaceRelations(ctx, id, t.Relations))
-	}
-	if len(t.XProperties) > 0 {
-		add("x-properties", svc.ReplaceXProperties(ctx, id, t.XProperties))
-	}
+	add("alarms", svc.ReplaceAlarms(ctx, id, t.Alarms))
+	add("attendees", svc.ReplaceAttendees(ctx, id, t.Attendees))
+	add("attachments", svc.ReplaceAttachments(ctx, id, t.Attachments))
+	add("comments", svc.ReplaceComments(ctx, id, t.Comments))
+	add("contacts", svc.ReplaceContacts(ctx, id, t.Contacts))
+	add("resources", svc.ReplaceResources(ctx, id, t.Resources))
+	add("relations", svc.ReplaceRelations(ctx, id, t.Relations))
+	add("x-properties", svc.ReplaceXProperties(ctx, id, t.XProperties))
 	return warns
 }
 
@@ -368,24 +340,12 @@ func importJournalFields(ctx context.Context, svc *journal.Service, id int64, j 
 			warns = append(warns, fmt.Sprintf("import journal %d: replace %s: %v", id, field, err))
 		}
 	}
-	if len(j.Attendees) > 0 {
-		add("attendees", svc.ReplaceAttendees(ctx, id, j.Attendees))
-	}
-	if len(j.Attachments) > 0 {
-		add("attachments", svc.ReplaceAttachments(ctx, id, j.Attachments))
-	}
-	if len(j.Comments) > 0 {
-		add("comments", svc.ReplaceComments(ctx, id, j.Comments))
-	}
-	if len(j.Contacts) > 0 {
-		add("contacts", svc.ReplaceContacts(ctx, id, j.Contacts))
-	}
-	if len(j.Relations) > 0 {
-		add("relations", svc.ReplaceRelations(ctx, id, j.Relations))
-	}
-	if len(j.XProperties) > 0 {
-		add("x-properties", svc.ReplaceXProperties(ctx, id, j.XProperties))
-	}
+	add("attendees", svc.ReplaceAttendees(ctx, id, j.Attendees))
+	add("attachments", svc.ReplaceAttachments(ctx, id, j.Attachments))
+	add("comments", svc.ReplaceComments(ctx, id, j.Comments))
+	add("contacts", svc.ReplaceContacts(ctx, id, j.Contacts))
+	add("relations", svc.ReplaceRelations(ctx, id, j.Relations))
+	add("x-properties", svc.ReplaceXProperties(ctx, id, j.XProperties))
 	return warns
 }
 

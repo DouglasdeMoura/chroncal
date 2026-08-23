@@ -12,7 +12,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 func newTestApp(t *testing.T) *app.App {
@@ -247,6 +249,79 @@ func TestImport_ChildFieldFailureIsWarningNotFailed(t *testing.T) {
 	}
 	if !containsSubstring(summary.Warnings, "alarms") {
 		t.Errorf("summary.Warnings = %v, want one about dropped alarms", summary.Warnings)
+	}
+}
+
+// TestImport_ReimportRemovesStaleChildren locks in the re-import contract.
+// An import replaces the child collections of a row. It does not merge
+// them. A re-import that omits a child must remove the stored child. The
+// old len>0 guard kept stale alarms and attendees on the row, so a
+// removal on the source never reached the local copy.
+func TestImport_ReimportRemovesStaleChildren(t *testing.T) {
+	ctx := context.Background()
+	a := newTestApp(t)
+	cal, err := a.Calendars.Create(ctx, "Work", "", "")
+	if err != nil {
+		t.Fatalf("create calendar: %v", err)
+	}
+
+	start := time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC)
+	attendee := model.Attendee{
+		Email: "user@example.com", Name: "User",
+		RSVPStatus: "NEEDS-ACTION", Role: "REQ-PARTICIPANT",
+	}
+	importAll := func(withChildren bool) icaltransfer.Summary {
+		evt := event.Event{
+			UID: "evt-children", Title: "Reimport",
+			StartTime: start, EndTime: start.Add(time.Hour),
+		}
+		td := todo.Todo{UID: "todo-children", Summary: "Reimport todo"}
+		jr := journal.Journal{UID: "jr-children", Summary: "Reimport journal"}
+		if withChildren {
+			evt.Alarms = []model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "START"}}
+			evt.Attendees = []model.Attendee{attendee}
+			td.Alarms = []model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT30M", Related: "START"}}
+			jr.Attendees = []model.Attendee{attendee}
+		}
+		return icaltransfer.Import(ctx, a, cal.ID, &ical.ImportResult{
+			Events:   []event.Event{evt},
+			Todos:    []todo.Todo{td},
+			Journals: []journal.Journal{jr},
+		})
+	}
+
+	if s := importAll(true); s.Failed != 0 {
+		t.Fatalf("first import Failed = %d, want 0 (warnings: %v)", s.Failed, s.Warnings)
+	}
+	if s := importAll(false); s.Failed != 0 {
+		t.Fatalf("re-import Failed = %d, want 0 (warnings: %v)", s.Failed, s.Warnings)
+	}
+
+	evt, err := a.Events.GetByUID(ctx, "evt-children")
+	if err != nil {
+		t.Fatalf("GetByUID event: %v", err)
+	}
+	if alarms, err := a.Events.ListAlarms(ctx, evt.ID); err != nil || len(alarms) != 0 {
+		t.Errorf("event alarms after re-import = %v (err %v), want none", alarms, err)
+	}
+	if atts, err := a.Events.ListAttendees(ctx, evt.ID); err != nil || len(atts) != 0 {
+		t.Errorf("event attendees after re-import = %v (err %v), want none", atts, err)
+	}
+
+	td, err := a.Todos.GetByUID(ctx, "todo-children")
+	if err != nil {
+		t.Fatalf("GetByUID todo: %v", err)
+	}
+	if alarms, err := a.Todos.ListAlarms(ctx, td.ID); err != nil || len(alarms) != 0 {
+		t.Errorf("todo alarms after re-import = %v (err %v), want none", alarms, err)
+	}
+
+	jr, err := a.Journals.GetByUID(ctx, "jr-children")
+	if err != nil {
+		t.Fatalf("GetByUID journal: %v", err)
+	}
+	if atts, err := a.Journals.ListAttendees(ctx, jr.ID); err != nil || len(atts) != 0 {
+		t.Errorf("journal attendees after re-import = %v (err %v), want none", atts, err)
 	}
 }
 
