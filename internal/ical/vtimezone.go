@@ -123,6 +123,9 @@ func parseUTCOffset(s string) (int, error) {
 			return 0, err
 		}
 	}
+	if hours > 23 || minutes > 59 || seconds > 59 {
+		return 0, fmt.Errorf("utc-offset component out of range: %q", s)
+	}
 	return sign * (hours*3600 + minutes*60 + seconds), nil
 }
 
