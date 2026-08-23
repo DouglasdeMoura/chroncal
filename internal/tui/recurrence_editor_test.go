@@ -193,9 +193,7 @@ func TestRecurrenceEditor_EnterOnEndsOnDateOpensPicker(t *testing.T) {
 }
 
 func TestRecurrenceEditor_ClickOnWeekdayTogglesThroughViewMouseZones(t *testing.T) {
-	saved := *defaultMouseTracker
-	defer func() { *defaultMouseTracker = saved }()
-	*defaultMouseTracker = mouseTracker{}
+	isolateMouseTracker(t)
 
 	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
 	_ = m.View()

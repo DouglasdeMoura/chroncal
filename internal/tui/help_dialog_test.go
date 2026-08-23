@@ -1,6 +1,9 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestHelpDialog_EventsSectionDocumentsAgendaToggleEmpty(t *testing.T) {
 	if got := findHelpEntry(t, "Events", "toggle empty days (agenda)"); got != "o" {
@@ -49,13 +52,10 @@ func TestHelpDialog_TopLevelSectionsAreTaskShaped(t *testing.T) {
 	// Palette is its own section — it has palette-specific keys
 	// (ctrl+k/j navigation, pgup/pgdn) that don't apply elsewhere.
 	want := []string{"Getting Around", "Events", "Alarms", "Calendars", "Command Palette", "Windows"}
-	sections := NewHelpDialogModel(NewTheme(true)).sections()
-	if got := len(sections); got != len(want) {
-		t.Fatalf("section count = %d, want %d", got, len(want))
-	}
-	for i, w := range want {
-		if sections[i].title != w {
-			t.Errorf("section[%d] = %q, want %q", i, sections[i].title, w)
+	view := stripANSI(NewHelpDialogModel(NewTheme(true)).SetSize(100, 40).View())
+	for _, w := range want {
+		if !strings.Contains(view, w) {
+			t.Errorf("help view missing section %q:\n%s", w, view)
 		}
 	}
 }

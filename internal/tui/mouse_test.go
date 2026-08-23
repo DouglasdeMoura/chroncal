@@ -339,9 +339,7 @@ func TestMouseZoneContains_EndAtNewLine(t *testing.T) {
 }
 
 func TestMouseMark_DefaultTracker(t *testing.T) {
-	saved := *defaultMouseTracker
-	defer func() { *defaultMouseTracker = saved }()
-	*defaultMouseTracker = mouseTracker{}
+	isolateMouseTracker(t)
 
 	content := "Click " + mouseMark("link", "here") + " for more"
 	cleaned := defaultMouseTracker.sweep(content)
