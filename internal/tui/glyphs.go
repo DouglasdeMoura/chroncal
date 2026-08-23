@@ -6,7 +6,6 @@ package tui
 var Glyphs = map[string]string{
 	// Focus / navigation
 	"focus":    ">",
-	"ellipsis": "…",
 
 	// Checkbox
 	"checkbox.on":  "[x]",
@@ -14,7 +13,6 @@ var Glyphs = map[string]string{
 
 	// Status
 	"status.ok":     "✓",
-	"status.danger": "✗",
 
 	// Select
 	"select.prev": "◀",
@@ -27,7 +25,6 @@ var Glyphs = map[string]string{
 	"time.arrow": "→",
 
 	// Separators
-	"separator.vertical":   "│",
 	"separator.horizontal": "─",
 	"separator.dot":        " · ",
 }

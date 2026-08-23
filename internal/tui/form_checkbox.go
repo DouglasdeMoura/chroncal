@@ -17,7 +17,6 @@ type CheckboxField struct {
 	checked     bool
 	autoChecked bool // true when checked was set by the form, not the user
 	focused     bool
-	quietFocus  bool // when true, focus does not apply reverse styling
 	disabledFn  func() (disabled bool, text string)
 }
 
@@ -51,11 +50,6 @@ func (f *CheckboxField) SetDisabledWhen(fn func() (disabled bool, text string)) 
 	f.disabledFn = fn
 }
 
-// SetQuietFocus suppresses the default reverse-style highlight the checkbox
-// applies when focused. Useful for non-primary toggles where the focus
-// affordance comes from the form's focus marker.
-func (f *CheckboxField) SetQuietFocus(v bool) { f.quietFocus = v }
-
 func (f *CheckboxField) Toggle() {
 	if f.disabledFn != nil {
 		if disabled, _ := f.disabledFn(); disabled {
@@ -85,10 +79,9 @@ func (f *CheckboxField) View() string {
 	if f.checked {
 		glyph = Glyphs["checkbox.on"]
 	}
+	// The focus affordance comes from the form's focus marker, so the
+	// checkbox itself never applies a reverse-style highlight.
 	style := lipgloss.NewStyle()
-	if f.focused && !f.quietFocus {
-		style = style.Reverse(true)
-	}
 
 	var out string
 	if len(f.content) > 0 {
