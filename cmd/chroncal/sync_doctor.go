@@ -40,7 +40,10 @@ before the push and asks for confirmation.`,
 			defer a.Close()
 
 			ctx := context.Background()
-			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
+			credStore, err := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
+			if err != nil {
+				return fmt.Errorf("credential store: %w", err)
+			}
 			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
 
 			cals, err := a.Queries.ListCalendars(ctx)
