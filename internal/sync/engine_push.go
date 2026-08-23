@@ -56,8 +56,9 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 				// retry on the next pass rather than guess in either
 				// direction: a false skip clears the dirty flag forever,
 				// a true push sends a guaranteed-rejected PUT.
-				result.errors = append(result.errors,
-					fmt.Errorf("organizer lookup for %s: %w", res.Uid, oErr))
+				gateErr := fmt.Errorf("organizer lookup for %s: %w", res.Uid, oErr)
+				result.errors = append(result.errors, gateErr)
+				e.recordPushFailure(ctx, calendarID, res.Uid, gateErr)
 				continue
 			}
 			if !organizes {
