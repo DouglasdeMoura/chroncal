@@ -169,7 +169,7 @@ func renderDoctorPush(cmd *cobra.Command, uid string, dropped []string) error {
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "Pushed %s. Dropped relation(s): %s.\n",
-		uid, strings.Join(dropped, ", "))
+		safeText(uid), safeText(strings.Join(dropped, ", ")))
 	fmt.Fprintln(out, "The resource is no longer dirty. Other edits flow again.")
 	return nil
 }
