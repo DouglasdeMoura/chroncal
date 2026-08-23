@@ -109,6 +109,15 @@ func (m Model) armChoice(p pendingAction, d ChoiceDialogModel) Model {
 // point: the ctrl+c supersede and both cancel branches call it. The
 // superseded action can then never fire or reappear afterward.
 func (m Model) clearPending() Model {
+	// An in-flight calendar move keeps syncing=true with no dialog
+	// attached (discovery / migrate). Dropping the pending intent
+	// without clearing that flag leaves the spinner stuck: the
+	// matching finished message then ignores itself because pending
+	// is gone, and never reaches the syncing=false assignment.
+	if m.pending.isCalendarMove() && m.syncing {
+		m.syncing = false
+		m.syncStatus = ""
+	}
 	m.pending = pendingAction{}
 	m.choiceOpen = false
 	return m
@@ -145,7 +154,6 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		// it). Clear the abandoned confirm's pending state. That keeps the
 		// destructive action from a later fire.
 		m = m.clearPending()
-		m.choiceOpen = false
 		return m.openQuitConfirm(), nil, true
 	}
 	textEntryActive := m.paletteOpen || m.formOpen || m.calendarManagerOpen ||
