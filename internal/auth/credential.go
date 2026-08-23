@@ -275,12 +275,28 @@ func (s *PlaintextFileStore) Set(cred Credential) error {
 		tmp.Close()
 		return fmt.Errorf("write credential: %w", err)
 	}
+	// Sync the data before the rename. Without the sync, a power loss can
+	// persist the rename and lose the data blocks. The write then destroys
+	// the previous secret.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync credential temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close credential file: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replace credential file: %w", err)
 	}
+	// Sync the directory so the rename survives a power loss. Some
+	// platforms do not support a sync on a directory handle. Ignore that
+	// failure.
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("open credential dir: %w", err)
+	}
+	dir.Sync()
+	dir.Close()
 	w := s.warnWriter()
 	fmt.Fprintf(w, "Warning: credentials stored in plaintext at %s\n", path)
 	if cred.OAuthClientSecret != "" {
