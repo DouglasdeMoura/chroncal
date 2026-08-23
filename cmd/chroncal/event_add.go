@@ -219,6 +219,9 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 					if err != nil {
 						return err
 					}
+					if err := mustPositiveDuration("duration", durationStr, dur); err != nil {
+						return err
+					}
 				}
 				endTime = startTime.Add(dur)
 			}

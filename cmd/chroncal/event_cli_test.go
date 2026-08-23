@@ -363,6 +363,57 @@ func TestNotFoundErrorJSONHasNoWrapPrefix(t *testing.T) {
 	}
 }
 
+// TestEventDurationMustBePositive guards the --duration end-after-start
+// contract. A zero or negative duration stored end <= start, an event no
+// view or exporter can represent. The end-time path already rejected it;
+// the duration path must reject it too, in add and update.
+func TestEventDurationMustBePositive(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	for _, dur := range []string{"0s", "-30m"} {
+		_, stderr, err := runChroncalCommand(t, "event", "add", "Standup",
+			"--calendar", "Work", "--date", "2026-04-06", "--time", "09:00",
+			"--duration", dur, "--output", "json")
+		if err == nil {
+			t.Fatalf("event add --duration %s was accepted", dur)
+		}
+		var payload struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
+		if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+			t.Fatalf("decode error payload %q: %v", stderr, jerr)
+		}
+		if payload.Code != "invalid_input" {
+			t.Fatalf("--duration %s: code = %q, want invalid_input", dur, payload.Code)
+		}
+	}
+
+	// A positive duration still works, and update rejects the same values.
+	if _, _, err := runChroncalCommand(t, "event", "add", "Standup",
+		"--calendar", "Work", "--date", "2026-04-06", "--time", "09:00",
+		"--duration", "30m"); err != nil {
+		t.Fatalf("event add --duration 30m: %v", err)
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "update", "1", "--duration", "0s", "--output", "json")
+	if err == nil {
+		t.Fatal("event update --duration 0s was accepted")
+	}
+	var payload struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+		t.Fatalf("decode error payload %q: %v", stderr, jerr)
+	}
+	if payload.Code != "invalid_input" {
+		t.Fatalf("event update --duration 0s: code = %q, want invalid_input", payload.Code)
+	}
+}
+
 // TestEventListJSONIncludesAttendees locks in that `event list --output json`
 // hydrates attendees the same way `event get` does. Chroncal Bar RSVP, the
 // participant filter, and participant search all read the list payload. They
