@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"io"
+	"os"
 	"testing"
 
 	lipgloss "charm.land/lipgloss/v2"
@@ -215,5 +217,39 @@ func TestAnsi16IndexBoundaries(t *testing.T) {
 		if ok != tc.wantOK || (ok && idx != tc.idx) {
 			t.Errorf("ansi16Index(%q) = (%d, %v); want (%d, %v)", tc.in, idx, ok, tc.idx, tc.wantOK)
 		}
+	}
+}
+
+// LoadTheme runs while the TUI owns the terminal. The fallback for an
+// unknown theme must not write to stderr. A stderr write prints over the
+// alternate screen. The warning goes to the state-dir log file instead
+// (see config.SharedStateDirLogger).
+func TestLoadThemeFallbackDoesNotWriteToStderr(t *testing.T) {
+	// The fallback warning goes through the memoized
+	// config.SharedStateDirLogger. Point XDG_STATE_HOME at a scratch
+	// dir so the test never writes to the developer's real
+	// chroncal.log (see sync_warnings_test.go for the same guard).
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	th := LoadTheme("does-not-exist", true)
+	os.Stderr = old
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("LoadTheme wrote to stderr: %q", data)
+	}
+	if th.Primary == nil {
+		t.Fatal("fallback theme should still populate tokens")
 	}
 }
