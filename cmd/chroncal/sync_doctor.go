@@ -112,8 +112,8 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 	}
 	for _, en := range entries {
 		fmt.Fprintf(out, "calendar %q uid %s (%s): unreadable relation(s) %s; %d failed push attempt(s)\n",
-			en.calendarName, en.wedged.UID, en.wedged.OwnerType,
-			strings.Join(en.wedged.Relations, ", "), en.wedged.PushFailCount)
+			safeText(en.calendarName), safeText(en.wedged.UID), safeText(en.wedged.OwnerType),
+			safeText(strings.Join(en.wedged.Relations, ", ")), en.wedged.PushFailCount)
 	}
 	// The whole hint block goes to stdout. A consumer that captures stdout
 	// then also captures the recovery command.
@@ -138,7 +138,7 @@ func runDoctorPush(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 		}
 		question := fmt.Sprintf(
 			"Push %s from calendar %q without relation(s) %s? The server copy loses those fields",
-			uid, en.calendarName, strings.Join(w.Relations, ", "))
+			safeText(uid), safeText(en.calendarName), safeText(strings.Join(w.Relations, ", ")))
 		if err := confirmDestructive(cmd, question); err != nil {
 			return err
 		}

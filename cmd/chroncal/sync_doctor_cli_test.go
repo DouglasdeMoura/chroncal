@@ -16,6 +16,14 @@ import (
 // helper process still opens the database afterwards.
 func seedWedgedCLIResource(t *testing.T, dbPath string) {
 	t.Helper()
+	seedWedgedCLIResourceWithUID(t, dbPath, "wedge-cli@example.com")
+}
+
+// seedWedgedCLIResourceWithUID seeds one wedged resource whose sync UID is
+// the given string. The doctor then lists exactly that UID. The helper
+// renames event_relations back at cleanup like the fixed-UID variant.
+func seedWedgedCLIResourceWithUID(t *testing.T, dbPath string, uid string) {
+	t.Helper()
 	a, err := app.New(dbPath)
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
@@ -29,14 +37,14 @@ func seedWedgedCLIResource(t *testing.T, dbPath string) {
 	if _, err := a.DB.ExecContext(ctx,
 		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, status, transp, class)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		"wedge-cli@example.com", cals[0].ID, "Wedged",
+		uid, cals[0].ID, "Wedged",
 		"2026-04-03T10:00:00Z", "2026-04-03T11:00:00Z", "CONFIRMED", "OPAQUE", "PUBLIC",
 	); err != nil {
 		t.Fatalf("insert event: %v", err)
 	}
 	if err := a.Queries.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
 		CalendarID:   cals[0].ID,
-		Uid:          "wedge-cli@example.com",
+		Uid:          uid,
 		OwnerType:    "event",
 		Etag:         "",
 		Dirty:        1,
@@ -127,6 +135,26 @@ func TestSyncDoctorListsWedgedResource(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "3 failed push attempt(s)") {
 		t.Errorf("output %q misses the recorded push-failure count", stdout)
+	}
+}
+
+// TestSyncDoctorSanitizesRemoteDerivedStrings guards the doctor output.
+// The UID and owner type come from remote iCal data. A UID with terminal
+// escape bytes must not reach the terminal raw. Every other wedged line
+// passes through safeText like the sync status and conflict lines.
+func TestSyncDoctorSanitizesRemoteDerivedStrings(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	seedWedgedCLIResourceWithUID(t, dbPath, "\x1b[31mwedge\x1b[0m@example.com")
+
+	stdout, _, err := runChroncalCommand(t, "sync", "doctor")
+	if err != nil {
+		t.Fatalf("sync doctor: %v", err)
+	}
+	if strings.Contains(stdout, "\x1b") {
+		t.Fatalf("doctor line leaked a raw escape byte:\n%q", stdout)
+	}
+	if !strings.Contains(stdout, "uid wedge@example.com (event):") {
+		t.Fatalf("output %q misses the sanitized wedged line", stdout)
 	}
 }
 
