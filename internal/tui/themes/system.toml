@@ -25,7 +25,7 @@
 #
 #   0 base00  background           4 base0D  blue   (primary accent)
 #   1 base08  red    (danger)      5 base0E  magenta (focus highlight)
-#   2 base0B  green  (positive)    6 base0C  cyan   (secondary accent)
+#   2 base0B  green  (positive)    6 base0C  cyan   (cyan accent)
 #   3 base0A  yellow (warning)     7 base05  default foreground
 #   8 base03  comment/dim         15 base07  inverted bg / brightest
 #

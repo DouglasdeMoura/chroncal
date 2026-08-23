@@ -695,7 +695,7 @@ Every key is also available as an environment variable (`CHRONCAL_` prefix, dots
 The TUI ships two built-in themes:
 
 - **`system`** (default) — Chrome (text, borders, surfaces, dim text) inherits the terminal ANSI palette (`color0..15`). The TUI then follows themed terminal setups such as [Omarchy](https://learn.omacom.io/2/the-omarchy-manual/52/themes), Catppuccin, Gruvbox, Tokyo Night, or any setup that paints the standard 16 colors. The row-selection highlight adapts to the live terminal background via OSC 11. Accent colors (buttons, badges, "today", errors) sit on a fixed Dracula palette. Text-on-accent contrast then stays guaranteed across themes.
-- **`default`** — Fixed designer palette (violet primary, sky secondary, emerald accent) with light and dark variants. This theme ignores the terminal palette. Pick this if you do not theme your terminal, or if you want the same look on every machine.
+- **`default`** — Fixed designer palette (violet primary, emerald accent) with light and dark variants. This theme ignores the terminal palette. Pick this if you do not theme your terminal, or if you want the same look on every machine.
 
 Override with `ui.theme = "default"` in `config.toml` or
 `CHRONCAL_UI_THEME=default`.
