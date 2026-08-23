@@ -1,6 +1,62 @@
 package storage
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+	"slices"
+)
+
+// eventColumns lists the events table columns in migration order. The
+// dynamic queries read the table with SELECT *, and SQLite returns the
+// columns in the order the migrations defined them. scanEvents scans by
+// position, so this list pins that order.
+var eventColumns = []string{
+	"id", "uid", "calendar_id", "title", "description",
+	"location", "start_time", "end_time", "all_day",
+	"recurrence_rule", "timezone", "status", "transp",
+	"sequence", "priority", "class", "url", "exdates",
+	"rdates", "recurrence_id", "geo", "created_at",
+	"updated_at", "duration", "dtstamp", "conference_uri",
+	"deleted_at",
+}
+
+// todoColumns lists the todos table columns in migration order. See
+// eventColumns for why the order matters.
+var todoColumns = []string{
+	"id", "uid", "calendar_id", "summary", "description",
+	"location", "due_date", "start_date", "duration",
+	"completed_at", "percent_complete", "status", "priority",
+	"class", "url", "recurrence_rule", "timezone",
+	"sequence", "exdates", "rdates", "recurrence_id",
+	"geo", "created_at", "updated_at", "dtstamp",
+	"deleted_at",
+}
+
+// journalColumns lists the journals table columns in migration order. See
+// eventColumns for why the order matters.
+var journalColumns = []string{
+	"id", "uid", "calendar_id", "summary", "description",
+	"start_date", "status", "class", "url",
+	"recurrence_rule", "timezone", "sequence",
+	"exdates", "rdates", "recurrence_id", "dtstamp",
+	"created_at", "updated_at",
+	"deleted_at",
+}
+
+// checkScanColumns verifies that rows carry the expected columns in the
+// expected order. A schema change that moves a same-type column then fails
+// the first read with a descriptive error. Without the check, the scan
+// swaps such values in silence.
+func checkScanColumns(rows *sql.Rows, table string, want []string) error {
+	got, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("read %s columns: %w", table, err)
+	}
+	if !slices.Equal(got, want) {
+		return fmt.Errorf("%s query returned columns %v; scan expects %v", table, got, want)
+	}
+	return nil
+}
 
 // scanEvents reads rows into []Event. Column order must match the events table.
 // Columns:
