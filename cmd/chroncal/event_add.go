@@ -219,6 +219,9 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 					if err != nil {
 						return err
 					}
+					if dur <= 0 {
+						return errInvalidInputf("--duration must be positive (e.g. 30m, 1h), got %q", durationStr)
+					}
 				}
 				endTime = startTime.Add(dur)
 			}

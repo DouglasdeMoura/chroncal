@@ -255,6 +255,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				if err != nil {
 					return err
 				}
+				if dur <= 0 {
+					return errInvalidInputf("--duration must be positive (e.g. 30m, 1h), got %q", durationStr)
+				}
 				p.EndTime = p.StartTime.Add(dur)
 			case cmd.Flags().Changed("date") || cmd.Flags().Changed("time"):
 				if existing.AllDay && !p.AllDay {
