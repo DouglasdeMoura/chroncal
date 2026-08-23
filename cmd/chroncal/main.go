@@ -494,3 +494,14 @@ func parseCLIDuration(flag, value string) (time.Duration, error) {
 	}
 	return d, nil
 }
+
+// mustPositiveDuration rejects a zero or negative duration after a
+// successful parseCLIDuration call. Pass the flag name without the leading
+// dashes and the raw flag value. The error names the flag and repeats the
+// value, tagged with code "invalid_input".
+func mustPositiveDuration(flag, raw string, d time.Duration) error {
+	if d <= 0 {
+		return errInvalidInputf("--%s must be positive (e.g. 30m, 1h), got %q", flag, raw)
+	}
+	return nil
+}
