@@ -28,7 +28,6 @@ type rawTheme struct {
 
 	// Structural chrome.
 	Primary      any `toml:"primary"`
-	Secondary    any `toml:"secondary"`
 	Accent       any `toml:"accent"`
 	Muted        any `toml:"muted"`
 	Text         any `toml:"text"`
@@ -267,7 +266,6 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 
 	t := Theme{
 		Primary:      pick("primary", r.Primary),
-		Secondary:    pick("secondary", r.Secondary),
 		Accent:       pick("accent", r.Accent),
 		Muted:        pick("muted", r.Muted),
 		Text:         pick("text", r.Text),

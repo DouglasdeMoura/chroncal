@@ -23,15 +23,14 @@ const DefaultThemeName = "system"
 // Do not hunt hardcoded values.
 type Theme struct {
 	// Structural chrome
-	Primary   color.Color
-	Secondary color.Color
-	Accent    color.Color
-	Muted     color.Color
-	Text      color.Color
-	TextDim   color.Color
-	Border    color.Color
-	Today     color.Color
-	Selected  color.Color
+	Primary  color.Color
+	Accent   color.Color
+	Muted    color.Color
+	Text     color.Color
+	TextDim  color.Color
+	Border   color.Color
+	Today    color.Color
+	Selected color.Color
 	// SelectedText is the foreground color to use when painting text on
 	// top of Selected. On themes where Selected and Text may converge
 	// (e.g. Base16 system themes where both resolve to dark indices),

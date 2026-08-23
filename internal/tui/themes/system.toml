@@ -68,7 +68,6 @@ selected_text = "7"   # base05 reads on a neutral gray on both modes
 # ---------------------------------------------------------------------------
 
 primary   = "4"   # base0D blue — brand accent (calendar selected cell border)
-secondary = "6"   # base0C cyan
 accent    = "2"   # base0B green — positive actions
 today     = "1"   # base08 red — "now line", today indicator
 error     = "1"   # base08 red
