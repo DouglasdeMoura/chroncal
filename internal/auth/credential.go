@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/zalando/go-keyring"
 )
 
@@ -320,26 +321,13 @@ func (s *PlaintextFileStore) path(accountID int64) string {
 	return filepath.Join(s.dir, "db_"+s.namespace, fmt.Sprintf("account_%d.json", accountID))
 }
 
-// appConfigBaseDir returns the OS base config directory. It honours
-// XDG_CONFIG_HOME on every platform. That matches the behaviour of the config
-// loader's configDir. goos is a runtime.GOOS value. It is a parameter so
-// tests can call it with a non-current GOOS to verify cross-platform behaviour.
+// appConfigBaseDir returns the OS base config directory for the credential
+// store. It delegates to config.BaseDir so the config loader and the
+// credential store share one resolver. goos is a runtime.GOOS value. It is
+// a parameter so tests can call it with a non-current GOOS to verify
+// cross-platform behaviour.
 func appConfigBaseDir(goos string) (string, error) {
-	// XDG_CONFIG_HOME takes precedence on every OS, not just Linux.
-	// Many CLI tools adopt this so users on macOS/Windows can relocate
-	// config with a single env var. Checking it first here matches the
-	// behaviour of the config loader (internal/config.configDir).
-	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
-		return dir, nil
-	}
-	if goos == "linux" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, ".config"), nil
-	}
-	return os.UserConfigDir()
+	return config.BaseDir("XDG_CONFIG_HOME", goos, ".config")
 }
 
 func credentialDir() (string, error) {
