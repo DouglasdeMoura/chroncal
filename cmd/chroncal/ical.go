@@ -256,16 +256,9 @@ them.`,
 						From:       fromT,
 						To:         toT,
 					})
-					if eerr == nil {
-						seen := make(map[int64]bool, len(events))
-						for _, e := range events {
-							seen[e.ID] = true
-						}
-						for _, e := range extra {
-							if !seen[e.ID] {
-								events = append(events, e)
-							}
-						}
+					events, err = appendRecurringExtras(events, extra, eerr)
+					if err != nil {
+						return err
 					}
 				}
 
@@ -405,6 +398,26 @@ them.`,
 	cmd.Flags().BoolVar(&skipUnreadable, "skip-unreadable", false,
 		"export past unreadable relations and mark incomplete records (default: abort)")
 	return cmd
+}
+
+// appendRecurringExtras merges recurring masters from the expansion query
+// into the export set. expandErr is the error from that query. A failed
+// expansion must abort the export: a backup file that silently drops
+// series masters is incomplete, so no file may be written.
+func appendRecurringExtras(events, extra []event.Event, expandErr error) ([]event.Event, error) {
+	if expandErr != nil {
+		return nil, fmt.Errorf("export aborted, no file written: expand recurring events: %w", expandErr)
+	}
+	seen := make(map[int64]bool, len(events))
+	for _, e := range events {
+		seen[e.ID] = true
+	}
+	for _, e := range extra {
+		if !seen[e.ID] {
+			events = append(events, e)
+		}
+	}
+	return events, nil
 }
 
 // unreadableRecord names one record that exported without all its relations.

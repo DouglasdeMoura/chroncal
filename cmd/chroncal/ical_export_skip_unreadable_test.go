@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
 )
 
@@ -165,5 +167,35 @@ func TestICalExportSkipUnreadable(t *testing.T) {
 	}
 	if !brokenOK || !healthyOK {
 		t.Fatalf("missing records after round-trip: broken=%v healthy=%v", brokenOK, healthyOK)
+	}
+}
+
+// TestAppendRecurringExtrasPropagatesExpansionError guards the export
+// abort contract for the recurring-master expansion. The export command
+// used to swallow the ExportExpandedByDateRange error, so a failed
+// expansion still wrote an incomplete backup and exited 0.
+func TestAppendRecurringExtrasPropagatesExpansionError(t *testing.T) {
+	boom := fmt.Errorf("disk I/O error")
+	_, err := appendRecurringExtras(nil, nil, boom)
+	if err == nil {
+		t.Fatal("appendRecurringExtras must return the expansion error")
+	}
+	if !strings.Contains(err.Error(), "no file written") || !strings.Contains(err.Error(), "disk I/O error") {
+		t.Fatalf("error = %q, want the abort message to carry the cause", err)
+	}
+}
+
+// TestAppendRecurringExtrasMergesAndDedupes verifies the merge half of the
+// helper: masters already in the export set stay single, new masters append.
+func TestAppendRecurringExtrasMergesAndDedupes(t *testing.T) {
+	events := []event.Event{{ID: 1}, {ID: 2}}
+	extra := []event.Event{{ID: 2}, {ID: 3}}
+
+	got, err := appendRecurringExtras(events, extra, nil)
+	if err != nil {
+		t.Fatalf("appendRecurringExtras: %v", err)
+	}
+	if len(got) != 3 || got[0].ID != 1 || got[1].ID != 2 || got[2].ID != 3 {
+		t.Fatalf("merged = %+v, want ids [1 2 3]", got)
 	}
 }
