@@ -218,16 +218,16 @@ a --progress value other than 100.`,
 				p.RecurrenceRule = rrule
 			}
 			if cmd.Flags().Changed("exception-date-times") || cmd.Flags().Changed("exdate") {
-				parsed, err := parseDateFlags(exdates, "", time.Time{})
+				parsed, err := parseExdateRdateFlags("exception-date-times", exdates, "", time.Time{})
 				if err != nil {
-					return errInvalidInputf("--exception-date-times: %v", err)
+					return err
 				}
 				p.ExDates = parsed
 			}
 			if cmd.Flags().Changed("recurrence-date-times") || cmd.Flags().Changed("rdate") {
-				parsed, err := parseDateFlags(rdates, "", time.Time{})
+				parsed, err := parseExdateRdateFlags("recurrence-date-times", rdates, "", time.Time{})
 				if err != nil {
-					return errInvalidInputf("--recurrence-date-times: %v", err)
+					return err
 				}
 				p.RDates = parsed
 			}

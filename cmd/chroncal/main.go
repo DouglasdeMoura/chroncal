@@ -54,6 +54,13 @@ func errInvalidInputf(format string, args ...any) error {
 	return &cliError{Code: "invalid_input", Msg: fmt.Sprintf(format, args...)}
 }
 
+// errNotFoundf is the printf counterpart to notFoundErr. It produces a
+// *cliError tagged with code "not_found". Use it when a command cannot
+// find the row that the user named, for example on a restore or a purge.
+func errNotFoundf(format string, args ...any) error {
+	return &cliError{Code: "not_found", Msg: fmt.Sprintf(format, args...)}
+}
+
 // printCLIError writes err to stderr in the format that matches --output.
 // Text mode keeps "Error: <msg>". JSON emits a structured payload.
 // Aborted errors drop the "Error: " prefix in text mode. They come from

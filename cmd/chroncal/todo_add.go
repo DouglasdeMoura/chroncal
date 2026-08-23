@@ -174,13 +174,13 @@ and percent-complete to 100.`,
 				return fmt.Errorf("--status COMPLETED requires 100%% progress, got %d (omit --progress or set it to 100)", progress)
 			}
 
-			parsedExDates, err := parseDateFlags(exdates, "", time.Time{})
+			parsedExDates, err := parseExdateRdateFlags("exception-date-times", exdates, "", time.Time{})
 			if err != nil {
-				return errInvalidInputf("--exception-date-times: %v", err)
+				return err
 			}
-			parsedRDates, err := parseDateFlags(rdates, "", time.Time{})
+			parsedRDates, err := parseExdateRdateFlags("recurrence-date-times", rdates, "", time.Time{})
 			if err != nil {
-				return errInvalidInputf("--recurrence-date-times: %v", err)
+				return err
 			}
 
 			// Validate all parseable flags before creating the todo so a

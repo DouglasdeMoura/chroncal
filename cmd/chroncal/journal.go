@@ -260,13 +260,13 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 				startDate = dateStr
 			}
 
-			parsedExDates, err := parseDateFlags(exdates, "", time.Time{})
+			parsedExDates, err := parseExdateRdateFlags("exception-date-times", exdates, "", time.Time{})
 			if err != nil {
-				return errInvalidInputf("--exception-date-times: %v", err)
+				return err
 			}
-			parsedRDates, err := parseDateFlags(rdates, "", time.Time{})
+			parsedRDates, err := parseExdateRdateFlags("recurrence-date-times", rdates, "", time.Time{})
 			if err != nil {
-				return errInvalidInputf("--recurrence-date-times: %v", err)
+				return err
 			}
 
 			// Validate all parseable flags before creating the journal so a
@@ -501,16 +501,16 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 				p.RecurrenceRule = rrule
 			}
 			if cmd.Flags().Changed("exception-date-times") || cmd.Flags().Changed("exdate") {
-				parsed, err := parseDateFlags(exdates, "", time.Time{})
+				parsed, err := parseExdateRdateFlags("exception-date-times", exdates, "", time.Time{})
 				if err != nil {
-					return errInvalidInputf("--exception-date-times: %v", err)
+					return err
 				}
 				p.ExDates = parsed
 			}
 			if cmd.Flags().Changed("recurrence-date-times") || cmd.Flags().Changed("rdate") {
-				parsed, err := parseDateFlags(rdates, "", time.Time{})
+				parsed, err := parseExdateRdateFlags("recurrence-date-times", rdates, "", time.Time{})
 				if err != nil {
-					return errInvalidInputf("--recurrence-date-times: %v", err)
+					return err
 				}
 				p.RDates = parsed
 			}
@@ -720,7 +720,7 @@ the next sync cycle recreates it remotely.`,
 			if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
 				if err := a.Journals.RestoreByID(ctx, id); err != nil {
 					if errors.Is(err, journal.ErrNotDeleted) {
-						return fmt.Errorf("journal %d not found (may have been purged)", id)
+						return errNotFoundf("journal %d not found (may have been purged)", id)
 					}
 					return fmt.Errorf("restore journal: %w", err)
 				}
@@ -733,7 +733,7 @@ the next sync cycle recreates it remotely.`,
 
 			if err := a.Journals.RestoreByUID(ctx, ref); err != nil {
 				if errors.Is(err, journal.ErrNotDeleted) {
-					return fmt.Errorf("journal %q not found (may have been purged)", ref)
+					return errNotFoundf("journal %q not found (may have been purged)", ref)
 				}
 				return fmt.Errorf("restore journal: %w", err)
 			}
@@ -787,7 +787,7 @@ use 'journal delete' first. Purging is not reversible — child rows cascade.`,
 
 			if err := a.Journals.PurgeByID(ctx, id); err != nil {
 				if errors.Is(err, journal.ErrNotDeleted) {
-					return fmt.Errorf("journal %d not found or not soft-deleted", id)
+					return errNotFoundf("journal %d not found or not soft-deleted", id)
 				}
 				return fmt.Errorf("purge: %w", err)
 			}

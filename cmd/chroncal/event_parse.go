@@ -492,6 +492,19 @@ func validateRRule(rrule string) error {
 	return errInvalidInputf("invalid --rrule %q: must contain FREQ= (e.g. FREQ=WEEKLY;BYDAY=MO)", rrule)
 }
 
+// parseExdateRdateFlags parses the values of one recurrence-date flag. The
+// flag argument is the long name without the leading dashes, for example
+// "exception-date-times". The function tags a parse failure with code
+// "invalid_input" and names the flag in the message. Pass the start time in
+// startTime so date-only values inherit it, as parseDateFlags describes.
+func parseExdateRdateFlags(flag string, values []string, tz string, startTime time.Time) (string, error) {
+	parsed, err := parseDateFlags(values, tz, startTime)
+	if err != nil {
+		return "", errInvalidInputf("--%s: %v", flag, err)
+	}
+	return parsed, nil
+}
+
 // validateGeo checks that a GEO value is "lat;lon" with valid ranges per
 // RFC 5545 Section 3.8.1.6. Empty string is allowed (optional field).
 func validateGeo(geo string) error {

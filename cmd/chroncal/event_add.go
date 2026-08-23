@@ -230,13 +230,13 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			if !allDay {
 				exrdateRef = startTime
 			}
-			parsedExDates, err := parseDateFlags(exdates, timezone, exrdateRef)
+			parsedExDates, err := parseExdateRdateFlags("exception-date-times", exdates, timezone, exrdateRef)
 			if err != nil {
-				return errInvalidInputf("--exception-date-times: %v", err)
+				return err
 			}
-			parsedRDates, err := parseDateFlags(rdates, timezone, exrdateRef)
+			parsedRDates, err := parseExdateRdateFlags("recurrence-date-times", rdates, timezone, exrdateRef)
 			if err != nil {
-				return errInvalidInputf("--recurrence-date-times: %v", err)
+				return err
 			}
 
 			// Validate all parseable flags before creating the event so a
