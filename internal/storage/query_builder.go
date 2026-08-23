@@ -111,6 +111,10 @@ func (q *Queries) queryEvents(ctx context.Context, where string, args []interfac
 	if err != nil {
 		return nil, err
 	}
+	if err := checkScanColumns(rows, "events", eventColumns); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	return scanEvents(rows)
 }
 
@@ -120,6 +124,10 @@ func (q *Queries) queryTodos(ctx context.Context, where string, args []interface
 	if err != nil {
 		return nil, err
 	}
+	if err := checkScanColumns(rows, "todos", todoColumns); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	return scanTodos(rows)
 }
 
@@ -127,6 +135,10 @@ func (q *Queries) queryJournals(ctx context.Context, where string, args []interf
 	query := "SELECT * FROM journals " + where + " ORDER BY " + orderBy
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkScanColumns(rows, "journals", journalColumns); err != nil {
+		rows.Close()
 		return nil, err
 	}
 	return scanJournals(rows)
