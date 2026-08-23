@@ -11,8 +11,8 @@ import (
 // rejected with HTTP 400 by strict CalDAV servers (Google in particular).
 // Import and export both filter them now. Rows already in the DB still
 // poison every push until they are gone. Sweep them on startup.
-func purgeLibicalDiagnosticXProps(conn *sql.DB) error {
-	_, err := conn.ExecContext(context.Background(),
+func purgeLibicalDiagnosticXProps(ctx context.Context, conn *sql.DB) error {
+	_, err := conn.ExecContext(ctx,
 		`DELETE FROM x_properties WHERE name LIKE 'X-LIC-%'`)
 	return err
 }
