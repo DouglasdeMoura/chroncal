@@ -2,12 +2,6 @@ package storage
 
 import "context"
 
-// overrideUIDBatch bounds how many UIDs go into a single `uid IN (...)` override
-// query. SQLite (modernc) caps host parameters at 32766. Stay well under that.
-// The batched fetch then does not fail on accounts with very many recurring
-// masters. The cost is a few extra queries instead of one.
-const overrideUIDBatch = 500
-
 // ListOverridesByUIDs returns all recurrence overrides (rows with a non-empty
 // recurrence_id) for the given master UIDs. It is the batched form of
 // ListOverridesByUID, used by recurrence expansion to avoid one SELECT per
@@ -17,7 +11,7 @@ const overrideUIDBatch = 500
 // support.
 func (q *Queries) ListOverridesByUIDs(ctx context.Context, uids []string) ([]Event, error) {
 	var out []Event
-	for _, chunk := range chunkSlice(uids, overrideUIDBatch) {
+	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		where := "WHERE uid IN (" + placeholders + ") AND recurrence_id != '' AND deleted_at IS NULL /* ListOverridesByUIDs */"
 		rows, err := q.queryEvents(ctx, where, args, "uid ASC, recurrence_id ASC")
@@ -32,7 +26,7 @@ func (q *Queries) ListOverridesByUIDs(ctx context.Context, uids []string) ([]Eve
 // ListTodoOverridesByUIDs is the batched form of ListTodoOverridesByUID.
 func (q *Queries) ListTodoOverridesByUIDs(ctx context.Context, uids []string) ([]Todo, error) {
 	var out []Todo
-	for _, chunk := range chunkSlice(uids, overrideUIDBatch) {
+	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		where := "WHERE uid IN (" + placeholders + ") AND recurrence_id != '' AND deleted_at IS NULL /* ListTodoOverridesByUIDs */"
 		rows, err := q.queryTodos(ctx, where, args, "uid ASC, recurrence_id ASC")
@@ -47,7 +41,7 @@ func (q *Queries) ListTodoOverridesByUIDs(ctx context.Context, uids []string) ([
 // ListJournalOverridesByUIDs is the batched form of ListJournalOverridesByUID.
 func (q *Queries) ListJournalOverridesByUIDs(ctx context.Context, uids []string) ([]Journal, error) {
 	var out []Journal
-	for _, chunk := range chunkSlice(uids, overrideUIDBatch) {
+	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		where := "WHERE uid IN (" + placeholders + ") AND recurrence_id != '' AND deleted_at IS NULL /* ListJournalOverridesByUIDs */"
 		rows, err := q.queryJournals(ctx, where, args, "uid ASC, recurrence_id ASC")
