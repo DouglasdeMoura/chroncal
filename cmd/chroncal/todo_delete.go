@@ -2,88 +2,49 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
+// todoResource adapts the todo service to the shared verb builders.
+var todoResource = resource{
+	name: "todo",
+	resolve: func(ctx context.Context, a *app.App, ref, recurrenceID string) (row, error) {
+		t, err := resolveTodo(ctx, a, ref, recurrenceID)
+		if err != nil {
+			return row{}, err
+		}
+		return row{ID: t.ID, UID: t.UID, CalendarID: t.CalendarID, Summary: t.Summary}, nil
+	},
+	del:          func(ctx context.Context, a *app.App, id int64) error { return a.Todos.Delete(ctx, id) },
+	delSeries:    func(ctx context.Context, a *app.App, uid string) error { return a.Todos.DeleteSeries(ctx, uid) },
+	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Todos.RestoreByID(ctx, id) },
+	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Todos.RestoreByUID(ctx, uid) },
+	purgeCandidate: func(ctx context.Context, a *app.App, id int64) (row, bool, error) {
+		td, err := a.Todos.GetIncludingDeleted(ctx, id)
+		if err != nil {
+			return row{}, false, err
+		}
+		return row{Summary: td.Summary}, td.DeletedAt != nil, nil
+	},
+	purgeDeleted: func(ctx context.Context, a *app.App, cutoff time.Time) (int64, error) {
+		n, err := a.Todos.PurgeDeleted(ctx, cutoff)
+		return int64(n), err
+	},
+	errNotDeleted: todo.ErrNotDeleted,
+}
+
 func todoDeleteCmd() *cobra.Command {
-	var (
-		recurrenceID string
-		series       bool
-	)
-	cmd := &cobra.Command{
-		Use:   "delete <id|uid>",
-		Short: "Delete a todo",
-		Long: `Delete a single todo, a specific recurring override, or an entire
+	return newDeleteCmd(todoResource, verbHelp{
+		short: "Delete a todo",
+		long: `Delete a single todo, a specific recurring override, or an entire
 recurring series.`,
-		Example: `  chroncal todo delete 7
+		example: `  chroncal todo delete 7
   chroncal todo delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
   chroncal todo delete weekly-review-uid --series`,
-		Args: exactOneArg,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := initApp()
-			if err != nil {
-				return err
-			}
-			defer a.Close()
-			ctx := context.Background()
-
-			t, err := resolveTodo(ctx, a, args[0], recurrenceID)
-			if err != nil {
-				return fmt.Errorf("get todo: %w", err)
-			}
-
-			if series && recurrenceID != "" {
-				return errInvalidInputf("--series and --recurrence-id are mutually exclusive")
-			}
-
-			question := fmt.Sprintf("Delete todo %q?", safeText(t.Summary))
-			if series {
-				question = fmt.Sprintf("Delete the entire recurring series %q (master + all overrides)?", safeText(t.Summary))
-			} else if recurrenceID != "" {
-				question = fmt.Sprintf("Delete override instance of %q at %s?", safeText(t.Summary), recurrenceID)
-			}
-			if err := confirmDestructive(cmd, question); err != nil {
-				return err
-			}
-
-			if series {
-				if err := a.Todos.DeleteSeries(ctx, t.UID); err != nil {
-					return fmt.Errorf("delete series: %w", err)
-				}
-				w := cmd.OutOrStdout()
-				if outputFmt != "text" {
-					if err := printOutput(w, map[string]any{"deleted": true, "uid": t.UID, "series": true}); err != nil {
-						return err
-					}
-					opportunisticPush(a, t.CalendarID, cmd)
-					return nil
-				}
-				fmt.Fprintf(w, "Deleted todo series %q.\n", safeText(t.UID))
-				opportunisticPush(a, t.CalendarID, cmd)
-				return nil
-			}
-
-			if err := a.Todos.Delete(ctx, t.ID); err != nil {
-				return fmt.Errorf("delete todo: %w", err)
-			}
-
-			w := cmd.OutOrStdout()
-			if outputFmt != "text" {
-				if err := printOutput(w, map[string]any{"deleted": true, "id": t.ID}); err != nil {
-					return err
-				}
-				opportunisticPush(a, t.CalendarID, cmd)
-				return nil
-			}
-			fmt.Fprintf(w, "Deleted todo %d.\n", t.ID)
-			opportunisticPush(a, t.CalendarID, cmd)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
-	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
-	addConfirmFlag(cmd)
-	return cmd
+	})
 }
