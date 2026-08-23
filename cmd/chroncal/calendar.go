@@ -164,7 +164,7 @@ hidden calendars as opted out of the sidebar.`
 			}
 			target, err := findCalendarByRef(cals, args[0])
 			if err != nil {
-				return errInvalidInputf("%v", err)
+				return err
 			}
 			if err := setCalendarHidden(target.ID, hide); err != nil {
 				return err
@@ -616,7 +616,7 @@ func resolveNewDefault(cmd *cobra.Command, a *app.App, ctx context.Context, cal 
 	if promote != "" {
 		chosen, err := findCalendarByRef(candidates, promote)
 		if err != nil {
-			return calendarpkg.Calendar{}, errInvalidInputf("promote: %v", err)
+			return calendarpkg.Calendar{}, fmt.Errorf("promote: %w", err)
 		}
 		return chosen, nil
 	}
@@ -661,7 +661,7 @@ func promptForNewDefault(cmd *cobra.Command, cal calendarpkg.Calendar, candidate
 	}
 	chosen, err := findCalendarByRef(candidates, answer)
 	if err != nil {
-		return calendarpkg.Calendar{}, errInvalidInputf("promote: %v", err)
+		return calendarpkg.Calendar{}, fmt.Errorf("promote: %w", err)
 	}
 	return chosen, nil
 }
@@ -680,7 +680,7 @@ func findCalendarByRef(cals []calendarpkg.Calendar, ref string) (calendarpkg.Cal
 				return cal, nil
 			}
 		}
-		return calendarpkg.Calendar{}, fmt.Errorf("calendar %q not found", ref)
+		return calendarpkg.Calendar{}, &cliError{Code: "not_found", Msg: fmt.Sprintf("calendar %q not found", ref)}
 	}
 
 	var matches []calendarpkg.Calendar
@@ -691,11 +691,11 @@ func findCalendarByRef(cals []calendarpkg.Calendar, ref string) (calendarpkg.Cal
 	}
 	switch len(matches) {
 	case 0:
-		return calendarpkg.Calendar{}, fmt.Errorf("calendar %q not found", ref)
+		return calendarpkg.Calendar{}, &cliError{Code: "not_found", Msg: fmt.Sprintf("calendar %q not found", ref)}
 	case 1:
 		return matches[0], nil
 	default:
-		return calendarpkg.Calendar{}, fmt.Errorf("calendar name %q is ambiguous; use its numeric ID instead", ref)
+		return calendarpkg.Calendar{}, errInvalidInputf("calendar name %q is ambiguous; use its numeric ID instead", ref)
 	}
 }
 
