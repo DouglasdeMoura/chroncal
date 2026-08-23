@@ -111,7 +111,7 @@ The TUI background purge loop writes logs to the state-dir file `$XDG_STATE_HOME
 
 There are exactly two variants: `Button` (neutral default) and `ButtonDanger` (destructive). There is no Primary, no Secondary, and no Ghost.
 
-`ButtonDanger` at rest shares the same pill and background as `Button`. Only the label is bold red (`Theme.Error`). On focus, Danger inverts (red background, contrast foreground). It does not use `FormHighlight`. Some themes have a warm or red focus highlight. Red text on that highlight is not readable.
+`ButtonDanger` at rest shares the same pill and background as `Button`. Only the label is bold red, derived from `Theme.Error`. A lightness clamp keeps the label at least 0.25 OKLCh L from the pill and at or above 3:1 contrast (bold text). On focus, Danger inverts (red background, contrast foreground). It does not use `FormHighlight`. Some themes have a warm or red focus highlight. Red text on that highlight is not readable.
 
 Put the red on the background. Compute a contrast label with `oklch.ContrastingFg`. That pair stays readable on every theme. It also shows the destructive signal when the user is about to commit.
 
