@@ -199,7 +199,7 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 
 	// Import events.
 	for _, e := range result.Events {
-		_, lookupErr := a.Events.GetByUID(ctx, e.UID)
+		_, lookupErr := lookupEvent(a.Events, ctx, e.UID, e.RecurrenceID)
 		saved, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
 			UID: e.UID, CalendarID: calendarID,
 			Title: e.Title, Description: e.Description, Location: e.Location,
@@ -228,7 +228,7 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 
 	// Import todos.
 	for _, t := range result.Todos {
-		_, lookupErr := a.Todos.GetByUID(ctx, t.UID)
+		_, lookupErr := lookupTodo(a.Todos, ctx, t.UID, t.RecurrenceID)
 		saved, err := a.Todos.UpsertByUID(ctx, todo.UpsertParams{
 			UID: t.UID, CalendarID: calendarID,
 			Summary: t.Summary, Description: t.Description, Location: t.Location,
@@ -257,7 +257,7 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 
 	// Import journals.
 	for _, j := range result.Journals {
-		_, lookupErr := a.Journals.GetByUID(ctx, j.UID)
+		_, lookupErr := lookupJournal(a.Journals, ctx, j.UID, j.RecurrenceID)
 		saved, err := a.Journals.UpsertByUID(ctx, journal.UpsertParams{
 			UID: j.UID, CalendarID: calendarID,
 			Summary: j.Summary, Description: j.Description,
@@ -475,4 +475,30 @@ func ExportCalendarFile(ctx context.Context, a *app.App, calendarID int64, calen
 		return summary, fmt.Errorf("write file: %w", err)
 	}
 	return summary, nil
+}
+
+// lookupEvent reports whether an imported event row already exists. An
+// override (a non-empty recurrence_id) must match its own row, not the
+// master, so the summary counts a first-time override as new.
+func lookupEvent(svc *event.Service, ctx context.Context, uid, recurrenceID string) (event.Event, error) {
+	if recurrenceID != "" {
+		return svc.GetByUIDAndRecurrenceID(ctx, uid, recurrenceID)
+	}
+	return svc.GetByUID(ctx, uid)
+}
+
+// lookupTodo reports whether an imported todo row already exists.
+func lookupTodo(svc *todo.Service, ctx context.Context, uid, recurrenceID string) (todo.Todo, error) {
+	if recurrenceID != "" {
+		return svc.GetByUIDAndRecurrenceID(ctx, uid, recurrenceID)
+	}
+	return svc.GetByUID(ctx, uid)
+}
+
+// lookupJournal reports whether an imported journal row already exists.
+func lookupJournal(svc *journal.Service, ctx context.Context, uid, recurrenceID string) (journal.Journal, error) {
+	if recurrenceID != "" {
+		return svc.GetByUIDAndRecurrenceID(ctx, uid, recurrenceID)
+	}
+	return svc.GetByUID(ctx, uid)
 }
