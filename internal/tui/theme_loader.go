@@ -254,6 +254,17 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 		// "auto" is a sentinel for "derive me at the end from other
 		// resolved tokens". Returning nil here lets the post-process
 		// step below fill it in once Text and Surface are known.
+		//
+		// Only text_dim and muted have a derivation. An "auto" value on
+		// any other token is a theme authoring error: reject it loudly
+		// instead of leaving a nil token behind.
+		if isAutoSentinel(v) && field != "text_dim" && field != "muted" {
+			err := fmt.Errorf("field %q: \"auto\" is not supported; only text_dim and muted derive their value", field)
+			if firstErr == nil {
+				firstErr = err
+			}
+			return nil
+		}
 		if isAutoSentinel(v) {
 			return nil
 		}
@@ -318,8 +329,8 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 
 // isAutoSentinel reports whether a raw TOML color value is the string
 // literal "auto", which signals "compute me at theme-load time from
-// Text and Surface". Currently honored for the text_dim and muted
-// tokens; other fields fall through resolveColor as-is.
+// Text and Surface". Only the text_dim and muted tokens accept "auto".
+// Any other token set to "auto" fails the load with an authoring error.
 func isAutoSentinel(v any) bool {
 	s, ok := v.(string)
 	return ok && s == "auto"

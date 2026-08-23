@@ -42,8 +42,8 @@ description = "Terminal ANSI palette for every chrome and accent slot"
 # ---------------------------------------------------------------------------
 
 text     = "7"      # base05 — default foreground (always contrasts with bg)
-text_dim = "auto"   # OKLab mix of text+surface (60/40); see note below
-muted    = "auto"   # OKLab mix of text+surface (45/55) — a notch dimmer
+text_dim = "auto"   # OKLab mix of text+surface (70/30); see note below
+muted    = "auto"   # OKLab mix of text+surface (55/45) — a notch dimmer
 border   = "8"      # base03 — panel borders (acceptable to be dim, structural line)
 surface  = "0"      # base00 — panel background, matches terminal default
 

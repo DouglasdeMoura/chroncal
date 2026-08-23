@@ -32,7 +32,8 @@ surface        = { light = "#F9FAFB", dark = "#111827" }
 error          = { light = "#DC2626", dark = "#F87171" }
 
 # ---------------------------------------------------------------------------
-# Badges (BadgeText is the shared foreground)
+# Badges. The text-on-badge foreground is computed at render time via
+# oklch.ContrastingFg, so there is no badge text token.
 # ---------------------------------------------------------------------------
 
 badge_ok      = "28"
@@ -54,7 +55,8 @@ form_error     = "9"
 form_highlight = "63"
 
 # ---------------------------------------------------------------------------
-# Buttons (ButtonText is the shared foreground)
+# Buttons. The label foreground comes from Text or Error, so there is
+# no separate button text token.
 # ---------------------------------------------------------------------------
 
 button_bg = "240"
