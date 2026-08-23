@@ -42,6 +42,5 @@ func (s *Service) ReplaceAttachments(ctx context.Context, journalID int64, attac
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, journalID)
-	return nil
+	return s.markDirtyByID(ctx, journalID)
 }
