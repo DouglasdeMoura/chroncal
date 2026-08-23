@@ -283,7 +283,10 @@ func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, code, redir
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != 200 {
-			return nil, fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, body)
+			// The typed status lets retry.IsTransient classify a transient
+			// exchange failure without scraping the message text.
+			return nil, retry.NewHTTPError(resp.StatusCode,
+				fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, body))
 		}
 
 		var result struct {
@@ -333,7 +336,10 @@ func RefreshGoogleToken(ctx context.Context, clientID, clientSecret, refreshToke
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != 200 {
-			return nil, fmt.Errorf("token refresh failed (%d): %s", resp.StatusCode, body)
+			// The typed status lets retry.IsTransient classify a transient
+			// refresh failure without scraping the message text.
+			return nil, retry.NewHTTPError(resp.StatusCode,
+				fmt.Errorf("token refresh failed (%d): %s", resp.StatusCode, body))
 		}
 
 		var result struct {

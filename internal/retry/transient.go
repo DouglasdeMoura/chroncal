@@ -10,7 +10,11 @@ import (
 	"time"
 )
 
-var httpStatusPattern = regexp.MustCompile(`\b([1-5][0-9][0-9])\b`)
+// The pattern accepts only an explicit status marker: a message that starts
+// with the code ("503 Service Unavailable") or a named prefix ("HTTP 503",
+// "status 503"). A bare \b[0-9]{3}\b scrape also matched batch indices,
+// ports, and host segments, and classified unrelated failures as retryable.
+var httpStatusPattern = regexp.MustCompile(`(?i)(?:^([1-5][0-9][0-9])\b)|(?:\b(?:https?|status)(?: code)?[: =]+([1-5][0-9][0-9]))`)
 
 // TransientError marks an error as retryable. It optionally carries a
 // server-requested minimum delay before the next attempt. One example is the
@@ -103,13 +107,16 @@ func IsTransient(err error) bool {
 		return true
 	}
 
+	// A bare "timeout" substring check is gone. Real timeouts carry the
+	// typed net.Error Timeout method or context.DeadlineExceeded. A text
+	// scrape also matched non-retryable failures whose message merely
+	// mentioned the word.
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "no such host") ||
-		strings.Contains(msg, "server misbehaving") ||
-		strings.Contains(msg, "timeout")
+		strings.Contains(msg, "server misbehaving")
 }
 
 // IsRetryableStatus reports whether an HTTP status code is worth a retry:
@@ -145,14 +152,22 @@ func statusCode(err error) int {
 		return httpErr.Status
 	}
 
-	// Fall back to scraping the message for legacy string-only errors.
+	// Fall back to an explicit status marker in the message for legacy
+	// string-only errors. The pattern rejects bare numeric tokens.
 	match := httpStatusPattern.FindStringSubmatch(err.Error())
-	if len(match) != 2 {
+	var token string
+	if len(match) > 1 {
+		token = match[1]
+		if token == "" && len(match) > 2 {
+			token = match[2]
+		}
+	}
+	if token == "" {
 		return 0
 	}
 
 	code := 0
-	for _, r := range match[1] {
+	for _, r := range token {
 		code = (code * 10) + int(r-'0')
 	}
 	return code

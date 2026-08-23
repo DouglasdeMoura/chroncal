@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/retry"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -151,7 +152,9 @@ func TestOAuth2HTTPClient_FailsFastOnNonTransientRefreshError(t *testing.T) {
 func TestOAuth2HTTPClient_ProceedsWithStaleTokenOnTransientRefreshError(t *testing.T) {
 	prevRefresh := refreshGoogleTokenFn
 	refreshGoogleTokenFn = func(ctx context.Context, clientID, clientSecret, refreshToken string) (*auth.GoogleOAuthResult, error) {
-		return nil, errors.New("token refresh failed (503): Service Unavailable")
+		// Match the production contract: google.go returns a typed status
+		// so IsTransient classifies without scraping the message.
+		return nil, retry.NewHTTPError(503, errors.New("token refresh failed (503): Service Unavailable"))
 	}
 	t.Cleanup(func() { refreshGoogleTokenFn = prevRefresh })
 

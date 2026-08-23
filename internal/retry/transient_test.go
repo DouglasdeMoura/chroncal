@@ -119,3 +119,38 @@ func TestIsConflict(t *testing.T) {
 		})
 	}
 }
+
+// TestStatusScrapeRejectsBareTokens pins the tightened scrape. Only an
+// explicit status marker classifies: a leading code or a named prefix.
+// Numeric tokens from ports, batch indices, or hostnames must not count.
+func TestStatusScrapeRejectsBareTokens(t *testing.T) {
+	t.Parallel()
+
+	retryable := []string{
+		"503 Service Unavailable",
+		"http 503 Service Unavailable",
+		"HTTP:429",
+		"status 500 Internal Server Error",
+		"Status Code: 502 Bad Gateway",
+	}
+	for _, msg := range retryable {
+		if !IsRetryableStatus(statusCode(errors.New(msg))) {
+			t.Errorf("statusCode(%q) must classify as a retryable status", msg)
+		}
+	}
+
+	notRetryable := []string{
+		"PUT https://dav.example.com:8443/cal/x.ics failed", // port
+		"multiget batch 100 failed",                         // index
+		"request timeout budget exhausted for item 200",     // prose + number
+		"operation timed out after 300 ms",                  // typed paths cover timeouts; text must not
+	}
+	for _, msg := range notRetryable {
+		if got := IsRetryableStatus(statusCode(errors.New(msg))); got {
+			t.Errorf("statusCode(%q) scraped a retryable status, want 0", msg)
+		}
+		if IsTransient(errors.New(msg)) {
+			t.Errorf("IsTransient(%q) = true via text scrape, want false", msg)
+		}
+	}
+}
