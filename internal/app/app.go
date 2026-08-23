@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/fileid"
 	"github.com/douglasdemoura/chroncal/internal/journal"
@@ -127,15 +128,7 @@ func DefaultDBPath() (string, error) {
 // On Linux this follows XDG: $XDG_DATA_HOME or ~/.local/share.
 // On macOS and Windows, config and data share the same path.
 func userDataDir() (string, error) {
-	if runtime.GOOS == "linux" {
-		if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
-			return dir, nil
-		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, ".local", "share"), nil
-	}
-	return os.UserConfigDir()
+	// The env variable now wins on every OS, matching the config and state
+	// resolvers. Previously only Linux read XDG_DATA_HOME.
+	return config.BaseDir("XDG_DATA_HOME", runtime.GOOS, ".local", "share")
 }

@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -154,17 +153,5 @@ func newViper() *viper.Viper {
 }
 
 func configDir() (string, error) {
-	// Honour XDG_CONFIG_HOME on every OS. Many CLI tools do this so users
-	// on macOS/Windows can override the default config location.
-	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
-		return dir, nil
-	}
-	if runtime.GOOS == "linux" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, ".config"), nil
-	}
-	return os.UserConfigDir()
+	return BaseDir("XDG_CONFIG_HOME", runtime.GOOS, ".config")
 }

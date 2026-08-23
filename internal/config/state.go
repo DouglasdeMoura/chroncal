@@ -85,15 +85,5 @@ func stateFile() (string, error) {
 // stateDir resolves XDG_STATE_HOME. It falls back to ~/.local/state on
 // Linux and os.UserConfigDir() on platforms without a state convention.
 func stateDir() (string, error) {
-	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
-		return dir, nil
-	}
-	if runtime.GOOS == "linux" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, ".local", "state"), nil
-	}
-	return os.UserConfigDir()
+	return BaseDir("XDG_STATE_HOME", runtime.GOOS, ".local", "state")
 }
