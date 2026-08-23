@@ -179,7 +179,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 				org := &ical.Prop{Name: ical.PropOrganizer, Params: make(ical.Params)}
 				org.Value = "mailto:" + att.Email
 				if att.Name != "" {
-					org.Params.Set(ical.ParamCommonName, att.Name)
+					org.Params.Set(ical.ParamCommonName, safeParamValue(att.Name))
 				}
 				setOrganizerParams(org, att)
 				vevent.Props.Set(org)
@@ -188,7 +188,7 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			attendee := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
 			attendee.Value = "mailto:" + att.Email
 			if att.Name != "" {
-				attendee.Params.Set(ical.ParamCommonName, att.Name)
+				attendee.Params.Set(ical.ParamCommonName, safeParamValue(att.Name))
 			}
 			attendee.Params.Set(ical.ParamParticipationStatus, att.RSVPStatus)
 			attendee.Params.Set(ical.ParamRole, att.Role)

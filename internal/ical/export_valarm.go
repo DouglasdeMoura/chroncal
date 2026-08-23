@@ -143,7 +143,7 @@ func buildValarm(alarm model.Alarm, recordTZ string) *ical.Component {
 		p := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
 		p.Value = "mailto:" + att.Email
 		if att.Name != "" {
-			p.Params.Set(ical.ParamCommonName, att.Name)
+			p.Params.Set(ical.ParamCommonName, safeParamValue(att.Name))
 		}
 		valarm.Props.Add(p)
 	}
@@ -167,7 +167,7 @@ func buildValarm(alarm model.Alarm, recordTZ string) *ical.Component {
 			p.Value = alarm.AttachURI
 		}
 		if alarm.AttachFmtType != "" {
-			p.Params.Set("FMTTYPE", alarm.AttachFmtType)
+			p.Params.Set("FMTTYPE", safeParamValue(alarm.AttachFmtType))
 		}
 		valarm.Props.Add(p)
 	}

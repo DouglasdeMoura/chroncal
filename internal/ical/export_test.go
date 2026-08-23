@@ -976,6 +976,43 @@ func TestExport_EventWithAttendees(t *testing.T) {
 	}
 }
 
+// TestExport_AttendeeNameWithQuoteDoesNotFailExport guards the free-text
+// parameter values (CN, FILENAME, FMTTYPE). The go-ical encoder rejects a
+// parameter value that contains a double-quote. A stored attendee name or
+// an attachment metadata field with a quote then failed the whole export
+// batch. Export must strip the bytes the parameter grammar cannot carry.
+func TestExport_AttendeeNameWithQuoteDoesNotFailExport(t *testing.T) {
+	t.Parallel()
+	events := []event.Event{{
+		UID:       "att-quote",
+		Title:     "Meeting",
+		StartTime: time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+		Status:    "CONFIRMED",
+		Transp:    "OPAQUE",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Attendees: []model.Attendee{
+			{Name: `He said "ok"`, Email: "user@example.com", RSVPStatus: "NEEDS-ACTION", Role: "REQ-PARTICIPANT"},
+			{Name: "Broken\r\nName", Email: "other@example.com", RSVPStatus: "NEEDS-ACTION", Role: "REQ-PARTICIPANT"},
+		},
+		Attachments: []model.Attachment{
+			{Data: []byte("x"), Filename: `bad"name.txt`, FmtType: "text/plain"},
+		},
+	}}
+
+	data, err := ExportEvents(events, "")
+	if err != nil {
+		t.Fatalf("ExportEvents error: %v", err)
+	}
+	ics := string(data)
+	for _, want := range []string{"CN=He said ok", "CN=BrokenName", "FILENAME=badname.txt", "FMTTYPE=text/plain"} {
+		if !strings.Contains(ics, want) {
+			t.Errorf("output missing %q\noutput:\n%s", want, ics)
+		}
+	}
+}
+
 func TestExport_SingleTodo(t *testing.T) {
 	t.Parallel()
 	todos := []todo.Todo{{
