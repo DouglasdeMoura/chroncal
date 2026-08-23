@@ -860,6 +860,73 @@ func TestDeleteSeries_MasterLookupError(t *testing.T) {
 	}
 }
 
+// TestDeleteInstance_OverrideLookupError mirrors the #290/#412 guard for the
+// instance path. DeleteInstance must not treat a genuine DB error from the
+// override lookup as "no override". On a non-ErrNoRows error the old code
+// committed the EXDATE and its provenance log while the live override row
+// stayed. The deleted occurrence then stayed visible through the override,
+// and the trash entry could not un-hide it.
+func TestDeleteInstance_OverrideLookupError(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "instance-lookup-err",
+		CalendarID:     1,
+		Title:          "Weekly Review",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	instanceAt := time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Weekly Review (moved)",
+		StartTime:    time.Date(2026, 4, 15, 14, 0, 0, 0, time.UTC),
+		EndTime:      time.Date(2026, 4, 15, 15, 0, 0, 0, time.UTC),
+		RecurrenceID: instanceAt.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Force the override lookup (GetEventByUIDAndRecurrenceID) to fail with
+	// a genuine, non-ErrNoRows error by writing non-numeric text into the
+	// override's integer sequence column so its row scan fails. The master
+	// read and UpdateEventExdates never scan the override row, so the buggy
+	// path still committed the EXDATE and returned nil.
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET sequence = 'corrupt' WHERE id = ?", override.ID); err != nil {
+		t.Fatalf("corrupt override sequence: %v", err)
+	}
+
+	err = svc.DeleteInstance(ctx, master.UID, instanceAt)
+	if err == nil {
+		t.Fatal("DeleteInstance should propagate a non-ErrNoRows override-lookup error, got nil")
+	}
+
+	// Repair the override so reads work, then confirm nothing committed: the
+	// master carries no EXDATE and the override is still live.
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET sequence = 0 WHERE id = ?", override.ID); err != nil {
+		t.Fatalf("repair override sequence: %v", err)
+	}
+	got, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after failed DeleteInstance: %v", err)
+	}
+	if n := len(got.ParseExDates()); n != 0 {
+		t.Fatalf("master EXDATE count = %d, want 0 (%q)", n, got.ExDates)
+	}
+	if _, err := svc.Get(ctx, override.ID); err != nil {
+		t.Fatalf("override should still be live after failed DeleteInstance: %v", err)
+	}
+}
+
 // TestSoftDelete_FromInstanceUndo_ReAddsRDates reproduces issue #490. The TUI
 // truncation-undo path (RestoreUndo of an UndoKindFromInstance) must re-add the
 // post-cutoff RDATEs the truncation trimmed. That matches the trash-restore

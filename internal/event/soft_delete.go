@@ -667,6 +667,14 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 		Uid:          uid,
 		RecurrenceID: recID,
 	})
+	// Only ErrNoRows means "this occurrence has no override row". A genuine
+	// lookup error must abort. Otherwise the EXDATE and its provenance commit
+	// while the live override row stays. The deleted occurrence then stays
+	// visible through the override. This mirrors the master-lookup guard the
+	// Delete override path carries (issue #412).
+	if oErr != nil && !errors.Is(oErr, sql.ErrNoRows) {
+		return fmt.Errorf("get override: %w", oErr)
+	}
 	if oErr == nil {
 		if err := qtx.SoftDeleteEvent(ctx, override.ID); err != nil {
 			return fmt.Errorf("soft-delete override: %w", err)
