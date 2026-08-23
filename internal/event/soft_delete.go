@@ -46,7 +46,9 @@ type UndoMeta struct {
 	Label     string
 	DeletedAt time.Time
 
-	// UndoKindSingle only, when Undo reverses DeleteInstanceWithUndo.
+	// UndoKindSingle only. DeleteWithUndo or DeleteInstanceWithUndo sets
+	// this field when the delete targets an override instance. A standalone
+	// master delete leaves this field empty.
 	RecurrenceID string
 
 	// UndoKindFromInstance only. CutoffTime is the truncation cutoff. It finds
