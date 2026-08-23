@@ -195,13 +195,19 @@ func (p *UpdateParams) applyDefaults() {
 	normalizeEventTimes(&p.StartTime, &p.EndTime, p.AllDay)
 }
 
-// markDirtyByID looks up an event by ID and marks its sync resource as dirty.
-func (s *Service) markDirtyByID(ctx context.Context, eventID int64) {
+// markDirtyByID marks the sync resource of the event with the given ID dirty
+// through the service's current dirty executor. A failed mark returns an
+// error so every caller can propagate it per the issue #107 contract: a
+// change that is never pushed must not stay silent.
+func (s *Service) markDirtyByID(ctx context.Context, eventID int64) error {
 	r, err := s.q.GetEvent(ctx, eventID)
 	if err != nil {
-		return
+		return fmt.Errorf("get event for dirty mark: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "event")
+	if err := storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "event"); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
+	}
+	return nil
 }
 
 // ensureEventWritable resolves an event by ID and enforces remote
