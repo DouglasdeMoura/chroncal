@@ -18,7 +18,6 @@ description = "Default tcal theme — structural chrome adapts to terminal backg
 # ---------------------------------------------------------------------------
 
 primary   = { light = "#7C3AED", dark = "#A78BFA" }
-secondary = { light = "#0284C7", dark = "#38BDF8" }
 accent    = { light = "#059669", dark = "#34D399" }
 muted     = { light = "#9CA3AF", dark = "#6B7280" }
 text      = { light = "#1F2937", dark = "#F9FAFB" }

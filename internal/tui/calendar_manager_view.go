@@ -159,7 +159,6 @@ func fingerprintTheme(t Theme) string {
 		fmt.Fprintf(&b, "|%d,%d,%d,%d;", r, g, bl, a)
 	}
 	fp("primary", t.Primary)
-	fp("secondary", t.Secondary)
 	fp("accent", t.Accent)
 	fp("muted", t.Muted)
 	fp("text", t.Text)
