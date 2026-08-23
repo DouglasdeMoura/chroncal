@@ -140,7 +140,7 @@ func TestAlarmMissed_JSONIsFlatArray(t *testing.T) {
 // TestAlarmDaemon_RejectsNonPositiveInterval guards against a panic:
 // time.NewTicker panics on a zero or negative interval. A bad --interval
 // must fail as invalid_input instead. Validation runs before initApp, so
-// the command fails with no touch of the database.
+// the command fails before the database opens.
 func TestAlarmDaemon_RejectsNonPositiveInterval(t *testing.T) {
 	for _, interval := range []string{"0s", "-1m", "-30s"} {
 		t.Run("interval="+interval, func(t *testing.T) {
