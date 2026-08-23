@@ -51,11 +51,11 @@ func expandInPlaceholders(ids []int64) (string, []interface{}) {
 	return placeholders, args
 }
 
-// loaderIDBatch bounds how many ids go into a single `id IN (...)` batch loader
-// query (categories, attendees). Like overrideUIDBatch it stays well under
-// SQLite's 32766 host-parameter cap. The IN clause then never overflows on wide
-// recurrence expansions. The cost is a few extra queries instead of one.
-const loaderIDBatch = 500
+// sqliteINBatch bounds how many values go into a single `IN (...)` batched
+// query (category/attendee loaders, overrides by UID). SQLite (modernc) caps
+// host parameters at 32766. Stay well under that: the IN clause then never
+// overflows on wide expansions. The cost is a few extra queries instead of one.
+const sqliteINBatch = 500
 
 // dedupeInt64s returns ids with duplicates removed. It keeps first-seen
 // order. Recurrence expansion feeds one id per expanded instance, so the same
@@ -82,7 +82,7 @@ func dedupeInt64s(ids []int64) []int64 {
 // load is small enough for a single `IN (...)` query.
 func loadByIDChunks[T any](ctx context.Context, ids []int64, load func(context.Context, []int64) ([]T, error)) ([]T, error) {
 	var out []T
-	for _, chunk := range chunkSlice(dedupeInt64s(ids), loaderIDBatch) {
+	for _, chunk := range chunkSlice(dedupeInt64s(ids), sqliteINBatch) {
 		rows, err := load(ctx, chunk)
 		if err != nil {
 			return nil, err
