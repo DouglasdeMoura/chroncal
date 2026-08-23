@@ -2291,8 +2291,8 @@ func TestEnginePushNormalizesNewResourcePath(t *testing.T) {
 	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
 		switch r.Method {
 		case http.MethodPut:
-			if r.URL.Path != "/calendar/opaque-resource.ics" {
-				t.Fatalf("PUT path = %s, want /calendar/opaque-resource.ics", r.URL.Path)
+			if r.URL.Path != "/calendar/normalized-new.ics" {
+				t.Fatalf("PUT path = %s, want /calendar/normalized-new.ics", r.URL.Path)
 			}
 			return &http.Response{
 				StatusCode: http.StatusCreated,
@@ -2312,7 +2312,7 @@ func TestEnginePushNormalizesNewResourcePath(t *testing.T) {
 				Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
   <d:response>
-    <d:href>/calendar/opaque-resource.ics</d:href>
+    <d:href>/calendar/normalized-new.ics</d:href>
     <d:propstat>
       <d:prop>
         <d:getetag>&quot;etag-new&quot;</d:getetag>
@@ -2356,8 +2356,8 @@ END:VCALENDAR
 	if err != nil {
 		t.Fatalf("GetSyncResource: %v", err)
 	}
-	if res.RemoteUrl != "/calendar/opaque-resource.ics" {
-		t.Fatalf("RemoteUrl = %q, want /calendar/opaque-resource.ics", res.RemoteUrl)
+	if res.RemoteUrl != "/calendar/normalized-new.ics" {
+		t.Fatalf("RemoteUrl = %q, want /calendar/normalized-new.ics", res.RemoteUrl)
 	}
 
 	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/")
@@ -2378,12 +2378,17 @@ END:VCALENDAR
 	if err != nil {
 		t.Fatalf("GetSyncResource after pull: %v", err)
 	}
-	if res.RemoteUrl != "/calendar/opaque-resource.ics" {
-		t.Fatalf("RemoteUrl after pull = %q, want /calendar/opaque-resource.ics", res.RemoteUrl)
+	if res.RemoteUrl != "/calendar/normalized-new.ics" {
+		t.Fatalf("RemoteUrl after pull = %q, want /calendar/normalized-new.ics", res.RemoteUrl)
 	}
 }
 
-func TestEnginePushIgnoresUIDWhenAssigningNewResourcePath(t *testing.T) {
+// TestEnginePushEscapesUIDWhenAssigningNewResourcePath guards the PUT href
+// for a UID with path-traversal bytes. The name comes from the UID, and the
+// sanitizer percent-encodes each '/', so the wire request cannot escape the
+// calendar collection. The decoded URL.Path still shows the raw bytes; the
+// wire form is EscapedPath.
+func TestEnginePushEscapesUIDWhenAssigningNewResourcePath(t *testing.T) {
 	engine, db, q := newTestEngine(t)
 	ctx := context.Background()
 	overrideRemoteObjectNameGenerator(t, "opaque-malicious.ics")
@@ -2412,8 +2417,8 @@ func TestEnginePushIgnoresUIDWhenAssigningNewResourcePath(t *testing.T) {
 		if r.Method != http.MethodPut {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		if r.URL.Path != "/calendar/opaque-malicious.ics" {
-			t.Fatalf("PUT path = %s, want /calendar/opaque-malicious.ics", r.URL.Path)
+		if got := r.URL.EscapedPath(); got != "/calendar/..%2F..%2Fescape.ics" {
+			t.Fatalf("PUT path = %s, want /calendar/..%%2F..%%2Fescape.ics", got)
 		}
 		return &http.Response{
 			StatusCode: http.StatusCreated,
@@ -2439,8 +2444,8 @@ func TestEnginePushIgnoresUIDWhenAssigningNewResourcePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSyncResource: %v", err)
 	}
-	if res.RemoteUrl != "/calendar/opaque-malicious.ics" {
-		t.Fatalf("RemoteUrl = %q, want /calendar/opaque-malicious.ics", res.RemoteUrl)
+	if res.RemoteUrl != "/calendar/..%2F..%2Fescape.ics" {
+		t.Fatalf("RemoteUrl = %q, want /calendar/..%%2F..%%2Fescape.ics", res.RemoteUrl)
 	}
 }
 
@@ -5256,11 +5261,41 @@ func TestBuildRemoteResourcePathUsesUID(t *testing.T) {
 		t.Errorf("buildRemoteResourcePath = %q, want %q", got, want)
 	}
 
-	// A UID with path-hostile characters must not escape its segment.
+	// A UID with path-hostile characters must not escape its segment. The
+	// URL encoder escapes the '%' of each escape sequence once more.
 	got = buildRemoteResourcePath("https://caldav.example.com/cal", "a/b c?d")
-	want = "https://caldav.example.com/cal/a_b%20c_d.ics"
+	want = "https://caldav.example.com/cal/a%252Fb%20c%253Fd.ics"
 	if got != want {
 		t.Errorf("buildRemoteResourcePath = %q, want %q", got, want)
+	}
+}
+
+// TestBuildRemoteResourcePathDistinctForEscapeBytes is a regression test.
+// The old sanitizer replaced '/', '?', '#', and '%' with '_', so the UID
+// pairs below collapsed to one name. Two resources then wrote the same
+// remote object, and one of them clobbered the other. The percent encoding
+// keeps every pair on a distinct href.
+func TestBuildRemoteResourcePathDistinctForEscapeBytes(t *testing.T) {
+	pairs := [][2]string{
+		{"x/y", "x_y"},
+		{"x?y", "x_y"},
+		{"x#y", "x_y"},
+		{"x%y", "x_y"},
+		{"x/y", "x%2Fy"},
+	}
+	for _, pair := range pairs {
+		a := buildRemoteResourcePath("https://caldav.example.com/cal/", pair[0])
+		b := buildRemoteResourcePath("https://caldav.example.com/cal/", pair[1])
+		if a == b {
+			t.Errorf("UIDs %q and %q map to the same href %q", pair[0], pair[1], a)
+		}
+	}
+
+	// The encoded name must stay one path segment: the href gains no '/'
+	// beyond the calendar collection delimiter.
+	href := buildRemoteResourcePath("https://caldav.example.com/cal/", "x/y")
+	if strings.Count(href, "/") != strings.Count("https://caldav.example.com/cal/x_y.ics", "/") {
+		t.Errorf("href %q adds a path segment; the UID must stay in one segment", href)
 	}
 }
 
@@ -5268,7 +5303,7 @@ func TestBuildRemoteResourcePathDeterministic(t *testing.T) {
 	a := buildRemoteResourcePath("https://caldav.example.com/cal/", "uid-1")
 	b := buildRemoteResourcePath("https://caldav.example.com/cal/", "uid-1")
 	if a != b {
-		t.Errorf("two calls disagree: %q vs %q; the name must be deterministic so a lost bookkeeping write cannot mint a second object for the same UID", a, b)
+		t.Errorf("two calls disagree: %q vs %q; the name must be deterministic so a lost bookkeeping write cannot create a second object for the same UID", a, b)
 	}
 }
 
