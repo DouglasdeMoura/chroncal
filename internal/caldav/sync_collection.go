@@ -23,7 +23,7 @@ var ErrSyncCollectionUnsupported = errors.New("caldav: sync-collection not suppo
 
 // SyncChange describes one changed or removed resource returned by a
 // sync-collection REPORT. Deleted entries carry only Path; updated entries
-// carry Path and ETag (no body — fetch with GetResources).
+// carry Path and ETag (no body — fetch with MultiGetTolerant).
 type SyncChange struct {
 	Path    string
 	ETag    string
@@ -51,8 +51,7 @@ type SyncCollectionResult struct {
 // a full snapshot of hrefs+etags plus a fresh token. Later calls return
 // only resources changed since the supplied token.
 //
-// The body returned only contains hrefs + etags. Use GetResources for the
-// updated paths to download bodies.
+// Use MultiGetTolerant for the updated paths to download bodies.
 func (c *Client) SyncCollection(ctx context.Context, calendarPath string, syncToken string) (*SyncCollectionResult, error) {
 	canonicalPath, err := c.CanonicalCollectionRef(calendarPath)
 	if err != nil {

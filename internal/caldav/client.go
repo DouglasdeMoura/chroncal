@@ -257,38 +257,6 @@ func componentNames(set verifySupportedCalendarComponentSet) []string {
 	return names
 }
 
-// GetResources fetches full iCal data for a set of hrefs via calendar-multiget.
-func (c *Client) GetResources(ctx context.Context, calendarPath string, hrefs []string) ([]Resource, error) {
-	calendarPath, err := c.CanonicalCollectionRef(calendarPath)
-	if err != nil {
-		return nil, err
-	}
-
-	multiGet := &caldav.CalendarMultiGet{
-		Paths: hrefs,
-		CompRequest: caldav.CalendarCompRequest{
-			Name:     "VCALENDAR",
-			AllComps: true,
-			AllProps: true,
-		},
-	}
-
-	objects, err := c.inner.MultiGetCalendar(ctx, calendarPath, multiGet)
-	if err != nil {
-		return nil, fmt.Errorf("multiget: %w", err)
-	}
-
-	out := make([]Resource, 0, len(objects))
-	for _, obj := range objects {
-		out = append(out, Resource{
-			Path: obj.Path,
-			ETag: normalizeETag(obj.ETag),
-			Data: obj.Data,
-		})
-	}
-	return out, nil
-}
-
 // QueryAll fetches all resources from a calendar.
 func (c *Client) QueryAll(ctx context.Context, calendarPath string) ([]Resource, error) {
 	calendarPath, err := c.CanonicalCollectionRef(calendarPath)
