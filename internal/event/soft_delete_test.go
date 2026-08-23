@@ -814,6 +814,52 @@ func TestSoftDelete_OverrideMasterLookupError(t *testing.T) {
 	}
 }
 
+// TestDeleteSeries_MasterLookupError mirrors the #290/#412 guard for the
+// series path. DeleteSeries must not treat a genuine DB error from the master
+// lookup as "no master". On a non-ErrNoRows error the old code soft-deleted
+// the series locally with no tombstone. The next pull then resurrected the
+// series. The todo and journal services already carry this guard.
+func TestDeleteSeries_MasterLookupError(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "series-lookup-err",
+		CalendarID:     1,
+		Title:          "Weekly Review",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	// Force the master lookup (GetEventByUID) to fail with a genuine, non-
+	// ErrNoRows error by writing non-numeric text into the master's integer
+	// sequence column so its row scan fails. The writable check before the
+	// transaction reads only calendar_id. SoftDeleteEventsByUID never scans,
+	// so the buggy path would still soft-delete the series and return nil.
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET sequence = 'corrupt' WHERE id = ?", master.ID); err != nil {
+		t.Fatalf("corrupt master sequence: %v", err)
+	}
+
+	if err := svc.DeleteSeries(ctx, master.UID); err == nil {
+		t.Fatal("DeleteSeries should propagate a non-ErrNoRows master-lookup error, got nil")
+	}
+
+	// Repair the master so reads work, then confirm the series is still
+	// live: the transaction must have rolled back.
+	if _, err := svc.db.ExecContext(ctx,
+		"UPDATE events SET sequence = 0 WHERE id = ?", master.ID); err != nil {
+		t.Fatalf("repair master sequence: %v", err)
+	}
+	if _, err := svc.GetByUID(ctx, master.UID); err != nil {
+		t.Fatalf("series should still be live after failed DeleteSeries: %v", err)
+	}
+}
+
 // TestSoftDelete_FromInstanceUndo_ReAddsRDates reproduces issue #490. The TUI
 // truncation-undo path (RestoreUndo of an UndoKindFromInstance) must re-add the
 // post-cutoff RDATEs the truncation trimmed. That matches the trash-restore

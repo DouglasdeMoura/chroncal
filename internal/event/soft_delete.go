@@ -859,7 +859,15 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	// tombstone and the soft-delete commit together so a failed tombstone
 	// write can't leave a tombstone for a still-live series whose next sync
 	// would DELETE it from the server (issue #107).
-	if master, err := qtx.GetEventByUID(ctx, uid); err == nil {
+	master, mErr := qtx.GetEventByUID(ctx, uid)
+	// Only ErrNoRows means "no master to track". A genuine lookup error must
+	// abort. Otherwise the series is soft-deleted locally with no tombstone.
+	// The next pull would then resurrect the series. This mirrors the guard
+	// the todo and journal services already carry (issue #290).
+	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
+		return fmt.Errorf("get master: %w", mErr)
+	}
+	if mErr == nil {
 		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
 			return fmt.Errorf("create tombstone: %w", err)
 		}
