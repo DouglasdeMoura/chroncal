@@ -54,17 +54,27 @@ var defaultHTTPClient = &http.Client{
 }
 var errResponseTooLarge = errors.New("caldav response exceeds configured limits")
 
+// checkRedirect governs redirects for defaultHTTPClient. It rejects any
+// redirect that leaves the host of the first request.
+//
+// net/http copies the sensitive headers of the first request (Authorization,
+// Cookie) before it calls this hook. It also forwards those headers to
+// subdomains of the first host. An abort is therefore the only safe answer.
+// The request then fails before it reaches the other host.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("stopped after %d redirects", maxRedirects)
 	}
 	if len(via) > 0 && !sameRedirectHost(req.URL, via[0].URL) {
-		req.Header.Del("Authorization")
-		req.Header.Del("Cookie")
+		return fmt.Errorf("refuse redirect from host %q to host %q: a cross-host redirect can leak credentials", via[0].URL.Host, req.URL.Host)
 	}
 	return nil
 }
 
+// sameRedirectHost reports whether two URLs carry the same host name and
+// port. The compare ignores case. A subdomain counts as a different host.
+// This rule is stricter than the net/http default. That default forwards
+// credentials to subdomains of the first host.
 func sameRedirectHost(a, b *url.URL) bool {
 	return strings.EqualFold(a.Host, b.Host)
 }

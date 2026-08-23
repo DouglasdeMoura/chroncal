@@ -5,16 +5,18 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
 
-func TestDefaultHTTPClientStripsAuthOnCrossHostRedirect(t *testing.T) {
+func TestDefaultHTTPClientAbortsCrossHostRedirect(t *testing.T) {
 	t.Parallel()
 
-	var attackerAuth atomic.Value // string
+	var attackerHits atomic.Int64
 	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attackerAuth.Store(r.Header.Get("Authorization"))
+		attackerHits.Add(1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
 	}))
@@ -32,22 +34,24 @@ func TestDefaultHTTPClientStripsAuthOnCrossHostRedirect(t *testing.T) {
 	req.SetBasicAuth("alice", "s3cr3t")
 
 	resp, err := defaultHTTPClient.Do(req)
-	if err != nil {
-		t.Fatalf("Do: %v", err)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("Do err = nil, want a cross-host redirect abort")
 	}
-	defer resp.Body.Close()
-
-	if got, _ := attackerAuth.Load().(string); got != "" {
-		t.Fatalf("cross-host redirect leaked Authorization header = %q, want empty", got)
+	if !strings.Contains(err.Error(), "refuse redirect") {
+		t.Fatalf("Do err = %v, want a refuse-redirect error", err)
+	}
+	if n := attackerHits.Load(); n != 0 {
+		t.Fatalf("cross-host redirect sent %d requests to the other host, want 0", n)
 	}
 }
 
-func TestBearerAuthClientStripsAuthOnCrossHostRedirect(t *testing.T) {
+func TestBearerAuthClientAbortsCrossHostRedirect(t *testing.T) {
 	t.Parallel()
 
-	var attackerAuth atomic.Value // string
+	var attackerHits atomic.Int64
 	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attackerAuth.Store(r.Header.Get("Authorization"))
+		attackerHits.Add(1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
 	}))
@@ -68,22 +72,24 @@ func TestBearerAuthClientStripsAuthOnCrossHostRedirect(t *testing.T) {
 	}
 
 	resp, err := client.HTTPClient().Do(req)
-	if err != nil {
-		t.Fatalf("Do: %v", err)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("Do err = nil, want a cross-host redirect abort")
 	}
-	defer resp.Body.Close()
-
-	if got, _ := attackerAuth.Load().(string); got != "" {
-		t.Fatalf("cross-host redirect leaked bearer Authorization header = %q, want empty", got)
+	if !strings.Contains(err.Error(), "refuse redirect") {
+		t.Fatalf("Do err = %v, want a refuse-redirect error", err)
+	}
+	if n := attackerHits.Load(); n != 0 {
+		t.Fatalf("cross-host redirect sent %d requests to the other host, want 0", n)
 	}
 }
 
-func TestBasicAuthClientStripsAuthOnCrossHostRedirect(t *testing.T) {
+func TestBasicAuthClientAbortsCrossHostRedirect(t *testing.T) {
 	t.Parallel()
 
-	var attackerAuth atomic.Value // string
+	var attackerHits atomic.Int64
 	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attackerAuth.Store(r.Header.Get("Authorization"))
+		attackerHits.Add(1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
 	}))
@@ -104,13 +110,15 @@ func TestBasicAuthClientStripsAuthOnCrossHostRedirect(t *testing.T) {
 	}
 
 	resp, err := client.HTTPClient().Do(req)
-	if err != nil {
-		t.Fatalf("Do: %v", err)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("Do err = nil, want a cross-host redirect abort")
 	}
-	defer resp.Body.Close()
-
-	if got, _ := attackerAuth.Load().(string); got != "" {
-		t.Fatalf("cross-host redirect leaked basic Authorization header = %q, want empty", got)
+	if !strings.Contains(err.Error(), "refuse redirect") {
+		t.Fatalf("Do err = %v, want a refuse-redirect error", err)
+	}
+	if n := attackerHits.Load(); n != 0 {
+		t.Fatalf("cross-host redirect sent %d requests to the other host, want 0", n)
 	}
 }
 
@@ -158,6 +166,7 @@ func TestDefaultHTTPClientCapsRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
+
 	resp, err := defaultHTTPClient.Do(req)
 	if err == nil {
 		resp.Body.Close()
@@ -169,6 +178,41 @@ func TestDefaultHTTPClientHasRedirectPolicy(t *testing.T) {
 	t.Parallel()
 
 	if defaultHTTPClient.CheckRedirect == nil {
-		t.Fatal("defaultHTTPClient.CheckRedirect = nil, want a policy that strips credentials on cross-host redirects")
+		t.Fatal("defaultHTTPClient.CheckRedirect = nil, want a policy that aborts cross-host redirects")
+	}
+}
+
+func TestSameRedirectHost(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		a    string
+		b    string
+		want bool
+	}{
+		{"same host", "https://caldav.example.com/", "https://caldav.example.com/calendar/", true},
+		{"host case differs", "https://CalDAV.example.com/", "https://caldav.example.com/", true},
+		{"subdomain counts as different host", "https://caldav.example.com/", "https://evil.caldav.example.com/", false},
+		{"different registrable domain", "https://caldav.example.com/", "https://caldav.example.org/", false},
+		{"port differs", "https://caldav.example.com:8443/", "https://caldav.example.com/", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			a, err := url.Parse(tc.a)
+			if err != nil {
+				t.Fatalf("parse %q: %v", tc.a, err)
+			}
+			b, err := url.Parse(tc.b)
+			if err != nil {
+				t.Fatalf("parse %q: %v", tc.b, err)
+			}
+			if got := sameRedirectHost(a, b); got != tc.want {
+				t.Fatalf("sameRedirectHost(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
 	}
 }
