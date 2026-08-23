@@ -69,22 +69,7 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 			if d, err := time.Parse("2006-01-02", j.StartDate); err == nil {
 				vjournal.Props.SetDate(ical.PropDateTimeStart, d)
 			} else if start, err := time.Parse(time.RFC3339, j.StartDate); err == nil {
-				if j.Timezone == "FLOATING" {
-					p := &ical.Prop{Name: ical.PropDateTimeStart}
-					p.Value = start.UTC().Format("20060102T150405")
-					vjournal.Props.Set(p)
-				} else if j.Timezone != "" {
-					if loc, lerr := time.LoadLocation(j.Timezone); lerr == nil {
-						vjournal.Props.SetDateTime(ical.PropDateTimeStart, start.In(loc))
-						if p := vjournal.Props.Get(ical.PropDateTimeStart); p != nil {
-							p.Params.Set(ical.ParamTimezoneID, j.Timezone)
-						}
-					} else {
-						vjournal.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
-					}
-				} else {
-					vjournal.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
-				}
+				setZonedDateTime(vjournal.Props, ical.PropDateTimeStart, start, j.Timezone)
 			}
 		}
 
