@@ -203,6 +203,10 @@ type Engine struct {
 	todos     *todo.Service
 	journals  *journal.Service
 	logger    *slog.Logger
+
+	// testHooks is nil in production. Tests assign an engineTestHooks value
+	// to inject failure windows. Call sites treat nil as "no hook".
+	testHooks *engineTestHooks
 }
 
 type pushLockKey struct {
@@ -718,18 +722,23 @@ func (e *Engine) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*Syn
 	return results, nil
 }
 
-// afterImportRevCapture, when non-nil, runs inside clearDirtyAfterImport just
-// before the conditional clear. It is nil in production. Tests use it to
-// simulate a concurrent local edit that lands between the import and the
-// clear, to exercise the rev guard. See issue #417.
-var afterImportRevCapture func()
+// engineTestHooks holds the engine's test-only injection points. It is nil
+// in production. A test sets the fields on the engine it builds, so a hook
+// cannot leak into another test's engine and no restore step is needed.
+type engineTestHooks struct {
+	// afterImportRevCapture runs inside clearDirtyAfterImport just before
+	// the conditional clear. Tests use it to simulate a concurrent local
+	// edit that lands between the import and the clear, to exercise the rev
+	// guard. See issue #417.
+	afterImportRevCapture func()
 
-// afterImportPersist, when non-nil, runs inside importICal right after
-// persistImported commits and before the caller's clearDirtyAfterImport. It is
-// nil in production. Tests use it to simulate a concurrent local edit that
-// lands in the persist-commit to clear window. That exercises the rev guard
-// now that the persist transaction captures the rev. See issue #494.
-var afterImportPersist func()
+	// afterImportPersist runs inside importICal right after persistImported
+	// commits and before the caller's clearDirtyAfterImport. Tests use it to
+	// simulate a concurrent local edit that lands in the persist-commit to
+	// clear window. That exercises the rev guard now that the persist
+	// transaction captures the rev. See issue #494.
+	afterImportPersist func()
+}
 
 // clearDirtyAfterImport adopts the server ETag and clears the dirty flag.
 // The resource's local row was overwritten with the server's version
@@ -751,8 +760,8 @@ var afterImportPersist func()
 // commit. That also closes the narrow window between persist-commit and the
 // read. See issues #92, #417 and #494.
 func (e *Engine) clearDirtyAfterImport(ctx context.Context, calendarID int64, uid, etag string, rev int64) error {
-	if afterImportRevCapture != nil {
-		afterImportRevCapture()
+	if e.testHooks != nil && e.testHooks.afterImportRevCapture != nil {
+		e.testHooks.afterImportRevCapture()
 	}
 	return e.q.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
 		CalendarID: calendarID,
