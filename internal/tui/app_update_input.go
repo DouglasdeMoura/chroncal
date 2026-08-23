@@ -4,173 +4,14 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 )
 
 func (m Model) captureOverlayInput(msg tea.Msg) (Model, tea.Cmd, bool) {
-	// The quit guard sits on top of every other overlay (including help,
-	// palette, and text-entry dialogs), so it must own input whenever it's
-	// up. Without this, keystrokes like y/n/esc would be swallowed by
-	// whatever dialog happens to be underneath.
-	if m.confirmOpen && m.pending.kind == pendingActionQuit {
-		switch msg.(type) {
-		case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.PasteMsg:
-			var cmd tea.Cmd
-			m.confirmDialog, cmd = m.confirmDialog.Update(msg)
-			return m, cmd, true
-		}
-	}
-
-	// The OAuth pending modal owns key and mouse input while it's up
-	// (below only the quit guard). Flow lifecycle messages, loads, and
-	// sizes fall through to the main switch, which routes them to the
-	// modal and dispatches the outcome.
-	if m.oauthFlowOpen && (!m.confirmOpen || m.pending.kind != pendingActionQuit) {
-		switch msg.(type) {
-		case tea.KeyPressMsg, tea.MouseClickMsg:
-			var cmd tea.Cmd
-			m.oauthFlow, cmd = m.oauthFlow.Update(msg)
-			return m, cmd, true
-		}
-	}
-
-	// When the palette is open, it captures all input. Only specific
-	// parent-level messages (size, theme, palette-result, and
-	// spinner ticks) fall through.
-	if m.paletteOpen {
-		switch msg.(type) {
-		case PaletteSelectedMsg, PaletteClosedMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg,
-			spinner.TickMsg:
-			// fall through to main switch
-		default:
-			var cmd tea.Cmd
-			m.palette, cmd = m.palette.Update(msg)
-			return m, cmd, true
-		}
-	}
-
-	if m.accountOAuthConfigOpen {
-		switch msg.(type) {
-		case AccountOAuthConfigSubmittedMsg, AccountOAuthConfigClosedMsg,
-			syncStatusExpiredMsg, toastTickMsg, spinner.TickMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg:
-			// fall through to main switch
-		default:
-			var cmd tea.Cmd
-			m.accountOAuthConfig, cmd = m.accountOAuthConfig.Update(msg)
-			return m, cmd, true
-		}
-	}
-
-	if m.accountCredentialsOpen {
-		switch msg.(type) {
-		case AccountCredentialsUpdateSubmittedMsg, AccountCredentialsUpdateClosedMsg,
-			syncStatusExpiredMsg, toastTickMsg, spinner.TickMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg:
-			// fall through to main switch
-		default:
-			var cmd tea.Cmd
-			m.accountCredentials, cmd = m.accountCredentials.Update(msg)
-			return m, cmd, true
-		}
-	}
-
-	if m.accountRenameOpen {
-		switch msg.(type) {
-		case AccountRenameRequestedMsg, accountRenameCancelledMsg,
-			accountRenameFinishedMsg, syncStatusExpiredMsg, toastTickMsg, spinner.TickMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg:
-			// fall through to main switch
-		default:
-			var cmd tea.Cmd
-			m.accountRename, cmd = m.accountRename.Update(msg)
-			return m, cmd, true
-		}
-	}
-
-	// Calendar manager is the canonical calendar management overlay.
-	// It hosts calendar detail, account detail, and discovery flows.
-	if m.calendarManagerOpen && !m.accountRenameOpen &&
-		!m.accountOAuthConfigOpen && !m.accountCredentialsOpen &&
-		!m.confirmOpen && !m.choiceOpen {
-		switch msg.(type) {
-		case CalendarManagerClosedMsg, CalendarManagerRequestedMsg, CalendarTransferClosedMsg,
-			CalendarSavedMsg, CalendarDiscoveryRequestedMsg,
-			CalendarDeleteRequestedMsg, CalendarKeepLocalRequestedMsg, CalendarMoveToAccountRequestedMsg, CalendarTestRequestedMsg,
-			CalendarVisibilityToggledMsg, CalendarReorderedMsg, AccountReorderedMsg,
-			calendarOrderSavedMsg, accountOrderSavedMsg,
-			CalendarExportRequestedMsg, CalendarImportPreviewRequestedMsg,
-			CalendarImportRequestedMsg, CalendarExportWriteRequestedMsg,
-			calendarImportPreviewReadyMsg, calendarImportFinishedMsg, calendarExportFinishedMsg,
-			AccountSettingsRequestedMsg, AccountSettingsClosedMsg, AccountSettingsManageRequestedMsg, AccountSettingsSyncRequestedMsg,
-			AccountSettingsRenameRequestedMsg, AccountSettingsReauthRequestedMsg,
-			AccountSettingsUpdateCredentialsRequestedMsg,
-			AccountSettingsRemoveRequestedMsg, AccountRenameRequestedMsg,
-			CalendarSetDefaultRequestedMsg,
-			AccountCalendarsImportRequestedMsg, AccountCalendarsReconcileRequestedMsg,
-			AccountCalendarPickerClosedMsg,
-			accountDiscoveryReadyMsg, accountImportFinishedMsg, accountSelectionFinishedMsg,
-			calendarDiscoveryDiscardedMsg,
-			calendarDeleteCountMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg,
-			eventsLoadedMsg, calendarsLoadedMsg,
-			calendarMutationDoneMsg,
-			toastTickMsg, spinner.TickMsg, syncStatusExpiredMsg:
-			// fall through to main switch
-		default:
-			var cmd tea.Cmd
-			m.calendarManager, cmd = m.calendarManager.Update(msg)
-			return m, cmd, true
-		}
-	}
-
-	// When the form is open, route most messages to it (cursor blink, keys, etc.).
-	// Only let specific parent-level messages fall through to the main switch.
-	if m.formOpen {
-		switch msg.(type) {
-		case EventFormSaveMsg, EventFormClosedMsg,
-			tea.BackgroundColorMsg, tea.WindowSizeMsg,
-			eventsLoadedMsg, calendarsLoadedMsg,
-			eventCreatedMsg, eventUpdatedMsg,
-			spinner.TickMsg:
-			// fall through to main switch
-		default:
-			var cmd tea.Cmd
-			m.form, cmd = m.form.Update(msg)
-			return m, cmd, true
-		}
-	}
-	return m, nil, false
+	return m.routeOverlay(msg)
 }
 
 func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
-	if m.helpDialogOpen {
-		var cmd tea.Cmd
-		m.helpDialog, cmd = m.helpDialog.Update(msg)
-		return m, cmd
-	}
-	if m.viewDialogOpen {
-		var cmd tea.Cmd
-		m.viewDialog, cmd = m.viewDialog.Update(msg)
-		return m, cmd
-	}
-	if m.dialogOpen {
-		var cmd tea.Cmd
-		m.dialog, cmd = m.dialog.Update(msg)
-		return m, cmd
-	}
-	if m.calendarManagerOpen {
-		var cmd tea.Cmd
-		m.calendarManager, cmd = m.calendarManager.Update(msg)
-		return m, cmd
-	}
-	if m.trashOpen {
-		var cmd tea.Cmd
-		m.trash, cmd = m.trash.Update(msg)
-		return m, cmd
-	}
 	if !m.dialogOpen && !m.choiceOpen && !m.confirmOpen && !m.oauthFlowOpen {
 		switch m.viewMode {
 		case viewWeek:
@@ -218,41 +59,6 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return m, nil
-	}
-	if m.helpDialogOpen {
-		var cmd tea.Cmd
-		m.helpDialog, cmd = m.helpDialog.Update(msg)
-		return m, cmd
-	}
-	if m.choiceOpen {
-		var cmd tea.Cmd
-		m.choiceDialog, cmd = m.choiceDialog.Update(msg)
-		return m, cmd
-	}
-	if m.confirmOpen {
-		var cmd tea.Cmd
-		m.confirmDialog, cmd = m.confirmDialog.Update(msg)
-		return m, cmd
-	}
-	if m.dialogOpen {
-		var cmd tea.Cmd
-		m.dialog, cmd = m.dialog.Update(msg)
-		return m, cmd
-	}
-	if m.viewDialogOpen {
-		var cmd tea.Cmd
-		m.viewDialog, cmd = m.viewDialog.Update(msg)
-		return m, cmd
-	}
-	if m.calendarManagerOpen {
-		var cmd tea.Cmd
-		m.calendarManager, cmd = m.calendarManager.Update(msg)
-		return m, cmd
-	}
-	if m.trashOpen {
-		var cmd tea.Cmd
-		m.trash, cmd = m.trash.Update(msg)
-		return m, cmd
 	}
 	// Footer label hit-test: clicking the context label (MONTH/WEEK/DAY/
 	// AGENDA) cycles through views. The sweep in View() populates the
@@ -324,43 +130,6 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	// Help sits on top of every other overlay (see View()), so it must
-	// own input — including Esc — whenever it's open.
-	if m.helpDialogOpen {
-		var cmd tea.Cmd
-		m.helpDialog, cmd = m.helpDialog.Update(msg)
-		return m, cmd
-	}
-	if m.choiceOpen {
-		var cmd tea.Cmd
-		m.choiceDialog, cmd = m.choiceDialog.Update(msg)
-		return m, cmd
-	}
-	if m.confirmOpen {
-		var cmd tea.Cmd
-		m.confirmDialog, cmd = m.confirmDialog.Update(msg)
-		return m, cmd
-	}
-	if m.viewDialogOpen {
-		var cmd tea.Cmd
-		m.viewDialog, cmd = m.viewDialog.Update(msg)
-		return m, cmd
-	}
-	if m.dialogOpen {
-		var cmd tea.Cmd
-		m.dialog, cmd = m.dialog.Update(msg)
-		return m, cmd
-	}
-	if m.calendarManagerOpen {
-		var cmd tea.Cmd
-		m.calendarManager, cmd = m.calendarManager.Update(msg)
-		return m, cmd
-	}
-	if m.trashOpen {
-		var cmd tea.Cmd
-		m.trash, cmd = m.trash.Update(msg)
-		return m, cmd
-	}
 	switch {
 	case key.Matches(msg, m.keys.Palette):
 		return m.openPalette()
