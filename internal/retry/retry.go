@@ -32,8 +32,9 @@ func Retry[T any](ctx context.Context, opts RetryOptions, fn func(context.Contex
 
 		delay := retryDelay(opts, attempt-1)
 		// Honor a server-requested Retry-After as a floor: never retry
-		// sooner than the server asked, even if it exceeds MaxDelay.
-		if floor := retryAfter(err); floor > delay {
+		// sooner than the server asked, even if it exceeds MaxDelay. The
+		// floor is still capped. See retryAfterDelay for the ceiling.
+		if floor := retryAfterDelay(err); floor > delay {
 			delay = floor
 		}
 		select {
@@ -72,4 +73,22 @@ func retryDelay(opts RetryOptions, attempt int) time.Duration {
 		return opts.MaxDelay
 	}
 	return wait
+}
+
+// maxRetryAfterDelay caps a server-requested Retry-After floor. The value
+// matches the 60-second ceiling backoffDuration applies to computed backoff.
+// A hostile or broken server can request an absurd delay (24 hours, for
+// example). The retry caller often holds locks while it waits (the sync
+// push lock is one example), so an uncapped floor would stall the whole
+// account on one bad header.
+const maxRetryAfterDelay = 60 * time.Second
+
+// retryAfterDelay returns the server-requested minimum delay for err,
+// capped at maxRetryAfterDelay. Zero means the server gave no usable hint.
+func retryAfterDelay(err error) time.Duration {
+	floor := retryAfter(err)
+	if floor > maxRetryAfterDelay {
+		return maxRetryAfterDelay
+	}
+	return floor
 }
