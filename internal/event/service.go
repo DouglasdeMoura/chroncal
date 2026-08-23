@@ -366,10 +366,15 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	if err != nil {
 		return Event{}, err
 	}
+	// Mark dirty inside the transaction so a failed sync-tracking write rolls
+	// the edit back rather than committing a change that is never pushed
+	// (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit update event: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
 	return e, nil
 }
 
@@ -408,10 +413,15 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	if err := replaceRelationsTx(ctx, qtx, e.ID, attendees, alarms); err != nil {
 		return Event{}, err
 	}
+	// Mark dirty inside the transaction so a failed sync-tracking write rolls
+	// the edit back rather than committing a change that is never pushed
+	// (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit update event: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
 	return e, nil
 }
 
@@ -595,10 +605,15 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 	if err != nil {
 		return Event{}, err
 	}
+	// Mark the override dirty inside the transaction so a failed sync-tracking
+	// write rolls the override back rather than committing a change that is
+	// never pushed (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, calendarID, uid, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit override: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event")
 	return e, nil
 }
 
@@ -632,17 +647,22 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 	if err := replaceRelationsTx(ctx, qtx, e.ID, attendees, alarms); err != nil {
 		return Event{}, err
 	}
+	// Mark the override dirty inside the transaction so a failed sync-tracking
+	// write rolls the override and its children back rather than committing a
+	// change that is never pushed (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, calendarID, uid, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit override: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event")
 	return e, nil
 }
 
 // updateInstanceTx creates or updates a per-occurrence override row and its
 // categories using a tx-bound Queries. It returns the event and the master's
-// calendar ID (for a dirty mark after commit). It opens no transaction, so
-// callers can compose it with attendee/alarm writes.
+// calendar ID (for the dirty mark inside the caller's transaction). It opens
+// no transaction, so callers can compose it with attendee/alarm writes.
 func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
@@ -824,11 +844,18 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 	if err != nil {
 		return Event{}, err
 	}
+	// Mark both rows dirty inside the transaction so a failed sync-tracking
+	// write rolls the split back rather than committing a change that is
+	// never pushed (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, masterCalendarID, uid, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
+	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit split: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, masterCalendarID, uid, "event")
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
 	return e, nil
 }
 
@@ -862,11 +889,18 @@ func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid strin
 	if err := replaceRelationsTx(ctx, qtx, e.ID, attendees, alarms); err != nil {
 		return Event{}, err
 	}
+	// Mark both rows dirty inside the transaction so a failed sync-tracking
+	// write rolls the split and its children back rather than committing a
+	// change that is never pushed (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, masterCalendarID, uid, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
+	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit split: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, masterCalendarID, uid, "event")
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
 	return e, nil
 }
 
