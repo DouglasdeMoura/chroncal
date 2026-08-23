@@ -372,12 +372,7 @@ a --progress value other than 100.`,
 	cmd.Flags().StringArrayVar(&resourceFlags, "resource", nil, "resource needed (e.g. PROJECTOR, repeatable, replaces all)")
 	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable)")
 	// Aliases
-	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
-	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
-	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
-	cmd.Flags().Lookup("rrule").Usage = "alias for --recurrence-rule"
-	cmd.Flags().Lookup("exdate").Usage = "alias for --exception-date-times"
-	cmd.Flags().Lookup("rdate").Usage = "alias for --recurrence-date-times"
+	registerRecurrenceAliases(cmd, &rrule, &exdates, &rdates)
 	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
 }
