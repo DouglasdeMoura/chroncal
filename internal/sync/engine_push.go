@@ -49,16 +49,28 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		// PUTs with HTTP 400 / 500 and a vague <D:error/> body. Skipping
 		// foreign-organized events here clears the dirty flag so we stop
 		// retrying every sync; the local row is left untouched.
-		if pushIdentity != "" && res.OwnerType == ownerTypeEvent && !e.userOrganizesEvent(ctx, res.Uid, pushIdentity) {
-			e.logger.Info("skip push: not the organizer", "uid", res.Uid, "owner", pushIdentity)
-			if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
-				CalendarID: calendarID,
-				Uid:        res.Uid,
-				Etag:       res.Etag,
-			}); err != nil {
-				e.logger.Error("clear non-owned dirty", "uid", res.Uid, "error", err)
+		if pushIdentity != "" && res.OwnerType == ownerTypeEvent {
+			organizes, oErr := e.userOrganizesEvent(ctx, res.Uid, pushIdentity)
+			if oErr != nil {
+				// A failed lookup proves nothing. Keep the row dirty and
+				// retry on the next pass rather than guess in either
+				// direction: a false skip clears the dirty flag forever,
+				// a true push sends a guaranteed-rejected PUT.
+				result.errors = append(result.errors,
+					fmt.Errorf("organizer lookup for %s: %w", res.Uid, oErr))
+				continue
 			}
-			continue
+			if !organizes {
+				e.logger.Info("skip push: not the organizer", "uid", res.Uid, "owner", pushIdentity)
+				if err := e.q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+					CalendarID: calendarID,
+					Uid:        res.Uid,
+					Etag:       res.Etag,
+				}); err != nil {
+					e.logger.Error("clear non-owned dirty", "uid", res.Uid, "error", err)
+				}
+				continue
+			}
 		}
 
 		// In a full prompt-mode pass, skip resources that already have an
