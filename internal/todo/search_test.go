@@ -61,7 +61,7 @@ func TestService_Search(t *testing.T) {
 		{"summary and description match", SearchParams{Query: "budget"}, 2},
 		{"category match", SearchParams{Query: "personal"}, 2},
 		{"no results", SearchParams{Query: "nonexistent"}, 0},
-		{"filter incomplete only", SearchParams{Query: "budget", Completed: 2}, 2},
+		{"filter incomplete only", SearchParams{Query: "budget", Completed: storage.OpenOnly}, 2},
 	}
 
 	for _, tt := range tests {
@@ -138,7 +138,7 @@ func TestService_ExportFiltered(t *testing.T) {
 	}{
 		{"export all", ExportParams{}, 2},
 		{"export by category", ExportParams{Category: "work"}, 1},
-		{"export incomplete only", ExportParams{Completed: 2}, 2},
+		{"export incomplete only", ExportParams{Completed: storage.OpenOnly}, 2},
 	}
 
 	for _, tt := range tests {

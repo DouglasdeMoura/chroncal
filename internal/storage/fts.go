@@ -60,7 +60,7 @@ func (q *Queries) SearchEventsFTS(ctx context.Context, query string, calendarID 
 	return q.queryEvents(ctx, where, args, "start_time ASC")
 }
 
-func (q *Queries) SearchTodosFTS(ctx context.Context, query string, calendarID int64, filterStatus string, completedFilter int64) ([]Todo, error) {
+func (q *Queries) SearchTodosFTS(ctx context.Context, query string, calendarID int64, filterStatus string, completedFilter CompletedFilter) ([]Todo, error) {
 	var w whereBuilder
 	w.addSoftDeleteFilter(false, false)
 	w.add("id IN (SELECT rowid FROM todos_fts WHERE todos_fts MATCH ?)", query)
@@ -70,9 +70,10 @@ func (q *Queries) SearchTodosFTS(ctx context.Context, query string, calendarID i
 	if filterStatus != "" {
 		w.add("status = ?", filterStatus)
 	}
-	if completedFilter == 1 {
+	switch completedFilter {
+	case CompletedOnly:
 		w.add("completed_at IS NOT NULL")
-	} else if completedFilter == 2 {
+	case OpenOnly:
 		w.add("completed_at IS NULL")
 	}
 	where, args := w.build()

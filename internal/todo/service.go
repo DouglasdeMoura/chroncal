@@ -20,7 +20,7 @@ type SearchParams struct {
 	Query      string
 	CalendarID int64  // 0 = all
 	Status     string // empty = all
-	Completed  int    // 0 = all, 1 = completed only, 2 = incomplete only
+	Completed  storage.CompletedFilter
 }
 
 type ExportParams struct {
@@ -29,7 +29,7 @@ type ExportParams struct {
 	To         string // date-only ("YYYY-MM-DD") or empty
 	Category   string // empty = all
 	Status     string // empty = all
-	Completed  int    // 0 = all, 1 = completed, 2 = incomplete
+	Completed  storage.CompletedFilter
 }
 
 type Service struct {
@@ -242,7 +242,7 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Todo, error) {
 	if ftsQuery == "" {
 		return nil, nil
 	}
-	rows, err := s.q.SearchTodosFTS(ctx, ftsQuery, p.CalendarID, p.Status, int64(p.Completed))
+	rows, err := s.q.SearchTodosFTS(ctx, ftsQuery, p.CalendarID, p.Status, p.Completed)
 	if err != nil {
 		return nil, fmt.Errorf("search todos: %w", err)
 	}
@@ -258,7 +258,7 @@ func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Todo, e
 		ToDate:          p.To,
 		Category:        p.Category,
 		FilterStatus:    p.Status,
-		CompletedFilter: int64(p.Completed),
+		CompletedFilter: p.Completed,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("export todos: %w", err)

@@ -4,6 +4,19 @@ import "context"
 
 const todoCategoryExists = "EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category = ?)"
 
+// CompletedFilter selects todos by completion state. The zero value
+// (CompletionAny) adds no clause.
+type CompletedFilter int64
+
+const (
+	// CompletionAny keeps completed and open todos.
+	CompletionAny CompletedFilter = iota
+	// CompletedOnly keeps todos with a completion time.
+	CompletedOnly
+	// OpenOnly keeps todos without a completion time.
+	OpenOnly
+)
+
 // TodoFilterParams holds optional filters for todo queries.
 // Zero values mean "no filter" for that field.
 type TodoFilterParams struct {
@@ -12,9 +25,9 @@ type TodoFilterParams struct {
 	Category     string
 	// HideCompleted, when true, hides COMPLETED and CANCELLED todos.
 	HideCompleted bool
-	// CompletedFilter selects rows by completed_at. The value 1 keeps
-	// only completed todos, and the value 2 keeps only open todos.
-	CompletedFilter int64
+	// CompletedFilter selects rows by completed_at. CompletedOnly keeps
+	// only completed todos, and OpenOnly keeps only open todos.
+	CompletedFilter CompletedFilter
 	FromDate        string
 	ToDate          string
 	// IncludeDeleted, when true, omits the default `deleted_at IS NULL`
@@ -42,11 +55,15 @@ func (w *whereBuilder) addTodoFilters(arg TodoFilterParams) {
 	if arg.HideCompleted {
 		w.add("status != 'COMPLETED' AND status != 'CANCELLED'")
 	}
-	if arg.CompletedFilter == 1 {
+	switch arg.CompletedFilter {
+	case CompletedOnly:
 		w.add("completed_at IS NOT NULL")
-	} else if arg.CompletedFilter == 2 {
+	case OpenOnly:
 		w.add("completed_at IS NULL")
 	}
+	// FromDate and ToDate form the half-open range [FromDate, ToDate).
+	// The filter includes a todo due on FromDate. The filter excludes a
+	// todo due on ToDate. A todo with no due date passes the filter.
 	if arg.FromDate != "" {
 		w.add("(due_date IS NULL OR due_date >= ?)", arg.FromDate)
 	}

@@ -39,6 +39,10 @@ func (w *whereBuilder) addJournalFilters(arg JournalFilterParams) {
 	if arg.HideCancelled {
 		w.add("status != 'CANCELLED'")
 	}
+	// FromDate and ToDate form the half-open range [FromDate, ToDate).
+	// The filter includes a journal dated on FromDate. The filter
+	// excludes a journal dated on ToDate. A journal with no start date
+	// passes the filter.
 	if arg.FromDate != "" {
 		w.add("(start_date IS NULL OR start_date >= ?)", arg.FromDate)
 	}
