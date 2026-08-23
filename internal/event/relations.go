@@ -95,8 +95,7 @@ func (s *Service) ReplaceAttachments(ctx context.Context, eventID int64, attachm
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, eventID)
-	return nil
+	return s.markDirtyByID(ctx, eventID)
 }
 
 // Comment CRUD
@@ -133,8 +132,7 @@ func (s *Service) ReplaceComments(ctx context.Context, eventID int64, comments [
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, eventID)
-	return nil
+	return s.markDirtyByID(ctx, eventID)
 }
 
 // Contact CRUD
@@ -171,8 +169,7 @@ func (s *Service) ReplaceContacts(ctx context.Context, eventID int64, contacts [
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, eventID)
-	return nil
+	return s.markDirtyByID(ctx, eventID)
 }
 
 // Resource CRUD
@@ -209,8 +206,7 @@ func (s *Service) ReplaceResources(ctx context.Context, eventID int64, resources
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, eventID)
-	return nil
+	return s.markDirtyByID(ctx, eventID)
 }
 
 // Relation CRUD
@@ -247,8 +243,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, eventID int64, relations
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, eventID)
-	return nil
+	return s.markDirtyByID(ctx, eventID)
 }
 
 // X-Property CRUD
@@ -292,6 +287,5 @@ func (s *Service) ReplaceXProperties(ctx context.Context, eventID int64, xprops 
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, eventID)
-	return nil
+	return s.markDirtyByID(ctx, eventID)
 }

@@ -390,8 +390,7 @@ func (s *Service) ReplaceAlarmsForSync(ctx context.Context, eventID int64, alarm
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, eventID)
-	return nil
+	return s.markDirtyByID(ctx, eventID)
 }
 
 // replaceAlarmsTx reconciles an event's alarms (content/UID match, in-place

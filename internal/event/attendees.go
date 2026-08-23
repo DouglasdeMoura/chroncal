@@ -56,8 +56,7 @@ func (s *Service) ReplaceAttendeesForSync(ctx context.Context, eventID int64, at
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, eventID)
-	return nil
+	return s.markDirtyByID(ctx, eventID)
 }
 
 // replaceAttendeesTx replaces an event's attendees using a tx-bound Queries. It

@@ -195,13 +195,18 @@ func (p *UpdateParams) applyDefaults() {
 	normalizeEventTimes(&p.StartTime, &p.EndTime, p.AllDay)
 }
 
-// markDirtyByID looks up an event by ID and marks its sync resource as dirty.
-func (s *Service) markDirtyByID(ctx context.Context, eventID int64) {
+// markDirtyTx marks the sync resource of the event with the given ID dirty
+// inside the caller's transaction. A failed mark aborts the mutation per the
+// issue #107 contract: a change that is never pushed must not commit.
+func (s *Service) markDirtyByID(ctx context.Context, eventID int64) error {
 	r, err := s.q.GetEvent(ctx, eventID)
 	if err != nil {
-		return
+		return fmt.Errorf("get event for dirty mark: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "event")
+	if err := storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "event"); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
+	}
+	return nil
 }
 
 // ensureEventWritable resolves an event by ID and enforces remote
@@ -369,7 +374,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit update event: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
+	if err := storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return e, nil
 }
 
@@ -411,7 +418,9 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit update event: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
+	if err := storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return e, nil
 }
 
@@ -598,7 +607,9 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit override: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event")
+	if err := storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return e, nil
 }
 
@@ -635,7 +646,9 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit override: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event")
+	if err := storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return e, nil
 }
 
@@ -827,8 +840,12 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit split: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, masterCalendarID, uid, "event")
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
+	if err := storage.MarkResourceDirty(ctx, s.db, masterCalendarID, uid, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark master resource dirty: %w", err)
+	}
+	if err := storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return e, nil
 }
 
@@ -865,8 +882,12 @@ func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid strin
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit split: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, masterCalendarID, uid, "event")
-	_ = storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event")
+	if err := storage.MarkResourceDirty(ctx, s.db, masterCalendarID, uid, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark master resource dirty: %w", err)
+	}
+	if err := storage.MarkResourceDirty(ctx, s.db, e.CalendarID, e.UID, "event"); err != nil {
+		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return e, nil
 }
 

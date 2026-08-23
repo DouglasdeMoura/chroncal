@@ -226,12 +226,16 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 }
 
 // markDirtyByID looks up a journal by ID and marks its sync resource as dirty.
-func (s *Service) markDirtyByID(ctx context.Context, journalID int64) {
+// The error is surfaced so a dropped dirty flag is never silent.
+func (s *Service) markDirtyByID(ctx context.Context, journalID int64) error {
 	r, err := s.q.GetJournal(ctx, journalID)
 	if err != nil {
-		return
+		return fmt.Errorf("get journal for dirty mark: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "journal")
+	if err := storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "journal"); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
+	}
+	return nil
 }
 
 // ensureWritable guards a user-originated mutation against a read-only or
@@ -321,7 +325,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
 		return Journal{}, fmt.Errorf("commit create journal: %w", err)
 	}
 	j.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), j.CalendarID, j.UID, "journal")
+	if err := storage.MarkResourceDirty(ctx, s.dirtyExec(), j.CalendarID, j.UID, "journal"); err != nil {
+		return Journal{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return j, nil
 }
 
@@ -372,7 +378,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 		return Journal{}, fmt.Errorf("commit update journal: %w", err)
 	}
 	j.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), j.CalendarID, j.UID, "journal")
+	if err := storage.MarkResourceDirty(ctx, s.dirtyExec(), j.CalendarID, j.UID, "journal"); err != nil {
+		return Journal{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return j, nil
 }
 
@@ -512,8 +520,7 @@ func (s *Service) ReplaceComments(ctx context.Context, journalID int64, comments
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, journalID)
-	return nil
+	return s.markDirtyByID(ctx, journalID)
 }
 
 // Contact CRUD
@@ -550,8 +557,7 @@ func (s *Service) ReplaceContacts(ctx context.Context, journalID int64, contacts
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, journalID)
-	return nil
+	return s.markDirtyByID(ctx, journalID)
 }
 
 // Relation CRUD
@@ -588,8 +594,7 @@ func (s *Service) ReplaceRelations(ctx context.Context, journalID int64, relatio
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, journalID)
-	return nil
+	return s.markDirtyByID(ctx, journalID)
 }
 
 // Converters
@@ -699,8 +704,7 @@ func (s *Service) ReplaceXProperties(ctx context.Context, journalID int64, xprop
 	if err := commit(); err != nil {
 		return err
 	}
-	s.markDirtyByID(ctx, journalID)
-	return nil
+	return s.markDirtyByID(ctx, journalID)
 }
 
 func fromStorageSlice(rows []storage.Journal) []Journal {
