@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -168,5 +169,251 @@ func TestDeleteSeries_TombstoneIsAtomic(t *testing.T) {
 	if deletedAt != nil && *deletedAt != "" {
 		t.Fatalf("series was soft-deleted (deleted_at=%q) despite the tombstone write failing; "+
 			"DeleteSeries tombstone is not atomic with the soft-delete", *deletedAt)
+	}
+}
+
+// TestDeleteInstance_SyncMarkIsAtomic is the DeleteInstance analogue of
+// TestCreate_SyncMarkIsAtomic. The master's EXDATE change must commit together
+// with its dirty mark. The old code discarded a failed post-commit
+// MarkResourceDirty. A synced calendar then kept an EXDATE change that no push
+// ever sent (issue #107 contract).
+func TestDeleteInstance_SyncMarkIsAtomic(t *testing.T) {
+	svc := newTestService(t)
+	makeSyncedCalendar(t, svc)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "instance-dirty-atomic",
+		CalendarID:     1,
+		Title:          "Standup",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 15, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	// Force the dirty-mark INSERT to fail.
+	if _, err := svc.db.ExecContext(ctx, `DROP TABLE sync_resources`); err != nil {
+		t.Fatalf("drop sync_resources: %v", err)
+	}
+
+	instanceAt := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	if err := svc.DeleteInstance(ctx, master.UID, instanceAt); err == nil {
+		t.Fatal("DeleteInstance succeeded but the dirty-mark write failed; the error was discarded")
+	}
+
+	// The mutation must have rolled back: the master carries no EXDATE.
+	got, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after failed DeleteInstance: %v", err)
+	}
+	if n := len(got.ParseExDates()); n != 0 {
+		t.Fatalf("master EXDATE count = %d, want 0 (%q); the EXDATE committed despite the "+
+			"dirty-mark write failing", n, got.ExDates)
+	}
+}
+
+// TestDeleteFromInstance_SyncMarkIsAtomic is the DeleteFromInstance analogue
+// of TestCreate_SyncMarkIsAtomic. The truncation must commit together with its
+// dirty mark. The old code discarded a failed post-commit MarkResourceDirty. A
+// synced calendar then kept a truncated RRULE that no push ever sent (issue
+// #107 contract).
+func TestDeleteFromInstance_SyncMarkIsAtomic(t *testing.T) {
+	svc := newTestService(t)
+	makeSyncedCalendar(t, svc)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "truncate-dirty-atomic",
+		CalendarID:     1,
+		Title:          "Standup",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 15, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	if _, err := svc.db.ExecContext(ctx, `DROP TABLE sync_resources`); err != nil {
+		t.Fatalf("drop sync_resources: %v", err)
+	}
+
+	cutoff := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err == nil {
+		t.Fatal("DeleteFromInstance succeeded but the dirty-mark write failed; the error was discarded")
+	}
+
+	// The mutation must have rolled back: the RRULE keeps its original COUNT.
+	got, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after failed DeleteFromInstance: %v", err)
+	}
+	if got.RecurrenceRule != master.RecurrenceRule {
+		t.Fatalf("master RRULE = %q, want the original %q; the truncation committed despite "+
+			"the dirty-mark write failing", got.RecurrenceRule, master.RecurrenceRule)
+	}
+}
+
+// TestUpdatePaths_SyncMarkIsAtomic extends TestCreate_SyncMarkIsAtomic to
+// the six update entry points in service.go. Each entry point must write its
+// dirty mark inside the mutation transaction. The old code discarded a failed
+// post-commit MarkResourceDirty. A synced calendar then kept an edit that no
+// push ever sent (issue #107 contract).
+func TestUpdatePaths_SyncMarkIsAtomic(t *testing.T) {
+	newStandup := func(t *testing.T, svc *Service) Event {
+		t.Helper()
+		master, err := svc.UpsertByUID(context.Background(), UpsertParams{
+			UID:            "update-dirty-atomic",
+			CalendarID:     1,
+			Title:          "Standup",
+			StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+			EndTime:        time.Date(2026, 4, 1, 9, 15, 0, 0, time.UTC),
+			RecurrenceRule: "FREQ=DAILY;COUNT=5",
+		})
+		if err != nil {
+			t.Fatalf("create master: %v", err)
+		}
+		return master
+	}
+	editTitle := func() UpdateParams {
+		return UpdateParams{
+			CalendarID:     1,
+			Title:          "Edited",
+			StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+			EndTime:        time.Date(2026, 4, 1, 9, 15, 0, 0, time.UTC),
+			RecurrenceRule: "FREQ=DAILY;COUNT=5",
+		}
+	}
+	attendees := []model.Attendee{{
+		Email: "a@example.com", Role: "REQ-PARTICIPANT", RSVPStatus: "NEEDS-ACTION",
+	}}
+	instanceAt := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+
+	titleUnchanged := func(t *testing.T, svc *Service, master Event) {
+		t.Helper()
+		got, err := svc.Get(context.Background(), master.ID)
+		if err != nil {
+			t.Fatalf("get master after the failed call: %v", err)
+		}
+		if got.Title != "Standup" {
+			t.Fatalf("title = %q, want %q; the edit committed despite the "+
+				"dirty-mark write failing", got.Title, "Standup")
+		}
+	}
+	noOverride := func(t *testing.T, svc *Service, master Event) {
+		t.Helper()
+		var n int
+		if err := svc.db.QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM events WHERE uid = ? AND recurrence_id != ''`,
+			master.UID).Scan(&n); err != nil {
+			t.Fatalf("count overrides: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("override rows = %d, want 0; the override committed despite "+
+				"the dirty-mark write failing", n)
+		}
+	}
+	seriesIntact := func(t *testing.T, svc *Service, master Event) {
+		t.Helper()
+		var n int
+		if err := svc.db.QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM events`).Scan(&n); err != nil {
+			t.Fatalf("count events: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("event rows = %d, want 1 (the master only); the split series "+
+				"committed despite the dirty-mark write failing", n)
+		}
+		got, err := svc.GetByUID(context.Background(), master.UID)
+		if err != nil {
+			t.Fatalf("get master after the failed call: %v", err)
+		}
+		if got.RecurrenceRule != master.RecurrenceRule {
+			t.Fatalf("master RRULE = %q, want the original %q; the truncation "+
+				"committed despite the dirty-mark write failing",
+				got.RecurrenceRule, master.RecurrenceRule)
+		}
+	}
+
+	cases := []struct {
+		name   string
+		call   func(svc *Service, master Event) error
+		verify func(t *testing.T, svc *Service, master Event)
+	}{
+		{
+			name: "Update",
+			call: func(svc *Service, master Event) error {
+				_, err := svc.Update(context.Background(), master.ID, editTitle())
+				return err
+			},
+			verify: titleUnchanged,
+		},
+		{
+			name: "UpdateWithRelations",
+			call: func(svc *Service, master Event) error {
+				_, err := svc.UpdateWithRelations(context.Background(), master.ID,
+					editTitle(), attendees, nil)
+				return err
+			},
+			verify: titleUnchanged,
+		},
+		{
+			name: "UpdateInstance",
+			call: func(svc *Service, master Event) error {
+				_, err := svc.UpdateInstance(context.Background(), master.UID,
+					instanceAt, editTitle())
+				return err
+			},
+			verify: noOverride,
+		},
+		{
+			name: "UpdateInstanceWithRelations",
+			call: func(svc *Service, master Event) error {
+				_, err := svc.UpdateInstanceWithRelations(context.Background(),
+					master.UID, instanceAt, editTitle(), attendees, nil)
+				return err
+			},
+			verify: noOverride,
+		},
+		{
+			name: "UpdateFromInstance",
+			call: func(svc *Service, master Event) error {
+				_, err := svc.UpdateFromInstance(context.Background(), master.UID,
+					instanceAt, editTitle())
+				return err
+			},
+			verify: seriesIntact,
+		},
+		{
+			name: "UpdateFromInstanceWithRelations",
+			call: func(svc *Service, master Event) error {
+				_, err := svc.UpdateFromInstanceWithRelations(context.Background(),
+					master.UID, instanceAt, editTitle(), attendees, nil)
+				return err
+			},
+			verify: seriesIntact,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTestService(t)
+			makeSyncedCalendar(t, svc)
+			master := newStandup(t, svc)
+			ctx := context.Background()
+
+			// Force the dirty-mark INSERT to fail.
+			if _, err := svc.db.ExecContext(ctx, `DROP TABLE sync_resources`); err != nil {
+				t.Fatalf("drop sync_resources: %v", err)
+			}
+
+			if err := tc.call(svc, master); err == nil {
+				t.Fatal("call succeeded but the dirty-mark write failed; the error was discarded")
+			}
+			tc.verify(t, svc, master)
+		})
 	}
 }

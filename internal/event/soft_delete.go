@@ -698,11 +698,13 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 		return fmt.Errorf("record exdate delete: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
+	// Mark the master dirty — its EXDATE was modified — inside the same
+	// transaction so a failed mark rolls the EXDATE change back rather than
+	// committing a change that is never pushed (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, uid, "event"); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
-	return nil
+	return tx.Commit()
 }
 
 // DeleteFromInstance truncates a recurring series so that instances at or
@@ -850,10 +852,15 @@ func (s *Service) deleteFromInstance(ctx context.Context, uid string, instanceTi
 	}
 	postUpdated := truncated.UpdatedAt
 
+	// Mark the master dirty — its RRULE and RDATEs were modified — inside
+	// the same transaction so a failed mark rolls the truncation back rather
+	// than committing a change that is never pushed (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, uid, "event"); err != nil {
+		return "", fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, master.CalendarID, uid, "event")
 	return postUpdated, nil
 }
 
