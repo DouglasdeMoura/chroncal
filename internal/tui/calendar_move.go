@@ -24,8 +24,10 @@ type calendarMoveState struct {
 }
 
 type calendarMoveDiscoveryReadyMsg struct {
-	sourceID  int64
-	accountID int64
+	// state is the move snapshot the choice dispatched. The move working
+	// state lives in the message, not in Model: no dialog is armed while
+	// discovery or migration runs.
+	state     calendarMoveState
 	discovery account.Discovery
 	err       error
 }
@@ -38,7 +40,7 @@ type calendarMoveFinishedMsg struct {
 }
 
 func (m Model) beginCalendarMove(msg CalendarMoveToAccountRequestedMsg) (Model, tea.Cmd) {
-	if m.syncing || m.pendingCalendarMove != nil {
+	if m.syncing || m.pending.isCalendarMove() {
 		return m, m.toast.Failed("Finish the current account operation before moving a calendar")
 	}
 	info, ok := m.calendars[msg.ID]
@@ -65,38 +67,43 @@ func (m Model) beginCalendarMove(msg CalendarMoveToAccountRequestedMsg) (Model, 
 			labels[i] = textsafe.Display(configured.Name)
 		}
 	}
-	m.pendingCalendarMove = &calendarMoveState{
-		sourceID: msg.ID, sourceName: msg.Name, accounts: accounts,
-	}
-	m.pendingScopeKind = pendingScopeCalendarMoveAccount
-	m.choiceDialog = NewChoiceDialogModel(
-		fmt.Sprintf("Move %q to which account?", msg.Name), m.theme, labels...,
-	).SetSize(m.width, m.height)
-	m.choiceOpen = true
-	return m, nil
+	return m.armChoice(
+		pendingAction{
+			kind: pendingActionCalendarMoveAccount,
+			target: pendingTarget{move: &calendarMoveState{
+				sourceID: msg.ID, sourceName: msg.Name, accounts: accounts,
+			}},
+		},
+		NewChoiceDialogModel(
+			fmt.Sprintf("Move %q to which account?", msg.Name), m.theme, labels...,
+		),
+	), nil
 }
 
-func (m Model) discoverCalendarMove(sourceID, accountID int64) tea.Cmd {
+func (m Model) discoverCalendarMove(state calendarMoveState) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {
-			return calendarMoveDiscoveryReadyMsg{sourceID: sourceID, accountID: accountID, err: fmt.Errorf("open credential store: %w", err)}
+			return calendarMoveDiscoveryReadyMsg{state: state, err: fmt.Errorf("open credential store: %w", err)}
 		}
-		discovery, err := m.app.Accounts.Discover(ctx, accountID, store)
-		return calendarMoveDiscoveryReadyMsg{sourceID: sourceID, accountID: accountID, discovery: discovery, err: err}
+		discovery, err := m.app.Accounts.Discover(ctx, state.account.ID, store)
+		return calendarMoveDiscoveryReadyMsg{state: state, discovery: discovery, err: err}
 	}
 }
 
 func (m Model) finishCalendarMoveDiscovery(msg calendarMoveDiscoveryReadyMsg) (Model, tea.Cmd) {
-	pending := m.pendingCalendarMove
-	if pending == nil || pending.sourceID != msg.sourceID || pending.account.ID != msg.accountID {
+	pending := m.pending.target.move
+	if !m.pending.isCalendarMove() || pending == nil ||
+		pending.sourceID != msg.state.sourceID ||
+		pending.account.ID != msg.state.account.ID {
 		return m, nil
 	}
 	m.syncing = false
+	state := msg.state
 	if msg.err != nil {
-		m.pendingCalendarMove = nil
+		m = m.clearPending()
 		m.statusToken++
 		m.syncStatus = "Couldn't load destination calendars: " + msg.err.Error()
 		return m, m.expireStatusAfter(10*time.Second, m.statusToken)
@@ -108,7 +115,7 @@ func (m Model) finishCalendarMoveDiscovery(msg calendarMoveDiscoveryReadyMsg) (M
 		}
 	}
 	if len(collections) == 0 {
-		m.pendingCalendarMove = nil
+		m = m.clearPending()
 		return m, m.toast.Failed("This account has no writable calendar collections")
 	}
 	slices.SortFunc(collections, func(a, b account.DiscoveredCalendar) int {
@@ -121,15 +128,17 @@ func (m Model) finishCalendarMoveDiscovery(msg calendarMoveDiscoveryReadyMsg) (M
 			labels[i] = textsafe.Display(remote.Path)
 		}
 	}
-	pending.discovery = msg.discovery
-	pending.collections = collections
-	m.pendingScopeKind = pendingScopeCalendarMoveCollection
-	m.choiceDialog = NewChoiceDialogModel(
-		fmt.Sprintf("Move %q into which calendar?", pending.sourceName), m.theme, labels...,
-	).SetSize(m.width, m.height)
-	m.choiceOpen = true
-	m.syncStatus = ""
-	return m, nil
+	state.discovery = msg.discovery
+	state.collections = collections
+	return m.armChoice(
+		pendingAction{
+			kind:   pendingActionCalendarMoveCollection,
+			target: pendingTarget{move: &state},
+		},
+		NewChoiceDialogModel(
+			fmt.Sprintf("Move %q into which calendar?", state.sourceName), m.theme, labels...,
+		),
+	), nil
 }
 
 func (m Model) migrateCalendarMove(pending calendarMoveState, path string) tea.Cmd {
@@ -142,12 +151,14 @@ func (m Model) migrateCalendarMove(pending calendarMoveState, path string) tea.C
 }
 
 func (m Model) finishCalendarMove(msg calendarMoveFinishedMsg) (Model, tea.Cmd) {
-	pending := m.pendingCalendarMove
-	if pending == nil || pending.sourceID != msg.sourceID || pending.account.ID != msg.account.ID {
+	pending := m.pending.target.move
+	if !m.pending.isCalendarMove() || pending == nil ||
+		pending.sourceID != msg.sourceID ||
+		pending.account.ID != msg.account.ID {
 		return m, nil
 	}
 	m.syncing = false
-	m.pendingCalendarMove = nil
+	m = m.clearPending()
 	if msg.err != nil {
 		m.statusToken++
 		m.syncStatus = "Couldn't move calendar: " + msg.err.Error()
@@ -164,32 +175,42 @@ func (m Model) finishCalendarMove(msg calendarMoveFinishedMsg) (Model, tea.Cmd) 
 	)
 }
 
-func (m Model) handleCalendarMoveChoice(kind pendingScopeKind, choice int) (Model, tea.Cmd, bool) {
-	pending := m.pendingCalendarMove
-	switch kind {
-	case pendingScopeCalendarMoveAccount:
-		if pending == nil || choice < 0 || choice >= len(pending.accounts) {
-			m.pendingCalendarMove = nil
-			return m, nil, true
+// calendarMoveChoice resolves one step of the calendar move flow. act is
+// the armed action captured by handleChoiceDialogResult before it reset
+// the pending state; the working state rides in the dispatched message.
+func (m Model) calendarMoveChoice(act pendingAction, choice int) (tea.Model, tea.Cmd) {
+	move := act.target.move
+	switch act.kind {
+	case pendingActionCalendarMoveAccount:
+		if move == nil || choice < 0 || choice >= len(move.accounts) {
+			return m, nil
 		}
-		pending.account = pending.accounts[choice]
+		move.account = move.accounts[choice]
 		m.syncing = true
-		m.syncStatus = "Loading calendars for " + textsafe.Display(pending.account.DisplayName) + "…"
+		m.syncStatus = "Loading calendars for " + textsafe.Display(move.account.DisplayName) + "…"
+		// Keep the move armed while discovery runs so a cancelled or
+		// superseded flow ignores the stale result (ctrl+c clearPending).
+		m.pending = pendingAction{
+			kind:   pendingActionCalendarMoveAccount,
+			target: pendingTarget{move: move},
+		}
 		return m, tea.Batch(
 			m.syncSpinner.Tick,
-			m.discoverCalendarMove(pending.sourceID, pending.account.ID),
-		), true
-	case pendingScopeCalendarMoveCollection:
-		if pending == nil || choice < 0 || choice >= len(pending.collections) {
-			m.pendingCalendarMove = nil
-			return m, nil, true
+			m.discoverCalendarMove(*move),
+		)
+	case pendingActionCalendarMoveCollection:
+		if move == nil || choice < 0 || choice >= len(move.collections) {
+			return m, nil
 		}
-		path := pending.collections[choice].Path
-		state := *pending
+		state := *move
 		m.syncing = true
-		m.syncStatus = "Moving " + textsafe.Display(pending.sourceName) + "…"
-		return m, tea.Batch(m.syncSpinner.Tick, m.migrateCalendarMove(state, path)), true
+		m.syncStatus = "Moving " + textsafe.Display(move.sourceName) + "…"
+		m.pending = pendingAction{
+			kind:   pendingActionCalendarMoveCollection,
+			target: pendingTarget{move: move},
+		}
+		return m, tea.Batch(m.syncSpinner.Tick, m.migrateCalendarMove(state, move.collections[choice].Path))
 	default:
-		return m, nil, false
+		return m, nil
 	}
 }

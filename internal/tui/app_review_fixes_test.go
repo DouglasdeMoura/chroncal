@@ -119,8 +119,8 @@ func TestKeepLocalRequestOpensConfirm(t *testing.T) {
 
 	updated, _ := m.Update(CalendarKeepLocalRequestedMsg{ID: 42, Name: "Work"})
 	m = updated.(Model)
-	if !m.confirmOpen || m.pendingCalendarKeepLocal != 42 {
-		t.Fatalf("keep-local request: confirmOpen=%v pending=%d, want open with 42", m.confirmOpen, m.pendingCalendarKeepLocal)
+	if !m.confirmOpen || m.pending.kind != pendingActionCalendarKeepLocal || m.pending.target.calendarID != 42 {
+		t.Fatalf("keep-local request: confirmOpen=%v kind=%v pending=%d, want open with 42", m.confirmOpen, m.pending.kind, m.pending.target.calendarID)
 	}
 	if view := stripANSI(m.confirmDialog.View()); !strings.Contains(view, "Keep") || !strings.Contains(view, "local calendar") {
 		t.Fatalf("confirm copy missing keep-local message:\n%s", view)
@@ -129,7 +129,7 @@ func TestKeepLocalRequestOpensConfirm(t *testing.T) {
 	// Cancelling clears the staged ID.
 	updated, _ = m.Update(ConfirmDialogResultMsg{Confirmed: false})
 	m = updated.(Model)
-	if m.pendingCalendarKeepLocal != 0 {
+	if m.pending.kind != pendingActionNone || m.pending.target.calendarID != 0 {
 		t.Fatal("cancel did not clear the staged keep-local ID")
 	}
 }

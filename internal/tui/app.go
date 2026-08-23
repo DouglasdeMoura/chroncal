@@ -90,6 +90,10 @@ type calendarDeleteCountMsg struct {
 	id         int64
 	name       string
 	eventCount int64
+	// promoteID and promoteName carry the replacement default that the
+	// promote picker selected. Zero ID and empty name mean no picker ran.
+	promoteID   int64
+	promoteName string
 }
 
 type eventEditLoadedMsg struct {
@@ -98,19 +102,61 @@ type eventEditLoadedMsg struct {
 	err          error
 }
 
-// pendingScopeKind tags which kind of recurring-scope action a ChoiceDialog
-// currently drives. Zero means no scope dialog is open.
-type pendingScopeKind int
+// pendingActionKind tags the intent behind an open confirm or choice
+// dialog. The value decides which service call a confirmed result fires.
+// The zero value means no dialog action is armed.
+type pendingActionKind int
 
 const (
-	pendingScopeNone pendingScopeKind = iota
-	pendingScopeDelete
-	pendingScopeEdit
-	pendingScopeCalendarPromote
-	pendingScopeAccountSelectionPromote
-	pendingScopeCalendarMoveAccount
-	pendingScopeCalendarMoveCollection
+	pendingActionNone pendingActionKind = iota
+	// Confirm dialogs.
+	pendingActionQuit             // 'q'/ctrl+c quit confirm
+	pendingActionEventDelete      // single-event delete
+	pendingActionPurgeEntries     // trash purge
+	pendingActionAccountRemove    // account removal
+	pendingActionAccountSelection // account calendar reconcile
+	pendingActionCalendarKeepLocal
+	pendingActionCalendarDelete
+	// Choice dialogs.
+	pendingActionEventDeleteScope        // recurring delete scope
+	pendingActionEditScope               // recurring edit scope
+	pendingActionCalendarPromote         // new-default picker before a calendar delete
+	pendingActionAccountSelectionPromote // new-default picker before a reconcile
+	pendingActionCalendarMoveAccount     // calendar move: pick destination account
+	pendingActionCalendarMoveCollection  // calendar move: pick destination collection
 )
+
+// pendingAction is the single armed intent behind an open confirm or
+// choice dialog. kind selects which pendingTarget member holds the
+// payload. The zero value means nothing is armed.
+type pendingAction struct {
+	kind   pendingActionKind
+	target pendingTarget
+	label  string // pre-sanitized display name or result title
+}
+
+// pendingTarget holds the payload of one pendingAction. Exactly one
+// member is live at a time; the owning kind selects it.
+type pendingTarget struct {
+	ev           event.Event      // eventDelete, eventDeleteScope
+	save         EventFormSaveMsg // editScope
+	calendarID   int64            // calendarDelete, calendarKeepLocal, calendarPromote
+	promoteID    int64            // calendarDelete: replacement default
+	promoteCands []int64          // calendarPromote: candidate IDs by button index
+	accountID    int64            // accountRemove
+	selection    *accountCalendarSelection
+	defaultCands []accountDefaultCandidate
+	entries      []trash.Entry // purgeEntries
+	move         *calendarMoveState
+}
+
+// isCalendarMove reports whether the armed action drives the calendar
+// move flow. The move request guard uses it to block a second move while
+// one of the move choice dialogs is open.
+func (p pendingAction) isCalendarMove() bool {
+	return p.kind == pendingActionCalendarMoveAccount ||
+		p.kind == pendingActionCalendarMoveCollection
+}
 
 type eventViewLoadedMsg struct {
 	event event.Event
@@ -389,20 +435,18 @@ type Model struct {
 	formOpen        bool
 	palette         PaletteModel
 	paletteOpen     bool
-	pendingDelete   event.Event
-	// pendingScopeKind disambiguates which flow the open choice dialog is
-	// driving — recurring delete vs recurring edit. Both reuse the same
-	// ChoiceDialogModel and ChoiceDialogResultMsg.
-	pendingScopeKind pendingScopeKind
-	pendingEditSave  EventFormSaveMsg
-	err              error
-	ready            bool
-	showSidebar      bool
-	showWeekNumbers  bool
-	weekStart        time.Weekday
-	focus            appFocus
-	hiddenCalendars  map[int64]bool
-	clickedEventID   int64
+	// pending is the single armed intent behind an open confirm or choice
+	// dialog (see pendingAction). armConfirm and armChoice set it;
+	// clearPending resets it.
+	pending         pendingAction
+	err             error
+	ready           bool
+	showSidebar     bool
+	showWeekNumbers bool
+	weekStart       time.Weekday
+	focus           appFocus
+	hiddenCalendars map[int64]bool
+	clickedEventID  int64
 
 	sidebar                     SidebarModel
 	calendarManager             CalendarManagerModel
@@ -435,23 +479,11 @@ type Model struct {
 	// another sync was running (e.g. a re-auth completing mid-sync).
 	// syncFinishedMsg drains it so the post-reauth sync isn't lost and the
 	// sidebar ⚠ always clears. Zero ID means nothing queued.
-	pendingSyncCalendar             syncTarget
-	pendingCalendarDelete           int64
-	pendingCalendarDeleteName       string
-	pendingCalendarKeepLocal        int64   // account calendar to unlink while keeping local events
-	pendingCalendarPromote          int64   // new default to promote when deleting the current default
-	pendingCalendarPromoteName      string  // human-readable name of the promotion target
-	pendingCalendarPromoteCands     []int64 // candidate calendar IDs by ChoiceDialog button index
-	pendingAccountSelection         *accountCalendarSelection
-	pendingAccountDefaultCandidates []accountDefaultCandidate
-	pendingAccountRemoveID          int64
-	pendingAccountRemoveName        string
-	pendingCalendarMove             *calendarMoveState
+	pendingSyncCalendar syncTarget
 
-	// pendingQuit is true while the confirm dialog is asking the user to
-	// confirm a 'q' quit. Distinguishes the quit flow from event/calendar
-	// delete flows that share ConfirmDialogModel.
-	pendingQuit bool
+	// pendingAccountManagementID and pendingDiscovery* above drain through
+	// their own lifecycles. They are not dialog wait state; see
+	// pendingAction for that.
 
 	helpDialog     HelpDialogModel
 	helpDialogOpen bool
@@ -495,10 +527,8 @@ type Model struct {
 	// trash is the "Recently deleted" overlay. While trashOpen is true
 	// the main content renders trash.View() instead of the active
 	// viewMode's model, and key input routes through m.trash.Update.
-	trash               TrashModel
-	trashOpen           bool
-	pendingPurgeEntries []trash.Entry
-	pendingPurgeTitle   string
+	trash     TrashModel
+	trashOpen bool
 }
 
 // NewModel builds the root TUI model. themeName selects a built-in theme
