@@ -418,7 +418,7 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 		to = to.AddDate(0, 0, 1) // half-open: include the entire end day
 	}
 	// An inverted window (--to before --from) silently matched nothing.
-	// Reject it so a typo fails loudly instead of hiding every row.
+	// Reject it so a typo gives an error instead of an empty result.
 	if !to.After(from) {
 		return time.Time{}, time.Time{}, errInvalidInputf("--to must be after --from")
 	}

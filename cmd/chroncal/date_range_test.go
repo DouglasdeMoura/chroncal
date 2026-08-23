@@ -131,20 +131,28 @@ func TestParseExportDateBoundsNeither(t *testing.T) {
 // filtered out with no error. The same-day range stays valid because the
 // half-open end bound includes the whole --to day.
 func TestParseDateRangeRejectsInvertedRange(t *testing.T) {
-	_, _, err := parseDateRange("2026-05-10", "2026-05-01")
-	if err == nil {
-		t.Fatal("parseDateRange accepted --to before --from")
-	}
-	var ce *cliError
-	if !errors.As(err, &ce) || ce.Code != "invalid_input" {
-		t.Fatalf("error = %#v, want an invalid_input cliError", err)
-	}
-
-	if _, _, err := parseDateRange("2026-05-10", "2026-05-10"); err != nil {
-		t.Fatalf("same-day range must stay valid, got %v", err)
-	}
-	if _, _, err := parseDateRange("2026-05-10", ""); err != nil {
-		t.Fatalf("default upper bound must stay valid, got %v", err)
+	for _, tc := range []struct {
+		from, to string
+		wantErr  bool
+	}{
+		{"2026-05-10", "2026-05-01", true},  // to strictly before from
+		{"2026-05-10", "2026-05-09", true},  // to one day before from
+		{"2026-05-10", "2026-05-10", false}, // whole --to day included
+		{"2026-05-10", "", false},           // default upper bound
+	} {
+		_, _, err := parseDateRange(tc.from, tc.to)
+		if tc.wantErr && err == nil {
+			t.Fatalf("parseDateRange(%q, %q) accepted an inverted range", tc.from, tc.to)
+		}
+		if !tc.wantErr && err != nil {
+			t.Fatalf("parseDateRange(%q, %q) = %v, want valid", tc.from, tc.to, err)
+		}
+		if err != nil {
+			var ce *cliError
+			if !errors.As(err, &ce) || ce.Code != "invalid_input" {
+				t.Fatalf("error = %#v, want an invalid_input cliError", err)
+			}
+		}
 	}
 }
 
