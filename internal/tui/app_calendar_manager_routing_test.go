@@ -279,8 +279,8 @@ func TestCalendarManagerAddMenuRoutes(t *testing.T) {
 			m = updated.(Model)
 
 			// The obsolete generic choice dialog must never be involved.
-			if m.choiceOpen || m.pendingScopeKind != pendingScopeNone {
-				t.Fatalf("choice dialog leaked into add routing: choice=%v scope=%v", m.choiceOpen, m.pendingScopeKind)
+			if m.choiceOpen || m.pending.kind != pendingActionNone {
+				t.Fatalf("choice dialog leaked into add routing: choice=%v kind=%v", m.choiceOpen, m.pending.kind)
 			}
 			if !m.calendarManagerOpen {
 				t.Fatal("manager closed after add-menu selection")

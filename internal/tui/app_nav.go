@@ -6,7 +6,6 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
 func nextClockTickDelay(now time.Time) time.Duration {
@@ -87,39 +86,41 @@ func (m Model) refreshCalendarViews() Model {
 // agenda row list then stays in sync with the toggle set. The original slice
 // is not mutated.
 
-// clearConfirmPending drops wait state owned by a destructive confirm or
-// choice. Used when ctrl+c abandons that operation in favor of the quit
-// confirm. The superseded action can then never fire or reappear afterward.
-func (m Model) clearConfirmPending() Model {
-	m.pendingDelete = event.Event{}
-	m.pendingPurgeEntries = nil
-	m.pendingPurgeTitle = ""
-	m.pendingCalendarDelete = 0
-	m.pendingCalendarDeleteName = ""
-	m.pendingCalendarKeepLocal = 0
-	m.pendingCalendarPromote = 0
-	m.pendingCalendarPromoteName = ""
-	m.pendingCalendarPromoteCands = nil
-	m.pendingAccountSelection = nil
-	m.pendingAccountDefaultCandidates = nil
-	m.pendingAccountRemoveID = 0
-	m.pendingAccountRemoveName = ""
-	if m.choiceOpen {
-		m.pendingCalendarMove = nil
-	}
+// armConfirm stores p as the armed intent and opens d as the confirm
+// dialog. Every confirm flow arms through this one site: no other code
+// writes m.pending while a dialog is open.
+func (m Model) armConfirm(p pendingAction, d ConfirmDialogModel) Model {
+	m.pending = p
+	m.confirmDialog = d.SetSize(m.width, m.height)
+	m.confirmOpen = true
+	return m
+}
+
+// armChoice stores p as the armed intent and opens d as the choice
+// dialog. Every choice flow arms through this one site.
+func (m Model) armChoice(p pendingAction, d ChoiceDialogModel) Model {
+	m.pending = p
+	m.choiceDialog = d.SetSize(m.width, m.height)
+	m.choiceOpen = true
+	return m
+}
+
+// clearPending drops the armed dialog intent. It is the single reset
+// point: the ctrl+c supersede and both cancel branches call it. The
+// superseded action can then never fire or reappear afterward.
+func (m Model) clearPending() Model {
+	m.pending = pendingAction{}
 	m.choiceOpen = false
-	m.pendingScopeKind = pendingScopeNone
 	return m
 }
 
 // openQuitConfirm builds and opens the quit-confirm dialog. Shared by the
 // q and ctrl+c entry points so the two keystrokes cannot drift in style.
 func (m Model) openQuitConfirm() Model {
-	m.pendingQuit = true
-	m.confirmDialog = NewConfirmDialogModel("Quit chroncal?", "Quit", m.theme).
-		SetSize(m.width, m.height)
-	m.confirmOpen = true
-	return m
+	return m.armConfirm(
+		pendingAction{kind: pendingActionQuit},
+		NewConfirmDialogModel("Quit chroncal?", "Quit", m.theme),
+	)
 }
 
 // interceptGlobalKeys routes the quit guard (q / ctrl+c) and help (?) ahead
@@ -131,7 +132,7 @@ func (m Model) openQuitConfirm() Model {
 // so the overlay's own close binding runs instead. The quit confirm also
 // blocks ?. The help dialog handles its own close keys.
 func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
-	inQuitConfirm := m.confirmOpen && m.pendingQuit
+	inQuitConfirm := m.confirmOpen && m.pending.kind == pendingActionQuit
 	if msg.String() == "ctrl+c" {
 		if inQuitConfirm {
 			m.oauthFlow.Abort() // release any in-flight OAuth listener
@@ -143,7 +144,8 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		// keystroke fall through to confirmDialog.Update (which ignores
 		// it). Clear the abandoned confirm's pending state. That keeps the
 		// destructive action from a later fire.
-		m = m.clearConfirmPending()
+		m = m.clearPending()
+		m.choiceOpen = false
 		return m.openQuitConfirm(), nil, true
 	}
 	textEntryActive := m.paletteOpen || m.formOpen || m.calendarManagerOpen ||

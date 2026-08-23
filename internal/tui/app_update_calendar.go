@@ -374,15 +374,17 @@ func (m Model) handleCalendarSaved(msg CalendarSavedMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleCalendarKeepLocalRequested(msg CalendarKeepLocalRequestedMsg) (tea.Model, tea.Cmd) {
 	// Keep the edit dialog open behind the confirm, mirroring the delete
 	// flow: cancelling returns to the editor with the draft intact.
-	m.pendingCalendarKeepLocal = msg.ID
 	message := fmt.Sprintf(
 		"Keep %q as a local calendar?\n\nSyncing with its account stops; every downloaded event stays on this device.\nRe-adding it later from Manage Calendars creates a separate copy.",
 		msg.Name,
 	)
-	m.confirmDialog = NewConfirmDialogModel(message, "Keep as Local", m.theme).
-		SetSize(m.width, m.height)
-	m.confirmOpen = true
-	return m, nil
+	return m.armConfirm(
+		pendingAction{
+			kind:   pendingActionCalendarKeepLocal,
+			target: pendingTarget{calendarID: msg.ID},
+		},
+		NewConfirmDialogModel(message, "Keep as Local", m.theme),
+	), nil
 }
 
 func (m Model) handleCalendarSetDefaultRequested(msg CalendarSetDefaultRequestedMsg) (tea.Model, tea.Cmd) {
@@ -430,20 +432,21 @@ func (m Model) handleCalendarDeleteRequested(msg CalendarDeleteRequestedMsg) (te
 				return calendarDeleteCountMsg{id: id, name: name, eventCount: count}
 			}
 		}
-		m.pendingCalendarDelete = id
-		m.pendingCalendarDeleteName = name
-		m.pendingCalendarPromoteCands = make([]int64, len(candidates))
+		promoteCands := make([]int64, len(candidates))
 		labels := make([]string, len(candidates))
 		for i, c := range candidates {
-			m.pendingCalendarPromoteCands[i] = c.id
+			promoteCands[i] = c.id
 			labels[i] = c.name
 		}
-		m.pendingScopeKind = pendingScopeCalendarPromote
 		message := fmt.Sprintf("%q is the default calendar.\n\nChoose a new default before deleting it:", name)
-		m.choiceDialog = NewChoiceDialogModel(message, m.theme, labels...).
-			SetSize(m.width, m.height)
-		m.choiceOpen = true
-		return m, nil
+		return m.armChoice(
+			pendingAction{
+				kind:   pendingActionCalendarPromote,
+				target: pendingTarget{calendarID: id, promoteCands: promoteCands},
+				label:  name,
+			},
+			NewChoiceDialogModel(message, m.theme, labels...),
+		), nil
 	}
 	return m, func() tea.Msg {
 		count, _ := m.app.Events.CountByCalendar(context.Background(), id)
@@ -456,8 +459,6 @@ func (m Model) handleCalendarDeleteCount(msg calendarDeleteCountMsg) (tea.Model,
 	// cancels the confirm, they return to the edit dialog. They do
 	// not lose their in-progress changes. The confirm dialog takes
 	// input priority, so the edit dialog is visible but inert.
-	m.pendingCalendarDelete = msg.id
-	m.pendingCalendarDeleteName = msg.name
 	message := fmt.Sprintf("Delete calendar %q?", msg.name)
 	if msg.eventCount > 0 {
 		if msg.eventCount == 1 {
@@ -466,14 +467,17 @@ func (m Model) handleCalendarDeleteCount(msg calendarDeleteCountMsg) (tea.Model,
 			message = fmt.Sprintf("Delete calendar %q?\n\n%d events will be deleted", msg.name, msg.eventCount)
 		}
 	}
-	if m.pendingCalendarPromoteName != "" {
-		message += fmt.Sprintf("\n\n%q will become the default.", m.pendingCalendarPromoteName)
+	if msg.promoteName != "" {
+		message += fmt.Sprintf("\n\n%q will become the default.", msg.promoteName)
 	}
-	m.confirmDialog = NewConfirmDialogModel(message, "Delete", m.theme).
-		Destructive().
-		SetSize(m.width, m.height)
-	m.confirmOpen = true
-	return m, nil
+	return m.armConfirm(
+		pendingAction{
+			kind:   pendingActionCalendarDelete,
+			target: pendingTarget{calendarID: msg.id, promoteID: msg.promoteID},
+		},
+		NewConfirmDialogModel(message, "Delete", m.theme).
+			Destructive(),
+	), nil
 }
 
 func (m Model) handleCalendarManagerClosed(msg CalendarManagerClosedMsg) (tea.Model, tea.Cmd) {
@@ -484,11 +488,7 @@ func (m Model) handleCalendarManagerClosed(msg CalendarManagerClosedMsg) (tea.Mo
 		m.syncing = false
 		m.syncStatus = ""
 	}
-	m.pendingAccountSelection = nil
-	m.pendingAccountDefaultCandidates = nil
-	if m.pendingScopeKind == pendingScopeAccountSelectionPromote {
-		m.pendingScopeKind = pendingScopeNone
-	}
+	m = m.clearPending()
 	return m, nil
 }
 

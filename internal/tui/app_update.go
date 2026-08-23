@@ -498,115 +498,93 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, tea.Cmd) {
 	m.choiceOpen = false
-	kind := m.pendingScopeKind
-	m.pendingScopeKind = pendingScopeNone
+	act := m.pending
+	m = m.clearPending()
 	if msg.Choice < 0 {
-		m.pendingEditSave = EventFormSaveMsg{}
-		m.pendingDelete = event.Event{}
 		m.viewReturnEvent = event.Event{}
-		if kind == pendingScopeCalendarPromote {
-			m.pendingCalendarDelete = 0
-			m.pendingCalendarDeleteName = ""
-			m.pendingCalendarPromote = 0
-			m.pendingCalendarPromoteName = ""
-			m.pendingCalendarPromoteCands = nil
-		}
-		if kind == pendingScopeAccountSelectionPromote {
-			m.pendingAccountSelection = nil
-			m.pendingAccountDefaultCandidates = nil
-		}
-		if kind == pendingScopeCalendarMoveAccount || kind == pendingScopeCalendarMoveCollection {
-			m.pendingCalendarMove = nil
-		}
 		return m, nil
 	}
-	if next, cmd, handled := m.handleCalendarMoveChoice(kind, msg.Choice); handled {
-		return next, cmd
-	}
-	if kind == pendingScopeAccountSelectionPromote {
-		if msg.Choice >= len(m.pendingAccountDefaultCandidates) ||
-			m.pendingAccountSelection == nil {
-			m.pendingAccountSelection = nil
-			m.pendingAccountDefaultCandidates = nil
+	switch act.kind {
+	case pendingActionCalendarMoveAccount, pendingActionCalendarMoveCollection:
+		return m.calendarMoveChoice(act, msg.Choice)
+	case pendingActionAccountSelectionPromote:
+		if msg.Choice >= len(act.target.defaultCands) ||
+			act.target.selection == nil {
 			return m, nil
 		}
-		candidate := m.pendingAccountDefaultCandidates[msg.Choice]
+		candidate := act.target.defaultCands[msg.Choice]
+		selection := act.target.selection
 		if candidate.id != 0 {
-			m.pendingAccountSelection.params.NewDefaultID = candidate.id
+			selection.params.NewDefaultID = candidate.id
 		} else {
-			m.pendingAccountSelection.params.NewDefaultPath = candidate.path
+			selection.params.NewDefaultPath = candidate.path
 		}
-		selection := m.pendingAccountSelection
-		m.pendingAccountDefaultCandidates = nil
-		m = m.showAccountCalendarRemovalConfirmation(selection)
-		return m, nil
-	}
-	if kind == pendingScopeCalendarPromote {
-		if msg.Choice < 0 || msg.Choice >= len(m.pendingCalendarPromoteCands) {
-			m.pendingCalendarDelete = 0
-			m.pendingCalendarDeleteName = ""
-			m.pendingCalendarPromote = 0
-			m.pendingCalendarPromoteName = ""
-			m.pendingCalendarPromoteCands = nil
+		return m.showAccountCalendarRemovalConfirmation(selection), nil
+	case pendingActionCalendarPromote:
+		if msg.Choice >= len(act.target.promoteCands) {
 			return m, nil
 		}
-		promoteID := m.pendingCalendarPromoteCands[msg.Choice]
-		m.pendingCalendarPromote = promoteID
+		promoteID := act.target.promoteCands[msg.Choice]
+		promoteName := ""
 		if info, ok := m.calendars[promoteID]; ok {
-			m.pendingCalendarPromoteName = info.Name
+			promoteName = info.Name
 		}
-		id, name := m.pendingCalendarDelete, m.pendingCalendarDeleteName
-		m.pendingCalendarPromoteCands = nil
+		id, name := act.target.calendarID, act.label
 		return m, func() tea.Msg {
 			count, _ := m.app.Events.CountByCalendar(context.Background(), id)
-			return calendarDeleteCountMsg{id: id, name: name, eventCount: count}
+			return calendarDeleteCountMsg{
+				id: id, name: name, eventCount: count,
+				promoteID: promoteID, promoteName: promoteName,
+			}
 		}
-	}
-	if kind == pendingScopeEdit {
-		save := m.pendingEditSave
-		m.pendingEditSave = EventFormSaveMsg{}
+	case pendingActionEditScope:
+		save := act.target.save
 		editID := m.form.editID
 		choice := msg.Choice
 		return m, func() tea.Msg {
 			return m.dispatchEditScope(editID, choice, save)
 		}
-	}
-	ev := m.pendingDelete
-	return m, func() tea.Msg {
-		switch msg.Choice {
-		case 0: // This event
-			meta, err := m.app.Events.DeleteInstanceWithUndo(context.Background(), ev.UID, ev.StartTime)
-			return eventDeletedMsg{
-				calendarID: ev.CalendarID,
-				meta:       meta,
-				title:      ev.Title,
-				err:        err,
+	case pendingActionEventDeleteScope:
+		ev := act.target.ev
+		return m, func() tea.Msg {
+			switch msg.Choice {
+			case 0: // This event
+				meta, err := m.app.Events.DeleteInstanceWithUndo(context.Background(), ev.UID, ev.StartTime)
+				return eventDeletedMsg{
+					calendarID: ev.CalendarID,
+					meta:       meta,
+					title:      ev.Title,
+					err:        err,
+				}
+			case 1: // This and following
+				meta, err := m.app.Events.DeleteFromInstanceWithUndo(context.Background(), ev.UID, ev.StartTime)
+				return eventDeletedMsg{
+					calendarID: ev.CalendarID,
+					meta:       meta,
+					title:      ev.Title,
+					err:        err,
+				}
+			case 2: // All events
+				meta, err := m.app.Events.DeleteSeriesWithUndo(context.Background(), ev.UID)
+				return eventDeletedMsg{
+					calendarID: ev.CalendarID,
+					meta:       meta,
+					title:      ev.Title,
+					err:        err,
+				}
 			}
-		case 1: // This and following
-			meta, err := m.app.Events.DeleteFromInstanceWithUndo(context.Background(), ev.UID, ev.StartTime)
-			return eventDeletedMsg{
-				calendarID: ev.CalendarID,
-				meta:       meta,
-				title:      ev.Title,
-				err:        err,
-			}
-		case 2: // All events
-			meta, err := m.app.Events.DeleteSeriesWithUndo(context.Background(), ev.UID)
-			return eventDeletedMsg{
-				calendarID: ev.CalendarID,
-				meta:       meta,
-				title:      ev.Title,
-				err:        err,
-			}
+			return eventDeletedMsg{calendarID: ev.CalendarID}
 		}
-		return eventDeletedMsg{calendarID: ev.CalendarID}
+	default:
+		return m, nil
 	}
 }
 
 func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model, tea.Cmd) {
 	m.confirmOpen = false
-	if m.pendingQuit {
-		m.pendingQuit = false
+	act := m.pending
+	m = m.clearPending()
+	if act.kind == pendingActionQuit {
 		if msg.Confirmed {
 			m.oauthFlow.Abort() // release any in-flight OAuth listener
 			return m, tea.Quit
@@ -614,45 +592,24 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 		return m, nil
 	}
 	if !msg.Confirmed {
-		m.pendingCalendarDelete = 0
-		m.pendingCalendarDeleteName = ""
-		m.pendingCalendarKeepLocal = 0
-		m.pendingCalendarPromote = 0
-		m.pendingCalendarPromoteName = ""
-		m.pendingPurgeEntries = nil
-		m.pendingPurgeTitle = ""
-		m.pendingAccountSelection = nil
-		m.pendingAccountDefaultCandidates = nil
-		m.pendingAccountRemoveID = 0
-		m.pendingAccountRemoveName = ""
 		return m, nil
 	}
-	if m.pendingAccountRemoveID != 0 {
-		accountID := m.pendingAccountRemoveID
-		name := m.pendingAccountRemoveName
-		m.pendingAccountRemoveID = 0
-		m.pendingAccountRemoveName = ""
+	switch act.kind {
+	case pendingActionAccountRemove:
 		m.calendarManagerOpen = false
 		m.syncing = true
 		m.syncStatus = "Removing account…"
-		return m, tea.Batch(m.syncSpinner.Tick, m.removeAccount(accountID, name))
-	}
-	if m.pendingAccountSelection != nil {
-		selection := m.pendingAccountSelection
-		m.pendingAccountSelection = nil
-		m.pendingAccountDefaultCandidates = nil
+		return m, tea.Batch(m.syncSpinner.Tick, m.removeAccount(act.target.accountID, act.label))
+	case pendingActionAccountSelection:
 		m.syncing = true
 		m.syncStatus = "Applying calendar changes…"
 		return m, tea.Batch(
 			m.syncSpinner.Tick,
-			m.reconcileAndSyncAccountCalendars(selection),
+			m.reconcileAndSyncAccountCalendars(act.target.selection),
 		)
-	}
-	if len(m.pendingPurgeEntries) > 0 {
-		entries := m.pendingPurgeEntries
-		title := m.pendingPurgeTitle
-		m.pendingPurgeEntries = nil
-		m.pendingPurgeTitle = ""
+	case pendingActionPurgeEntries:
+		entries := act.target.entries
+		title := act.label
 		return m, func() tea.Msg {
 			for _, e := range entries {
 				if err := m.app.Trash.Purge(context.Background(), e); err != nil {
@@ -661,10 +618,8 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 			}
 			return trashActionDoneMsg{action: "purged", title: title, err: nil}
 		}
-	}
-	if m.pendingCalendarKeepLocal != 0 {
-		id := m.pendingCalendarKeepLocal
-		m.pendingCalendarKeepLocal = 0
+	case pendingActionCalendarKeepLocal:
+		id := act.target.calendarID
 		return m, func() tea.Msg {
 			ctx := context.Background()
 			cal, err := m.app.Calendars.Get(ctx, id)
@@ -674,36 +629,30 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 			credStore, _ := m.openCredentialStore()
 			return calendarMutationDoneMsg{err: m.app.Calendars.Disconnect(ctx, cal, credStore)}
 		}
-	}
-	if m.pendingCalendarDelete != 0 {
-		id := m.pendingCalendarDelete
-		newDefaultID := m.pendingCalendarPromote
-		m.pendingCalendarDelete = 0
-		m.pendingCalendarDeleteName = ""
-		m.pendingCalendarPromote = 0
-		m.pendingCalendarPromoteName = ""
+	case pendingActionCalendarDelete:
 		// Delete confirmed: close the edit dialog too.
 		m.calendarManagerOpen = false
+		id := act.target.calendarID
+		newDefaultID := act.target.promoteID
 		return m, func() tea.Msg {
 			credStore, _ := m.openCredentialStore()
 			err := m.app.Calendars.DeleteWithRemoteCleanup(context.Background(), id, newDefaultID, credStore)
 			return calendarMutationDoneMsg{err: err}
 		}
-	}
-	ev := m.pendingDelete
-	if ev.ID == 0 {
-		// No branch above matched: nothing destructive waits behind this
-		// confirm. Do not delete event 0. That call always fails and shows
-		// a spurious error toast.
-		return m, nil
-	}
-	return m, func() tea.Msg {
-		meta, err := m.app.Events.DeleteWithUndo(context.Background(), ev.ID)
-		return eventDeletedMsg{
-			calendarID: ev.CalendarID,
-			meta:       meta,
-			title:      ev.Title,
-			err:        err,
+	case pendingActionEventDelete:
+		ev := act.target.ev
+		return m, func() tea.Msg {
+			meta, err := m.app.Events.DeleteWithUndo(context.Background(), ev.ID)
+			return eventDeletedMsg{
+				calendarID: ev.CalendarID,
+				meta:       meta,
+				title:      ev.Title,
+				err:        err,
+			}
 		}
+	default:
+		// Nothing destructive waits behind this confirm. No fallback
+		// action fires.
+		return m, nil
 	}
 }

@@ -270,13 +270,15 @@ func (m Model) handleAccountSettingsRemoveRequested(msg AccountSettingsRemoveReq
 		draft != nil && draft.AccountID == msg.AccountID {
 		message += "\nAny unsaved calendar edits will be discarded."
 	}
-	m.pendingAccountRemoveID = msg.AccountID
-	m.pendingAccountRemoveName = name
-	m.confirmDialog = NewConfirmDialogModel(message, "Remove Account", m.theme).
-		Destructive().
-		SetSize(m.width, m.height)
-	m.confirmOpen = true
-	return m, nil
+	return m.armConfirm(
+		pendingAction{
+			kind:   pendingActionAccountRemove,
+			target: pendingTarget{accountID: msg.AccountID},
+			label:  name,
+		},
+		NewConfirmDialogModel(message, "Remove Account", m.theme).
+			Destructive(),
+	), nil
 }
 
 func (m Model) handleAccountSettingsClosed(msg AccountSettingsClosedMsg) (tea.Model, tea.Cmd) {
@@ -392,20 +394,24 @@ func (m Model) handleAccountCalendarsReconcileRequested(msg AccountCalendarsReco
 		)
 	}
 	if len(candidates) > 0 {
-		m.pendingAccountSelection = selection
-		m.pendingAccountDefaultCandidates = candidates
-		m.pendingScopeKind = pendingScopeAccountSelectionPromote
 		labels := make([]string, len(candidates))
 		for i, candidate := range candidates {
 			labels[i] = textsafe.Display(candidate.name)
 		}
-		m.choiceDialog = NewChoiceDialogModel(
-			"The default calendar is being removed.\n\nChoose a new default before saving these changes:",
-			m.theme,
-			labels...,
-		).SetSize(m.width, m.height)
-		m.choiceOpen = true
-		return m, nil
+		return m.armChoice(
+			pendingAction{
+				kind: pendingActionAccountSelectionPromote,
+				target: pendingTarget{
+					selection:    selection,
+					defaultCands: candidates,
+				},
+			},
+			NewChoiceDialogModel(
+				"The default calendar is being removed.\n\nChoose a new default before saving these changes:",
+				m.theme,
+				labels...,
+			),
+		), nil
 	}
 	m = m.showAccountCalendarRemovalConfirmation(selection)
 	return m, nil

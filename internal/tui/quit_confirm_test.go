@@ -12,6 +12,10 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
+func pendingQuit(m Model) bool {
+	return m.pending.kind == pendingActionQuit
+}
+
 // TestCtrlCConvertsNonQuitConfirmToQuit reproduces issue #143. ctrl+c is
 // documented as "truly global". When a destructive (non-quit) confirm is
 // open it used to fall through and be swallowed. ctrl+c must instead replace
@@ -24,18 +28,20 @@ func TestCtrlCConvertsNonQuitConfirmToQuit(t *testing.T) {
 	// Simulate an open event-delete confirm: confirm dialog is up but it is
 	// NOT the quit confirm.
 	m.confirmOpen = true
-	m.pendingQuit = false
-	m.pendingDelete = event.Event{ID: 7, Title: "Standup"}
+	m.pending = pendingAction{
+		kind:   pendingActionEventDelete,
+		target: pendingTarget{ev: event.Event{ID: 7, Title: "Standup"}},
+	}
 
 	next, _, handled := m.interceptGlobalKeys(ctrlC)
 	if !handled {
 		t.Fatalf("ctrl+c not handled while a non-quit confirm is open (issue #143)")
 	}
-	if !next.confirmOpen || !next.pendingQuit {
-		t.Fatalf("ctrl+c should replace the open confirm with the quit confirm: confirmOpen=%v pendingQuit=%v", next.confirmOpen, next.pendingQuit)
+	if !next.confirmOpen || !pendingQuit(next) {
+		t.Fatalf("ctrl+c should replace the open confirm with the quit confirm: confirmOpen=%v kind=%v", next.confirmOpen, next.pending.kind)
 	}
-	if next.pendingDelete.ID != 0 {
-		t.Fatalf("abandoned destructive pending state not cleared: pendingDelete.ID=%d", next.pendingDelete.ID)
+	if next.pending.target.ev.ID != 0 {
+		t.Fatalf("abandoned destructive pending state not cleared: event ID=%d", next.pending.target.ev.ID)
 	}
 
 	// A second ctrl+c now force-quits.
@@ -53,138 +59,146 @@ func TestCtrlCClearsPurgePendingState(t *testing.T) {
 
 	m := Model{}
 	m.confirmOpen = true
-	m.pendingQuit = false
-	m.pendingPurgeEntries = []trash.Entry{{Kind: trash.KindEvent}}
-	m.pendingPurgeTitle = "1 item"
+	m.pending = pendingAction{
+		kind:   pendingActionPurgeEntries,
+		label:  "1 item",
+		target: pendingTarget{entries: []trash.Entry{{Kind: trash.KindEvent}}},
+	}
 
 	next, _, handled := m.interceptGlobalKeys(ctrlC)
 	if !handled {
 		t.Fatalf("ctrl+c not handled while a purge confirm is open (issue #143)")
 	}
-	if !next.pendingQuit {
+	if !pendingQuit(next) {
 		t.Fatalf("ctrl+c should open the quit confirm")
 	}
-	if len(next.pendingPurgeEntries) != 0 || next.pendingPurgeTitle != "" {
-		t.Fatalf("abandoned purge pending state not cleared: entries=%d title=%q", len(next.pendingPurgeEntries), next.pendingPurgeTitle)
+	if len(next.pending.target.entries) != 0 || next.pending.label != "" {
+		t.Fatalf("abandoned purge pending state not cleared: entries=%d label=%q", len(next.pending.target.entries), next.pending.label)
 	}
 }
 
 func TestCtrlCClearsAccountCalendarSelectionPendingState(t *testing.T) {
 	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	m := Model{
-		choiceOpen:       true,
-		pendingScopeKind: pendingScopeAccountSelectionPromote,
-		pendingAccountSelection: &accountCalendarSelection{
-			params: account.SelectionParams{SelectedPaths: []string{"/keep/"}},
+		choiceOpen: true,
+		pending: pendingAction{
+			kind: pendingActionAccountSelectionPromote,
+			target: pendingTarget{
+				selection:    &accountCalendarSelection{params: account.SelectionParams{SelectedPaths: []string{"/keep/"}}},
+				defaultCands: []accountDefaultCandidate{{id: 9, name: "Home"}},
+			},
 		},
-		pendingAccountDefaultCandidates: []accountDefaultCandidate{{id: 9, name: "Home"}},
 	}
 
 	next, _, handled := m.interceptGlobalKeys(ctrlC)
-	if !handled || !next.pendingQuit {
-		t.Fatalf("ctrl+c did not replace account removal with quit: handled=%v quit=%v", handled, next.pendingQuit)
+	if !handled || !pendingQuit(next) {
+		t.Fatalf("ctrl+c did not replace account removal with quit: handled=%v quit=%v", handled, pendingQuit(next))
 	}
-	if next.pendingAccountSelection != nil || len(next.pendingAccountDefaultCandidates) != 0 {
+	if next.pending.target.selection != nil || len(next.pending.target.defaultCands) != 0 {
 		t.Fatalf("abandoned account selection remains armed: selection=%+v candidates=%+v",
-			next.pendingAccountSelection, next.pendingAccountDefaultCandidates)
+			next.pending.target.selection, next.pending.target.defaultCands)
 	}
-	if next.choiceOpen || next.pendingScopeKind != pendingScopeNone {
+	if next.choiceOpen || next.pending.kind != pendingActionQuit {
 		t.Fatalf("superseded default choice remains open: open=%v kind=%v",
-			next.choiceOpen, next.pendingScopeKind)
+			next.choiceOpen, next.pending.kind)
 	}
 }
 
 func TestCtrlCClearsAccountRemovalPendingState(t *testing.T) {
 	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	m := Model{
-		confirmOpen:              true,
-		pendingAccountRemoveID:   7,
-		pendingAccountRemoveName: "Personal Google",
+		confirmOpen: true,
+		pending: pendingAction{
+			kind:   pendingActionAccountRemove,
+			label:  "Personal Google",
+			target: pendingTarget{accountID: 7},
+		},
 	}
 
 	next, _, handled := m.interceptGlobalKeys(ctrlC)
-	if !handled || !next.pendingQuit {
+	if !handled || !pendingQuit(next) {
 		t.Fatalf("ctrl+c did not replace account removal with quit: handled=%v quit=%v",
-			handled, next.pendingQuit)
+			handled, pendingQuit(next))
 	}
-	if next.pendingAccountRemoveID != 0 || next.pendingAccountRemoveName != "" {
-		t.Fatalf("abandoned account removal remains armed: id=%d name=%q",
-			next.pendingAccountRemoveID, next.pendingAccountRemoveName)
+	if next.pending.target.accountID != 0 || next.pending.label != "" {
+		t.Fatalf("abandoned account removal remains armed: id=%d label=%q",
+			next.pending.target.accountID, next.pending.label)
 	}
 }
 
 // TestCtrlCClearsKeepLocalPendingState guards the keep-local variant of the
-// ctrl+c supersede. The keep-local confirm arms pendingCalendarKeepLocal.
+// ctrl+c supersede. The keep-local confirm arms pendingActionCalendarKeepLocal.
 // ctrl+c must drop that ID with the other wait state. A stale ID survives
 // the canceled quit confirm. The next confirmed dialog then fires Disconnect
-// instead of its own action (handleConfirmDialogResult consumes the field
-// before the delete fallback).
+// instead of its own action.
 func TestCtrlCClearsKeepLocalPendingState(t *testing.T) {
 	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 
 	m := Model{
-		confirmOpen:              true,
-		pendingCalendarKeepLocal: 42,
+		confirmOpen: true,
+		pending: pendingAction{
+			kind:   pendingActionCalendarKeepLocal,
+			target: pendingTarget{calendarID: 42},
+		},
 	}
 
 	next, _, handled := m.interceptGlobalKeys(ctrlC)
-	if !handled || !next.pendingQuit {
+	if !handled || !pendingQuit(next) {
 		t.Fatalf("ctrl+c did not replace the keep-local confirm with quit: handled=%v quit=%v",
-			handled, next.pendingQuit)
+			handled, pendingQuit(next))
 	}
-	if next.pendingCalendarKeepLocal != 0 {
-		t.Fatalf("abandoned keep-local ID remains armed: %d", next.pendingCalendarKeepLocal)
+	if next.pending.target.calendarID != 0 {
+		t.Fatalf("abandoned keep-local ID remains armed: %d", next.pending.target.calendarID)
 	}
 }
 
-// pendingFieldsOutsideConfirmClear lists Model fields with a "pending"
-// prefix that clearConfirmPending does not own. Each entry drains through
-// its own lifecycle. Every other "pending" field holds wait state for a
-// confirm or choice dialog, so clearConfirmPending must reset it.
-var pendingFieldsOutsideConfirmClear = map[string]bool{
+// pendingFieldsOutsideDialog lists Model fields with a "pending" prefix that
+// clearPending does not own. Each entry drains through its own lifecycle.
+// The `pending` field is the dialog wait state and must be zero after clear.
+var pendingFieldsOutsideDialog = map[string]bool{
 	"pendingOrder":               true, // calendar order save; the order-saved message drains it
 	"pendingAccountOrder":        true, // account order save; the order-saved message drains it
 	"pendingAccountOrderIDs":     true, // account order save; the order-saved message drains it
 	"pendingOpenEvent":           true, // event view request; the view loader drains it
-	"pendingEditSave":            true, // recurring edit save; the form drains it
 	"pendingAccountManagementID": true, // account management routing; the manager drains it
 	"pendingDiscoveryAccountID":  true, // OAuth discovery target; the flow drains it
 	"pendingDiscoveryCreated":    true, // OAuth discovery result; the flow drains it
 	"pendingSyncCalendar":        true, // queued sync; syncFinishedMsg drains it
-	"pendingQuit":                true, // quit confirm marker; the quit result drains it
-	"pendingCalendarMove":        true, // move choice state; the choice dialog drains it
-	"pendingScopeKind":           true, // choice scope; the reset writes pendingScopeNone, not zero
 }
 
-// TestClearConfirmPendingResetsAllConfirmWaitFields arms every owned
-// "pending" field, then requires the zero value after the call. Extend the
-// arm literal below when you add a confirm wait field. The reflective check
-// then fails until clearConfirmPending resets the new field too.
-func TestClearConfirmPendingResetsAllConfirmWaitFields(t *testing.T) {
+// TestClearPendingZerosWholeStruct fills every pendingAction field, calls
+// clearPending, and requires the zero value. A new field on pendingAction
+// or pendingTarget fails this test until clearPending resets it too.
+func TestClearPendingZerosWholeStruct(t *testing.T) {
 	m := Model{
-		pendingDelete:                   event.Event{ID: 7, Title: "Standup"},
-		pendingPurgeEntries:             []trash.Entry{{Kind: trash.KindEvent}},
-		pendingPurgeTitle:               "1 item",
-		pendingCalendarDelete:           3,
-		pendingCalendarDeleteName:       "Work",
-		pendingCalendarKeepLocal:        42,
-		pendingCalendarPromote:          9,
-		pendingCalendarPromoteName:      "Home",
-		pendingCalendarPromoteCands:     []int64{3, 9},
-		pendingAccountSelection:         &accountCalendarSelection{},
-		pendingAccountDefaultCandidates: []accountDefaultCandidate{{id: 9, name: "Home"}},
-		pendingAccountRemoveID:          7,
-		pendingAccountRemoveName:        "Personal Google",
+		pending: pendingAction{
+			kind:  pendingActionEventDelete,
+			label: "Standup",
+			target: pendingTarget{
+				ev:           event.Event{ID: 7, Title: "Standup"},
+				save:         EventFormSaveMsg{Title: "Standup"},
+				calendarID:   3,
+				promoteID:    9,
+				promoteCands: []int64{3, 9},
+				accountID:    7,
+				selection:    &accountCalendarSelection{},
+				defaultCands: []accountDefaultCandidate{{id: 9, name: "Home"}},
+				entries:      []trash.Entry{{Kind: trash.KindEvent}},
+				move:         &calendarMoveState{sourceID: 1},
+			},
+		},
 	}
 
-	m = m.clearConfirmPending()
+	m = m.clearPending()
+
+	assertPendingZero(t, m.pending)
 
 	mv := reflect.ValueOf(m)
 	mt := mv.Type()
 	var stale []string
 	for i := 0; i < mt.NumField(); i++ {
 		f := mt.Field(i)
-		if !strings.HasPrefix(f.Name, "pending") || pendingFieldsOutsideConfirmClear[f.Name] {
+		if !strings.HasPrefix(f.Name, "pending") || pendingFieldsOutsideDialog[f.Name] {
 			continue
 		}
 		if !mv.Field(i).IsZero() {
@@ -192,7 +206,22 @@ func TestClearConfirmPendingResetsAllConfirmWaitFields(t *testing.T) {
 		}
 	}
 	if len(stale) > 0 {
-		t.Fatalf("clearConfirmPending left confirm wait state armed: %v", stale)
+		t.Fatalf("clearPending left dialog wait state armed: %v", stale)
+	}
+}
+
+func assertPendingZero(t *testing.T, p pendingAction) {
+	t.Helper()
+	pv := reflect.ValueOf(p)
+	pt := pv.Type()
+	var stale []string
+	for i := 0; i < pt.NumField(); i++ {
+		if !pv.Field(i).IsZero() {
+			stale = append(stale, pt.Field(i).Name)
+		}
+	}
+	if len(stale) > 0 {
+		t.Fatalf("clearPending left pendingAction fields armed: %v", stale)
 	}
 }
 
@@ -221,8 +250,8 @@ func TestQuitKeyDeferredToOpenOverlay(t *testing.T) {
 			if handled {
 				t.Fatalf("q was intercepted while %s is open; the overlay should own q (issue #406)", name)
 			}
-			if next.pendingQuit || next.confirmOpen {
-				t.Fatalf("q opened the quit confirm while %s is open: pendingQuit=%v confirmOpen=%v", name, next.pendingQuit, next.confirmOpen)
+			if pendingQuit(next) || next.confirmOpen {
+				t.Fatalf("q opened the quit confirm while %s is open: kind=%v confirmOpen=%v", name, next.pending.kind, next.confirmOpen)
 			}
 		})
 	}
@@ -238,7 +267,7 @@ func TestQuitKeyStillQuitsFromMainGrid(t *testing.T) {
 	if !handled {
 		t.Fatalf("q not handled from the main grid; expected the quit confirm to open")
 	}
-	if !next.pendingQuit || !next.confirmOpen {
-		t.Fatalf("q should open the quit confirm from the main grid: pendingQuit=%v confirmOpen=%v", next.pendingQuit, next.confirmOpen)
+	if !pendingQuit(next) || !next.confirmOpen {
+		t.Fatalf("q should open the quit confirm from the main grid: kind=%v confirmOpen=%v", next.pending.kind, next.confirmOpen)
 	}
 }

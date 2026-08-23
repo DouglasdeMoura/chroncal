@@ -221,18 +221,20 @@ func (m Model) handleEventFormSave(msg EventFormSaveMsg) (tea.Model, tea.Cmd) {
 	alarms := msg.Alarms
 	// Editing one occurrence of a recurring series → defer the actual
 	// write until the user picks a scope. The dialog dispatch
-	// (ChoiceDialogResultMsg below) reads m.pendingEditSave and routes
+	// (ChoiceDialogResultMsg below) reads the armed save and routes
 	// to UpdateInstance / UpdateFromInstance / Update.
 	if editID > 0 && !msg.InstanceTime.IsZero() {
-		m.pendingEditSave = msg
-		m.pendingScopeKind = pendingScopeEdit
-		m.choiceDialog = NewChoiceDialogModel(
-			fmt.Sprintf("Update %q?", msg.Title),
-			m.theme,
-			"This event", "This and following", "All events",
-		).SetSize(m.width, m.height)
-		m.choiceOpen = true
-		return m, nil
+		return m.armChoice(
+			pendingAction{
+				kind:   pendingActionEditScope,
+				target: pendingTarget{save: msg},
+			},
+			NewChoiceDialogModel(
+				fmt.Sprintf("Update %q?", msg.Title),
+				m.theme,
+				"This event", "This and following", "All events",
+			),
+		), nil
 	}
 	if editID > 0 {
 		eventID := editID
@@ -452,24 +454,30 @@ func (m Model) handleEventDelete(msg EventDeleteMsg) (tea.Model, tea.Cmd) {
 	if cmd, blocked := m.blockReadOnlyCalendarMutation(msg.Event.CalendarID); blocked {
 		return m, cmd
 	}
-	m.pendingDelete = msg.Event
 	if msg.Event.RecurrenceRule != "" {
-		m.pendingScopeKind = pendingScopeDelete
-		m.choiceDialog = NewChoiceDialogModel(
-			fmt.Sprintf("Delete %q?", msg.Event.Title),
-			m.theme,
-			"This event", "This and following", "All events",
-		).SetSize(m.width, m.height)
-		m.choiceOpen = true
-	} else {
-		m.confirmDialog = NewConfirmDialogModel(
+		return m.armChoice(
+			pendingAction{
+				kind:   pendingActionEventDeleteScope,
+				target: pendingTarget{ev: msg.Event},
+			},
+			NewChoiceDialogModel(
+				fmt.Sprintf("Delete %q?", msg.Event.Title),
+				m.theme,
+				"This event", "This and following", "All events",
+			),
+		), nil
+	}
+	return m.armConfirm(
+		pendingAction{
+			kind:   pendingActionEventDelete,
+			target: pendingTarget{ev: msg.Event},
+		},
+		NewConfirmDialogModel(
 			fmt.Sprintf("Delete %q?", msg.Event.Title),
 			"Delete",
 			m.theme,
-		).Destructive().SetSize(m.width, m.height)
-		m.confirmOpen = true
-	}
-	return m, nil
+		).Destructive(),
+	), nil
 }
 
 func (m Model) handleTrashViewRequested(msg TrashViewRequestedMsg) (tea.Model, tea.Cmd) {
@@ -569,21 +577,23 @@ func (m Model) handleTrashPurgeRequested(msg TrashPurgeRequestedMsg) (tea.Model,
 	if len(msg.Entries) == 0 {
 		return m, nil
 	}
-	m.pendingPurgeEntries = msg.Entries
-	m.pendingPurgeTitle = trashBulkTitle(msg.Entries)
 	var message string
 	if len(msg.Entries) == 1 {
 		message = fmt.Sprintf("Purge %q forever? This can't be undone.", msg.Entries[0].Title)
 	} else {
 		message = fmt.Sprintf("Purge %d items forever? This can't be undone.", len(msg.Entries))
 	}
-	m.confirmDialog = NewConfirmDialogModel(message, "Purge", m.theme).
-		Destructive().
-		SetSize(m.width, m.height)
-	m.confirmOpen = true
+	m = m.armConfirm(
+		pendingAction{
+			kind:   pendingActionPurgeEntries,
+			target: pendingTarget{entries: msg.Entries},
+			label:  trashBulkTitle(msg.Entries),
+		},
+		NewConfirmDialogModel(message, "Purge", m.theme).
+			Destructive(),
+	)
 	return m, nil
 }
-
 func (m Model) handleTrashActionDone(msg trashActionDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		cmd := m.toast.Failed(msg.err.Error())

@@ -23,9 +23,11 @@ func TestChoiceDialogCancel_ClearsViewReturnEvent(t *testing.T) {
 	}
 
 	m := Model{
-		viewReturnEvent:  ev,
-		pendingScopeKind: pendingScopeEdit,
-		pendingEditSave:  EventFormSaveMsg{Title: "Standup"},
+		viewReturnEvent: ev,
+		pending: pendingAction{
+			kind:   pendingActionEditScope,
+			target: pendingTarget{save: EventFormSaveMsg{Title: "Standup"}},
+		},
 	}
 
 	updated, _ := m.Update(ChoiceDialogResultMsg{Choice: -1})
@@ -49,9 +51,11 @@ func TestChoiceDialogCancel_NoSpuriousReopenOnNextUpdate(t *testing.T) {
 	}
 
 	m := Model{
-		viewReturnEvent:  ev,
-		pendingScopeKind: pendingScopeEdit,
-		pendingEditSave:  EventFormSaveMsg{Title: "Standup"},
+		viewReturnEvent: ev,
+		pending: pendingAction{
+			kind:   pendingActionEditScope,
+			target: pendingTarget{save: EventFormSaveMsg{Title: "Standup"}},
+		},
 	}
 
 	// Cancel the scope dialog.
@@ -76,23 +80,28 @@ func TestChoiceDialogCancel_NoSpuriousReopenOnNextUpdate(t *testing.T) {
 // into the next calendar-delete confirm text.
 func TestChoiceDialogPromoteOOB_ClearsAllPendingFields(t *testing.T) {
 	m := Model{
-		pendingScopeKind:            pendingScopeCalendarPromote,
-		pendingCalendarDelete:       7,
-		pendingCalendarDeleteName:   "Work",
-		pendingCalendarPromote:      9,
-		pendingCalendarPromoteName:  "Home",
-		pendingCalendarPromoteCands: nil, // empty: any non-negative Choice is OOB
+		pending: pendingAction{
+			kind:  pendingActionCalendarPromote,
+			label: "Work",
+			target: pendingTarget{
+				calendarID:   7,
+				promoteID:    9,
+				promoteCands: nil, // empty: any non-negative Choice is OOB
+			},
+		},
 	}
 
 	// Choice 0 with no candidates triggers the defensive OOB branch.
 	updated, _ := m.Update(ChoiceDialogResultMsg{Choice: 0})
 	m = updated.(Model)
 
-	require.Equal(t, int64(0), m.pendingCalendarDelete)
-	require.Equal(t, "", m.pendingCalendarDeleteName)
-	require.Equal(t, int64(0), m.pendingCalendarPromote,
-		"OOB branch must clear pendingCalendarPromote")
-	require.Equal(t, "", m.pendingCalendarPromoteName,
-		"OOB branch must clear pendingCalendarPromoteName")
-	require.Nil(t, m.pendingCalendarPromoteCands)
+	if m.pending.kind != pendingActionNone {
+		t.Fatalf("OOB branch must clear pending action, kind=%v", m.pending.kind)
+	}
+	if m.pending.target.calendarID != 0 || m.pending.label != "" {
+		t.Fatalf("OOB branch must clear calendar delete target: id=%d label=%q", m.pending.target.calendarID, m.pending.label)
+	}
+	if m.pending.target.promoteID != 0 || m.pending.target.promoteCands != nil {
+		t.Fatalf("OOB branch must clear promote fields: id=%d cands=%v", m.pending.target.promoteID, m.pending.target.promoteCands)
+	}
 }
