@@ -77,7 +77,7 @@ func eventFromVEvent(ve ical.Event, remote bool) (event.Event, []string, error) 
 		if prop != nil && duration.ValidateSpan(prop.Value) == nil {
 			// The end must land on a time the database can hold. See
 			// timeutil.Storable for that rule.
-			if end := addDuration(startTime, prop.Value); timeutil.Storable(end) {
+			if end := duration.Add(startTime, prop.Value); timeutil.Storable(end) {
 				durationValue = prop.Value
 				endTime = end
 				explicitEnd = true
@@ -87,7 +87,7 @@ func eventFromVEvent(ve ical.Event, remote bool) (event.Event, []string, error) 
 		if spanOK {
 			// The DURATION above is the span.
 		} else if prop != nil && duration.Validate(prop.Value) == nil &&
-			addDuration(startTime, prop.Value).Equal(startTime) {
+			duration.Add(startTime, prop.Value).Equal(startTime) {
 			// An exact zero span (DURATION:PT0S). RFC 5545 §3.6.1 gives
 			// the same meaning to a VEVENT with no DTEND and no
 			// DURATION, so store the equivalent zero-length event. Drop
@@ -181,7 +181,7 @@ func eventFromVEvent(ve ical.Event, remote bool) (event.Event, []string, error) 
 		geo = prop.Value
 	}
 
-	categories := parseCategories(ve)
+	categories := parseCategoriesFromProps(ve.Props)
 	exdates := parseDateListFromProps(ve.Props, ical.PropExceptionDates, dtstartZone(ve.Props))
 	rdates := parseDateListFromProps(ve.Props, ical.PropRecurrenceDates, dtstartZone(ve.Props))
 
@@ -215,7 +215,7 @@ func eventFromVEvent(ve ical.Event, remote bool) (event.Event, []string, error) 
 	}
 
 	// ATTENDEE + ORGANIZER
-	attendees, attendeeWarnings := parseAttendees(ve)
+	attendees, attendeeWarnings := parseAttendeesFromProps(ve.Props, model.EventAttendee)
 	for _, w := range attendeeWarnings {
 		// Name the owning record: the clamp leaves no other trace.
 		childWarnings = append(childWarnings, fmt.Sprintf("event %q: %s", uid, w))
@@ -289,22 +289,6 @@ func textOrDefault(ve ical.Event, prop, def string) string {
 		return v
 	}
 	return def
-}
-
-func parseCategories(ve ical.Event) string {
-	var cats []string
-	for _, prop := range ve.Props.Values(ical.PropCategories) {
-		// TextList splits on unescaped commas and unescapes each value,
-		// handling both RFC-correct "CATEGORIES:a,b" and legacy
-		// escaped "CATEGORIES:a\,b" inputs.
-		if list, err := prop.TextList(); err == nil {
-			cats = append(cats, list...)
-		}
-	}
-	// Join with comma-escaping so a category value that itself contains a
-	// comma (e.g. "Foo, Bar") stays a single value through the in-memory
-	// comma-joined representation instead of fragmenting on round-trip.
-	return timeutil.JoinCategoryList(cats)
 }
 
 // handledEventProps is the set of property names explicitly parsed by eventFromVEvent.

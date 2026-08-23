@@ -13,7 +13,6 @@ import (
 
 	"github.com/emersion/go-ical"
 
-	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/freebusy"
 	"github.com/douglasdemoura/chroncal/internal/journal"
@@ -248,42 +247,6 @@ func parseDateProp(props ical.Props, kind, name, uid string) (string, string) {
 	return t.UTC().Format(time.RFC3339), ""
 }
 
-// parseAttendees reads the attendees of a VEVENT. The second return
-// value lists the parameters attendeeFromProp clamped.
-func parseAttendees(ve ical.Event) ([]model.Attendee, []string) {
-	var attendees []model.Attendee
-	var warns []string
-
-	// ORGANIZER — track email so we can deduplicate against ATTENDEE below.
-	var organizerEmail string
-	if prop := ve.Props.Get(ical.PropOrganizer); prop != nil {
-		organizerEmail = stripMailto(prop.Value)
-		attendees = append(attendees, model.Attendee{
-			Email:      organizerEmail,
-			Name:       prop.Params.Get(ical.ParamCommonName),
-			RSVPStatus: "ACCEPTED",
-			Role:       "CHAIR",
-			Organizer:  true,
-			SentBy:     stripMailto(prop.Params.Get(ical.ParamSentBy)),
-			Dir:        prop.Params.Get(ical.ParamDir),
-			Language:   prop.Params.Get(ical.ParamLanguage),
-		})
-	}
-
-	// ATTENDEE properties — skip duplicates of the ORGANIZER email.
-	for _, prop := range ve.Props.Values(ical.PropAttendee) {
-		email := stripMailto(prop.Value)
-		if organizerEmail != "" && strings.EqualFold(email, organizerEmail) {
-			continue
-		}
-		a, w := attendeeFromProp(&prop, model.EventAttendee)
-		warns = append(warns, w...)
-		attendees = append(attendees, a)
-	}
-
-	return attendees, warns
-}
-
 // stripMailto removes the CAL-ADDRESS scheme prefix in any letter case.
 func stripMailto(s string) string {
 	if len(s) >= 7 && strings.EqualFold(s[:7], "mailto:") {
@@ -435,9 +398,10 @@ func parseDateListFromProps(props ical.Props, propName string, fallback *time.Lo
 	return strings.Join(dates, ",")
 }
 
-// parseAttendeesFromProps reads the attendees of a VTODO or a VJOURNAL.
-// Those two tables accept the wider PARTSTAT set, so the caller passes
-// model.TaskAttendee. The second return value lists the clamps.
+// parseAttendeesFromProps reads the attendees of a VEVENT, a VTODO, or a
+// VJOURNAL. The kind parameter selects the PARTSTAT set that is valid for
+// the component: model.EventAttendee for a VEVENT, model.TaskAttendee for a
+// VTODO and a VJOURNAL. The second return value lists the clamps.
 func parseAttendeesFromProps(props ical.Props, kind model.AttendeeKind) ([]model.Attendee, []string) {
 	var attendees []model.Attendee
 	var warns []string
@@ -545,12 +509,6 @@ func floatingOrTZ(floating bool, tz string) string {
 		return "FLOATING"
 	}
 	return tz
-}
-
-// addDuration parses an RFC 5545 duration string and adds it to a time.
-// Format: [+/-]P[nW] or [+/-]P[nD][T[nH][nM][nS]]
-func addDuration(t time.Time, dur string) time.Time {
-	return duration.Add(t, dur)
 }
 
 // decodeInlineAttachment decodes a BASE64 ATTACH value and enforces the inline
