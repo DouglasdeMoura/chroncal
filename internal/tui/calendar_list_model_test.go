@@ -295,11 +295,8 @@ func TestCalendarList_SelectedCalendarUsesThemeAccentInsteadOfReverseVideo(t *te
 	)
 	m.cursor = calendarListRowForCalendarID(t, m, 2)
 	out := m.View()
-	if strings.Contains(out, "\x1b[1;7m") {
-		t.Fatalf("selected calendar uses reverse video instead of the theme accent: %q", out)
-	}
-	if !strings.Contains(out, "48;2;17;34;51") {
-		t.Fatalf("selected calendar does not use accent background #112233: %q", out)
+	if hasReverseVideo(out) {
+		t.Fatalf("selected calendar uses reverse video instead of the theme accent")
 	}
 	selectedName := lipgloss.NewStyle().
 		Background(lipgloss.Color("#112233")).
@@ -584,11 +581,13 @@ func TestCalendarList_FocusedOptInSelectionUsesActiveAccent(t *testing.T) {
 		)
 	m.cursor = calendarListRowForCalendarID(t, m, 2) // Personal
 	out := m.View()
-	if !strings.Contains(out, "48;2;17;34;51") {
-		t.Fatalf("focused opt-in selection must use active accent #112233: %q", out)
+	active := lipgloss.NewStyle().Background(lipgloss.Color("#112233")).Foreground(lipgloss.Color("#ffffff")).Bold(true).Render(" Personal ")
+	inactive := lipgloss.NewStyle().Background(lipgloss.Color("#6c5ce7")).Foreground(lipgloss.Color("#ffffff")).Render(" Personal ")
+	if !strings.Contains(out, active) {
+		t.Fatalf("focused opt-in selection must use active accent: %q", out)
 	}
-	if strings.Contains(out, "48;2;108;92;231") {
-		t.Fatalf("focused opt-in selection leaked the inactive background #6c5ce7: %q", out)
+	if strings.Contains(out, inactive) {
+		t.Fatalf("focused opt-in selection leaked the inactive background: %q", out)
 	}
 }
 
@@ -609,11 +608,13 @@ func TestCalendarList_BlurredOptInSelectionUsesNeutralInactive(t *testing.T) {
 		Blur()
 	m.cursor = calendarListRowForCalendarID(t, m, 2) // Personal
 	out := m.View()
-	if strings.Contains(out, "48;2;17;34;51") {
-		t.Fatalf("blurred opt-in selection must not use the active accent #112233: %q", out)
+	active := lipgloss.NewStyle().Background(lipgloss.Color("#112233")).Foreground(lipgloss.Color("#ffffff")).Bold(true).Render(" Personal ")
+	inactive := lipgloss.NewStyle().Background(lipgloss.Color("#6c5ce7")).Foreground(lipgloss.Color("#ffffff")).Render(" Personal ")
+	if strings.Contains(out, active) {
+		t.Fatalf("blurred opt-in selection must not use the active accent: %q", out)
 	}
-	if !strings.Contains(out, "48;2;108;92;231") {
-		t.Fatalf("blurred opt-in selection must use the neutral inactive bg #6c5ce7: %q", out)
+	if !strings.Contains(out, inactive) {
+		t.Fatalf("blurred opt-in selection must use the inactive background: %q", out)
 	}
 }
 
@@ -633,7 +634,8 @@ func TestCalendarList_DefaultBlurredHasNoSelectedStyling(t *testing.T) {
 		Blur()
 	m.cursor = calendarListRowForCalendarID(t, m, 2) // Personal
 	out := m.View()
-	if strings.Contains(out, "48;2;17;34;51") {
+	active := lipgloss.NewStyle().Background(lipgloss.Color("#112233")).Foreground(lipgloss.Color("#ffffff")).Bold(true).Render(" Personal ")
+	if strings.Contains(out, active) {
 		t.Fatalf("default blurred list must not paint a selected background: %q", out)
 	}
 }

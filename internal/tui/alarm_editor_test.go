@@ -276,9 +276,7 @@ func TestAlarmEditor_AuthorsAfterTrigger(t *testing.T) {
 
 func TestAlarmEditor_EditModeMouseClickOnSubmitSavesAlarm(t *testing.T) {
 	// Isolate this test from others that use the global mouse tracker.
-	saved := *defaultMouseTracker
-	defer func() { *defaultMouseTracker = saved }()
-	*defaultMouseTracker = mouseTracker{}
+	isolateMouseTracker(t)
 
 	m := NewAlarmListEditorModel(nil, 80, 24, Theme{})
 	m, _ = m.Update(keyMsg("n"))
@@ -317,9 +315,7 @@ func TestAlarmEditor_EditModeMouseClickOnSubmitSavesAlarm(t *testing.T) {
 }
 
 func TestAlarmEditor_EditModeMouseClickOnCancelReturnsToList(t *testing.T) {
-	saved := *defaultMouseTracker
-	defer func() { *defaultMouseTracker = saved }()
-	*defaultMouseTracker = mouseTracker{}
+	isolateMouseTracker(t)
 
 	m := NewAlarmListEditorModel(nil, 80, 24, Theme{})
 	m, _ = m.Update(keyMsg("n"))

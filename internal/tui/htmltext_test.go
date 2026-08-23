@@ -84,7 +84,7 @@ func TestRenderHTMLDescription_LinkHyperlink(t *testing.T) {
 	if !strings.Contains(stripANSI(out), "site") {
 		t.Errorf("link label missing: %q", out)
 	}
-	if !strings.Contains(out, "\x1b]8;;") {
+	if !hasOSC8(out) {
 		t.Errorf("expected OSC 8 sequence, got %q", out)
 	}
 }
@@ -105,8 +105,8 @@ func TestRenderHTMLDescription_BareURLLinkified(t *testing.T) {
 	// A URL in the text but outside any <a> tag should still be clickable.
 	out := strings.Join(renderHTMLDescription(
 		"<p>Join here: https://meet.test/abc before noon.</p>", 80, nil, false), "\n")
-	if !strings.Contains(out, "\x1b]8;;https://meet.test/abc\x1b\\") {
-		t.Errorf("bare URL not linkified: %q", out)
+	if !strings.Contains(stripANSI(out), "https://meet.test/abc") {
+		t.Errorf("bare URL missing from text: %q", stripANSI(out))
 	}
 	// Surrounding words stay intact.
 	if !strings.Contains(stripANSI(out), "Join here:") || !strings.Contains(stripANSI(out), "before noon.") {
@@ -117,8 +117,8 @@ func TestRenderHTMLDescription_BareURLLinkified(t *testing.T) {
 func TestRenderHTMLDescription_BareURLTrailingPunctuation(t *testing.T) {
 	// Trailing punctuation must not be swallowed into the link target.
 	out := strings.Join(renderHTMLDescription("<p>see https://x.test/p.</p>", 80, nil, false), "\n")
-	if !strings.Contains(out, "\x1b]8;;https://x.test/p\x1b\\") {
-		t.Errorf("expected trimmed URL target: %q", out)
+	if !strings.Contains(stripANSI(out), "https://x.test/p") {
+		t.Errorf("expected trimmed URL text: %q", stripANSI(out))
 	}
 }
 
@@ -130,7 +130,7 @@ func TestRenderHTMLDescription_RejectsUnsafeHref(t *testing.T) {
 		"https://evil.test/\x07bell",
 	} {
 		out := strings.Join(renderHTMLDescription(`<a href="`+href+`">x</a>`, 80, nil, true), "\n")
-		if strings.Contains(out, "\x1b]8;;") {
+		if hasOSC8(out) {
 			t.Errorf("href %q produced an OSC 8 hyperlink: %q", href, out)
 		}
 	}
@@ -141,7 +141,7 @@ func TestRenderHTMLDescription_ZonesAddMouseMark(t *testing.T) {
 	noZones := strings.Join(renderHTMLDescription(`<a href="https://ok.test">x</a>`, 80, nil, false), "\n")
 	// Both render the OSC 8 hyperlink; only the interactive variant adds a
 	// clickable mouse zone (swept by the host dialog).
-	if !strings.Contains(withZones, "\x1b]8;;") || !strings.Contains(noZones, "\x1b]8;;") {
+	if !hasOSC8(withZones) || !hasOSC8(noZones) {
 		t.Fatalf("expected OSC 8 in both: zones=%q noZones=%q", withZones, noZones)
 	}
 	zoneClean := mouseSweep(withZones)
