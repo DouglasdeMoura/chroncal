@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/douglasdemoura/chroncal/internal/account"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 )
@@ -153,5 +155,41 @@ func TestCalendarMoveGlobalPendingCleanupAndStaleMessages(t *testing.T) {
 	m, _ = m.finishCalendarMove(calendarMoveFinishedMsg{sourceID: 1, account: account.Account{ID: 8}})
 	if !m.syncing {
 		t.Fatal("stale migration result cleared unrelated sync state")
+	}
+}
+
+func TestCalendarMoveCtrlCDuringDiscoveryClearsSyncing(t *testing.T) {
+	m, _ := calendarMoveModel().beginCalendarMove(CalendarMoveToAccountRequestedMsg{ID: 1, Name: "Local"})
+	updated, cmd := m.calendarMoveChoice(m.pending, 0)
+	m = updated.(Model)
+	if cmd == nil || !m.syncing {
+		t.Fatalf("discovery not started: cmd=%v syncing=%v", cmd != nil, m.syncing)
+	}
+	state := *moveState(m)
+
+	next, _, handled := m.interceptGlobalKeys(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatal("ctrl+c not handled during calendar-move discovery")
+	}
+	m = next
+	if m.syncing {
+		t.Fatal("ctrl+c during discovery left syncing true")
+	}
+	if m.pending.isCalendarMove() {
+		t.Fatal("ctrl+c left calendar move pending")
+	}
+
+	m, _ = m.finishCalendarMoveDiscovery(calendarMoveDiscoveryReadyMsg{
+		state: state,
+		discovery: account.Discovery{Account: state.account, Calendars: []account.DiscoveredCalendar{{
+			RemoteCalendar: caldav.RemoteCalendar{Path: "/write/", Name: "Writable", Access: caldav.CalendarAccessWrite},
+			Importable:     true,
+		}}},
+	})
+	if m.syncing {
+		t.Fatal("stale discovery after ctrl+c re-armed syncing")
+	}
+	if m.choiceOpen {
+		t.Fatal("stale discovery opened a collection choice after ctrl+c")
 	}
 }
