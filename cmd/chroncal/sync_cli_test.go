@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -19,7 +20,7 @@ func TestSyncResetMatchesCalendarCaseInsensitively(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	createLinkedCalendarForTest(t, dbPath)
 
-	stdout, stderr, err := runChroncalCommand(t, "sync", "reset", "--calendar", "work")
+	stdout, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "reset", "--calendar", "work")
 	if err != nil {
 		t.Fatalf("sync reset --calendar work: %v (stderr: %s)", err, stderr)
 	}
@@ -36,7 +37,7 @@ func TestSyncRunRejectsInvalidConflictStrategy(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	createLinkedCalendarForTest(t, dbPath)
 
-	_, stderr, err := runChroncalCommand(t, "sync", "run", "--conflict", "Prompt")
+	_, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "run", "--conflict", "Prompt")
 	if err == nil {
 		t.Fatalf("sync run --conflict Prompt was accepted; expected an invalid-input error")
 	}
@@ -55,7 +56,7 @@ func TestSyncRunMatchesCalendarCaseInsensitively(t *testing.T) {
 
 	// The run will still fail downstream (no stored credentials), but it must
 	// not fail with the case-sensitive "not found" resolution error.
-	_, stderr, err := runChroncalCommand(t, "sync", "run", "--calendar", "work")
+	_, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "run", "--calendar", "work")
 	if err == nil {
 		return // resolved and ran; resolution is clearly case-insensitive
 	}
@@ -73,7 +74,7 @@ func TestSyncRunRejectsAccountWithCalendar(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	createLinkedCalendarForTest(t, dbPath)
 
-	_, stderr, err := runChroncalCommand(t, "sync", "run",
+	_, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "run",
 		"--account", "__calendar_test", "--calendar", "Work", "--output", "json")
 	if err == nil {
 		t.Fatalf("sync run --account with --calendar was accepted; expected an invalid_input error")
@@ -117,7 +118,7 @@ func TestSyncRunScopesToRequestedAccount(t *testing.T) {
 	a.Close()
 
 	// An account with no linked calendars: the run is a no-op, not an error.
-	stdout, _, err := runChroncalCommand(t, "sync", "run", "--account", "empty", "--output", "json")
+	stdout, _, err := runChroncalCommand(t, "sync", "--allow-plaintext", "run", "--account", "empty", "--output", "json")
 	if err != nil {
 		t.Fatalf("sync run --account empty: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestSyncRunScopesToRequestedAccount(t *testing.T) {
 	// not account-not-found, and any rendered results stay inside the
 	// account: Work is its only calendar, so anything else in results would
 	// mean the run ignored --account.
-	stdout, stderr, err := runChroncalCommand(t, "sync", "run", "--account", "__CALENDAR_TEST", "--output", "json")
+	stdout, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "run", "--account", "__CALENDAR_TEST", "--output", "json")
 	if err != nil && strings.Contains(stderr, "not_found") {
 		t.Fatalf("sync run --account __CALENDAR_TEST failed to resolve the account case-insensitively; stderr = %q", stderr)
 	}
@@ -168,7 +169,7 @@ func TestSyncRunScopesToRequestedAccount(t *testing.T) {
 func TestSyncRunUnknownAccountIsNotFound(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
-	_, stderr, err := runChroncalCommand(t, "sync", "run", "--account", "ghost", "--output", "json")
+	_, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "run", "--account", "ghost", "--output", "json")
 	if err == nil {
 		t.Fatalf("sync run --account ghost was accepted; expected a not_found error")
 	}
@@ -182,5 +183,38 @@ func TestSyncRunUnknownAccountIsNotFound(t *testing.T) {
 	if payload.Code != "not_found" || payload.Error != `account "ghost" not found` {
 		t.Fatalf("sync run --account ghost: code = %q, error = %q; want the account not_found error",
 			payload.Code, payload.Error)
+	}
+}
+
+// TestSyncCommandsFailWhenCredentialStoreUnavailable guards the shared
+// service construction in newSyncService. A dead session bus makes the
+// keyring probe fail on every host. Each sync subcommand must then exit
+// non-zero with the credential store error. A command must not run on
+// with a nil store and fail later with a confusing error.
+func TestSyncCommandsFailWhenCredentialStoreUnavailable(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the session bus probe only applies on Linux")
+	}
+	setupCalendarCLITestEnv(t)
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
+
+	commands := [][]string{
+		{"sync", "run"},
+		{"sync", "status"},
+		{"sync", "conflicts"},
+		{"sync", "doctor"},
+		{"sync", "resolve", "999999", "--pick", "local"},
+		{"sync", "reset", "no-such-calendar"},
+	}
+	for _, args := range commands {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			_, stderr, err := runChroncalCommand(t, args...)
+			if err == nil {
+				t.Fatalf("%v exited 0 with a broken credential store; want non-zero. stderr=%q", args, stderr)
+			}
+			if !strings.Contains(stderr, "credential store") {
+				t.Fatalf("%v stderr = %q, want the credential store error", args, stderr)
+			}
+		})
 	}
 }

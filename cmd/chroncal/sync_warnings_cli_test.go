@@ -167,7 +167,7 @@ func TestSyncResolveServerPrintsImportWarnings(t *testing.T) {
 	a.Close()
 
 	stdout, stderr, err := runChroncalCommand(t,
-		"sync", "resolve", strconv.FormatInt(conflictID, 10), "--pick", "server")
+		"--allow-plaintext", "sync", "resolve", strconv.FormatInt(conflictID, 10), "--pick", "server")
 	if err != nil {
 		t.Fatalf("sync resolve: %v (stderr: %s)", err, stderr)
 	}
