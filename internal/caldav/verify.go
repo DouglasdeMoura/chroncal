@@ -11,21 +11,8 @@ import (
 	"github.com/emersion/go-webdav"
 )
 
-type verifyMultiStatus struct {
-	Responses []verifyResponse `xml:"DAV: response"`
-}
-
-type verifyResponse struct {
-	Href      string           `xml:"DAV: href"`
-	PropStats []verifyPropStat `xml:"DAV: propstat"`
-}
-
-type verifyPropStat struct {
-	Status string        `xml:"DAV: status"`
-	Prop   verifyPropSet `xml:"DAV: prop"`
-}
-
-type verifyPropSet struct {
+// verifyProps is the DAV: prop payload of the calendar-home-set PROPFIND.
+type verifyProps struct {
 	DisplayName         string                              `xml:"DAV: displayname"`
 	ResourceType        verifyResourceTypeEl                `xml:"DAV: resourcetype"`
 	CalendarDescription string                              `xml:"urn:ietf:params:xml:ns:caldav calendar-description"`
@@ -169,7 +156,7 @@ func fetchCalendarMetadata(ctx context.Context, calendarURL string, httpClient w
 		return CalendarMetadata{}, httpError(resp)
 	}
 
-	var ms verifyMultiStatus
+	var ms davMultiStatus[verifyProps]
 	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
 		return CalendarMetadata{}, fmt.Errorf("decode PROPFIND response: %w", err)
 	}
@@ -177,24 +164,24 @@ func fetchCalendarMetadata(ctx context.Context, calendarURL string, httpClient w
 	meta := CalendarMetadata{}
 	isCalendar := false
 	for _, r := range ms.Responses {
-		for _, ps := range r.PropStats {
-			code := parseStatusCode(ps.Status)
-			if code < 200 || code >= 300 {
-				continue
-			}
+		// RFC 4918 §9.1.2 lets a server split the properties of one
+		// response across several 2xx propstats. Merge every 2xx
+		// propstat per field; the first propstat that fills a field
+		// wins.
+		for _, prop := range allOKPropstats(r) {
 			if meta.DisplayName == "" {
-				meta.DisplayName = strings.TrimSpace(ps.Prop.DisplayName)
+				meta.DisplayName = strings.TrimSpace(prop.DisplayName)
 			}
 			if meta.Color == "" {
-				meta.Color = NormalizeCalendarColor(ps.Prop.CalendarColor)
+				meta.Color = NormalizeCalendarColor(prop.CalendarColor)
 			}
 			if meta.Access == "" {
-				meta.Access = calendarAccessFromPrivileges(ps.Prop.CurrentPrivileges)
+				meta.Access = calendarAccessFromPrivileges(prop.CurrentPrivileges)
 			}
-			if meta.SupportedComponents == nil && len(ps.Prop.SupportedComponents.Components) > 0 {
-				meta.SupportedComponents = componentNames(ps.Prop.SupportedComponents)
+			if meta.SupportedComponents == nil && len(prop.SupportedComponents.Components) > 0 {
+				meta.SupportedComponents = componentNames(prop.SupportedComponents)
 			}
-			if ps.Prop.ResourceType.Calendar != nil {
+			if prop.ResourceType.Calendar != nil {
 				isCalendar = true
 			}
 		}

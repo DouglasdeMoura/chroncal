@@ -96,7 +96,7 @@ func (c *Client) SyncCollection(ctx context.Context, calendarPath string, syncTo
 		return nil, fmt.Errorf("REPORT sync-collection: %w", httpError(resp))
 	}
 
-	var ms syncCollectionMultiStatus
+	var ms davMultiStatus[syncCollectionProps]
 	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
 		return nil, fmt.Errorf("decode sync-collection response: %w", err)
 	}
@@ -124,12 +124,8 @@ func (c *Client) SyncCollection(ctx context.Context, calendarPath string, syncTo
 			continue
 		}
 		var etag string
-		for _, ps := range r.PropStats {
-			code := parseStatusCode(ps.Status)
-			if code >= 200 && code < 300 {
-				etag = normalizeETag(ps.Prop.ETag)
-				break
-			}
+		if ps, ok := firstOKPropstat(r); ok {
+			etag = normalizeETag(ps.ETag)
 		}
 		result.Changes = append(result.Changes, SyncChange{Path: href, ETag: etag})
 	}
@@ -147,21 +143,7 @@ func buildSyncCollectionBody(syncToken string) string {
 </d:sync-collection>`, xmlEscape(syncToken))
 }
 
-type syncCollectionMultiStatus struct {
-	XMLName   xml.Name                 `xml:"DAV: multistatus"`
-	Responses []syncCollectionResponse `xml:"DAV: response"`
-	SyncToken string                   `xml:"DAV: sync-token"`
-}
-
-type syncCollectionResponse struct {
-	Href      string                   `xml:"DAV: href"`
-	Status    string                   `xml:"DAV: status"`
-	PropStats []syncCollectionPropStat `xml:"DAV: propstat"`
-}
-
-type syncCollectionPropStat struct {
-	Status string `xml:"DAV: status"`
-	Prop   struct {
-		ETag string `xml:"DAV: getetag"`
-	} `xml:"DAV: prop"`
+// syncCollectionProps is the DAV: prop payload of a sync-collection REPORT.
+type syncCollectionProps struct {
+	ETag string `xml:"DAV: getetag"`
 }

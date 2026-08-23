@@ -114,6 +114,63 @@ func TestFetchCalendarMetadata_DoesNotRequireCalendarResourceType(t *testing.T) 
 	}
 }
 
+// TestFetchCalendarMetadata_MergesSplitPropstats covers RFC 4918 §9.1.2: a
+// server may split the properties of one response across several 2xx
+// propstats. Here the first 200 propstat carries displayname, color, and the
+// ACL, and the second carries resourcetype and the component set. The
+// metadata must merge all of them, and the first propstat that fills a field
+// wins (the shadowed displayname in the second propstat must not overwrite
+// Work).
+func TestFetchCalendarMetadata_MergesSplitPropstats(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:ic="http://apple.com/ns/ical/">
+  <d:response>
+    <d:href>/cal/work/</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:displayname>Work</d:displayname>
+        <ic:calendar-color>#9FE1E7FF</ic:calendar-color>
+        <d:current-user-privilege-set><d:privilege><d:write/></d:privilege></d:current-user-privilege-set>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+    <d:propstat>
+      <d:prop>
+        <d:displayname>Shadowed</d:displayname>
+        <d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+        <c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = w.Write([]byte(fixture))
+	}))
+	t.Cleanup(srv.Close)
+
+	meta, err := VerifyCalendarURL(context.Background(), srv.URL+"/cal/work/", "user", "pass", "basic", true)
+	if err != nil {
+		t.Fatalf("VerifyCalendarURL: %v", err)
+	}
+	if meta.DisplayName != "Work" {
+		t.Errorf("DisplayName = %q, want Work (the first propstat that fills the field wins)", meta.DisplayName)
+	}
+	if meta.Color != "#9FE1E7" {
+		t.Errorf("Color = %q, want #9FE1E7 from the first propstat", meta.Color)
+	}
+	if meta.Access != CalendarAccessWrite {
+		t.Errorf("Access = %q, want %q from the first propstat", meta.Access, CalendarAccessWrite)
+	}
+	if got := strings.Join(meta.SupportedComponents, ","); got != "VEVENT" {
+		t.Errorf("SupportedComponents = %q, want VEVENT from the second propstat", got)
+	}
+}
+
 func priv(names ...string) verifyCurrentUserPrivilegeSet {
 	set := verifyCurrentUserPrivilegeSet{}
 	for _, n := range names {
