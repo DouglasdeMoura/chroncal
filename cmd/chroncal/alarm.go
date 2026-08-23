@@ -759,16 +759,21 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
   # Check every 10 seconds
   chroncal alarm daemon --interval 10s`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Validate before initApp so a bad interval fails without
+			// touching the database, like the --days check in alarm missed.
+			dur, err := parseCLIDuration("interval", interval)
+			if err != nil {
+				return err
+			}
+			if dur <= 0 {
+				return errInvalidInputf("--interval must be a positive duration (e.g. 30s, 1m), got %q", interval)
+			}
+
 			a, err := initApp()
 			if err != nil {
 				return err
 			}
 			defer a.Close()
-
-			dur, err := parseCLIDuration("interval", interval)
-			if err != nil {
-				return err
-			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()

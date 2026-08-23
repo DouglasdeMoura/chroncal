@@ -136,3 +136,30 @@ func TestAlarmMissed_JSONIsFlatArray(t *testing.T) {
 		t.Fatalf("output still uses map shape with events/todos keys:\n%s", out.String())
 	}
 }
+
+// TestAlarmDaemon_RejectsNonPositiveInterval guards against a panic:
+// time.NewTicker panics on a zero or negative interval. A bad --interval
+// must fail as invalid_input instead. Validation runs before initApp, so
+// the command fails with no touch of the database.
+func TestAlarmDaemon_RejectsNonPositiveInterval(t *testing.T) {
+	for _, interval := range []string{"0s", "-1m", "-30s"} {
+		t.Run("interval="+interval, func(t *testing.T) {
+			cmd := alarmDaemonCmd()
+			if err := cmd.ParseFlags([]string{"--interval", interval}); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+
+			err := cmd.RunE(cmd, nil)
+			if err == nil {
+				t.Fatalf("--interval %s: want error, got nil", interval)
+			}
+			var ce *cliError
+			if !errors.As(err, &ce) {
+				t.Fatalf("--interval %s: want *cliError, got %T: %v", interval, err, err)
+			}
+			if ce.Code != "invalid_input" {
+				t.Fatalf("--interval %s: code = %q, want invalid_input", interval, ce.Code)
+			}
+		})
+	}
+}
