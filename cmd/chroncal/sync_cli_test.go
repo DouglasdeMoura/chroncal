@@ -29,6 +29,33 @@ func TestSyncResetMatchesCalendarCaseInsensitively(t *testing.T) {
 	}
 }
 
+// TestSyncCommandsFailWhenCredentialStoreUnavailable guards the sync read
+// commands. They used to discard the auth.NewCredentialStore error, built
+// the service on a nil store, and exited 0. The first command that needed
+// a credential would then fail far from the cause, or misbehave. A store
+// that cannot open must fail the command up front, like `sync run` does.
+// The test points DBUS_SESSION_BUS_ADDRESS at a dead socket, so the OS
+// keyring probe fails deterministically, and the plaintext fallback stays
+// off (the default in a fresh config).
+func TestSyncCommandsFailWhenCredentialStoreUnavailable(t *testing.T) {
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-chroncal-test")
+	setupCalendarCLITestEnv(t)
+
+	for _, args := range [][]string{
+		{"sync", "status", "--output", "json"},
+		{"sync", "conflicts", "--output", "json"},
+		{"sync", "doctor", "--output", "json"},
+	} {
+		_, stderr, err := runChroncalCommand(t, args...)
+		if err == nil {
+			t.Fatalf("%s exited 0 with a dead credential store; want a failure", strings.Join(args, " "))
+		}
+		if !strings.Contains(stderr, "credential store") {
+			t.Fatalf("%s stderr = %q, want the credential store failure", strings.Join(args, " "), stderr)
+		}
+	}
+}
+
 // TestSyncRunRejectsInvalidConflictStrategy guards against issue #215.
 // `sync run --conflict <bad>` must be rejected up front. It must not
 // fall back to server-wins in silence. That would discard local edits
