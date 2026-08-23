@@ -283,8 +283,8 @@ func resolveTheme(r *rawTheme, hasDarkBG bool) (Theme, error) {
 
 // isAutoSentinel reports whether a raw TOML color value is the string
 // literal "auto", which signals "compute me at theme-load time from
-// Text and Surface". Currently honored for the text_dim and muted
-// tokens; other fields fall through resolveColor as-is.
+// Text and Surface". Only the text_dim and muted tokens accept "auto".
+// Any other token set to "auto" fails the load with an authoring error.
 func isAutoSentinel(v any) bool {
 	s, ok := v.(string)
 	return ok && s == "auto"
