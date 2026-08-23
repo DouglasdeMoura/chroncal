@@ -175,11 +175,6 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 // date range is provided, recurring journals are expanded. Otherwise master
 // entries are returned as-is.
 func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams) ([]journal.Journal, error) {
-	hideCancelled := int64(0)
-	if p.HideCancelled {
-		hideCancelled = 1
-	}
-
 	fromStr := ""
 	toStr := ""
 	hasRange := !p.From.IsZero() || !p.To.IsZero()
@@ -190,10 +185,10 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 		toStr = p.To.Format("2006-01-02")
 	}
 
-	rows, err := s.q.ListJournalsFiltered(ctx, storage.ListJournalsFilteredParams{
+	rows, err := s.q.ListJournalsFiltered(ctx, storage.JournalFilterParams{
 		CalendarID:     p.CalendarID,
 		FilterStatus:   p.Status,
-		HideCancelled:  hideCancelled,
+		HideCancelled:  p.HideCancelled,
 		FromDate:       fromStr,
 		ToDate:         toStr,
 		IncludeDeleted: p.IncludeDeleted,
@@ -207,10 +202,10 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 		result = append(result, journalFromRow(row))
 	}
 
-	recurringRows, err := s.q.ListRecurringJournalsFiltered(ctx, storage.ListRecurringJournalsFilteredParams{
+	recurringRows, err := s.q.ListRecurringJournalsFiltered(ctx, storage.JournalFilterParams{
 		CalendarID:     p.CalendarID,
 		FilterStatus:   p.Status,
-		HideCancelled:  hideCancelled,
+		HideCancelled:  p.HideCancelled,
 		IncludeDeleted: p.IncludeDeleted,
 	})
 	if err != nil {

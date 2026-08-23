@@ -36,7 +36,7 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Journal, error)
 }
 
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Journal, error) {
-	rows, err := s.q.ListJournalsForExport(ctx, storage.ListJournalsForExportParams{
+	rows, err := s.q.ListJournalsForExport(ctx, storage.JournalFilterParams{
 		CalendarID:   p.CalendarID,
 		FromDate:     p.From,
 		ToDate:       p.To,

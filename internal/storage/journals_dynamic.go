@@ -4,95 +4,70 @@ import "context"
 
 const journalCategoryExists = "EXISTS (SELECT 1 FROM journal_categories jc WHERE jc.journal_id = journals.id AND jc.category = ?)"
 
-// addJournalListFilters appends the calendar / status / hide-cancelled clauses
-// shared verbatim by ListJournalsFiltered and ListRecurringJournalsFiltered, in
-// the same order so positional args line up.
-func (w *whereBuilder) addJournalListFilters(calendarID int64, filterStatus string, hideCancelled int64) {
-	if calendarID != 0 {
-		w.add("calendar_id = ?", calendarID)
-	}
-	if filterStatus != "" {
-		w.add("status = ?", filterStatus)
-	}
-	if hideCancelled != 0 {
-		w.add("status != 'CANCELLED'")
-	}
-}
-
-type ListJournalsFilteredParams struct {
-	CalendarID     int64
-	FilterStatus   string
-	HideCancelled  int64
-	FromDate       string
-	ToDate         string
+// JournalFilterParams holds optional filters for journal queries.
+// Zero values mean "no filter" for that field.
+type JournalFilterParams struct {
+	CalendarID   int64
+	FilterStatus string
+	Category     string
+	// HideCancelled, when true, hides CANCELLED journals.
+	HideCancelled bool
+	FromDate      string
+	ToDate        string
+	// IncludeDeleted, when true, omits the default `deleted_at IS NULL`
+	// filter. Callers that need to see soft-deleted rows (trash views,
+	// --include-deleted flag) set this to true.
 	IncludeDeleted bool
-	DeletedOnly    bool
+	// DeletedOnly, when true, inverts the default filter to
+	// `deleted_at IS NOT NULL`. Implies IncludeDeleted.
+	DeletedOnly bool
 }
 
-func (q *Queries) ListJournalsFiltered(ctx context.Context, arg ListJournalsFilteredParams) ([]Journal, error) {
-	var w whereBuilder
-	// Non-recurring, non-RDATE-only masters (RDATE-only handled by ListRecurringJournalsFiltered).
-	w.add("recurrence_rule IS NULL AND (rdates IS NULL OR rdates = '') AND recurrence_id = ''")
-	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
-	w.addJournalListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCancelled)
-	if arg.FromDate != "" {
-		w.add("(start_date IS NULL OR start_date >= ?)", arg.FromDate)
-	}
-	if arg.ToDate != "" {
-		w.add("(start_date IS NULL OR start_date < ?)", arg.ToDate)
-	}
-	where, args := w.build()
-	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
-}
-
-type ListRecurringJournalsFilteredParams struct {
-	CalendarID     int64
-	FilterStatus   string
-	HideCancelled  int64
-	IncludeDeleted bool
-	DeletedOnly    bool
-}
-
-func (q *Queries) ListRecurringJournalsFiltered(ctx context.Context, arg ListRecurringJournalsFilteredParams) ([]Journal, error) {
-	var w whereBuilder
-	// RRULE masters and RDATE-only masters (no RRULE but has RDATEs); both need expansion.
-	w.add("(recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = ''")
-	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
-	w.addJournalListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCancelled)
-	where, args := w.build()
-	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
-}
-
-type ListJournalsForExportParams struct {
-	CalendarID     int64
-	Category       string
-	FilterStatus   string
-	FromDate       string
-	ToDate         string
-	IncludeDeleted bool
-	DeletedOnly    bool
-}
-
-func (q *Queries) ListJournalsForExport(ctx context.Context, arg ListJournalsForExportParams) ([]Journal, error) {
-	var w whereBuilder
+// addJournalFilters appends the soft-delete, calendar, status, category, and
+// date clauses shared by every journal query, in one fixed order.
+func (w *whereBuilder) addJournalFilters(arg JournalFilterParams) {
 	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}
-	if arg.Category != "" {
-		w.add(journalCategoryExists, arg.Category)
-	}
 	if arg.FilterStatus != "" {
 		w.add("status = ?", arg.FilterStatus)
 	}
-	// Match the half-open [from, to) date semantics used by
-	// ListJournalsFiltered; dateless journals pass the filter (NULL stays in).
+	if arg.Category != "" {
+		w.add(journalCategoryExists, arg.Category)
+	}
+	if arg.HideCancelled {
+		w.add("status != 'CANCELLED'")
+	}
 	if arg.FromDate != "" {
 		w.add("(start_date IS NULL OR start_date >= ?)", arg.FromDate)
 	}
 	if arg.ToDate != "" {
 		w.add("(start_date IS NULL OR start_date < ?)", arg.ToDate)
 	}
+}
+
+func (q *Queries) ListJournalsFiltered(ctx context.Context, arg JournalFilterParams) ([]Journal, error) {
+	var w whereBuilder
+	// Non-recurring, non-RDATE-only masters (RDATE-only handled by ListRecurringJournalsFiltered).
+	w.add("recurrence_rule IS NULL AND (rdates IS NULL OR rdates = '') AND recurrence_id = ''")
+	w.addJournalFilters(arg)
+	where, args := w.build()
+	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
+}
+
+func (q *Queries) ListRecurringJournalsFiltered(ctx context.Context, arg JournalFilterParams) ([]Journal, error) {
+	var w whereBuilder
+	// RRULE masters and RDATE-only masters (no RRULE but has RDATEs); both need expansion.
+	w.add("(recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = ''")
+	w.addJournalFilters(arg)
+	where, args := w.build()
+	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
+}
+
+func (q *Queries) ListJournalsForExport(ctx context.Context, arg JournalFilterParams) ([]Journal, error) {
+	var w whereBuilder
+	w.addJournalFilters(arg)
 	where, args := w.build()
 	return q.queryJournals(ctx, where, args, "start_date ASC, summary ASC")
 }

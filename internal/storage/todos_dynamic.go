@@ -4,101 +4,78 @@ import "context"
 
 const todoCategoryExists = "EXISTS (SELECT 1 FROM todo_categories tc WHERE tc.todo_id = todos.id AND tc.category = ?)"
 
-// addTodoListFilters appends the calendar / status / hide-completed clauses
-// shared verbatim by ListTodosFiltered and ListRecurringTodosFiltered, in the
-// same order so positional args line up.
-func (w *whereBuilder) addTodoListFilters(calendarID int64, filterStatus string, hideCompleted int64) {
-	if calendarID != 0 {
-		w.add("calendar_id = ?", calendarID)
-	}
-	if filterStatus != "" {
-		w.add("status = ?", filterStatus)
-	}
-	if hideCompleted != 0 {
-		w.add("status != 'COMPLETED' AND status != 'CANCELLED'")
-	}
-}
-
-type ListTodosFilteredParams struct {
-	CalendarID     int64
-	FilterStatus   string
-	HideCompleted  int64
-	FromDate       string
-	ToDate         string
-	IncludeDeleted bool
-	DeletedOnly    bool
-}
-
-func (q *Queries) ListTodosFiltered(ctx context.Context, arg ListTodosFilteredParams) ([]Todo, error) {
-	var w whereBuilder
-	// Non-recurring, non-RDATE-only masters (RDATE-only handled by ListRecurringTodosFiltered).
-	w.add("recurrence_rule IS NULL AND (rdates IS NULL OR rdates = '') AND recurrence_id = ''")
-	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
-	w.addTodoListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCompleted)
-	if arg.FromDate != "" {
-		w.add("(due_date IS NULL OR due_date >= ?)", arg.FromDate)
-	}
-	if arg.ToDate != "" {
-		w.add("(due_date IS NULL OR due_date < ?)", arg.ToDate)
-	}
-	where, args := w.build()
-	return q.queryTodos(ctx, where, args, "due_date ASC, summary ASC")
-}
-
-type ListRecurringTodosFilteredParams struct {
-	CalendarID     int64
-	FilterStatus   string
-	HideCompleted  int64
-	IncludeDeleted bool
-	DeletedOnly    bool
-}
-
-func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg ListRecurringTodosFilteredParams) ([]Todo, error) {
-	var w whereBuilder
-	// RRULE masters and RDATE-only masters (no RRULE but has RDATEs); both need expansion.
-	w.add("(recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = ''")
-	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
-	w.addTodoListFilters(arg.CalendarID, arg.FilterStatus, arg.HideCompleted)
-	where, args := w.build()
-	return q.queryTodos(ctx, where, args, "due_date ASC, summary ASC")
-}
-
-type ListTodosForExportParams struct {
-	CalendarID      int64
-	Category        string
-	FilterStatus    string
+// TodoFilterParams holds optional filters for todo queries.
+// Zero values mean "no filter" for that field.
+type TodoFilterParams struct {
+	CalendarID   int64
+	FilterStatus string
+	Category     string
+	// HideCompleted, when true, hides COMPLETED and CANCELLED todos.
+	HideCompleted bool
+	// CompletedFilter selects rows by completed_at. The value 1 keeps
+	// only completed todos, and the value 2 keeps only open todos.
 	CompletedFilter int64
 	FromDate        string
 	ToDate          string
-	IncludeDeleted  bool
-	DeletedOnly     bool
+	// IncludeDeleted, when true, omits the default `deleted_at IS NULL`
+	// filter. Callers that need to see soft-deleted rows (trash views,
+	// --include-deleted flag) set this to true.
+	IncludeDeleted bool
+	// DeletedOnly, when true, inverts the default filter to
+	// `deleted_at IS NOT NULL`. Implies IncludeDeleted.
+	DeletedOnly bool
 }
 
-func (q *Queries) ListTodosForExport(ctx context.Context, arg ListTodosForExportParams) ([]Todo, error) {
-	var w whereBuilder
+// addTodoFilters appends the soft-delete, calendar, status, category, and
+// date clauses shared by every todo query, in one fixed order.
+func (w *whereBuilder) addTodoFilters(arg TodoFilterParams) {
 	w.addSoftDeleteFilter(arg.IncludeDeleted, arg.DeletedOnly)
 	if arg.CalendarID != 0 {
 		w.add("calendar_id = ?", arg.CalendarID)
 	}
+	if arg.FilterStatus != "" {
+		w.add("status = ?", arg.FilterStatus)
+	}
 	if arg.Category != "" {
 		w.add(todoCategoryExists, arg.Category)
 	}
-	if arg.FilterStatus != "" {
-		w.add("status = ?", arg.FilterStatus)
+	if arg.HideCompleted {
+		w.add("status != 'COMPLETED' AND status != 'CANCELLED'")
 	}
 	if arg.CompletedFilter == 1 {
 		w.add("completed_at IS NOT NULL")
 	} else if arg.CompletedFilter == 2 {
 		w.add("completed_at IS NULL")
 	}
-	// Match the half-open [from, to) date semantics used by
-	// ListTodosFiltered; dateless todos pass the filter (NULL stays in).
 	if arg.FromDate != "" {
 		w.add("(due_date IS NULL OR due_date >= ?)", arg.FromDate)
 	}
 	if arg.ToDate != "" {
 		w.add("(due_date IS NULL OR due_date < ?)", arg.ToDate)
 	}
+}
+
+func (q *Queries) ListTodosFiltered(ctx context.Context, arg TodoFilterParams) ([]Todo, error) {
+	var w whereBuilder
+	// Non-recurring, non-RDATE-only masters (RDATE-only handled by ListRecurringTodosFiltered).
+	w.add("recurrence_rule IS NULL AND (rdates IS NULL OR rdates = '') AND recurrence_id = ''")
+	w.addTodoFilters(arg)
+	where, args := w.build()
+	return q.queryTodos(ctx, where, args, "due_date ASC, summary ASC")
+}
+
+func (q *Queries) ListRecurringTodosFiltered(ctx context.Context, arg TodoFilterParams) ([]Todo, error) {
+	var w whereBuilder
+	// RRULE masters and RDATE-only masters (no RRULE but has RDATEs); both need expansion.
+	w.add("(recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = ''")
+	w.addTodoFilters(arg)
+	where, args := w.build()
+	return q.queryTodos(ctx, where, args, "due_date ASC, summary ASC")
+}
+
+func (q *Queries) ListTodosForExport(ctx context.Context, arg TodoFilterParams) ([]Todo, error) {
+	var w whereBuilder
+	w.addTodoFilters(arg)
 	where, args := w.build()
 	return q.queryTodos(ctx, where, args, "due_date ASC, summary ASC")
 }
