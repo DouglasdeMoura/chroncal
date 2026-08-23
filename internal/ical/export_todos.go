@@ -54,44 +54,14 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			if d, err := time.Parse("2006-01-02", t.DueDate); err == nil {
 				vtodo.Props.SetDate(ical.PropDue, d)
 			} else if due, err := time.Parse(time.RFC3339, t.DueDate); err == nil {
-				if t.Timezone == "FLOATING" {
-					p := &ical.Prop{Name: ical.PropDue}
-					p.Value = due.UTC().Format("20060102T150405")
-					vtodo.Props.Set(p)
-				} else if t.Timezone != "" {
-					if loc, lerr := time.LoadLocation(t.Timezone); lerr == nil {
-						vtodo.Props.SetDateTime(ical.PropDue, due.In(loc))
-						if p := vtodo.Props.Get(ical.PropDue); p != nil {
-							p.Params.Set(ical.ParamTimezoneID, t.Timezone)
-						}
-					} else {
-						vtodo.Props.SetDateTime(ical.PropDue, due.UTC())
-					}
-				} else {
-					vtodo.Props.SetDateTime(ical.PropDue, due.UTC())
-				}
+				setZonedDateTime(vtodo.Props, ical.PropDue, due, t.Timezone)
 			}
 		}
 		if t.StartDate != "" {
 			if d, err := time.Parse("2006-01-02", t.StartDate); err == nil {
 				vtodo.Props.SetDate(ical.PropDateTimeStart, d)
 			} else if start, err := time.Parse(time.RFC3339, t.StartDate); err == nil {
-				if t.Timezone == "FLOATING" {
-					p := &ical.Prop{Name: ical.PropDateTimeStart}
-					p.Value = start.UTC().Format("20060102T150405")
-					vtodo.Props.Set(p)
-				} else if t.Timezone != "" {
-					if loc, lerr := time.LoadLocation(t.Timezone); lerr == nil {
-						vtodo.Props.SetDateTime(ical.PropDateTimeStart, start.In(loc))
-						if p := vtodo.Props.Get(ical.PropDateTimeStart); p != nil {
-							p.Params.Set(ical.ParamTimezoneID, t.Timezone)
-						}
-					} else {
-						vtodo.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
-					}
-				} else {
-					vtodo.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
-				}
+				setZonedDateTime(vtodo.Props, ical.PropDateTimeStart, start, t.Timezone)
 			}
 		}
 		// RFC 5545 (and go-ical's encoder) only accept DURATION on a VTODO when

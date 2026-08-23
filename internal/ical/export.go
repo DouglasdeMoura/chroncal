@@ -395,3 +395,25 @@ func emitRelations(props ical.Props, relations []model.Relation) {
 		props.Add(p)
 	}
 }
+
+// setZonedDateTime writes one datetime property under the shared timezone
+// rules. A "FLOATING" timezone emits bare wall-clock numbers (no Z, no TZID),
+// matching the stored floating semantics. A resolvable IANA timezone emits
+// the zone-local wall clock plus the TZID parameter. An empty or
+// unresolvable timezone falls back to UTC.
+func setZonedDateTime(props ical.Props, name string, t time.Time, timezone string) {
+	if timezone == "FLOATING" {
+		p := &ical.Prop{Name: name}
+		p.Value = t.UTC().Format("20060102T150405")
+		props.Set(p)
+		return
+	}
+	if loc, err := time.LoadLocation(timezone); timezone != "" && err == nil {
+		props.SetDateTime(name, t.In(loc))
+		if p := props.Get(name); p != nil {
+			p.Params.Set(ical.ParamTimezoneID, timezone)
+		}
+		return
+	}
+	props.SetDateTime(name, t.UTC())
+}
