@@ -55,7 +55,7 @@ func TestScanColumnAlignment(t *testing.T) {
 	}
 
 	// Query todos using dynamic function (SELECT * + scanTodos)
-	todos, err := q.ListTodosForExport(ctx, ListTodosForExportParams{CalendarID: calID})
+	todos, err := q.ListTodosForExport(ctx, TodoFilterParams{CalendarID: calID})
 	if err != nil {
 		t.Fatalf("query todos: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestScanColumnAlignment(t *testing.T) {
 	}
 
 	// Query journals using dynamic function (SELECT * + scanJournals)
-	journals, err := q.ListJournalsForExport(ctx, ListJournalsForExportParams{CalendarID: calID})
+	journals, err := q.ListJournalsForExport(ctx, JournalFilterParams{CalendarID: calID})
 	if err != nil {
 		t.Fatalf("query journals: %v", err)
 	}

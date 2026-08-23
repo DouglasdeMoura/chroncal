@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -41,11 +42,11 @@ and categories.`,
 				}
 			}
 
-			completedFilter := 0
+			completedFilter := storage.CompletionAny
 			if completed {
-				completedFilter = 1
+				completedFilter = storage.CompletedOnly
 			} else if incomplete {
-				completedFilter = 2
+				completedFilter = storage.OpenOnly
 			}
 
 			todos, err := a.Todos.Search(ctx, todo.SearchParams{

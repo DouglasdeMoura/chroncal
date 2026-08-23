@@ -256,11 +256,6 @@ type TodoListParams struct {
 // range is provided, recurring todos are expanded. Otherwise master entries
 // are returned as-is.
 func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]todo.Todo, error) {
-	hideCompleted := int64(0)
-	if p.HideCompleted {
-		hideCompleted = 1
-	}
-
 	fromStr := ""
 	toStr := ""
 	hasRange := !p.From.IsZero() || !p.To.IsZero()
@@ -271,10 +266,10 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 		toStr = p.To.Format("2006-01-02")
 	}
 
-	rows, err := s.q.ListTodosFiltered(ctx, storage.ListTodosFilteredParams{
+	rows, err := s.q.ListTodosFiltered(ctx, storage.TodoFilterParams{
 		CalendarID:     p.CalendarID,
 		FilterStatus:   p.Status,
-		HideCompleted:  hideCompleted,
+		HideCompleted:  p.HideCompleted,
 		FromDate:       fromStr,
 		ToDate:         toStr,
 		IncludeDeleted: p.IncludeDeleted,
@@ -288,10 +283,10 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 		result = append(result, todoFromRow(row))
 	}
 
-	recurringRows, err := s.q.ListRecurringTodosFiltered(ctx, storage.ListRecurringTodosFilteredParams{
+	recurringRows, err := s.q.ListRecurringTodosFiltered(ctx, storage.TodoFilterParams{
 		CalendarID:     p.CalendarID,
 		FilterStatus:   p.Status,
-		HideCompleted:  hideCompleted,
+		HideCompleted:  p.HideCompleted,
 		IncludeDeleted: p.IncludeDeleted,
 	})
 	if err != nil {
