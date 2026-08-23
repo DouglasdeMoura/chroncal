@@ -2,6 +2,7 @@ package alarm
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -665,6 +666,70 @@ func TestCheckTodos_OverrideAwareness(t *testing.T) {
 
 	if len(due) != 1 {
 		t.Errorf("CheckTodos = %d due alarms, want 1; master must not fire for overridden slot (issue #366)", len(due))
+		for i, d := range due {
+			t.Logf("  [%d] todo_id=%d summary=%q trigger=%v", i, d.Todo.ID, d.Todo.Summary, d.TriggerAt)
+		}
+		return
+	}
+	if due[0].Todo.ID != override.ID {
+		t.Errorf("due alarm is for todo ID %d (master=%d), want override ID %d", due[0].Todo.ID, master.ID, override.ID)
+	}
+}
+
+// TestCheckTodos_RDateOnlyMaster_OverrideAwareness extends the issue #366 fix
+// to RDATE-only masters. A master with an empty RRULE and two RDATEs expands
+// both slots. Without the isRecurringTodoMaster check the master fired its
+// alarm for the overridden slot while the override row also fired — a
+// duplicate.
+func TestCheckTodos_RDateOnlyMaster_OverrideAwareness(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	ctx := context.Background()
+	todoSvc := todo.NewService(db, q)
+
+	// Master: no RRULE. Two RDATE occurrences on Apr 1 and Apr 2 at 17:00 UTC.
+	apr1 := time.Date(2026, 4, 1, 17, 0, 0, 0, time.UTC)
+	apr2 := time.Date(2026, 4, 2, 17, 0, 0, 0, time.UTC)
+	master, err := todoSvc.UpsertByUID(ctx, todo.UpsertParams{
+		UID:        "rdate-override-alarm-test",
+		CalendarID: 1,
+		Summary:    "Twice-only task",
+		DueDate:    apr1.Format(time.RFC3339),
+		RDates:     strings.Join([]string{apr1.Format(time.RFC3339), apr2.Format(time.RFC3339)}, ","),
+	})
+	if err != nil {
+		t.Fatalf("upsert master todo: %v", err)
+	}
+	if err := todoSvc.ReplaceAlarms(ctx, master.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT1H"},
+	}); err != nil {
+		t.Fatalf("replace master alarms: %v", err)
+	}
+
+	override, err := todoSvc.UpsertByUID(ctx, todo.UpsertParams{
+		UID:          "rdate-override-alarm-test",
+		CalendarID:   1,
+		Summary:      "Twice-only task (rescheduled)",
+		DueDate:      apr2.Format(time.RFC3339),
+		RecurrenceID: apr2.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert override todo: %v", err)
+	}
+	if err := todoSvc.ReplaceAlarms(ctx, override.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT1H"},
+	}); err != nil {
+		t.Fatalf("replace override alarms: %v", err)
+	}
+
+	checkTime := time.Date(2026, 4, 2, 17, 30, 0, 0, time.UTC)
+	todoAlarmSvc := NewTodoService(db, q, todoSvc)
+	due, err := todoAlarmSvc.CheckTodos(ctx, checkTime)
+	if err != nil {
+		t.Fatalf("check todos: %v", err)
+	}
+
+	if len(due) != 1 {
+		t.Errorf("CheckTodos = %d due alarms, want 1; RDATE-only master must not fire for overridden slot", len(due))
 		for i, d := range due {
 			t.Logf("  [%d] todo_id=%d summary=%q trigger=%v", i, d.Todo.ID, d.Todo.Summary, d.TriggerAt)
 		}

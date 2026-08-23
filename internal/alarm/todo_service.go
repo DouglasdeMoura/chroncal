@@ -108,7 +108,7 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 		// For recurring masters, suppress occurrences that have been overridden.
 		// Without this, the master fires its alarm for the overridden slot while
 		// the override row also fires its own alarm — causing a duplicate.
-		if t.RecurrenceRule != "" && t.RecurrenceID == "" {
+		if isRecurringTodoMaster(t) {
 			if suppressed := overrideKeys[t.UID]; len(suppressed) > 0 {
 				kept := instances[:0]
 				for _, inst := range instances {
@@ -217,6 +217,14 @@ func buildOverrideSuppressionKeys(rows []storage.Todo) map[string]map[string]str
 		m[row.Uid][key] = struct{}{}
 	}
 	return m
+}
+
+// isRecurringTodoMaster reports whether a todo row is a recurring master. A
+// master carries no recurrence_id. The series recurs through an RRULE, through
+// RDATEs, or through both. An RDATE-only master expands several instances, so
+// it needs override suppression like an RRULE master.
+func isRecurringTodoMaster(td todo.Todo) bool {
+	return td.RecurrenceID == "" && (td.RecurrenceRule != "" || td.RDates != "")
 }
 
 // todoIsOpen reports whether a todo can still fire an alarm. A completed
