@@ -31,6 +31,7 @@ var journalResource = resource{
 		}
 		return row{Summary: j.Summary}, j.DeletedAt != nil, nil
 	},
+	purgeByID: func(ctx context.Context, a *app.App, id int64) error { return a.Journals.PurgeByID(ctx, id) },
 	purgeDeleted: func(ctx context.Context, a *app.App, cutoff time.Time) (int64, error) {
 		n, err := a.Journals.PurgeDeleted(ctx, cutoff)
 		return int64(n), err
