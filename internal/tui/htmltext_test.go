@@ -108,6 +108,9 @@ func TestRenderHTMLDescription_BareURLLinkified(t *testing.T) {
 	if !strings.Contains(stripANSI(out), "https://meet.test/abc") {
 		t.Errorf("bare URL missing from text: %q", stripANSI(out))
 	}
+	if !strings.Contains(out, osc8Open("https://meet.test/abc")) {
+		t.Errorf("bare URL was not wrapped in OSC 8: %q", out)
+	}
 	// Surrounding words stay intact.
 	if !strings.Contains(stripANSI(out), "Join here:") || !strings.Contains(stripANSI(out), "before noon.") {
 		t.Errorf("surrounding text lost: %q", stripANSI(out))
@@ -119,6 +122,12 @@ func TestRenderHTMLDescription_BareURLTrailingPunctuation(t *testing.T) {
 	out := strings.Join(renderHTMLDescription("<p>see https://x.test/p.</p>", 80, nil, false), "\n")
 	if !strings.Contains(stripANSI(out), "https://x.test/p") {
 		t.Errorf("expected trimmed URL text: %q", stripANSI(out))
+	}
+	if !strings.Contains(out, osc8Open("https://x.test/p")) {
+		t.Errorf("expected OSC 8 target without trailing punctuation: %q", out)
+	}
+	if strings.Contains(out, osc8Open("https://x.test/p.")) {
+		t.Errorf("trailing punctuation was swallowed into OSC 8 target: %q", out)
 	}
 }
 

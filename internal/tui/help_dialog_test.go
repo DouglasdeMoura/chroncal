@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -52,10 +51,13 @@ func TestHelpDialog_TopLevelSectionsAreTaskShaped(t *testing.T) {
 	// Palette is its own section — it has palette-specific keys
 	// (ctrl+k/j navigation, pgup/pgdn) that don't apply elsewhere.
 	want := []string{"Getting Around", "Events", "Alarms", "Calendars", "Command Palette", "Windows"}
-	view := stripANSI(NewHelpDialogModel(NewTheme(true)).SetSize(100, 40).View())
-	for _, w := range want {
-		if !strings.Contains(view, w) {
-			t.Errorf("help view missing section %q:\n%s", w, view)
+	got := NewHelpDialogModel(NewTheme(true)).sections()
+	if len(got) != len(want) {
+		t.Fatalf("section count = %d, want %d (%v)", len(got), len(want), titles(got))
+	}
+	for i, w := range want {
+		if got[i].title != w {
+			t.Errorf("section[%d] = %q, want %q", i, got[i].title, w)
 		}
 	}
 }
@@ -111,4 +113,12 @@ func findHelpEntry(t *testing.T, sectionTitle, desc string) string {
 	}
 	t.Fatalf("missing section %q", sectionTitle)
 	return ""
+}
+
+func titles(sections []helpSection) []string {
+	out := make([]string, len(sections))
+	for i, s := range sections {
+		out[i] = s.title
+	}
+	return out
 }
