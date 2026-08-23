@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image/color"
 	"io/fs"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +12,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 	toml "github.com/pelletier/go-toml/v2"
 
+	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/tui/oklch"
 )
 
@@ -78,8 +78,10 @@ func LoadBuiltinTheme(name string, hasDarkBG bool) (Theme, error) {
 
 // LoadTheme resolves a theme by name with a safe fallback to the default.
 // An empty name is treated as the default. Unknown or malformed themes log
-// the error and fall back to the default so a typo in config.toml cannot
-// make the TUI unusable.
+// a warning to the state-dir log file and fall back to the default so a
+// typo in config.toml cannot make the TUI unusable. The warning must not
+// go to stderr. LoadTheme runs while the TUI owns the terminal, and a
+// stderr write prints over the display.
 func LoadTheme(name string, hasDarkBG bool) Theme {
 	if name == "" {
 		name = DefaultThemeName
@@ -88,8 +90,8 @@ func LoadTheme(name string, hasDarkBG bool) Theme {
 	if err == nil {
 		return t
 	}
-	fmt.Fprintf(os.Stderr, "theme %q failed to load (%v); falling back to %q\n",
-		name, err, DefaultThemeName)
+	config.SharedStateDirLogger().Warn("theme failed to load; falling back to the default theme",
+		"theme", name, "error", err.Error(), "fallback", DefaultThemeName)
 	def, err := LoadBuiltinTheme(DefaultThemeName, hasDarkBG)
 	if err != nil {
 		panic("built-in default theme failed to load: " + err.Error())
