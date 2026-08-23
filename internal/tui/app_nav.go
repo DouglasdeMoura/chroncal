@@ -96,6 +96,7 @@ func (m Model) clearConfirmPending() Model {
 	m.pendingPurgeTitle = ""
 	m.pendingCalendarDelete = 0
 	m.pendingCalendarDeleteName = ""
+	m.pendingCalendarKeepLocal = 0
 	m.pendingCalendarPromote = 0
 	m.pendingCalendarPromoteName = ""
 	m.pendingCalendarPromoteCands = nil

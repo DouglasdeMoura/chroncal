@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -108,6 +110,89 @@ func TestCtrlCClearsAccountRemovalPendingState(t *testing.T) {
 	if next.pendingAccountRemoveID != 0 || next.pendingAccountRemoveName != "" {
 		t.Fatalf("abandoned account removal remains armed: id=%d name=%q",
 			next.pendingAccountRemoveID, next.pendingAccountRemoveName)
+	}
+}
+
+// TestCtrlCClearsKeepLocalPendingState guards the keep-local variant of the
+// ctrl+c supersede. The keep-local confirm arms pendingCalendarKeepLocal.
+// ctrl+c must drop that ID with the other wait state. A stale ID survives
+// the canceled quit confirm. The next confirmed dialog then fires Disconnect
+// instead of its own action (handleConfirmDialogResult consumes the field
+// before the delete fallback).
+func TestCtrlCClearsKeepLocalPendingState(t *testing.T) {
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+
+	m := Model{
+		confirmOpen:              true,
+		pendingCalendarKeepLocal: 42,
+	}
+
+	next, _, handled := m.interceptGlobalKeys(ctrlC)
+	if !handled || !next.pendingQuit {
+		t.Fatalf("ctrl+c did not replace the keep-local confirm with quit: handled=%v quit=%v",
+			handled, next.pendingQuit)
+	}
+	if next.pendingCalendarKeepLocal != 0 {
+		t.Fatalf("abandoned keep-local ID remains armed: %d", next.pendingCalendarKeepLocal)
+	}
+}
+
+// pendingFieldsOutsideConfirmClear lists Model fields with a "pending"
+// prefix that clearConfirmPending does not own. Each entry drains through
+// its own lifecycle. Every other "pending" field holds wait state for a
+// confirm or choice dialog, so clearConfirmPending must reset it.
+var pendingFieldsOutsideConfirmClear = map[string]bool{
+	"pendingOrder":               true, // calendar order save; the order-saved message drains it
+	"pendingAccountOrder":        true, // account order save; the order-saved message drains it
+	"pendingAccountOrderIDs":     true, // account order save; the order-saved message drains it
+	"pendingOpenEvent":           true, // event view request; the view loader drains it
+	"pendingEditSave":            true, // recurring edit save; the form drains it
+	"pendingAccountManagementID": true, // account management routing; the manager drains it
+	"pendingDiscoveryAccountID":  true, // OAuth discovery target; the flow drains it
+	"pendingDiscoveryCreated":    true, // OAuth discovery result; the flow drains it
+	"pendingSyncCalendar":        true, // queued sync; syncFinishedMsg drains it
+	"pendingQuit":                true, // quit confirm marker; the quit result drains it
+	"pendingCalendarMove":        true, // move choice state; the choice dialog drains it
+	"pendingScopeKind":           true, // choice scope; the reset writes pendingScopeNone, not zero
+}
+
+// TestClearConfirmPendingResetsAllConfirmWaitFields arms every owned
+// "pending" field, then requires the zero value after the call. Extend the
+// arm literal below when you add a confirm wait field. The reflective check
+// then fails until clearConfirmPending resets the new field too.
+func TestClearConfirmPendingResetsAllConfirmWaitFields(t *testing.T) {
+	m := Model{
+		pendingDelete:                   event.Event{ID: 7, Title: "Standup"},
+		pendingPurgeEntries:             []trash.Entry{{Kind: trash.KindEvent}},
+		pendingPurgeTitle:               "1 item",
+		pendingCalendarDelete:           3,
+		pendingCalendarDeleteName:       "Work",
+		pendingCalendarKeepLocal:        42,
+		pendingCalendarPromote:          9,
+		pendingCalendarPromoteName:      "Home",
+		pendingCalendarPromoteCands:     []int64{3, 9},
+		pendingAccountSelection:         &accountCalendarSelection{},
+		pendingAccountDefaultCandidates: []accountDefaultCandidate{{id: 9, name: "Home"}},
+		pendingAccountRemoveID:          7,
+		pendingAccountRemoveName:        "Personal Google",
+	}
+
+	m = m.clearConfirmPending()
+
+	mv := reflect.ValueOf(m)
+	mt := mv.Type()
+	var stale []string
+	for i := 0; i < mt.NumField(); i++ {
+		f := mt.Field(i)
+		if !strings.HasPrefix(f.Name, "pending") || pendingFieldsOutsideConfirmClear[f.Name] {
+			continue
+		}
+		if !mv.Field(i).IsZero() {
+			stale = append(stale, f.Name)
+		}
+	}
+	if len(stale) > 0 {
+		t.Fatalf("clearConfirmPending left confirm wait state armed: %v", stale)
 	}
 }
 

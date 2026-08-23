@@ -234,3 +234,53 @@ func TestHarness_CreateSave_WritesAlarmRows(t *testing.T) {
 	require.Equal(t, "DISPLAY", stored[0].Action)
 	require.Equal(t, "-PT10M", stored[0].TriggerValue)
 }
+
+// TestHarness_CtrlCSupersede_KeepLocalNotFiredLater drives the full supersede
+// path. The user opens the keep-local confirm, then presses ctrl+c, then
+// cancels the quit confirm. The abandoned keep-local ID must not survive.
+// The next confirmed dialog must then perform its own action. Before the
+// fix, a confirmed delete fired Disconnect on the stale calendar ID and
+// never deleted the event.
+func TestHarness_CtrlCSupersede_KeepLocalNotFiredLater(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+
+	seeded, err := a.Events.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Standup",
+		StartTime:  time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+
+	// Open the keep-local confirm the way the calendar manager does.
+	updated, _ := m.Update(CalendarKeepLocalRequestedMsg{ID: 1, Name: "Personal"})
+	m = updated.(Model)
+	require.True(t, m.confirmOpen, "the keep-local confirm did not open")
+	require.EqualValues(t, 1, m.pendingCalendarKeepLocal)
+
+	// ctrl+c replaces the open confirm with the quit confirm.
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	updated, _ = m.Update(ctrlC)
+	m = updated.(Model)
+	require.True(t, m.pendingQuit, "ctrl+c should open the quit confirm")
+	require.Zero(t, m.pendingCalendarKeepLocal, "ctrl+c must drop the abandoned keep-local ID")
+
+	// Cancel the quit, then confirm an unrelated event delete.
+	updated, _ = m.Update(ConfirmDialogResultMsg{Confirmed: false})
+	m = updated.(Model)
+	require.False(t, m.pendingQuit, "quit cancel did not clear the quit marker")
+	m.pendingDelete = event.Event{ID: seeded.ID, CalendarID: 1, Title: "Standup"}
+	m.confirmOpen = true
+
+	updated, cmd := m.Update(ConfirmDialogResultMsg{Confirmed: true})
+	m = updated.(Model)
+	require.NotNil(t, cmd, "the confirmed delete dispatched no command")
+	result := cmd()
+	done, ok := result.(eventDeletedMsg)
+	require.True(t, ok, "confirmed delete dispatched %T; stale keep-local state hijacked the dialog", result)
+	require.NoError(t, done.err)
+
+	_, err = a.Events.Get(ctx, seeded.ID)
+	require.Error(t, err, "the confirmed delete did not remove the event")
+}
