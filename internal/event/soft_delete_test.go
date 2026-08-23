@@ -927,6 +927,91 @@ func TestDeleteInstance_OverrideLookupError(t *testing.T) {
 	}
 }
 
+// TestSoftDelete_UndoOverrideDeleteRestoresOnlyThatInstance verifies the
+// undo metadata DeleteWithUndo returns for an override. The metadata must
+// carry the override's recurrence_id. Undo then un-hides exactly that
+// instance and clears only its EXDATE. Before the fix, the metadata dropped
+// the recurrence_id. Undo fell back to a UID-wide restore. That resurrected
+// another override of the same series the user had deleted before.
+func TestSoftDelete_UndoOverrideDeleteRestoresOnlyThatInstance(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "undo-override-uid",
+		CalendarID:     1,
+		Title:          "Weekly Review",
+		StartTime:      time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	week2 := time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)
+	week3 := time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
+	override2, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Week 2 (moved)",
+		StartTime:    week2.Add(2 * time.Hour),
+		EndTime:      week2.Add(3 * time.Hour),
+		RecurrenceID: week2.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override 2: %v", err)
+	}
+	override3, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Week 3 (moved)",
+		StartTime:    week3.Add(2 * time.Hour),
+		EndTime:      week3.Add(3 * time.Hour),
+		RecurrenceID: week3.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override 3: %v", err)
+	}
+
+	// Delete week 2's override first (an earlier, unrelated delete).
+	if _, err := svc.DeleteWithUndo(ctx, override2.ID); err != nil {
+		t.Fatalf("delete override 2: %v", err)
+	}
+	// Then delete week 3's override and undo just that one.
+	meta, err := svc.DeleteWithUndo(ctx, override3.ID)
+	if err != nil {
+		t.Fatalf("delete override 3: %v", err)
+	}
+	if meta.RecurrenceID != week3.UTC().Format(time.RFC3339) {
+		t.Fatalf("meta.RecurrenceID = %q, want %q", meta.RecurrenceID, week3.UTC().Format(time.RFC3339))
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+
+	// Week 3 must be live again: override un-hidden, its EXDATE cleared.
+	if _, err := svc.Get(ctx, override3.ID); err != nil {
+		t.Fatalf("override 3 should be live after undo: %v", err)
+	}
+	got, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after undo: %v", err)
+	}
+	exdates := got.ParseExDates()
+	if len(exdates) != 1 || !exdates[0].Equal(week2) {
+		t.Fatalf("master EXDATEs after undo = %v, want exactly week 2 (%v)", exdates, week2)
+	}
+
+	// Week 2's earlier delete must stand: its override stays soft-deleted.
+	still, err := svc.GetIncludingDeleted(ctx, override2.ID)
+	if err != nil {
+		t.Fatalf("get override 2 including deleted: %v", err)
+	}
+	if still.DeletedAt == nil {
+		t.Fatal("override 2 was resurrected by the undo of override 3")
+	}
+}
+
 // TestSoftDelete_FromInstanceUndo_ReAddsRDates reproduces issue #490. The TUI
 // truncation-undo path (RestoreUndo of an UndoKindFromInstance) must re-add the
 // post-cutoff RDATEs the truncation trimmed. That matches the trash-restore
