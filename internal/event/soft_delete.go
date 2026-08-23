@@ -59,7 +59,10 @@ type UndoMeta struct {
 
 // DeleteWithUndo soft-deletes an event by ID and returns the metadata needed
 // to reverse it. For an override, EXDATE mutation on the master is part of
-// the Delete flow. The returned UndoMeta covers the single-row un-hide.
+// the Delete flow. The returned UndoMeta carries the override's
+// recurrence_id. Undo then un-hides exactly that instance. Without it, undo
+// falls back to a UID-wide restore that would also resurrect other
+// soft-deleted overrides of the same series.
 func (s *Service) DeleteWithUndo(ctx context.Context, id int64) (UndoMeta, error) {
 	r, err := s.q.GetEvent(ctx, id)
 	if err != nil {
@@ -70,10 +73,11 @@ func (s *Service) DeleteWithUndo(ctx context.Context, id int64) (UndoMeta, error
 		return UndoMeta{}, err
 	}
 	return UndoMeta{
-		Kind:      UndoKindSingle,
-		UID:       evt.UID,
-		Label:     evt.Title,
-		DeletedAt: time.Now().UTC(),
+		Kind:         UndoKindSingle,
+		UID:          evt.UID,
+		Label:        evt.Title,
+		DeletedAt:    time.Now().UTC(),
+		RecurrenceID: evt.RecurrenceID,
 	}, nil
 }
 
@@ -271,11 +275,11 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 	return nil
 }
 
-// restoreSingle un-hides one row by (uid, recurrence_id = ""). Use it for
-// DeleteWithUndo and DeleteInstanceWithUndo single-row restore. For an
-// override, callers should fall back to RestoreByUID since we do not know the
-// recurrence_id. UndoKindSingle always targets the master UID, so this
-// finds the master.
+// restoreSingle reverses one single-row delete. The undo paths use it for
+// DeleteWithUndo and DeleteInstanceWithUndo. A non-empty recurrenceID
+// restores exactly that instance: it un-hides the override row and clears
+// the delete-recorded EXDATE for it. An empty recurrenceID targets the
+// master row itself.
 func (s *Service) restoreSingle(ctx context.Context, uid, recurrenceID string) error {
 	r, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid)
 	if err != nil {
