@@ -170,3 +170,88 @@ func TestDeleteSeries_TombstoneIsAtomic(t *testing.T) {
 			"DeleteSeries tombstone is not atomic with the soft-delete", *deletedAt)
 	}
 }
+
+// TestDeleteInstance_SyncMarkIsAtomic is the DeleteInstance analogue of
+// TestCreate_SyncMarkIsAtomic. The master's EXDATE change must commit together
+// with its dirty mark. The old code discarded a failed post-commit
+// MarkResourceDirty. A synced calendar then kept an EXDATE change that no push
+// ever sent (issue #107 contract).
+func TestDeleteInstance_SyncMarkIsAtomic(t *testing.T) {
+	svc := newTestService(t)
+	makeSyncedCalendar(t, svc)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "instance-dirty-atomic",
+		CalendarID:     1,
+		Title:          "Standup",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 15, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	// Force the dirty-mark INSERT to fail.
+	if _, err := svc.db.ExecContext(ctx, `DROP TABLE sync_resources`); err != nil {
+		t.Fatalf("drop sync_resources: %v", err)
+	}
+
+	instanceAt := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	if err := svc.DeleteInstance(ctx, master.UID, instanceAt); err == nil {
+		t.Fatal("DeleteInstance succeeded but the dirty-mark write failed; the error was discarded")
+	}
+
+	// The mutation must have rolled back: the master carries no EXDATE.
+	got, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after failed DeleteInstance: %v", err)
+	}
+	if n := len(got.ParseExDates()); n != 0 {
+		t.Fatalf("master EXDATE count = %d, want 0 (%q); the EXDATE committed despite the "+
+			"dirty-mark write failing", n, got.ExDates)
+	}
+}
+
+// TestDeleteFromInstance_SyncMarkIsAtomic is the DeleteFromInstance analogue
+// of TestCreate_SyncMarkIsAtomic. The truncation must commit together with its
+// dirty mark. The old code discarded a failed post-commit MarkResourceDirty. A
+// synced calendar then kept a truncated RRULE that no push ever sent (issue
+// #107 contract).
+func TestDeleteFromInstance_SyncMarkIsAtomic(t *testing.T) {
+	svc := newTestService(t)
+	makeSyncedCalendar(t, svc)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "truncate-dirty-atomic",
+		CalendarID:     1,
+		Title:          "Standup",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 15, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+
+	if _, err := svc.db.ExecContext(ctx, `DROP TABLE sync_resources`); err != nil {
+		t.Fatalf("drop sync_resources: %v", err)
+	}
+
+	cutoff := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err == nil {
+		t.Fatal("DeleteFromInstance succeeded but the dirty-mark write failed; the error was discarded")
+	}
+
+	// The mutation must have rolled back: the RRULE keeps its original COUNT.
+	got, err := svc.GetByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("get master after failed DeleteFromInstance: %v", err)
+	}
+	if got.RecurrenceRule != master.RecurrenceRule {
+		t.Fatalf("master RRULE = %q, want the original %q; the truncation committed despite "+
+			"the dirty-mark write failing", got.RecurrenceRule, master.RecurrenceRule)
+	}
+}
