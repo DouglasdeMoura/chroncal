@@ -70,7 +70,7 @@ func TestCalendarCommandDoesNotRegisterLinkOrUnlink(t *testing.T) {
 func TestSyncStatusEmptyMessageIsCalendarCentric(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
-	stdout, _, err := runChroncalCommand(t, "sync", "status")
+	stdout, _, err := runChroncalCommand(t, "sync", "--allow-plaintext", "status")
 	if err != nil {
 		t.Fatalf("sync status: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestSyncStatusEmptyMessageIsCalendarCentric(t *testing.T) {
 func TestSyncStatusHonorsOutputJSON(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
-	stdout, _, err := runChroncalCommand(t, "sync", "status", "--output", "json")
+	stdout, _, err := runChroncalCommand(t, "sync", "--allow-plaintext", "status", "--output", "json")
 	if err != nil {
 		t.Fatalf("sync status --output json: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestSyncStatusHonorsOutputJSON(t *testing.T) {
 func TestSyncConflictsHonorsOutputJSON(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
-	stdout, _, err := runChroncalCommand(t, "sync", "conflicts", "--output", "json")
+	stdout, _, err := runChroncalCommand(t, "sync", "--allow-plaintext", "conflicts", "--output", "json")
 	if err != nil {
 		t.Fatalf("sync conflicts --output json: %v", err)
 	}

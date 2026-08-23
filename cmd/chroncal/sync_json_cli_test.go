@@ -65,7 +65,7 @@ func TestSyncResolveOutputJSON(t *testing.T) {
 	id := seedSyncConflictForTest(t, dbPath, calID)
 
 	stdout, stderr, err := runChroncalCommand(t,
-		"sync", "resolve", strconv.FormatInt(id, 10), "--pick", "local", "--output", "json")
+		"--allow-plaintext", "sync", "resolve", strconv.FormatInt(id, 10), "--pick", "local", "--output", "json")
 	if err != nil {
 		t.Fatalf("sync resolve -o json: %v (stderr: %s)", err, stderr)
 	}
@@ -83,7 +83,7 @@ func TestSyncResetOutputJSON(t *testing.T) {
 	createLinkedCalendarForTest(t, dbPath)
 
 	stdout, stderr, err := runChroncalCommand(t,
-		"sync", "reset", "--calendar", "Work", "--output", "json")
+		"--allow-plaintext", "sync", "reset", "--calendar", "Work", "--output", "json")
 	if err != nil {
 		t.Fatalf("sync reset -o json: %v (stderr: %s)", err, stderr)
 	}

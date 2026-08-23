@@ -14,7 +14,7 @@ func TestSyncResetUnknownCalendarFails(t *testing.T) {
 		t.Fatalf("calendar create: %v", err)
 	}
 
-	_, stderr, err := runChroncalCommand(t, "sync", "reset", "--calendar", "Wrok")
+	_, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "reset", "--calendar", "Wrok")
 	if err == nil {
 		t.Fatalf("sync reset with unknown calendar exited 0; want non-zero. stderr=%q", stderr)
 	}
@@ -33,7 +33,7 @@ func TestSyncResetLocalOnlyCalendarReportsNotConnected(t *testing.T) {
 		t.Fatalf("calendar create: %v", err)
 	}
 
-	_, stderr, err := runChroncalCommand(t, "sync", "reset", "--calendar", "Work")
+	_, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "reset", "--calendar", "Work")
 	if err == nil {
 		t.Fatalf("sync reset on local-only calendar exited 0; want non-zero. stderr=%q", stderr)
 	}

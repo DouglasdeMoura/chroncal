@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
@@ -40,8 +39,10 @@ before the push and asks for confirmation.`,
 			defer a.Close()
 
 			ctx := context.Background()
-			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
+			svc, err := newSyncService(a, nil)
+			if err != nil {
+				return err
+			}
 
 			cals, err := a.Queries.ListCalendars(ctx)
 			if err != nil {

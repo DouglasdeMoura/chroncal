@@ -399,7 +399,11 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	// permanently failing calendar (issue #416).
 	attemptedAt := time.Now().UTC().Format(time.RFC3339)
 	defer func() {
-		if updateErr := e.updateSyncHealth(ctx, calendarID, attemptedAt, result, err); updateErr != nil {
+		// The sync context can be expired when this defer runs. One example
+		// is the per-calendar deadline that SyncAll enforces. The health
+		// write must still record the failed attempt, so it uses a context
+		// with the cancellation removed.
+		if updateErr := e.updateSyncHealth(context.WithoutCancel(ctx), calendarID, attemptedAt, result, err); updateErr != nil {
 			e.logger.Warn("update sync health failed", "calendar_id", calendarID, "error", updateErr)
 			if result != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("update sync health: %w", updateErr))

@@ -52,6 +52,20 @@ func fprintImportWarnings(w io.Writer, warnings []syncPkg.ImportWarning) {
 	}
 }
 
+// newSyncService builds the sync service for every sync subcommand. The
+// app supplies the database, the domain services, and the credential
+// store scope. A failed store construction returns an error; a command
+// then fails with one clear message instead of a nil store that fails
+// later with a confusing error. Pass a nil logger for silent commands.
+// Pass an explicit logger when the command shows sync logs.
+func newSyncService(a *app.App, logger *slog.Logger) (*syncPkg.Service, error) {
+	credStore, err := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
+	if err != nil {
+		return nil, fmt.Errorf("credential store: %w", err)
+	}
+	return syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, logger), nil
+}
+
 func syncNewCalendars(
 	ctx context.Context,
 	a *app.App,
@@ -184,12 +198,10 @@ linked to one CalDAV account. The two flags are mutually exclusive.`,
 				}
 			}
 
-			credStore, err := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
+			svc, err := newSyncService(a, stderrSyncLogger(os.Stderr))
 			if err != nil {
-				return fmt.Errorf("credential store: %w", err)
+				return err
 			}
-
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, stderrSyncLogger(os.Stderr))
 
 			var results []*syncPkg.SyncResult
 			if targetCalendarID != 0 {
@@ -237,8 +249,10 @@ for each connected calendar.`,
 			}
 			defer a.Close()
 
-			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
+			svc, err := newSyncService(a, nil)
+			if err != nil {
+				return err
+			}
 
 			statuses, err := svc.Status(context.Background())
 			if err != nil {
@@ -302,8 +316,10 @@ A resolved row keeps the recorded local version, so "chroncal sync resolve
 			}
 			defer a.Close()
 
-			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
+			svc, err := newSyncService(a, nil)
+			if err != nil {
+				return err
+			}
 
 			var conflicts []syncPkg.Conflict
 			if resolved {
@@ -389,8 +405,10 @@ it again with --pick local restores the recorded local version.`,
 			}
 			defer a.Close()
 
-			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
+			svc, err := newSyncService(a, nil)
+			if err != nil {
+				return err
+			}
 
 			warnings, err := svc.ResolveConflict(context.Background(), id, pick)
 			if err != nil {
@@ -430,8 +448,10 @@ This does not delete your local calendars or entries.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			credStore, _ := auth.NewCredentialStore(a.CredentialNamespace, a.PreviousCredentialNamespaces, a.MigrateLegacyCredentials, a.AllowPlaintext)
-			svc := syncPkg.NewService(a.DB, a.Queries, credStore, a.Calendars, a.Events, a.Todos, a.Journals, nil)
+			svc, err := newSyncService(a, nil)
+			if err != nil {
+				return err
+			}
 
 			cals, err := a.Calendars.List(ctx)
 			if err != nil {

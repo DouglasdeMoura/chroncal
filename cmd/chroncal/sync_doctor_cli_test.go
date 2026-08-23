@@ -69,7 +69,7 @@ func bumpPushFailCount(t *testing.T, dbPath string, count int) {
 func TestSyncDoctorEmptyReportsNone(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
-	stdout, _, err := runChroncalCommand(t, "sync", "doctor")
+	stdout, _, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
 	if err != nil {
 		t.Fatalf("sync doctor: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestSyncDoctorEmptyReportsNone(t *testing.T) {
 func TestSyncDoctorJSONEmptyIsArray(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
-	stdout, _, err := runChroncalCommand(t, "sync", "doctor", "--output", "json")
+	stdout, _, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--output", "json")
 	if err != nil {
 		t.Fatalf("sync doctor --output json: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestSyncDoctorListsWedgedResource(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	seedWedgedCLIResource(t, dbPath)
 
-	stdout, stderr, err := runChroncalCommand(t, "sync", "doctor")
+	stdout, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
 	if err != nil {
 		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
 	}
@@ -121,7 +121,7 @@ func TestSyncDoctorListsWedgedResource(t *testing.T) {
 	}
 
 	bumpPushFailCount(t, dbPath, 3)
-	stdout, _, err = runChroncalCommand(t, "sync", "doctor")
+	stdout, _, err = runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
 	if err != nil {
 		t.Fatalf("sync doctor after bumps: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSyncDoctorJSONListsWedgedResource(t *testing.T) {
 	seedWedgedCLIResource(t, dbPath)
 	bumpPushFailCount(t, dbPath, 2)
 
-	stdout, _, err := runChroncalCommand(t, "sync", "doctor", "--output", "json")
+	stdout, _, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--output", "json")
 	if err != nil {
 		t.Fatalf("sync doctor --output json: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestSyncDoctorPushRefusesNonInteractiveWithoutYes(t *testing.T) {
 
 	// Seed one wedged resource so the push flow reaches its confirmation
 	// gate instead of stopping at the not-found check.
-	_, _, err := runChroncalCommand(t, "sync", "doctor", "--push", "wedge-cli@example.com")
+	_, _, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--push", "wedge-cli@example.com")
 	if err == nil {
 		t.Fatal("expected refusal without --yes in a non-interactive shell")
 	}
@@ -180,7 +180,7 @@ func TestSyncDoctorPushRefusesNonInteractiveWithoutYes(t *testing.T) {
 func TestSyncDoctorPushUnknownUIDIsNotFound(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 
-	_, stderr, err := runChroncalCommand(t, "sync", "doctor", "--push", "missing@example.com", "--yes", "--output", "json")
+	_, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--push", "missing@example.com", "--yes", "--output", "json")
 	if err == nil {
 		t.Fatal("push of an unknown uid should fail")
 	}
