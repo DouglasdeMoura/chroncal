@@ -203,6 +203,10 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			Rev:        res.Rev,
 		}); err != nil {
 			e.logger.Error("finalize pushed resource failed", "uid", res.Uid, "error", err)
+			// The body reached the server, but the row keeps the old ETag
+			// and the dirty flag. The next push would replay a phantom 412
+			// on this resource. Report the failure in the sync result.
+			result.errors = append(result.errors, fmt.Errorf("finalize push %s: %w", res.Uid, err))
 		}
 		// The body reached the server, so this attempt succeeded. Reset the
 		// failure bookkeeping even when the finalize write above failed.
@@ -220,6 +224,11 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 				SyncStrategy: res.SyncStrategy,
 			}); err != nil {
 				e.logger.Error("update sync resource URL", "uid", res.Uid, "error", err)
+				// The object exists on the server, but the row still has no
+				// remote URL. The next push would PUT to a new path and
+				// create a duplicate object. Report the failure in the sync
+				// result.
+				result.errors = append(result.errors, fmt.Errorf("record remote href for %s: %w", res.Uid, err))
 			}
 		}
 
