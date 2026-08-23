@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -433,6 +434,81 @@ func TestCalendarRefNotFoundCodeUniform(t *testing.T) {
 		if !strings.Contains(payload.Error, "Ghost") {
 			t.Fatalf("%s: error = %q, want it to name the unknown reference", strings.Join(args, " "), payload.Error)
 		}
+	}
+}
+
+// TestCalendarDeleteAbortsWhenEventCountUnknown guards the destructive
+// prompt. calendar delete swallowed the CountEventsByCalendar error, so
+// the confirm quoted a zero count and the delete proceeded. The command
+// must abort while the risk summary is unknown, and keep the calendar.
+func TestCalendarDeleteAbortsWhenEventCountUnknown(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	// Break the events table so the count query fails, like an I/O error
+	// would. Only the count reads it at this stage of the command.
+	func() {
+		a, err := app.New(dbPath)
+		if err != nil {
+			t.Fatalf("app.New: %v", err)
+		}
+		defer a.Close()
+		if _, err := a.DB.ExecContext(context.Background(),
+			"ALTER TABLE events RENAME TO events_hidden"); err != nil {
+			t.Fatalf("hide events: %v", err)
+		}
+		t.Cleanup(func() {
+			b, berr := app.New(dbPath)
+			if berr != nil {
+				t.Fatalf("app.New for restore: %v", berr)
+			}
+			defer b.Close()
+			if _, err := b.DB.ExecContext(context.Background(),
+				"ALTER TABLE events_hidden RENAME TO events"); err != nil {
+				t.Fatalf("restore events: %v", err)
+			}
+		})
+	}()
+
+	var calID int64
+	{
+		a, err := app.New(dbPath)
+		if err != nil {
+			t.Fatalf("app.New: %v", err)
+		}
+		defer a.Close()
+		cals, err := a.Calendars.List(context.Background())
+		if err != nil {
+			t.Fatalf("calendar list: %v", err)
+		}
+		for _, c := range cals {
+			if c.Name == "Work" {
+				calID = c.ID
+			}
+		}
+		if calID == 0 {
+			t.Fatalf("calendar Work missing before delete")
+		}
+	}
+
+	_, stderr, err := runChroncalCommand(t, "calendar", "delete",
+		strconv.FormatInt(calID, 10), "--yes", "--output", "json")
+	if err == nil {
+		t.Fatal("calendar delete must abort when the event count is unknown")
+	}
+	if !strings.Contains(stderr, "count events") {
+		t.Fatalf("stderr = %q, want the count-events failure", stderr)
+	}
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	if _, err := a.Calendars.Get(context.Background(), calID); err != nil {
+		t.Fatalf("calendar %d was deleted despite the abort: %v", calID, err)
 	}
 }
 
