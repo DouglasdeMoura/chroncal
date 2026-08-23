@@ -1150,6 +1150,76 @@ func TestEngineSyncCalendarRecordsHealthOnEarlyClientFailure(t *testing.T) {
 	}
 }
 
+// TestEngineSyncCalendarRecordsHealthAfterContextExpiry is the regression
+// test for the stale health bookkeeping on a timed-out sync. SyncAll gives
+// each calendar a deadline. When the context expires mid-sync, the deferred
+// updateSyncHealth ran with the expired context. The write failed, so
+// LastSyncError stayed empty and the ambient ⚠ glyph never lit up for the
+// timed-out calendar. The health write must ignore the expiry.
+func TestEngineSyncCalendarRecordsHealthAfterContextExpiry(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	syncCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// The server cancels the sync context on the first request it sees.
+	// That imitates the per-calendar deadline hitting mid-sync, after
+	// loadCalendarClient already succeeded.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cancel()
+		http.Error(w, "deadline exceeded", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	remoteAccount, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "deadline", ServerUrl: server.URL, AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	remoteURL := server.URL + "/calendar"
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: calendarID, AccountID: &remoteAccount.ID, RemoteUrl: &remoteURL,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	engine.credStore.(*mockCredStore).creds[remoteAccount.ID] = auth.Credential{
+		AccountID: remoteAccount.ID, Username: "user", Password: "secret",
+	}
+
+	result, err := engine.SyncCalendar(syncCtx, calendarID, ConflictServerWins)
+	if err != nil {
+		t.Fatalf("SyncCalendar: %v", err)
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("sync errors empty: the canceled sync must report failures")
+	}
+	for _, syncErr := range result.Errors {
+		if strings.Contains(syncErr.Error(), "update sync health") {
+			t.Fatalf("sync errors = %v, want no health-write failure", result.Errors)
+		}
+	}
+
+	calRow, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if got := storage.NullableToString(calRow.LastSyncError); got == "" {
+		t.Fatal("LastSyncError empty: the timed-out sync still shows healthy")
+	}
+	if got := storage.NullableToString(calRow.LastSyncAttemptedAt); got == "" {
+		t.Fatal("LastSyncAttemptedAt empty: the failed attempt was not recorded")
+	}
+}
+
 // TestEnginePushSerializesConcurrentNewResourceCreate is the regression test
 // for issue #225. Two concurrent push runs for the same calendar (e.g. an
 // opportunistic save-time PushLocalEdits racing a periodic SyncCalendar) must not
