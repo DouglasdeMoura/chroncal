@@ -284,3 +284,19 @@ func TestHarness_CtrlCSupersede_KeepLocalNotFiredLater(t *testing.T) {
 	_, err = a.Events.Get(ctx, seeded.ID)
 	require.Error(t, err, "the confirmed delete did not remove the event")
 }
+
+// TestHarness_EmptyConfirmResult_NoDelete guards the confirm fallback. A
+// confirmed result that no pending branch owns must do nothing. Before the
+// guard, the fallback called DeleteWithUndo with ID 0. That call always
+// failed and set m.err, so the user saw an error toast for an empty
+// confirm.
+func TestHarness_EmptyConfirmResult_NoDelete(t *testing.T) {
+	m, _ := newDBBackedModel(t)
+
+	m.confirmOpen = true
+	updated, cmd := m.Update(ConfirmDialogResultMsg{Confirmed: true})
+	m = updated.(Model)
+	require.False(t, m.confirmOpen, "the confirm dialog must still close")
+	require.Nil(t, cmd, "an empty confirm must not dispatch a delete")
+	require.NoError(t, m.err, "an empty confirm must not raise an error")
+}

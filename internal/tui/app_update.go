@@ -691,6 +691,12 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 		}
 	}
 	ev := m.pendingDelete
+	if ev.ID == 0 {
+		// No branch above matched: nothing destructive waits behind this
+		// confirm. Do not delete event 0. That call always fails and shows
+		// a spurious error toast.
+		return m, nil
+	}
 	return m, func() tea.Msg {
 		meta, err := m.app.Events.DeleteWithUndo(context.Background(), ev.ID)
 		return eventDeletedMsg{
