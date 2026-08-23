@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
@@ -752,6 +753,176 @@ func TestSoftDelete_RestoreSurfacesTombstoneClearError(t *testing.T) {
 
 	if err := svc.RestoreByID(ctx, e.ID); err == nil {
 		t.Fatal("RestoreByID returned nil, want error when tombstone clear fails")
+	}
+}
+
+// TestSoftDelete_RestoreByUIDOrphanTailClearsTombstone covers the restore of
+// a UID whose master row was purged on its own. Only orphaned overrides
+// remain. The restore must still reconcile sync state. Before the fix, the
+// restore left a pending tombstone in place. The next sync then DELETEd the
+// series from the server right after a successful local restore.
+func TestSoftDelete_RestoreByUIDOrphanTailClearsTombstone(t *testing.T) {
+	svc := newTestService(t)
+	makeSyncedCalendar(t, svc)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "orphan-restore-uid",
+		CalendarID:     1,
+		Title:          "Daily Standup",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 15, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	instanceAt := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Daily Standup (moved)",
+		StartTime:    instanceAt.Add(time.Hour),
+		EndTime:      instanceAt.Add(90 * time.Minute),
+		RecurrenceID: instanceAt.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Mark the series synced (non-empty remote_url) so the delete queues a
+	// tombstone.
+	if err := svc.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   master.CalendarID,
+		Uid:          master.UID,
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/series.ics",
+		Etag:         "etag-1",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("upsert sync resource: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	tombstones, err := svc.q.ListTombstonesByCalendar(ctx, master.CalendarID)
+	if err != nil {
+		t.Fatalf("list tombstones: %v", err)
+	}
+	if len(tombstones) != 1 {
+		t.Fatalf("tombstones after DeleteSeries = %d, want 1", len(tombstones))
+	}
+
+	// Purge the master row on its own. The soft-deleted override stays behind
+	// as an orphan tail with the UID.
+	if err := svc.PurgeByID(ctx, master.ID); err != nil {
+		t.Fatalf("PurgeByID master: %v", err)
+	}
+
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+
+	// The restore must clear the tombstone. A surviving tombstone would
+	// DELETE the series from the server on the next sync.
+	tombstones, err = svc.q.ListTombstonesByCalendar(ctx, master.CalendarID)
+	if err != nil {
+		t.Fatalf("list tombstones after restore: %v", err)
+	}
+	if len(tombstones) != 0 {
+		t.Fatalf("tombstones after RestoreByUID = %d, want 0 (the pending delete outlived the restore)", len(tombstones))
+	}
+	if _, err := svc.Get(ctx, override.ID); err != nil {
+		t.Fatalf("orphan override should be live after RestoreByUID: %v", err)
+	}
+}
+
+// TestSoftDelete_RestoreUndoSeriesOrphanTailClearsTombstone covers the same
+// orphan-tail scenario as TestSoftDelete_RestoreByUIDOrphanTailClearsTombstone,
+// reached through RestoreUndo(UndoKindSeries). The master row was purged on
+// its own after the series delete. Only the soft-deleted override remains.
+// The undo must still reconcile sync state. Before the fix, the undo left a
+// pending tombstone in place. The next sync then DELETEd the series from the
+// server right after a successful local undo.
+func TestSoftDelete_RestoreUndoSeriesOrphanTailClearsTombstone(t *testing.T) {
+	svc := newTestService(t)
+	makeSyncedCalendar(t, svc)
+	ctx := context.Background()
+
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:            "orphan-undo-series-uid",
+		CalendarID:     1,
+		Title:          "Daily Standup",
+		StartTime:      time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(2026, 4, 1, 9, 15, 0, 0, time.UTC),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	instanceAt := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID:          master.UID,
+		CalendarID:   1,
+		Title:        "Daily Standup (moved)",
+		StartTime:    instanceAt.Add(time.Hour),
+		EndTime:      instanceAt.Add(90 * time.Minute),
+		RecurrenceID: instanceAt.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// Mark the series synced (non-empty remote_url) so the delete queues a
+	// tombstone.
+	if err := svc.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   master.CalendarID,
+		Uid:          master.UID,
+		OwnerType:    "event",
+		RemoteUrl:    "https://example.com/cal/series.ics",
+		Etag:         "etag-1",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("upsert sync resource: %v", err)
+	}
+	meta, err := svc.DeleteSeriesWithUndo(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo: %v", err)
+	}
+	if meta.Kind != UndoKindSeries {
+		t.Fatalf("undo kind = %d, want UndoKindSeries", meta.Kind)
+	}
+	tombstones, err := svc.q.ListTombstonesByCalendar(ctx, master.CalendarID)
+	if err != nil {
+		t.Fatalf("list tombstones: %v", err)
+	}
+	if len(tombstones) != 1 {
+		t.Fatalf("tombstones after DeleteSeriesWithUndo = %d, want 1", len(tombstones))
+	}
+
+	// Purge the master row on its own. The soft-deleted override stays behind
+	// as an orphan tail with the UID.
+	if err := svc.PurgeByID(ctx, master.ID); err != nil {
+		t.Fatalf("PurgeByID master: %v", err)
+	}
+
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+
+	// The undo must clear the tombstone. A surviving tombstone would
+	// DELETE the series from the server on the next sync.
+	tombstones, err = svc.q.ListTombstonesByCalendar(ctx, master.CalendarID)
+	if err != nil {
+		t.Fatalf("list tombstones after undo: %v", err)
+	}
+	if len(tombstones) != 0 {
+		t.Fatalf("tombstones after RestoreUndo = %d, want 0 (the pending delete outlived the undo)", len(tombstones))
+	}
+	if _, err := svc.Get(ctx, override.ID); err != nil {
+		t.Fatalf("orphan override should be live after RestoreUndo: %v", err)
 	}
 }
 
