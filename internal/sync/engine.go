@@ -927,22 +927,28 @@ func resolvePushIdentity(cal storage.Calendar, account storage.Account) string {
 // PUT this event. Returns true when the event has no organizer attendee
 // (locally-created event) or when the organizer's email matches identity
 // (case-insensitive, mailto: prefix tolerated). Returns false only when
-// we can prove the user is just an attendee.
-func (e *Engine) userOrganizesEvent(ctx context.Context, uid, identity string) bool {
+// we can prove the user is just an attendee. A missing master row counts
+// as "no organizer" so an orphaned dirty row can still push. Any other
+// failed lookup returns an error; the caller keeps the row dirty instead
+// of guessing.
+func (e *Engine) userOrganizesEvent(ctx context.Context, uid, identity string) (bool, error) {
 	row, err := e.q.GetEventByUID(ctx, uid)
 	if err != nil {
-		return true
+		if errors.Is(err, sql.ErrNoRows) {
+			return true, nil
+		}
+		return false, fmt.Errorf("get event: %w", err)
 	}
 	attendees, err := e.q.ListAttendeesByEventID(ctx, row.ID)
 	if err != nil {
-		return true
+		return false, fmt.Errorf("list attendees: %w", err)
 	}
 	for _, a := range attendees {
 		if a.Organizer == 1 {
-			return strings.EqualFold(stripMailtoPrefix(a.Email), stripMailtoPrefix(identity))
+			return strings.EqualFold(stripMailtoPrefix(a.Email), stripMailtoPrefix(identity)), nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 func stripMailtoPrefix(s string) string {
