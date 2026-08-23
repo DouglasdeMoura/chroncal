@@ -417,6 +417,11 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 		}
 		to = to.AddDate(0, 0, 1) // half-open: include the entire end day
 	}
+	// An inverted window (--to before --from) silently matched nothing.
+	// Reject it so a typo gives an error instead of an empty result.
+	if !to.After(from) {
+		return time.Time{}, time.Time{}, errInvalidInputf("--to must be after --from")
+	}
 	return from, to, nil
 }
 
@@ -444,6 +449,11 @@ func parseExportDateBounds(fromStr, toStr string) (time.Time, time.Time, error) 
 			return time.Time{}, time.Time{}, err
 		}
 		to = to.AddDate(0, 0, 1) // half-open: include the entire end day
+	}
+	// Both bounds set: an inverted window silently matched nothing.
+	// One bound alone stays open, so the check only runs when both exist.
+	if !from.IsZero() && !to.IsZero() && !to.After(from) {
+		return time.Time{}, time.Time{}, errInvalidInputf("--to must be after --from")
 	}
 	return from, to, nil
 }

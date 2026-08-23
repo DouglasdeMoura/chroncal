@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,60 @@ func TestParseExportDateBoundsNeither(t *testing.T) {
 	}
 	if !from.IsZero() || !to.IsZero() {
 		t.Fatalf("both bounds must be zero when no flags given, got from=%s to=%s", from, to)
+	}
+}
+
+// TestParseDateRangeRejectsInvertedRange guards against a silent empty
+// window. --to before --from used to be accepted; every row was then
+// filtered out with no error. The same-day range stays valid because the
+// half-open end bound includes the whole --to day.
+func TestParseDateRangeRejectsInvertedRange(t *testing.T) {
+	for _, tc := range []struct {
+		from, to string
+		wantErr  bool
+	}{
+		{"2026-05-10", "2026-05-01", true},  // to strictly before from
+		{"2026-05-10", "2026-05-09", true},  // to one day before from
+		{"2026-05-10", "2026-05-10", false}, // whole --to day included
+		{"2026-05-10", "", false},           // default upper bound
+	} {
+		_, _, err := parseDateRange(tc.from, tc.to)
+		if tc.wantErr && err == nil {
+			t.Fatalf("parseDateRange(%q, %q) accepted an inverted range", tc.from, tc.to)
+		}
+		if !tc.wantErr && err != nil {
+			t.Fatalf("parseDateRange(%q, %q) = %v, want valid", tc.from, tc.to, err)
+		}
+		if err != nil {
+			var ce *cliError
+			if !errors.As(err, &ce) || ce.Code != "invalid_input" {
+				t.Fatalf("error = %#v, want an invalid_input cliError", err)
+			}
+		}
+	}
+}
+
+// TestParseExportDateBoundsRejectsInvertedRange mirrors the guard above
+// for the export bounds parser. Both bounds must be set for the check to
+// run; a single bound keeps its open window (issue #358).
+func TestParseExportDateBoundsRejectsInvertedRange(t *testing.T) {
+	for _, tc := range []struct {
+		from, to string
+		wantErr  bool
+	}{
+		{"2026-05-10", "2026-05-01", true},  // to strictly before from
+		{"2026-05-10", "2026-05-09", true},  // to one day before from
+		{"2026-05-10", "2026-05-10", false}, // whole --to day included
+		{"2026-05-10", "", false},           // open upper bound
+		{"", "2026-05-10", false},           // open lower bound
+	} {
+		_, _, err := parseExportDateBounds(tc.from, tc.to)
+		if tc.wantErr && err == nil {
+			t.Fatalf("parseExportDateBounds(%q, %q) accepted an inverted range", tc.from, tc.to)
+		}
+		if !tc.wantErr && err != nil {
+			t.Fatalf("parseExportDateBounds(%q, %q) = %v, want valid", tc.from, tc.to, err)
+		}
 	}
 }
 
