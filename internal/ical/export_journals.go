@@ -126,17 +126,7 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 			emitRecurrenceID(vjournal.Props, j.RecurrenceID, timeutil.IsDateOnly(j.StartDate), j.Timezone == "FLOATING")
 		}
 
-		if j.DtStamp != "" {
-			if ts, err := time.Parse(time.RFC3339, j.DtStamp); err == nil {
-				vjournal.Props.SetDateTime(ical.PropDateTimeStamp, ts.UTC())
-			} else {
-				vjournal.Props.SetDateTime(ical.PropDateTimeStamp, j.UpdatedAt.UTC())
-			}
-		} else {
-			vjournal.Props.SetDateTime(ical.PropDateTimeStamp, j.UpdatedAt.UTC())
-		}
-		vjournal.Props.SetDateTime(ical.PropCreated, j.CreatedAt.UTC())
-		vjournal.Props.SetDateTime(ical.PropLastModified, j.UpdatedAt.UTC())
+		emitTimestamps(vjournal.Props, j.DtStamp, j.CreatedAt, j.UpdatedAt)
 
 		// ATTACH
 		for _, att := range j.Attachments {
@@ -144,28 +134,13 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 		}
 
 		// COMMENT
-		for _, c := range j.Comments {
-			p := &ical.Prop{Name: ical.PropComment}
-			p.SetText(c)
-			vjournal.Props.Add(p)
-		}
+		emitTextProps(vjournal.Props, ical.PropComment, j.Comments)
 
 		// CONTACT
-		for _, c := range j.Contacts {
-			p := &ical.Prop{Name: ical.PropContact}
-			p.SetText(c)
-			vjournal.Props.Add(p)
-		}
+		emitTextProps(vjournal.Props, ical.PropContact, j.Contacts)
 
 		// RELATED-TO
-		for _, r := range j.Relations {
-			p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}
-			p.Value = r.RelUID
-			if r.RelType != "" && r.RelType != "PARENT" {
-				p.Params.Set("RELTYPE", r.RelType)
-			}
-			vjournal.Props.Add(p)
-		}
+		emitRelations(vjournal.Props, j.Relations)
 
 		// X-Properties (round-trip preservation)
 		emitXProperties(vjournal, j.XProperties)

@@ -351,3 +351,47 @@ func emitAttendees(props ical.Props, attendees []model.Attendee) {
 		props.Add(attendee)
 	}
 }
+
+// emitTimestamps writes DTSTAMP, CREATED, and LAST-MODIFIED. A parseable
+// dtstamp wins; otherwise the updated timestamp stands in for DTSTAMP.
+func emitTimestamps(props ical.Props, dtstamp string, createdAt, updatedAt time.Time) {
+	if ts, err := time.Parse(time.RFC3339, dtstamp); err == nil {
+		props.SetDateTime(ical.PropDateTimeStamp, ts.UTC())
+	} else {
+		props.SetDateTime(ical.PropDateTimeStamp, updatedAt.UTC())
+	}
+	props.SetDateTime(ical.PropCreated, createdAt.UTC())
+	props.SetDateTime(ical.PropLastModified, updatedAt.UTC())
+}
+
+// emitTextProps appends one TEXT property per value (COMMENT, CONTACT).
+func emitTextProps(props ical.Props, name string, values []string) {
+	for _, c := range values {
+		p := &ical.Prop{Name: name}
+		p.SetText(c)
+		props.Add(p)
+	}
+}
+
+// emitResources writes the comma-separated RESOURCES list property. It skips
+// an empty list, because a bare RESOURCES carries no information.
+func emitResources(props ical.Props, resources []string) {
+	if len(resources) > 0 {
+		resProp := &ical.Prop{Name: ical.PropResources}
+		resProp.SetTextList(resources)
+		props.Set(resProp)
+	}
+}
+
+// emitRelations appends one RELATED-TO property per relation. The RELTYPE
+// parameter is omitted for the default PARENT type.
+func emitRelations(props ical.Props, relations []model.Relation) {
+	for _, r := range relations {
+		p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}
+		p.Value = r.RelUID
+		if r.RelType != "" && r.RelType != "PARENT" {
+			p.Params.Set("RELTYPE", r.RelType)
+		}
+		props.Add(p)
+	}
+}

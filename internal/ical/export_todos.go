@@ -176,53 +176,22 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 			vtodo.Props.Set(p)
 		}
 
-		if t.DtStamp != "" {
-			if ts, err := time.Parse(time.RFC3339, t.DtStamp); err == nil {
-				vtodo.Props.SetDateTime(ical.PropDateTimeStamp, ts.UTC())
-			} else {
-				vtodo.Props.SetDateTime(ical.PropDateTimeStamp, t.UpdatedAt.UTC())
-			}
-		} else {
-			vtodo.Props.SetDateTime(ical.PropDateTimeStamp, t.UpdatedAt.UTC())
-		}
-		vtodo.Props.SetDateTime(ical.PropCreated, t.CreatedAt.UTC())
-		vtodo.Props.SetDateTime(ical.PropLastModified, t.UpdatedAt.UTC())
+		emitTimestamps(vtodo.Props, t.DtStamp, t.CreatedAt, t.UpdatedAt)
 
 		// ATTACH
 		for _, att := range t.Attachments {
 			emitAttachment(vtodo.Props, att)
 		}
 
-		// COMMENT
-		for _, c := range t.Comments {
-			p := &ical.Prop{Name: ical.PropComment}
-			p.SetText(c)
-			vtodo.Props.Add(p)
-		}
+		emitTextProps(vtodo.Props, ical.PropComment, t.Comments)
 
-		// CONTACT
-		for _, c := range t.Contacts {
-			p := &ical.Prop{Name: ical.PropContact}
-			p.SetText(c)
-			vtodo.Props.Add(p)
-		}
+		emitTextProps(vtodo.Props, ical.PropContact, t.Contacts)
 
 		// RESOURCES (comma-separated list, like CATEGORIES)
-		if len(t.Resources) > 0 {
-			resProp := &ical.Prop{Name: ical.PropResources}
-			resProp.SetTextList(t.Resources)
-			vtodo.Props.Set(resProp)
-		}
+		emitResources(vtodo.Props, t.Resources)
 
 		// RELATED-TO
-		for _, r := range t.Relations {
-			p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}
-			p.Value = r.RelUID
-			if r.RelType != "" && r.RelType != "PARENT" {
-				p.Params.Set("RELTYPE", r.RelType)
-			}
-			vtodo.Props.Add(p)
-		}
+		emitRelations(vtodo.Props, t.Relations)
 
 		// X-Properties (round-trip preservation)
 		emitXProperties(vtodo, t.XProperties)

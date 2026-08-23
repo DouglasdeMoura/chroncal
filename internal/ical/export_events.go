@@ -112,53 +112,22 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 			vevent.Props.Set(p)
 		}
 
-		if e.DtStamp != "" {
-			if ts, err := time.Parse(time.RFC3339, e.DtStamp); err == nil {
-				vevent.Props.SetDateTime(ical.PropDateTimeStamp, ts.UTC())
-			} else {
-				vevent.Props.SetDateTime(ical.PropDateTimeStamp, e.UpdatedAt.UTC())
-			}
-		} else {
-			vevent.Props.SetDateTime(ical.PropDateTimeStamp, e.UpdatedAt.UTC())
-		}
-		vevent.Props.SetDateTime(ical.PropCreated, e.CreatedAt.UTC())
-		vevent.Props.SetDateTime(ical.PropLastModified, e.UpdatedAt.UTC())
+		emitTimestamps(vevent.Props, e.DtStamp, e.CreatedAt, e.UpdatedAt)
 
 		// ATTACH
 		for _, att := range e.Attachments {
 			emitAttachment(vevent.Props, att)
 		}
 
-		// COMMENT
-		for _, c := range e.Comments {
-			p := &ical.Prop{Name: ical.PropComment}
-			p.SetText(c)
-			vevent.Props.Add(p)
-		}
+		emitTextProps(vevent.Props, ical.PropComment, e.Comments)
 
-		// CONTACT
-		for _, c := range e.Contacts {
-			p := &ical.Prop{Name: ical.PropContact}
-			p.SetText(c)
-			vevent.Props.Add(p)
-		}
+		emitTextProps(vevent.Props, ical.PropContact, e.Contacts)
 
 		// RESOURCES (comma-separated list, like CATEGORIES)
-		if len(e.Resources) > 0 {
-			resProp := &ical.Prop{Name: ical.PropResources}
-			resProp.SetTextList(e.Resources)
-			vevent.Props.Set(resProp)
-		}
+		emitResources(vevent.Props, e.Resources)
 
 		// RELATED-TO
-		for _, r := range e.Relations {
-			p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}
-			p.Value = r.RelUID
-			if r.RelType != "" && r.RelType != "PARENT" {
-				p.Params.Set("RELTYPE", r.RelType)
-			}
-			vevent.Props.Add(p)
-		}
+		emitRelations(vevent.Props, e.Relations)
 
 		// X-Properties (round-trip preservation)
 		emitXProperties(vevent.Component, e.XProperties)
