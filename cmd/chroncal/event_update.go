@@ -277,9 +277,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				if !p.AllDay {
 					exrdateRef = p.StartTime
 				}
-				parsed, err := parseDateFlags(exdates, tz, exrdateRef)
+				parsed, err := parseExdateRdateFlags("exception-date-times", exdates, tz, exrdateRef)
 				if err != nil {
-					return errInvalidInputf("--exception-date-times: %v", err)
+					return err
 				}
 				p.ExDates = parsed
 			}
@@ -288,9 +288,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				if !p.AllDay {
 					exrdateRef = p.StartTime
 				}
-				parsed, err := parseDateFlags(rdates, tz, exrdateRef)
+				parsed, err := parseExdateRdateFlags("recurrence-date-times", rdates, tz, exrdateRef)
 				if err != nil {
-					return errInvalidInputf("--recurrence-date-times: %v", err)
+					return err
 				}
 				p.RDates = parsed
 			}

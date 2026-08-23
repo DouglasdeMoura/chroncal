@@ -51,7 +51,7 @@ use 'todo delete' first. Purging is not reversible — child rows cascade.`,
 
 			if err := a.Todos.PurgeByID(ctx, id); err != nil {
 				if errors.Is(err, todo.ErrNotDeleted) {
-					return fmt.Errorf("todo %d not found or not soft-deleted", id)
+					return errNotFoundf("todo %d not found or not soft-deleted", id)
 				}
 				return fmt.Errorf("purge: %w", err)
 			}

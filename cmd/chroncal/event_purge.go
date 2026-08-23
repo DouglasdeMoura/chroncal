@@ -52,7 +52,7 @@ attendees, attachments, overrides) cascade.`,
 
 			if err := a.Events.PurgeByID(ctx, id); err != nil {
 				if errors.Is(err, event.ErrNotDeleted) {
-					return fmt.Errorf("event %d not found or not soft-deleted", id)
+					return errNotFoundf("event %d not found or not soft-deleted", id)
 				}
 				return fmt.Errorf("purge: %w", err)
 			}

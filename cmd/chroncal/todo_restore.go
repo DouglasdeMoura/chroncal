@@ -39,7 +39,7 @@ the next sync cycle recreates it remotely (with a fresh resource URL).`,
 			if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
 				if err := a.Todos.RestoreByID(ctx, id); err != nil {
 					if errors.Is(err, todo.ErrNotDeleted) {
-						return fmt.Errorf("todo %d not found (may have been purged)", id)
+						return errNotFoundf("todo %d not found (may have been purged)", id)
 					}
 					return fmt.Errorf("restore todo: %w", err)
 				}
@@ -52,7 +52,7 @@ the next sync cycle recreates it remotely (with a fresh resource URL).`,
 
 			if err := a.Todos.RestoreByUID(ctx, ref); err != nil {
 				if errors.Is(err, todo.ErrNotDeleted) {
-					return fmt.Errorf("todo %q not found (may have been purged)", ref)
+					return errNotFoundf("todo %q not found (may have been purged)", ref)
 				}
 				return fmt.Errorf("restore todo: %w", err)
 			}

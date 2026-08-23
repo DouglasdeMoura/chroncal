@@ -40,7 +40,7 @@ the next sync cycle recreates it remotely (with a fresh resource URL).`,
 			if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
 				if err := a.Events.RestoreByID(ctx, id); err != nil {
 					if errors.Is(err, event.ErrNotDeleted) {
-						return fmt.Errorf("event %d not found (may have been purged)", id)
+						return errNotFoundf("event %d not found (may have been purged)", id)
 					}
 					return fmt.Errorf("restore event: %w", err)
 				}
@@ -54,7 +54,7 @@ the next sync cycle recreates it remotely (with a fresh resource URL).`,
 			// UID path: restore every row sharing the UID.
 			if err := a.Events.RestoreByUID(ctx, ref); err != nil {
 				if errors.Is(err, event.ErrNotDeleted) {
-					return fmt.Errorf("event %q not found (may have been purged)", ref)
+					return errNotFoundf("event %q not found (may have been purged)", ref)
 				}
 				return fmt.Errorf("restore event: %w", err)
 			}

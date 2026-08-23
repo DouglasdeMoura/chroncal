@@ -746,3 +746,31 @@ func TestEventUpdate_RecurrenceIDRejectsNonOccurrence(t *testing.T) {
 		t.Fatalf("non-occurrence update created an override:\n%s", listed)
 	}
 }
+
+// TestEventRestoreNotFoundIsTagged guards the error taxonomy of the restore
+// command. A live or missing event surfaced as a generic error code. The
+// not-found case must report not_found like event get, so --output json
+// consumers can dispatch on the code.
+func TestEventRestoreNotFoundIsTagged(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+
+	for _, ref := range []string{"999", "ghost-uid@example.com"} {
+		_, stderr, err := runChroncalCommand(t, "event", "restore", ref, "--output", "json")
+		if err == nil {
+			t.Fatalf("event restore %s should fail", ref)
+		}
+		var payload struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
+		if jerr := json.Unmarshal([]byte(stderr), &payload); jerr != nil {
+			t.Fatalf("event restore %s: decode error payload %q: %v", ref, stderr, jerr)
+		}
+		if payload.Code != "not_found" {
+			t.Fatalf("event restore %s: code = %q, want not_found", ref, payload.Code)
+		}
+		if !strings.Contains(payload.Error, "not found") {
+			t.Fatalf("event restore %s: error = %q, want a not-found message", ref, payload.Error)
+		}
+	}
+}
