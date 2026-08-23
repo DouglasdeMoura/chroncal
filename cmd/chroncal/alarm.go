@@ -97,32 +97,53 @@ type fireResult struct {
 	FireErr error
 }
 
-// markAndFireEventAlarm claims a due event alarm. Only on a successful
-// claim does it dispatch its notification. For a fresh fire (StateID == 0)
-// the claim is the INSERT performed by MarkFired. The (alarm_id, trigger_at)
-// UNIQUE index guards it. When two checkers overlap, both observe "no state"
-// and both try to insert. Only one wins. The loser's UNIQUE-constraint error
-// is reported as a non-fired, non-error result. Callers then suppress output
-// for it.
+// dueClaim carries the per-domain pieces of a mark-and-fire attempt. The
+// event and todo paths differ only in their mark calls, display name, and
+// unified view; the claim protocol is identical.
+type dueClaim struct {
+	// stateID is 0 for a fresh fire, or the snoozed state to re-fire.
+	stateID int64
+	// markRefire claims an expired-snoozed refire. claimed == false means
+	// another checker won.
+	markRefire func(ctx context.Context, stateID int64) (bool, error)
+	// markFired claims a fresh fire. It returns the new state row id.
+	markFired func(ctx context.Context) (int64, error)
+	// summary is the display name for error lines. It arrives sanitized.
+	summary string
+	// action is the alarm action for error lines.
+	action string
+	// label is the domain tag for error lines: "event" or "todo".
+	label string
+	// due is the unified view handed to the notifier.
+	due alarm.DueAlarm
+}
+
+// claimAndFireAlarm runs the shared mark-and-fire protocol. Only on a
+// successful claim does it dispatch the notification. For a fresh fire
+// (stateID == 0) the claim is the INSERT performed by MarkFired. The
+// (alarm_id, trigger_at) UNIQUE index guards it. When two checkers overlap,
+// both observe "no state" and both try to insert. Only one wins. The loser's
+// UNIQUE-constraint error is reported as a non-fired, non-error result.
+// Callers then suppress output for it.
 //
-// The refire path (StateID != 0, an expired-snoozed alarm) uses MarkRefired.
-// Its UPDATE is gated on snoozed_to IS NOT NULL. When two checkers overlap,
-// both observe the expired-snoozed row. Only the UPDATE that clears
-// snoozed_to first affects a row and wins the claim. The loser sees claimed
-// == false. That is likewise a non-fired, non-error result.
-func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) fireResult {
-	stateID := da.StateID
+// The refire path (stateID != 0, an expired-snoozed alarm) uses the refire
+// mark. Its UPDATE is gated on snoozed_to IS NOT NULL. When two checkers
+// overlap, both observe the expired-snoozed row. Only the UPDATE that clears
+// snoozed_to first affects a row and wins the claim. The loser sees
+// claimed == false. That is likewise a non-fired, non-error result.
+func claimAndFireAlarm(ctx context.Context, a *app.App, c dueClaim, policy alarmExecutionPolicy) fireResult {
+	stateID := c.stateID
 	var markErr error
 	op := "mark-fired"
 	if stateID != 0 {
 		op = "mark-refired"
 		var claimed bool
-		if claimed, markErr = a.Alarms.MarkRefired(ctx, stateID); markErr == nil && !claimed {
+		if claimed, markErr = c.markRefire(ctx, stateID); markErr == nil && !claimed {
 			return fireResult{} // another checker already re-fired this alarm
 		}
 	} else {
 		var newID int64
-		if newID, markErr = a.Alarms.MarkFired(ctx, da); markErr == nil {
+		if newID, markErr = c.markFired(ctx); markErr == nil {
 			stateID = newID
 		}
 	}
@@ -133,52 +154,48 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 		if errors.Is(markErr, alarm.ErrNotFireable) {
 			return fireResult{} // a sync pull disabled this alarm (issue #579)
 		}
-		fmt.Fprintf(os.Stderr, "chroncal: %s error: event=%q: %v\n", op, safeText(da.Event.Title), markErr)
+		fmt.Fprintf(os.Stderr, "chroncal: %s error: %s=%q: %v\n", op, c.label, c.summary, markErr)
 		return fireResult{StateID: stateID, MarkErr: markErr}
 	}
 
-	fireErr := fireAlarmFn(da, policy)
+	fireErr := fireAlarmFn(c.due, policy)
 	if fireErr != nil {
-		fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (event=%q action=%s): %v\n",
-			da.TriggerAt.Local().Format("15:04"), safeText(da.Event.Title), da.Alarm.Action, fireErr)
+		fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (%s=%q action=%s): %v\n",
+			c.due.TriggerAt.Local().Format("15:04"), c.label, c.summary, c.action, fireErr)
 	}
 	return fireResult{StateID: stateID, Fired: true, FireErr: fireErr}
 }
 
-// markAndFireTodoAlarm is the todo counterpart of markAndFireEventAlarm.
-func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) fireResult {
-	stateID := tda.StateID
-	var markErr error
-	op := "mark-fired"
-	if stateID != 0 {
-		op = "mark-refired"
-		var claimed bool
-		if claimed, markErr = a.Alarms.MarkTodoRefired(ctx, stateID); markErr == nil && !claimed {
-			return fireResult{} // another checker already re-fired this alarm
-		}
-	} else {
-		var newID int64
-		if newID, markErr = a.Alarms.MarkTodoFired(ctx, tda); markErr == nil {
-			stateID = newID
-		}
-	}
-	if markErr != nil {
-		if isAlarmAlreadyClaimed(markErr) {
-			return fireResult{} // another checker already fired this alarm
-		}
-		if errors.Is(markErr, alarm.ErrNotFireable) {
-			return fireResult{} // a sync pull disabled this alarm (issue #579)
-		}
-		fmt.Fprintf(os.Stderr, "chroncal: %s error: todo=%q: %v\n", op, safeText(tda.Todo.Summary), markErr)
-		return fireResult{StateID: stateID, MarkErr: markErr}
-	}
+// markAndFireEventAlarm claims and fires one event alarm through the shared
+// protocol.
+func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) fireResult {
+	return claimAndFireAlarm(ctx, a, dueClaim{
+		stateID:    da.StateID,
+		markRefire: a.Alarms.MarkRefired,
+		markFired: func(ctx context.Context) (int64, error) {
+			return a.Alarms.MarkFired(ctx, da)
+		},
+		summary: safeText(da.Event.Title),
+		action:  da.Alarm.Action,
+		label:   "event",
+		due:     da,
+	}, policy)
+}
 
-	fireErr := fireAlarmFn(todoDueAlarmToDueAlarm(tda), policy)
-	if fireErr != nil {
-		fmt.Fprintf(os.Stderr, "chroncal: todo alarm error: %s (todo=%q action=%s): %v\n",
-			tda.TriggerAt.Local().Format("15:04"), safeText(tda.Todo.Summary), tda.Alarm.Action, fireErr)
-	}
-	return fireResult{StateID: stateID, Fired: true, FireErr: fireErr}
+// markAndFireTodoAlarm claims and fires one todo alarm through the shared
+// protocol.
+func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) fireResult {
+	return claimAndFireAlarm(ctx, a, dueClaim{
+		stateID:    tda.StateID,
+		markRefire: a.Alarms.MarkTodoRefired,
+		markFired: func(ctx context.Context) (int64, error) {
+			return a.Alarms.MarkTodoFired(ctx, tda)
+		},
+		summary: safeText(tda.Todo.Summary),
+		action:  tda.Alarm.Action,
+		label:   "todo",
+		due:     todoDueAlarmToDueAlarm(tda),
+	}, policy)
 }
 
 func alarmCmd() *cobra.Command {
@@ -785,33 +802,7 @@ See "chroncal alarm check --help" for notification types and SMTP configuration.
 			// a fired alarm could not be marked (an unmarked alarm re-fires
 			// every tick, so persistent mark failures mean notification spam).
 			runCheck := func() error {
-				due, todoDue, err := a.Alarms.Check(ctx, time.Now())
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "chroncal: check error: %v\n", err)
-					return err
-				}
-				var dbErr error
-				for _, da := range due {
-					res := markAndFireEventAlarm(ctx, a, da, policy)
-					if res.MarkErr != nil {
-						dbErr = res.MarkErr
-					}
-					if !res.Fired || res.FireErr != nil {
-						continue
-					}
-					writeAlarmCheckLine(w, da.TriggerAt, da.Alarm.Action, da.Event.Title, false)
-				}
-				for _, tda := range todoDue {
-					res := markAndFireTodoAlarm(ctx, a, tda, policy)
-					if res.MarkErr != nil {
-						dbErr = res.MarkErr
-					}
-					if !res.Fired || res.FireErr != nil {
-						continue
-					}
-					writeAlarmCheckLine(w, tda.TriggerAt, tda.Alarm.Action, tda.Todo.Summary, true)
-				}
-				return dbErr
+				return runDaemonTick(ctx, a, w, policy)
 			}
 
 			// A failed tick is usually transient (the TUI holding the write
@@ -970,4 +961,37 @@ system was not running when they became due.`,
 	}
 	cmd.Flags().IntVar(&days, "days", 7, "lookback window in days")
 	return cmd
+}
+
+// runDaemonTick runs one daemon pass. It differs from runAlarmCheck on
+// purpose: the daemon always writes text lines, emits no JSON records, and
+// reports the first mark failure so the tick breaker can count it.
+func runDaemonTick(ctx context.Context, a *app.App, w io.Writer, policy alarmExecutionPolicy) error {
+	due, todoDue, err := a.Alarms.Check(ctx, time.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "chroncal: check error: %v\n", err)
+		return err
+	}
+	var dbErr error
+	for _, da := range due {
+		res := markAndFireEventAlarm(ctx, a, da, policy)
+		if res.MarkErr != nil {
+			dbErr = res.MarkErr
+		}
+		if !res.Fired || res.FireErr != nil {
+			continue
+		}
+		writeAlarmCheckLine(w, da.TriggerAt, da.Alarm.Action, da.Event.Title, false)
+	}
+	for _, tda := range todoDue {
+		res := markAndFireTodoAlarm(ctx, a, tda, policy)
+		if res.MarkErr != nil {
+			dbErr = res.MarkErr
+		}
+		if !res.Fired || res.FireErr != nil {
+			continue
+		}
+		writeAlarmCheckLine(w, tda.TriggerAt, tda.Alarm.Action, tda.Todo.Summary, true)
+	}
+	return dbErr
 }
