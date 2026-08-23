@@ -276,18 +276,42 @@ func normalizeRemoteRef(ref string) string {
 	return parsed.String()
 }
 
-func buildRemoteResourcePath(calendarRef, _ string) string {
+// buildRemoteResourcePath derives the PUT href for a first-time push. The
+// name comes from the UID, so a lost bookkeeping write cannot mint a second
+// object for the same UID on a later push. An empty UID falls back to a
+// random name.
+func buildRemoteResourcePath(calendarRef, uid string) string {
+	name := ""
+	if uid != "" {
+		name = sanitizeRemoteObjectName(uid)
+	} else {
+		name = newRemoteObjectName()
+	}
+
 	parsed, err := url.Parse(calendarRef)
 	if err != nil {
-		return normalizeRemoteRef(strings.TrimRight(calendarRef, "/") + "/" + newRemoteObjectName())
+		return normalizeRemoteRef(strings.TrimRight(calendarRef, "/") + "/" + name)
 	}
 
 	basePath := parsed.Path
 	if basePath == "" {
 		basePath = "/"
 	}
-	parsed.Path = path.Join(basePath, newRemoteObjectName())
+	parsed.Path = path.Join(basePath, name)
 	return normalizeRemoteRef(parsed.String())
+}
+
+// sanitizeRemoteObjectName derives a single path segment from a UID. It
+// replaces the characters that change the path structure or the escape pass.
+// The URL encoder escapes every remaining character exactly once.
+func sanitizeRemoteObjectName(uid string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '?', '#', '%':
+			return '_'
+		}
+		return r
+	}, uid) + ".ics"
 }
 
 // NewEngine creates a new sync engine. A nil logger disables logs.

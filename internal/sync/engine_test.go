@@ -5248,3 +5248,34 @@ func TestPersistImportedStillFailsOnOtherErrors(t *testing.T) {
 		t.Fatal("persistImported must still fail for a non-alarm error")
 	}
 }
+
+func TestBuildRemoteResourcePathUsesUID(t *testing.T) {
+	got := buildRemoteResourcePath("https://caldav.example.com/cal/123/", "some-uid-42")
+	want := "https://caldav.example.com/cal/123/some-uid-42.ics"
+	if got != want {
+		t.Errorf("buildRemoteResourcePath = %q, want %q", got, want)
+	}
+
+	// A UID with path-hostile characters must not escape its segment.
+	got = buildRemoteResourcePath("https://caldav.example.com/cal", "a/b c?d")
+	want = "https://caldav.example.com/cal/a_b%20c_d.ics"
+	if got != want {
+		t.Errorf("buildRemoteResourcePath = %q, want %q", got, want)
+	}
+}
+
+func TestBuildRemoteResourcePathDeterministic(t *testing.T) {
+	a := buildRemoteResourcePath("https://caldav.example.com/cal/", "uid-1")
+	b := buildRemoteResourcePath("https://caldav.example.com/cal/", "uid-1")
+	if a != b {
+		t.Errorf("two calls disagree: %q vs %q; the name must be deterministic so a lost bookkeeping write cannot mint a second object for the same UID", a, b)
+	}
+}
+
+func TestBuildRemoteResourcePathEmptyUIDStillWorks(t *testing.T) {
+	overrideRemoteObjectNameGenerator(t, "fallback-name.ics")
+	got := buildRemoteResourcePath("https://caldav.example.com/cal/", "")
+	if !strings.HasSuffix(got, "/fallback-name.ics") {
+		t.Errorf("buildRemoteResourcePath with empty UID = %q, want fallback name suffix", got)
+	}
+}
