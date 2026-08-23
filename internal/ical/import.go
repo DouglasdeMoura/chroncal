@@ -284,8 +284,12 @@ func parseAttendees(ve ical.Event) ([]model.Attendee, []string) {
 	return attendees, warns
 }
 
+// stripMailto removes the CAL-ADDRESS scheme prefix in any letter case.
 func stripMailto(s string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(s, "mailto:"), "MAILTO:")
+	if len(s) >= 7 && strings.EqualFold(s[:7], "mailto:") {
+		return s[7:]
+	}
+	return s
 }
 
 func paramOrDefault(prop *ical.Prop, param, def string) string {
