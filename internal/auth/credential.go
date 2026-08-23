@@ -256,8 +256,30 @@ func (s *PlaintextFileStore) Set(cred Credential) error {
 		return fmt.Errorf("marshal credential: %w", err)
 	}
 	path := s.path(cred.AccountID)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// Write through a temp file in the same directory and rename. A crash
+	// or a full disk then leaves the old file intact instead of a truncated
+	// secret. The rename is atomic within one filesystem.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".credential-*")
+	if err != nil {
+		return fmt.Errorf("create credential temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	// os.WriteFile keeps the mode of an existing file. Enforce 0600 on every
+	// write so a pre-existing loose file cannot survive forever.
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("restrict credential file: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
 		return fmt.Errorf("write credential: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close credential file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replace credential file: %w", err)
 	}
 	w := s.warnWriter()
 	fmt.Fprintf(w, "Warning: credentials stored in plaintext at %s\n", path)
