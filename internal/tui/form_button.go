@@ -92,7 +92,42 @@ const dangerRestingMinDeltaL = 0.25
 // when it already satisfies both. A saturated red cannot always reach
 // 4.5:1 on a mid-gray pill; 3:1 for bold text plus the lightness gap
 // keeps the label readable on every shipped theme.
+//
+// The clamp reads only the RGBA of the two colors, so the result depends
+// only on that pair. The pair is constant per theme, and many View paths
+// call DefaultButtonStyles on every render frame. Memoize the clamp on
+// the RGBA pair. A repeated pair returns the cached label. SetActiveTheme
+// installs a new pair, and the key check invalidates the slot then.
 func dangerRestingLabel(pill, err color.Color) color.Color {
+	pr, pg, pb, pa := pill.RGBA()
+	er, eg, eb, ea := err.RGBA()
+	m := &dangerRestingMemo
+	if m.label != nil &&
+		m.pillR == pr && m.pillG == pg && m.pillB == pb && m.pillA == pa &&
+		m.errR == er && m.errG == eg && m.errB == eb && m.errA == ea {
+		return m.label
+	}
+	label := clampDangerRestingLabel(pill, err)
+	m.pillR, m.pillG, m.pillB, m.pillA = pr, pg, pb, pa
+	m.errR, m.errG, m.errB, m.errA = er, eg, eb, ea
+	m.label = label
+	return label
+}
+
+// dangerRestingMemo holds the last dangerRestingLabel result. The key is
+// the RGBA of the (pill, error) pair. One slot is enough: only the active
+// theme feeds the clamp, and the tests that swap themes run in sequence.
+var dangerRestingMemo struct {
+	pillR, pillG, pillB, pillA uint32
+	errR, errG, errB, errA     uint32
+	label                      color.Color
+}
+
+// clampDangerRestingLabel runs the OKLCh gamut search that
+// dangerRestingLabel caches. It walks the label lightness away from the
+// pill in 0.01 steps. That costs up to ~75 OKLCh conversions, so the
+// memoized wrapper pays it once per (pill, error) pair.
+func clampDangerRestingLabel(pill, err color.Color) color.Color {
 	pillL, _, _, pillOK := oklch.FromColor(pill)
 	errL, errC, errH, errOK := oklch.FromColor(err)
 	if !pillOK || !errOK {
