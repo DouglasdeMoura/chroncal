@@ -142,6 +142,30 @@ func ContrastingFg(bg color.Color) color.Color {
 	return ToColor(L, C, H)
 }
 
+// ContrastRatio returns the WCAG 2 contrast ratio of a against b. Equal
+// colors give 1. Black on white gives 21. Use this to check a
+// foreground/background pair in tests and theme guards. A nil color
+// counts as black.
+func ContrastRatio(a, b color.Color) float64 {
+	la, lb := relativeLuminance(a), relativeLuminance(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// relativeLuminance computes the WCAG relative luminance of c. See
+// https://www.w3.org/TR/WCAG21/#dfn-relative-luminance.
+func relativeLuminance(c color.Color) float64 {
+	if c == nil {
+		return 0
+	}
+	r, g, b, _ := c.RGBA()
+	return 0.2126*srgbToLinear(float64(r)/0xffff) +
+		0.7152*srgbToLinear(float64(g)/0xffff) +
+		0.0722*srgbToLinear(float64(b)/0xffff)
+}
+
 func srgbToLinear(v float64) float64 {
 	if v <= 0.04045 {
 		return v / 12.92
