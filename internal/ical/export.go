@@ -293,6 +293,18 @@ func emitXProperties(comp *ical.Component, xprops []model.XProperty) {
 	}
 }
 
+// unsafeParamBytes strips the bytes the iCal parameter grammar cannot
+// carry. The go-ical encoder rejects a parameter value that contains a
+// double-quote. A CR or LF would split the property line.
+var unsafeParamBytes = strings.NewReplacer(`"`, "", "\r", "", "\n", "")
+
+// safeParamValue makes a free-text value safe for an iCal parameter. The
+// export paths use it for CN, FILENAME, and FMTTYPE. One unsafe stored
+// value must not fail the whole export batch.
+func safeParamValue(v string) string {
+	return unsafeParamBytes.Replace(v)
+}
+
 func emitAttachment(props ical.Props, att model.Attachment) {
 	p := &ical.Prop{Name: ical.PropAttach, Params: make(ical.Params)}
 	if att.Data != nil {
@@ -301,13 +313,13 @@ func emitAttachment(props ical.Props, att model.Attachment) {
 		p.Params.Set("ENCODING", "BASE64")
 		p.Params.Set("VALUE", "BINARY")
 		if att.Filename != "" {
-			p.Params.Set("FILENAME", att.Filename)
+			p.Params.Set("FILENAME", safeParamValue(att.Filename))
 		}
 	} else {
 		p.Value = att.URI
 	}
 	if att.FmtType != "" {
-		p.Params.Set("FMTTYPE", att.FmtType)
+		p.Params.Set("FMTTYPE", safeParamValue(att.FmtType))
 	}
 	props.Add(p)
 }
