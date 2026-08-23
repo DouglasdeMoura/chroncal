@@ -443,3 +443,42 @@ func TestExportCalendarFileEmptyCalendarDoesNotCreateFile(t *testing.T) {
 		t.Fatalf("empty export created file: %v", statErr)
 	}
 }
+
+// TestImport_FirstTimeOverrideCountsAsNew extends the UID upsert contract to
+// overrides. A first-time override shares the master's UID, so a plain
+// GetByUID matched it and counted it as updated. The override lookup must
+// match its own row through its recurrence_id.
+func TestImport_FirstTimeOverrideCountsAsNew(t *testing.T) {
+	ctx := context.Background()
+	a := newTestApp(t)
+	cal, err := a.Calendars.Create(ctx, "Work", "", "")
+	if err != nil {
+		t.Fatalf("create calendar: %v", err)
+	}
+
+	start := time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC)
+	if _, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "evt-series", CalendarID: cal.ID, Title: "Master",
+		StartTime: start, EndTime: start.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed master: %v", err)
+	}
+
+	overrideAt := start.Add(24 * time.Hour)
+	result := &ical.ImportResult{Events: []event.Event{{
+		UID: "evt-series", Title: "Moved instance",
+		StartTime: overrideAt, EndTime: overrideAt.Add(time.Hour),
+		RecurrenceID: overrideAt.Format(time.RFC3339),
+	}}}
+	summary := icaltransfer.Import(ctx, a, cal.ID, result)
+
+	if summary.NewEvents != 1 {
+		t.Errorf("NewEvents = %d, want 1 (first-time override is new, not an update of the master)", summary.NewEvents)
+	}
+	if summary.UpdatedEvents != 0 {
+		t.Errorf("UpdatedEvents = %d, want 0", summary.UpdatedEvents)
+	}
+	if _, err := a.Events.GetByUIDAndRecurrenceID(ctx, "evt-series", overrideAt.Format(time.RFC3339)); err != nil {
+		t.Errorf("override row not persisted: %v", err)
+	}
+}
