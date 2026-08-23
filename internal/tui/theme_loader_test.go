@@ -217,3 +217,22 @@ func TestAnsi16IndexBoundaries(t *testing.T) {
 		}
 	}
 }
+
+// TestAutoSentinelRejectedOnNonDerivedTokens pins the authoring guard. The
+// "auto" sentinel has a derivation only for text_dim and muted. Any other
+// token set to "auto" must fail the load instead of leaving a nil color.
+func TestAutoSentinelRejectedOnNonDerivedTokens(t *testing.T) {
+	r := rawTheme{Accent: "auto", Muted: "auto"}
+	if _, err := resolveTheme(&r, true); err == nil {
+		t.Fatal("resolveTheme accepted \"auto\" on accent, want an authoring error")
+	}
+
+	// The derived tokens themselves stay accepted on a real theme.
+	th, err := LoadBuiltinTheme("system", true)
+	if err != nil {
+		t.Fatalf("LoadBuiltinTheme(system): %v", err)
+	}
+	if th.TextDim == nil || th.Muted == nil {
+		t.Error("text_dim/muted did not resolve from the auto sentinel")
+	}
+}
