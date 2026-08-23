@@ -143,6 +143,9 @@ func passFormHost(msg tea.Msg) bool {
 // overlayStack returns active modal layers, top-most first. The order
 // matches View paint order (last painted owns input).
 func (m Model) overlayStack() []overlayLayer {
+	if !m.anyOverlayOpen() {
+		return nil
+	}
 	layers := make([]overlayLayer, 0, 8)
 	if m.confirmOpen && m.pending.kind == pendingActionQuit {
 		layers = append(layers, overlayLayer{

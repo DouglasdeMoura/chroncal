@@ -42,3 +42,20 @@ func TestWheelOverKeepLocalConfirmDoesNotScrollWeek(t *testing.T) {
 		t.Fatalf("wheel over keep-local confirm scrolled the week view: offset=%d", got.week.scrollOffset)
 	}
 }
+
+func TestOverlayStack_QuitConfirmIsTop(t *testing.T) {
+	m := NewModel(nil, "")
+	m = m.openQuitConfirm()
+	layers := m.overlayStack()
+	if len(layers) == 0 || layers[0].kind != overlayQuitConfirm {
+		t.Fatalf("quit confirm should be the top overlay, got %#v", kinds(layers))
+	}
+}
+
+func kinds(layers []overlayLayer) []overlayKind {
+	out := make([]overlayKind, len(layers))
+	for i, l := range layers {
+		out[i] = l.kind
+	}
+	return out
+}
