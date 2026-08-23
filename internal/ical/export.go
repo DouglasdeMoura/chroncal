@@ -323,3 +323,31 @@ func emitAttachment(props ical.Props, att model.Attachment) {
 	}
 	props.Add(p)
 }
+
+// emitAttendees writes the ORGANIZER and ATTENDEE properties for one
+// component. The organizer uses Set (one per component); attendees append.
+// Text in the CN parameter passes through safeParamValue, because the
+// encoder rejects parameter values that carry a double quote.
+func emitAttendees(props ical.Props, attendees []model.Attendee) {
+	for _, att := range attendees {
+		if att.Organizer {
+			org := &ical.Prop{Name: ical.PropOrganizer, Params: make(ical.Params)}
+			org.Value = "mailto:" + att.Email
+			if att.Name != "" {
+				org.Params.Set(ical.ParamCommonName, safeParamValue(att.Name))
+			}
+			setOrganizerParams(org, att)
+			props.Set(org)
+		}
+
+		attendee := &ical.Prop{Name: ical.PropAttendee, Params: make(ical.Params)}
+		attendee.Value = "mailto:" + att.Email
+		if att.Name != "" {
+			attendee.Params.Set(ical.ParamCommonName, safeParamValue(att.Name))
+		}
+		attendee.Params.Set(ical.ParamParticipationStatus, att.RSVPStatus)
+		attendee.Params.Set(ical.ParamRole, att.Role)
+		setAttendeeParams(attendee, att)
+		props.Add(attendee)
+	}
+}
