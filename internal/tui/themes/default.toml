@@ -46,7 +46,10 @@ badge_neutral = "240"
 # Form internals
 # ---------------------------------------------------------------------------
 
-form_label     = "240"
+# Labels must read on the surface below them. Flat "240" (#585858) gives
+# 6.8:1 on the light surface #F9FAFB but only 2.5:1 on the dark surface
+# #111827. Keep 240 for light. Use 245 (#8a8a8a, 5.1:1) for dark.
+form_label     = { light = "240", dark = "245" }
 form_required  = "9"
 form_error     = "9"
 form_highlight = "63"

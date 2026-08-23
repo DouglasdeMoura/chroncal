@@ -214,6 +214,31 @@ func TestResolveStringWithoutPaletteKeepsContrastPolarity(t *testing.T) {
 	})
 }
 
+// The default theme's form_label must read on its surface in both
+// polarities. A flat "240" (#585858) gave 6.8:1 on the light surface
+// #F9FAFB but only 2.49:1 on the dark surface #111827.
+func TestDefaultThemeFormLabelContrast(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		dark bool
+		min  float64
+	}{
+		{false, 6.8}, // light keeps ANSI 240: 6.81:1 on #F9FAFB
+		{true, 4.5},  // dark takes ANSI 245: 5.14:1 on #111827
+	}
+	for _, tc := range cases {
+		th, err := LoadBuiltinTheme("default", tc.dark)
+		if err != nil {
+			t.Fatalf("LoadBuiltinTheme(default, dark=%v): %v", tc.dark, err)
+		}
+		if ratio := oklch.ContrastRatio(th.Surface, th.FormLabel); ratio < tc.min {
+			t.Errorf("dark=%v: form_label reads %.2f:1 on the surface, want >= %.1f:1",
+				tc.dark, ratio, tc.min)
+		}
+	}
+}
+
 func TestAutoSentinelDerivesFromTextAndSurface(t *testing.T) {
 	// Force palette so "7" and "0" resolve to known hex values.
 	prev := ActivePalette()
