@@ -251,6 +251,11 @@ var newRemoteObjectName = func() string {
 	return uuid.NewString() + ".ics"
 }
 
+// normalizeRemoteRef normalizes a remote reference. It cleans the escaped
+// path form. A percent-encoded separator ("%2F") then stays inside one
+// object name. The decoded form would treat "%2F" as '/', collapse
+// dot-segments inside one object name, and merge two distinct objects
+// into one reference.
 func normalizeRemoteRef(ref string) string {
 	if ref == "" {
 		return ""
@@ -261,33 +266,78 @@ func normalizeRemoteRef(ref string) string {
 		return ref
 	}
 
-	if parsed.Path != "" {
-		trailingSlash := strings.HasSuffix(parsed.Path, "/")
-		cleaned := path.Clean(parsed.Path)
+	escaped := parsed.EscapedPath()
+	if escaped != "" {
+		trailingSlash := strings.HasSuffix(escaped, "/")
+		cleaned := path.Clean(escaped)
 		switch {
 		case cleaned == "." && trailingSlash:
 			cleaned = "/"
 		case trailingSlash && cleaned != "/":
 			cleaned += "/"
 		}
-		parsed.Path = cleaned
+		if cleaned != escaped {
+			if decoded, derr := url.PathUnescape(cleaned); derr == nil {
+				parsed.Path = decoded
+				parsed.RawPath = cleaned
+			}
+		}
 	}
 
 	return parsed.String()
 }
 
-func buildRemoteResourcePath(calendarRef, _ string) string {
+// buildRemoteResourcePath derives the PUT href for a first-time push. The
+// name comes from the UID, so a lost bookkeeping write cannot create a
+// second object for the same UID on a later push. An empty UID uses a
+// random name.
+func buildRemoteResourcePath(calendarRef, uid string) string {
+	name := ""
+	if uid != "" {
+		name = sanitizeRemoteObjectName(uid)
+	} else {
+		name = newRemoteObjectName()
+	}
+
 	parsed, err := url.Parse(calendarRef)
 	if err != nil {
-		return normalizeRemoteRef(strings.TrimRight(calendarRef, "/") + "/" + newRemoteObjectName())
+		return normalizeRemoteRef(strings.TrimRight(calendarRef, "/") + "/" + name)
 	}
 
 	basePath := parsed.Path
 	if basePath == "" {
 		basePath = "/"
 	}
-	parsed.Path = path.Join(basePath, newRemoteObjectName())
+	parsed.Path = path.Join(basePath, name)
 	return normalizeRemoteRef(parsed.String())
+}
+
+// sanitizeRemoteObjectName derives a single path segment from a UID. It
+// percent-encodes the bytes that change the path structure or the escape
+// pass: '/', '?', '#', and '%'. The mapping is injective, so two UIDs that
+// differ only in those bytes cannot map to the same remote object. The URL
+// encoder escapes the '%' of each escape sequence once more.
+// CanonicalObjectRef removes that extra escape, so the PUT href keeps each
+// escape exactly once.
+func sanitizeRemoteObjectName(uid string) string {
+	var b strings.Builder
+	b.Grow(len(uid) + len(".ics"))
+	for i := range len(uid) {
+		switch uid[i] {
+		case '/':
+			b.WriteString("%2F")
+		case '?':
+			b.WriteString("%3F")
+		case '#':
+			b.WriteString("%23")
+		case '%':
+			b.WriteString("%25")
+		default:
+			b.WriteByte(uid[i])
+		}
+	}
+	b.WriteString(".ics")
+	return b.String()
 }
 
 // NewEngine creates a new sync engine. A nil logger disables logs.
