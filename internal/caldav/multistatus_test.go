@@ -62,3 +62,54 @@ func TestDavMultiStatusDecodesCanonicalSample(t *testing.T) {
 		t.Error("firstOKPropstat accepted a 500 propstat")
 	}
 }
+
+// TestAllOKPropstatsReturnsEvery2xxPayload pins the helper that the discovery
+// and verify paths use. RFC 4918 §9.1.2 lets a server split the properties of
+// one response across several 2xx propstats. The helper must return every 2xx
+// payload in document order and skip every non-2xx propstat.
+func TestAllOKPropstatsReturnsEvery2xxPayload(t *testing.T) {
+	const body = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/cal/one/</d:href>
+    <d:propstat>
+      <d:status>HTTP/1.1 200 OK</d:status>
+      <d:prop><d:getetag>"first"</d:getetag></d:prop>
+    </d:propstat>
+    <d:propstat>
+      <d:status>HTTP/1.1 404 Not Found</d:status>
+      <d:prop><d:getetag>"dropped"</d:getetag></d:prop>
+    </d:propstat>
+    <d:propstat>
+      <d:status>HTTP/1.1 200 OK</d:status>
+      <d:prop><c:calendar-data>BEGIN:VCALENDAR
+END:VCALENDAR</c:calendar-data></d:prop>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+
+	var ms davMultiStatus[multiGetProps]
+	if err := xml.NewDecoder(strings.NewReader(body)).Decode(&ms); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	props := allOKPropstats(ms.Responses[0])
+	if len(props) != 2 {
+		t.Fatalf("2xx payloads = %d, want 2 (the 404 propstat must be skipped)", len(props))
+	}
+	if props[0].ETag != `"first"` || props[1].ETag != "" {
+		t.Errorf("payload order = [%q, %q], want the 200 propstats in document order", props[0].ETag, props[1].ETag)
+	}
+	if !strings.Contains(props[1].CalendarData, "BEGIN:VCALENDAR") {
+		t.Errorf("second payload calendar-data = %q, want the VCALENDAR text from the third propstat", props[1].CalendarData)
+	}
+
+	// A response with only error propstats yields an empty slice, not an error.
+	bad := strings.ReplaceAll(body, "200 OK", "500 Server Error")
+	var ms2 davMultiStatus[multiGetProps]
+	if err := xml.NewDecoder(strings.NewReader(bad)).Decode(&ms2); err != nil {
+		t.Fatalf("decode bad: %v", err)
+	}
+	if props := allOKPropstats(ms2.Responses[0]); len(props) != 0 {
+		t.Errorf("allOKPropstats accepted a 500 propstat: %+v", props)
+	}
+}

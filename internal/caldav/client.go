@@ -196,34 +196,33 @@ func propfindCalendarCollections(ctx context.Context, httpClient webdav.HTTPClie
 
 	out := make([]RemoteCalendar, 0, len(ms.Responses))
 	for _, r := range ms.Responses {
-		if len(r.PropStats) == 0 {
-			continue
-		}
 		isCalendar := false
 		remote := RemoteCalendar{}
-		ps, ok := firstOKPropstat(r)
-		if !ok {
-			continue
-		}
-		if remote.Name == "" {
-			remote.Name = strings.TrimSpace(ps.DisplayName)
-		}
-		if remote.Description == "" {
-			remote.Description = strings.TrimSpace(ps.CalendarDescription)
-		}
-		if remote.Color == "" {
-			remote.Color = NormalizeCalendarColor(ps.CalendarColor)
-		}
-		if len(remote.SupportedComponentSet) == 0 {
-			remote.SupportedComponentSet = componentNames(ps.SupportedComponents)
-		}
-		// calendarAccessFromPrivileges never returns "", so the first
-		// successful propstat wins — matching the verify path.
-		if remote.Access == "" {
-			remote.Access = calendarAccessFromPrivileges(ps.CurrentPrivileges)
-		}
-		if ps.ResourceType.Calendar != nil {
-			isCalendar = true
+		// RFC 4918 §9.1.2 lets a server split the properties of one
+		// response across several 2xx propstats. Merge every 2xx
+		// propstat per field; the first propstat that fills a field
+		// wins.
+		for _, ps := range allOKPropstats(r) {
+			if remote.Name == "" {
+				remote.Name = strings.TrimSpace(ps.DisplayName)
+			}
+			if remote.Description == "" {
+				remote.Description = strings.TrimSpace(ps.CalendarDescription)
+			}
+			if remote.Color == "" {
+				remote.Color = NormalizeCalendarColor(ps.CalendarColor)
+			}
+			if len(remote.SupportedComponentSet) == 0 {
+				remote.SupportedComponentSet = componentNames(ps.SupportedComponents)
+			}
+			// calendarAccessFromPrivileges never returns "", so the first
+			// successful propstat wins — matching the verify path.
+			if remote.Access == "" {
+				remote.Access = calendarAccessFromPrivileges(ps.CurrentPrivileges)
+			}
+			if ps.ResourceType.Calendar != nil {
+				isCalendar = true
+			}
 		}
 		if !isCalendar {
 			continue

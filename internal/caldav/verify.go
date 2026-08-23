@@ -164,24 +164,26 @@ func fetchCalendarMetadata(ctx context.Context, calendarURL string, httpClient w
 	meta := CalendarMetadata{}
 	isCalendar := false
 	for _, r := range ms.Responses {
-		prop, ok := firstOKPropstat(r)
-		if !ok {
-			continue
-		}
-		if meta.DisplayName == "" {
-			meta.DisplayName = strings.TrimSpace(prop.DisplayName)
-		}
-		if meta.Color == "" {
-			meta.Color = NormalizeCalendarColor(prop.CalendarColor)
-		}
-		if meta.Access == "" {
-			meta.Access = calendarAccessFromPrivileges(prop.CurrentPrivileges)
-		}
-		if meta.SupportedComponents == nil && len(prop.SupportedComponents.Components) > 0 {
-			meta.SupportedComponents = componentNames(prop.SupportedComponents)
-		}
-		if prop.ResourceType.Calendar != nil {
-			isCalendar = true
+		// RFC 4918 §9.1.2 lets a server split the properties of one
+		// response across several 2xx propstats. Merge every 2xx
+		// propstat per field; the first propstat that fills a field
+		// wins.
+		for _, prop := range allOKPropstats(r) {
+			if meta.DisplayName == "" {
+				meta.DisplayName = strings.TrimSpace(prop.DisplayName)
+			}
+			if meta.Color == "" {
+				meta.Color = NormalizeCalendarColor(prop.CalendarColor)
+			}
+			if meta.Access == "" {
+				meta.Access = calendarAccessFromPrivileges(prop.CurrentPrivileges)
+			}
+			if meta.SupportedComponents == nil && len(prop.SupportedComponents.Components) > 0 {
+				meta.SupportedComponents = componentNames(prop.SupportedComponents)
+			}
+			if prop.ResourceType.Calendar != nil {
+				isCalendar = true
+			}
 		}
 	}
 	if meta.Access == "" {

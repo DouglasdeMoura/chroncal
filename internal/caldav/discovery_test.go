@@ -117,6 +117,76 @@ func TestDiscoverCalendarsReturnsCollectionMetadata(t *testing.T) {
 	}
 }
 
+// TestPropfindCalendarCollections_MergesSplitPropstats covers RFC 4918
+// §9.1.2: a server may split the properties of one response across several
+// 2xx propstats. The work calendar carries resourcetype only in the second
+// 200 propstat. Discovery must still see the calendar and must merge its
+// fields across both propstats. The first propstat that fills a field wins
+// (the shadowed displayname in the second propstat must not overwrite Work).
+// calendarAccessFromPrivileges never returns an empty value, so the first
+// 200 propstat decides the access field.
+func TestPropfindCalendarCollections_MergesSplitPropstats(t *testing.T) {
+	const fixture = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:ic="http://apple.com/ns/ical/">
+  <d:response>
+    <d:href>/cal/work/</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:displayname>Work</d:displayname>
+        <ic:calendar-color>#123456FF</ic:calendar-color>
+        <d:current-user-privilege-set><d:privilege><d:read/></d:privilege></d:current-user-privilege-set>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+    <d:propstat>
+      <d:prop><d:getetag/></d:prop>
+      <d:status>HTTP/1.1 404 Not Found</d:status>
+    </d:propstat>
+    <d:propstat>
+      <d:prop>
+        <d:displayname>Shadowed</d:displayname>
+        <d:resourcetype><d:collection/><c:calendar/></d:resourcetype>
+        <c:supported-calendar-component-set><c:comp name="VTODO"/></c:supported-calendar-component-set>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PROPFIND" {
+			t.Errorf("method = %s, want PROPFIND", r.Method)
+		}
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = w.Write([]byte(fixture))
+	}))
+	t.Cleanup(srv.Close)
+
+	found, err := propfindCalendarCollections(context.Background(), srv.Client(), srv.URL+"/cal/")
+	if err != nil {
+		t.Fatalf("propfindCalendarCollections: %v", err)
+	}
+	if len(found) != 1 {
+		t.Fatalf("calendar count = %d, want 1 (resourcetype sits in the second 200 propstat and must not hide the calendar)", len(found))
+	}
+	work := found[0]
+	if work.Path != "/cal/work/" {
+		t.Errorf("path = %q, want /cal/work/", work.Path)
+	}
+	if work.Name != "Work" {
+		t.Errorf("name = %q, want Work (the first propstat that fills the field wins)", work.Name)
+	}
+	if work.Color != "#123456" {
+		t.Errorf("color = %q, want #123456 from the first propstat", work.Color)
+	}
+	if work.Access != CalendarAccessRead {
+		t.Errorf("access = %q, want read from the first propstat", work.Access)
+	}
+	if len(work.SupportedComponentSet) != 1 || work.SupportedComponentSet[0] != "VTODO" {
+		t.Errorf("components = %v, want [VTODO] from the second 200 propstat", work.SupportedComponentSet)
+	}
+}
+
 func multistatus(href, prop string) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">

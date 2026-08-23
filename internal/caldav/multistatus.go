@@ -2,14 +2,11 @@ package caldav
 
 import "encoding/xml"
 
-// This file carries the one shared WebDAV multistatus envelope. Every
-// REPORT/PROPFIND response decodes through it. Before the consolidation, four
-// packages-private struct hierarchies restated the same
-// multistatus → response → propstat shape with per-call-site Prop payloads,
-// and drifted independently.
-//
-// A call site defines only its Prop payload type and instantiates the generic
-// envelope with it.
+// This file carries the single shared WebDAV multistatus envelope. The
+// package decodes every REPORT and PROPFIND response through this envelope.
+// A call site defines only its Prop payload type and instantiates the
+// generic envelope with it. The envelope owns the multistatus, response,
+// and propstat shape, so all call sites decode that shape in the same way.
 
 // davMultiStatus decodes a DAV: multistatus document. P is the call site's
 // expected DAV: prop payload.
@@ -44,4 +41,20 @@ func firstOKPropstat[P any](r davResponse[P]) (P, bool) {
 	}
 	var zero P
 	return zero, false
+}
+
+// allOKPropstats returns the prop payload of every 2xx propstat, in
+// document order. RFC 4918 §9.1.2 lets a server split the properties of one
+// response across several 2xx propstats, so a caller that merges fields
+// iterates all of them. The slice is empty when the response carries no 2xx
+// propstat. A caller that needs only the first 2xx propstat uses
+// firstOKPropstat instead.
+func allOKPropstats[P any](r davResponse[P]) []P {
+	var props []P
+	for _, ps := range r.PropStats {
+		if code := parseStatusCode(ps.Status); code >= 200 && code < 300 {
+			props = append(props, ps.Prop)
+		}
+	}
+	return props
 }
