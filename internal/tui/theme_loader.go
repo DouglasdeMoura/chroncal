@@ -150,12 +150,14 @@ func readBuiltinRaw(name string) (*rawTheme, error) {
 // ANSI indices 0..15 are translated to the terminal's actually-rendered
 // RGB via activePalette when an OSC 4 response is available. Themes can
 // then lean on ANSI references (primary = "4"). Exact OKLCh contrast
-// computations still work against real hex values. Indices 16..255 and
-// unrecognized strings fall through to lipgloss.Color.
+// computations still work against real hex values. When the terminal
+// reports no palette entry, a static Base16-style hex for the current
+// background polarity stands in (see assumedPaletteDark). Indices 16..255
+// and unrecognized strings fall through to lipgloss.Color.
 func resolveColor(v any, hasDarkBG bool, field string) (color.Color, error) {
 	switch x := v.(type) {
 	case string:
-		return resolveString(x), nil
+		return resolveString(x, hasDarkBG), nil
 	case map[string]any:
 		key := "light"
 		if hasDarkBG {
@@ -165,7 +167,7 @@ func resolveColor(v any, hasDarkBG bool, field string) (color.Color, error) {
 		if !ok {
 			return nil, fmt.Errorf("field %q variant missing %q string", field, key)
 		}
-		return resolveString(s), nil
+		return resolveString(s, hasDarkBG), nil
 	case nil:
 		return nil, fmt.Errorf("field %q is missing", field)
 	default:
@@ -173,14 +175,58 @@ func resolveColor(v any, hasDarkBG bool, field string) (color.Color, error) {
 	}
 }
 
-// resolveString turns a single TOML color string into a color.Color. If
-// it is an ANSI index 0..15 and the queried terminal palette has a value
-// for that slot, the palette's hex wins. Otherwise lipgloss handles it.
-func resolveString(s string) color.Color {
+// assumedPaletteDark and assumedPaletteLight hold the ANSI 16-color
+// values the loader substitutes when the terminal reported no palette
+// entry for a slot. The values follow the Base16 convention that
+// system.toml documents: slot 0 is the background, slot 7 the foreground,
+// slot 8 the dim line, and slots 9..14 mirror slots 1..6. Slot 1 uses a
+// slightly darker red than the Base16 default. That keeps the
+// computed-foreground ratio above 4.5.
+//
+// The loader returns these hexes instead of ANSI indices. The terminal
+// then renders the exact value the OKLCh contrast math used. A pill and
+// its computed label can no longer disagree about polarity.
+var assumedPaletteDark = Palette{
+	rgbColor("#181818"), rgbColor("#a03e35"), rgbColor("#a1b56c"), rgbColor("#ba823f"),
+	rgbColor("#7cafc2"), rgbColor("#aa759f"), rgbColor("#86c1b9"), rgbColor("#d8d8d8"),
+	rgbColor("#585858"), rgbColor("#a03e35"), rgbColor("#a1b56c"), rgbColor("#ba823f"),
+	rgbColor("#7cafc2"), rgbColor("#aa759f"), rgbColor("#86c1b9"), rgbColor("#f8f8f8"),
+}
+
+var assumedPaletteLight = Palette{
+	rgbColor("#f8f8f8"), rgbColor("#a03e35"), rgbColor("#a1b56c"), rgbColor("#ba823f"),
+	rgbColor("#7cafc2"), rgbColor("#aa759f"), rgbColor("#86c1b9"), rgbColor("#383838"),
+	rgbColor("#b8b8b8"), rgbColor("#a03e35"), rgbColor("#a1b56c"), rgbColor("#ba823f"),
+	rgbColor("#7cafc2"), rgbColor("#aa759f"), rgbColor("#86c1b9"), rgbColor("#181818"),
+}
+
+// rgbColor parses a "#rrggbb" literal into a color. The assumed palettes
+// call it at package init. A malformed literal would silently decode to
+// black, so keep the literals valid. The tests exercise every slot.
+func rgbColor(hex string) color.RGBA {
+	var c color.RGBA
+	_, _ = fmt.Sscanf(hex, "#%02x%02x%02x", &c.R, &c.G, &c.B)
+	c.A = 0xff
+	return c
+}
+
+// resolveString turns a single TOML color string into a color.Color. An
+// ANSI index 0..15 first asks the terminal palette. Without a palette
+// answer, the assumed Base16-style hex for the current background
+// polarity stands in. The terminal then renders the exact value the
+// contrast math used. An index must not fall through to lipgloss here:
+// lipgloss answers with its VGA defaults. Those defaults sit on the wrong
+// lightness side for themed terminals, so every computed foreground
+// flipped polarity against the rendered color.
+func resolveString(s string, hasDarkBG bool) color.Color {
 	if idx, ok := ansi16Index(s); ok {
 		if c := activePalette.Lookup(idx); c != nil {
 			return c
 		}
+		if hasDarkBG {
+			return assumedPaletteDark.Lookup(idx)
+		}
+		return assumedPaletteLight.Lookup(idx)
 	}
 	return lipgloss.Color(s)
 }
