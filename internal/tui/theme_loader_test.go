@@ -225,6 +225,12 @@ func TestAnsi16IndexBoundaries(t *testing.T) {
 // alternate screen. The warning goes to the state-dir log file instead
 // (see config.SharedStateDirLogger).
 func TestLoadThemeFallbackDoesNotWriteToStderr(t *testing.T) {
+	// The fallback warning goes through the memoized
+	// config.SharedStateDirLogger. Point XDG_STATE_HOME at a scratch
+	// dir so the test never writes to the developer's real
+	// chroncal.log (see sync_warnings_test.go for the same guard).
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
