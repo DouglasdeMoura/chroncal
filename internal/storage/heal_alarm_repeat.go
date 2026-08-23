@@ -28,8 +28,7 @@ import (
 // backfillAlarmUIDs, and a failure is fatal to Open, like every startup
 // pass here. The function runs on every startup. It changes nothing
 // when all rows are healthy.
-func normalizeAlarmRepeatPairs(conn *sql.DB) error {
-	ctx := context.Background()
+func normalizeAlarmRepeatPairs(ctx context.Context, conn *sql.DB) error {
 	for _, table := range []string{"event_alarms", "todo_alarms"} {
 		type fix struct {
 			id       int64

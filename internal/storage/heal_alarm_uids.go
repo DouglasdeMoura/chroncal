@@ -17,8 +17,7 @@ import (
 // read a new UID as a different alarm. The row still matches on its
 // content during a pull, and it holds no alarm state, because it never
 // fires (issue #586).
-func backfillAlarmUIDs(conn *sql.DB, q *Queries) error {
-	ctx := context.Background()
+func backfillAlarmUIDs(ctx context.Context, conn *sql.DB, q *Queries) error {
 
 	storedAlarms, err := q.ListAlarmsWithEmptyUID(ctx)
 	if err != nil {

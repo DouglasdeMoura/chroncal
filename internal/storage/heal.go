@@ -21,19 +21,19 @@ var healSteps = []healStep{
 	{
 		name: "backfill alarm uids",
 		run: func(ctx context.Context, conn *sql.DB, q *Queries) error {
-			return backfillAlarmUIDs(conn, q)
+			return backfillAlarmUIDs(ctx, conn, q)
 		},
 	},
 	{
 		name: "purge libical diagnostic x-props",
 		run: func(ctx context.Context, conn *sql.DB, q *Queries) error {
-			return purgeLibicalDiagnosticXProps(conn)
+			return purgeLibicalDiagnosticXProps(ctx, conn)
 		},
 	},
 	{
 		name: "normalize alarm repeat pairs",
 		run: func(ctx context.Context, conn *sql.DB, q *Queries) error {
-			return normalizeAlarmRepeatPairs(conn)
+			return normalizeAlarmRepeatPairs(ctx, conn)
 		},
 	},
 }
