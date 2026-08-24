@@ -79,8 +79,9 @@ func TestEventDelete_MovedOverrideOriginalSlotSucceeds(t *testing.T) {
 	}
 
 	// The moved display start is not a deletion key.
+	const movedStart = "2026-09-07T15:00:00Z"
 	_, stderr, err := runChroncalCommand(t,
-		"event", "delete", master.UID, "--recurrence-id", "2026-09-02T13:00:00Z", "--yes")
+		"event", "delete", master.UID, "--recurrence-id", movedStart, "--yes")
 	if err == nil {
 		t.Fatal("delete at the moved time must fail")
 	}
@@ -101,7 +102,7 @@ func TestEventDelete_MovedOverrideOriginalSlotSucceeds(t *testing.T) {
 		t.Fatalf("master vanished: %v", err)
 	}
 	for _, ex := range strings.Split(got.ExDates, ",") {
-		if strings.TrimSpace(ex) == "2026-09-02T13:00:00Z" {
+		if strings.TrimSpace(ex) == movedStart {
 			t.Fatal("phantom EXDATE written for the moved time")
 		}
 	}

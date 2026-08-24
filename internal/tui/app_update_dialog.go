@@ -65,32 +65,45 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 			// Validate the scope against the master's raw rule set before
 			// touching storage. The deletion key is the original
 			// RECURRENCE-ID, never a moved override's display start.
-			scopeAt, scopeErr := recurrence.ScopeInstanceTime(ev)
-			if scopeErr == nil {
-				master, mErr := m.app.Events.GetByUID(context.Background(), ev.UID)
-				if mErr != nil {
-					scopeErr = mErr
-				} else if msg.Choice == 0 || msg.Choice == 1 {
-					ok := false
-					switch msg.Choice {
-					case 0:
-						ok = recurrence.OccurrenceExistsAt(master, scopeAt)
-					case 1:
-						ok = recurrence.HasOccurrenceFrom(master, scopeAt)
-					}
-					if !ok {
-						// A live override at that RECURRENCE-ID stays
-						// deletable even when an imported EXDATE hides the
-						// master slot; the override row is its own key.
-						if _, oErr := m.app.Events.GetByUIDAndRecurrenceID(
-							context.Background(), ev.UID, scopeAt.UTC().Format(time.RFC3339)); oErr != nil {
+			// Whole-series delete needs no scope time; validate only the
+			// instance scopes against the master's raw rule set.
+			if msg.Choice == 0 || msg.Choice == 1 {
+				scopeAt, scopeErr := recurrence.ScopeInstanceTime(ev)
+				if scopeErr == nil {
+					var master event.Event
+					master, scopeErr = m.app.Events.GetByUID(context.Background(), ev.UID)
+					if scopeErr == nil {
+						ok := false
+						if msg.Choice == 0 {
+							ok = recurrence.OccurrenceExistsAt(master, scopeAt)
+							if !ok {
+								// A live override at that RECURRENCE-ID stays
+								// deletable even when an imported EXDATE hides
+								// the master slot.
+								_, oErr := m.app.Events.GetByUIDAndRecurrenceID(
+									context.Background(), ev.UID, scopeAt.UTC().Format(time.RFC3339))
+								ok = oErr == nil
+							}
+						} else {
+							ok = recurrence.HasOccurrenceFrom(master, scopeAt)
+							if !ok {
+								ok, _ = m.app.Events.HasLiveOverrideFrom(context.Background(), ev.UID, scopeAt)
+							}
+						}
+						if !ok {
 							scopeErr = fmt.Errorf("no occurrence matches %s", scopeAt.Format(time.RFC3339))
 						}
 					}
 				}
+				if scopeErr != nil {
+					return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title, err: scopeErr}
+				}
 			}
-			if scopeErr != nil {
-				return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title, err: scopeErr}
+			scopeAt := ev.StartTime
+			if ev.RecurrenceID != "" {
+				if parsed, perr := time.Parse(time.RFC3339, ev.RecurrenceID); perr == nil {
+					scopeAt = parsed
+				}
 			}
 			switch msg.Choice {
 			case 0: // This event

@@ -738,6 +738,24 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 // after instanceTime are removed. It sets UNTIL on the RRULE. It soft-deletes
 // any overrides at or after the cutoff. It records the pre-truncation
 // RRULE in event_truncate_deletes so the trash view can restore it atomically.
+func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) error {
+	_, err := s.deleteFromInstance(ctx, uid, instanceTime)
+	return err
+}
+
+// softDeleteOverridesAndRecordTruncation trims the master's post-cutoff RDATEs.
+// It hides every live override at or after cutoff. It records the truncation
+// so the trash view can restore it. It captures the recurrence_ids it hides
+// and the RDATEs it drops BEFORE it removes them. Restore then re-shows
+// exactly those overrides and re-adds exactly those RDATEs.
+//
+// It does not restore an override the user deleted on its own (issue #287).
+// It does not leave a post-cutoff RDATE to reappear on the next expansion
+// (issue #463, since rrule-go expands RDATEs independently of the RRULE UNTIL
+// bound). Pairs with restoreTruncatedOverrides / restoreTruncatedRDates.
+//
+// prevRRule is the master's pre-truncation RRULE. The caller passes it because
+// it overwrote the master's recurrence_rule in the DB before this runs.
 // HasLiveOverrideFrom reports whether any live override of the series has a
 // RECURRENCE-ID at or after from. The --following scope guard uses it: a
 // truncation removes such overrides even when an imported EXDATE hides every
@@ -762,24 +780,6 @@ func (s *Service) HasLiveOverrideFrom(ctx context.Context, uid string, from time
 	return false, nil
 }
 
-func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) error {
-	_, err := s.deleteFromInstance(ctx, uid, instanceTime)
-	return err
-}
-
-// softDeleteOverridesAndRecordTruncation trims the master's post-cutoff RDATEs.
-// It hides every live override at or after cutoff. It records the truncation
-// so the trash view can restore it. It captures the recurrence_ids it hides
-// and the RDATEs it drops BEFORE it removes them. Restore then re-shows
-// exactly those overrides and re-adds exactly those RDATEs.
-//
-// It does not restore an override the user deleted on its own (issue #287).
-// It does not leave a post-cutoff RDATE to reappear on the next expansion
-// (issue #463, since rrule-go expands RDATEs independently of the RRULE UNTIL
-// bound). Pairs with restoreTruncatedOverrides / restoreTruncatedRDates.
-//
-// prevRRule is the master's pre-truncation RRULE. The caller passes it because
-// it overwrote the master's recurrence_rule in the DB before this runs.
 func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time, prevRRule string) error {
 	uid := master.Uid
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
