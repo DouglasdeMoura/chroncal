@@ -4,182 +4,51 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-
+	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"io"
-
+	"log/slog"
 	"net/http"
-
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/douglasdemoura/chroncal/internal/event"
-	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
-
-	"github.com/douglasdemoura/chroncal/internal/model"
-	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
-// TestEnginePullPaginatesTruncatedSyncCollection reproduces the Google
-// initial-snapshot data loss. The server truncates the sync-collection
-// response (RFC 6578 §3.6 — a 507 marker on the collection plus a
-// continuation token). The engine must page until complete. It diffs local
-// state against the UNION of pages. Before the fix, every local UID beyond
-// page one was soft-deleted (73 real events on one production calendar).
-func TestEnginePullPaginatesTruncatedSyncCollection(t *testing.T) {
+func TestSummarizeSyncError(t *testing.T) {
 	t.Parallel()
-
-	engine, db, q := newTestEngine(t)
-	ctx := context.Background()
-
-	cals, err := q.ListCalendars(ctx)
-	if err != nil {
-		t.Fatalf("ListCalendars: %v", err)
+	cases := []struct {
+		name   string
+		result *SyncResult
+		runErr error
+		want   string
+	}{
+		{"run error wins", &SyncResult{Errors: []error{errors.New("ignored")}}, errors.New("boom"), "boom"},
+		{"no errors", &SyncResult{}, nil, ""},
+		{"single", &SyncResult{Errors: []error{errors.New("e1")}}, nil, "e1"},
+		{"multi", &SyncResult{Errors: []error{errors.New("e1"), errors.New("e2"), errors.New("e3")}}, nil, "e1 (+2 more)"},
 	}
-	calendarID := cals[0].ID
-
-	// "survivor" exists locally and on the server — but only on PAGE TWO of
-	// the truncated snapshot. "gone-uid" exists locally and on neither page.
-	insertTestEvent(t, db, calendarID, "survivor")
-	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-		CalendarID: calendarID, Uid: "survivor", OwnerType: "event",
-		RemoteUrl: "/calendar/survivor.ics", Etag: "etag-survivor",
-		Dirty: 0, SyncStrategy: "sync-token",
-	}); err != nil {
-		t.Fatalf("UpsertSyncResource survivor: %v", err)
-	}
-	insertTestEvent(t, db, calendarID, "gone-uid")
-	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-		CalendarID: calendarID, Uid: "gone-uid", OwnerType: "event",
-		RemoteUrl: "/calendar/gone.ics", Etag: "etag-gone",
-		Dirty: 0, SyncStrategy: "sync-token",
-	}); err != nil {
-		t.Fatalf("UpsertSyncResource gone: %v", err)
-	}
-
-	const pageOne = `<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:">
- <D:response>
-  <D:href>/calendar/new-a.ics</D:href>
-  <D:propstat>
-   <D:status>HTTP/1.1 200 OK</D:status>
-   <D:prop><D:getetag>&quot;etag-a&quot;</D:getetag></D:prop>
-  </D:propstat>
- </D:response>
- <D:response>
-  <D:href>/calendar/</D:href>
-  <D:status>HTTP/1.1 507 Insufficient Storage</D:status>
- </D:response>
- <D:sync-token>PAGE2-TOKEN</D:sync-token>
-</D:multistatus>`
-
-	const pageTwo = `<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:">
- <D:response>
-  <D:href>/calendar/survivor.ics</D:href>
-  <D:propstat>
-   <D:status>HTTP/1.1 200 OK</D:status>
-   <D:prop><D:getetag>&quot;etag-survivor&quot;</D:getetag></D:prop>
-  </D:propstat>
- </D:response>
- <D:sync-token>FINAL-TOKEN</D:sync-token>
-</D:multistatus>`
-
-	const newAICS = `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//chroncal//tests//EN
-BEGIN:VEVENT
-UID:new-a-uid
-DTSTAMP:20260606T120000Z
-DTSTART:20260606T120000Z
-DTEND:20260606T130000Z
-SUMMARY:New A
-END:VEVENT
-END:VCALENDAR
-`
-
-	var reportCalls int
-	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
-		if r.Method != "REPORT" {
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-			return nil, nil
-		}
-		raw, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read req body: %v", err)
-		}
-		body := string(raw)
-		if strings.Contains(body, "calendar-multiget") {
-			if !strings.Contains(body, "new-a.ics") {
-				t.Fatalf("multiget should only fetch the new resource, got:\n%s", body)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := summarizeSyncError(c.result, c.runErr); got != c.want {
+				t.Errorf("summarizeSyncError = %q, want %q", got, c.want)
 			}
-			multigetBody := `<?xml version="1.0" encoding="utf-8"?>
-<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
-  <d:response>
-    <d:href>/calendar/new-a.ics</d:href>
-    <d:propstat>
-      <d:prop>
-        <d:getetag>&quot;etag-a&quot;</d:getetag>
-        <cal:calendar-data>` + newAICS + `</cal:calendar-data>
-      </d:prop>
-      <d:status>HTTP/1.1 200 OK</d:status>
-    </d:propstat>
-  </d:response>
-</d:multistatus>`
-			return &http.Response{
-				StatusCode: http.StatusMultiStatus,
-				Status:     "207 Multi-Status",
-				Header:     http.Header{"Content-Type": []string{"application/xml"}},
-				Body:       io.NopCloser(strings.NewReader(multigetBody)),
-				Request:    r,
-			}, nil
-		}
-		// sync-collection REPORTs: page 1 for the empty token, page 2 for
-		// the continuation token.
-		reportCalls++
-		page := pageOne
-		if strings.Contains(body, "PAGE2-TOKEN") {
-			page = pageTwo
-		}
-		return &http.Response{
-			StatusCode: http.StatusMultiStatus,
-			Status:     "207 Multi-Status",
-			Header:     http.Header{"Content-Type": []string{"application/xml"}},
-			Body:       io.NopCloser(strings.NewReader(page)),
-			Request:    r,
-		}, nil
-	})
+		})
+	}
+}
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
-	if err != nil {
-		t.Fatalf("pull: %v", err)
-	}
-	if reportCalls != 2 {
-		t.Fatalf("sync-collection REPORTs = %d, want 2 (pagination)", reportCalls)
-	}
-	if result.pulled != 1 {
-		t.Fatalf("pulled = %d, want 1 (new-a)", result.pulled)
-	}
-	if result.deleted != 1 {
-		t.Fatalf("deleted = %d, want 1 (only gone-uid)", result.deleted)
-	}
+// discardLogger returns a logger that drops everything, for pure-function
+// tests of the deletion chokepoint.
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-	// The page-two event must survive the initial-snapshot deletion sweep.
-	if _, err := q.GetEventByUID(ctx, "survivor"); err != nil {
-		t.Fatalf("survivor was deleted by the partial-page sweep: %v", err)
+func uidSet(rs map[string]string) map[string]bool {
+	out := make(map[string]bool, len(rs))
+	for uid := range rs {
+		out[uid] = true
 	}
-	// The genuinely-absent event must still be removed.
-	if _, err := q.GetEventByUID(ctx, "gone-uid"); err == nil {
-		t.Fatal("gone-uid should have been soft-deleted")
-	}
-	// The FINAL page's token is the one stored.
-	calRow, err := q.GetCalendar(ctx, calendarID)
-	if err != nil {
-		t.Fatalf("GetCalendar: %v", err)
-	}
-	if tok := storage.NullableToString(calRow.SyncToken); tok != "FINAL-TOKEN" {
-		t.Fatalf("sync_token = %q, want FINAL-TOKEN", tok)
-	}
+	return out
 }
 
 // TestPendingDeletions_AbsenceGate is the core invariant: absence-inferred
@@ -629,6 +498,110 @@ END:VCALENDAR
 	}
 }
 
+// TestEnginePullFullSnapshotWithholdsHealthOnPersistFailure covers issue
+// #734. The QueryAll fallback has no RFC 6578 sync-token to advance, but a
+// persist failure used to log-and-continue and leave LastSyncAt stamped as
+// healthy. It must now surface on the pull result so updateSyncHealth
+// withholds the healthy stamp, matching the sync-collection path.
+func TestEnginePullFullSnapshotWithholdsHealthOnPersistFailure(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "victim")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "victim", OwnerType: "event",
+		RemoteUrl: "/calendar/victim.ics", Etag: "old", Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource victim: %v", err)
+	}
+
+	const victimICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:victim
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Updated meeting
+BEGIN:VALARM
+ACTION:DISPLAY
+TRIGGER:-PT15M
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR
+`
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		body := string(raw)
+		if strings.Contains(body, "sync-collection") {
+			return &http.Response{
+				StatusCode: http.StatusUnprocessableEntity,
+				Status:     "422 Unprocessable Entity",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><error xmlns="DAV:"/>`)),
+				Request:    r,
+			}, nil
+		}
+		queryBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/victim.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;new&quot;</d:getetag>
+        <cal:calendar-data>` + victimICS + `</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{StatusCode: http.StatusMultiStatus, Status: "207 Multi-Status",
+			Header: http.Header{"Content-Type": []string{"application/xml"}},
+			Body:   io.NopCloser(strings.NewReader(queryBody)), Request: r}, nil
+	})
+
+	if _, err := db.ExecContext(ctx, "DROP TABLE event_alarms"); err != nil {
+		t.Fatalf("drop event_alarms table: %v", err)
+	}
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if result == nil || len(result.errors) == 0 {
+		t.Fatal("legacy persist failure must surface as pull errors so LastSyncAt is withheld")
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "victim"})
+	if err != nil {
+		t.Fatalf("GetSyncResource victim: %v", err)
+	}
+	if res.Etag != "old" {
+		t.Fatalf("victim etag = %q, want old preserved (persist failed)", res.Etag)
+	}
+
+	if err := engine.updateSyncHealth(ctx, calendarID, "2026-04-03T12:00:00Z", &SyncResult{Errors: result.errors}, nil); err != nil {
+		t.Fatalf("updateSyncHealth: %v", err)
+	}
+	calRow, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if at := storage.NullableToString(calRow.LastSyncAt); at != "" {
+		t.Fatalf("LastSyncAt = %q, want empty (legacy persist failure must withhold the healthy stamp)", at)
+	}
+}
+
 // TestPersistImportedRollsBackOnReplaceFailure verifies that persistImported is
 // atomic per resource. If any Replace* step fails after the event row and some
 // of its child collections have already been written, the entire resource is
@@ -750,14 +723,96 @@ func TestOwnerDispatchRejectsUnknownTypeUniformly(t *testing.T) {
 	}
 }
 
+// linkCalendarToTestAccount links the first seeded calendar to a fresh account.
+// Service-layer mutations (and the simulated concurrent edit below) then flip
+// the dirty flag via MarkResourceDirty. Returns the calendar ID.
+func linkCalendarToTestAccount(t *testing.T, ctx context.Context, q *storage.Queries) int64 {
+	t.Helper()
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name:      "test",
+		ServerUrl: "https://example.com",
+		AuthType:  "basic",
+		Username:  "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	remoteCalURL := "https://example.com/cal"
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        calendarID,
+		AccountID: &account.ID,
+		RemoteUrl: &remoteCalURL,
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	return calendarID
+}
+
+// serverWinsConflictClient returns a CalDAV client whose PUT 412s and whose GET
+// returns the server's version of uid (SUMMARY "Server version", ETag
+// "etag-server"). That drives the ConflictServerWins accept-server path. A
+// non-nil puts counter receives one increment per PUT.
+func serverWinsConflictClient(t *testing.T, uid string, puts *int) *caldav.Client {
+	t.Helper()
+	path := "/calendar/" + uid + ".ics"
+	return newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case http.MethodPut:
+			if puts != nil {
+				*puts++
+			}
+			return &http.Response{
+				StatusCode: http.StatusPreconditionFailed,
+				Status:     "412 Precondition Failed",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("precondition failed")),
+				Request:    r,
+			}, nil
+		case http.MethodGet:
+			if r.URL.Path != path {
+				t.Fatalf("GET path = %s, want %s", r.URL.Path, path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"text/calendar; charset=utf-8"},
+					"Etag":         []string{`"etag-server"`},
+				},
+				Body: io.NopCloser(strings.NewReader("BEGIN:VCALENDAR\r\n" +
+					"VERSION:2.0\r\n" +
+					"PRODID:-//chroncal//tests//EN\r\n" +
+					"BEGIN:VEVENT\r\n" +
+					"UID:" + uid + "\r\n" +
+					"DTSTAMP:20260403T120000Z\r\n" +
+					"DTSTART:20260403T120000Z\r\n" +
+					"DTEND:20260403T130000Z\r\n" +
+					"SUMMARY:Server version\r\n" +
+					"END:VEVENT\r\n" +
+					"END:VCALENDAR\r\n")),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+}
+
 // TestEnginePushServerWinsPreservesConcurrentEdit reproduces issue #417. A local
 // edit that lands in the window between the accept-server import and the dirty
-// clear must not be dropped in silence. The afterImportRevCapture hook simulates
-// that edit. The rev-guarded clear must leave the resource dirty. The next
-// push then sends it. With the previous unconditional clear this test fails
-// because the edit's dirty flag is wiped. Serial (no t.Parallel) because it
-// mutates the package-level hook.
+// clear must not be dropped in silence. The engine's afterImportRevCapture hook
+// simulates that edit. The rev-guarded clear must leave the resource dirty. The
+// next push then sends it. With the previous unconditional clear this test fails
+// because the edit's dirty flag is wiped.
 func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
+	t.Parallel()
+
 	engine, db, q := newTestEngine(t)
 	ctx := context.Background()
 	calendarID := linkCalendarToTestAccount(t, ctx, q)
@@ -779,13 +834,14 @@ func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
 	// server version but before the dirty flag is cleared: it bumps rev and
 	// re-marks the resource dirty, exactly as a real service-layer mutation would.
 	var fired int
-	afterImportRevCapture = func() {
-		fired++
-		if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-race", "event"); err != nil {
-			t.Errorf("simulate concurrent edit: %v", err)
-		}
+	engine.testHooks = &engineTestHooks{
+		afterImportRevCapture: func() {
+			fired++
+			if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-race", "event"); err != nil {
+				t.Errorf("simulate concurrent edit: %v", err)
+			}
+		},
 	}
-	t.Cleanup(func() { afterImportRevCapture = nil })
 
 	client := serverWinsConflictClient(t, "srv-wins-race", nil)
 	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
@@ -821,144 +877,5 @@ func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
 	}
 	if len(open) != 1 {
 		t.Fatalf("open conflicts = %d, want 1 (row stays open while dirty survives)", len(open))
-	}
-}
-
-// TestEnginePushServerWinsPreservesConcurrentEditAfterPersist reproduces issue
-// #494. A local edit that commits between the accept-server import's persist
-// commit and the dirty clear must not be dropped in silence. The
-// afterImportPersist hook fires in that window, after persistImported committed
-// and before clearDirtyAfterImport. It bumps rev and re-marks dirty exactly as
-// a real service-layer mutation would. persistImported now captures the
-// post-import rev inside its own transaction. It does not re-read it after
-// commit, where this edit's bump would be read and matched. The rev-guarded
-// clear then leaves the resource dirty. With the old after-commit re-read this
-// test fails. The clear reads the edit's bumped rev and wipes dirty. Serial
-// (no t.Parallel) because it mutates the package-level hook.
-func TestEnginePushServerWinsPreservesConcurrentEditAfterPersist(t *testing.T) {
-	engine, db, q := newTestEngine(t)
-	ctx := context.Background()
-	calendarID := linkCalendarToTestAccount(t, ctx, q)
-
-	insertTestEvent(t, db, calendarID, "srv-wins-persist-race")
-	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-		CalendarID:   calendarID,
-		Uid:          "srv-wins-persist-race",
-		OwnerType:    "event",
-		RemoteUrl:    "/calendar/srv-wins-persist-race.ics",
-		Etag:         `"etag-before"`,
-		Dirty:        1,
-		SyncStrategy: "sync-token",
-	}); err != nil {
-		t.Fatalf("UpsertSyncResource: %v", err)
-	}
-
-	// Simulate a concurrent local edit landing after the import committed but
-	// before the dirty clear. persistImported already released its connection,
-	// so this auto-commit write is safe under SetMaxOpenConns(1).
-	var fired int
-	afterImportPersist = func() {
-		fired++
-		if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-persist-race", "event"); err != nil {
-			t.Errorf("simulate concurrent edit: %v", err)
-		}
-	}
-	t.Cleanup(func() { afterImportPersist = nil })
-
-	client := serverWinsConflictClient(t, "srv-wins-persist-race", nil)
-	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
-	if err != nil {
-		t.Fatalf("push: %v", err)
-	}
-	if fired != 1 {
-		t.Fatalf("afterImportPersist fired %d times, want 1", fired)
-	}
-
-	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "srv-wins-persist-race"})
-	if err != nil {
-		t.Fatalf("GetSyncResource: %v", err)
-	}
-	if res.Dirty != 1 {
-		t.Fatalf("dirty = %d, want 1 (concurrent edit must not be dropped, #494)", res.Dirty)
-	}
-	// The ETag still advances to the server's version, mirroring
-	// FinalizePushedResource on the push path.
-	if res.Etag != "etag-server" {
-		t.Fatalf("etag = %q, want %q", res.Etag, "etag-server")
-	}
-
-	// Dirty survived, so the recorded conflict row stays open (see the
-	// srv-wins-race twin above).
-	if result.conflicts != 1 || result.autoResolved != 0 {
-		t.Fatalf("result = conflicts %d, autoResolved %d; want 1 open, 0 resolved", result.conflicts, result.autoResolved)
-	}
-	open, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
-	if err != nil {
-		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
-	}
-	if len(open) != 1 {
-		t.Fatalf("open conflicts = %d, want 1", len(open))
-	}
-}
-
-// TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty reproduces issue #495.
-// On a 412 with ConflictServerWins, if the re-fetched server body carries no
-// importable VEVENT/VTODO/VJOURNAL, importICal applies nothing. The auto-resolve
-// must not clear dirty or stamp the server ETag. That would drop the local
-// edit behind a server version that was never adopted. The manual
-// ResolveConflict path already guards against that asymmetry (#466). With the
-// previous unconditional clear this test fails. Dirty is wiped. The ETag is
-// advanced with nothing applied.
-func TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty(t *testing.T) {
-	t.Parallel()
-
-	engine, db, q := newTestEngine(t)
-	ctx := context.Background()
-	calendarID := linkCalendarToTestAccount(t, ctx, q)
-
-	insertTestEvent(t, db, calendarID, "srv-wins-empty")
-	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-		CalendarID:   calendarID,
-		Uid:          "srv-wins-empty",
-		OwnerType:    "event",
-		RemoteUrl:    "/calendar/srv-wins-empty.ics",
-		Etag:         `"etag-before"`,
-		Dirty:        1,
-		SyncStrategy: "sync-token",
-	}); err != nil {
-		t.Fatalf("UpsertSyncResource: %v", err)
-	}
-
-	client := emptyServerWinsConflictClient(t, "srv-wins-empty")
-	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
-	if err != nil {
-		t.Fatalf("push: %v", err)
-	}
-
-	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "srv-wins-empty"})
-	if err != nil {
-		t.Fatalf("GetSyncResource: %v", err)
-	}
-	if res.Dirty != 1 {
-		t.Fatalf("dirty = %d, want 1 (nothing was applied, local edit must survive, #495)", res.Dirty)
-	}
-	// The ETag must NOT be stamped to the server version: nothing from the server
-	// was adopted, so claiming the local row matches the server would let the next
-	// pull overwrite the still-pending local edit.
-	if res.Etag != `"etag-before"` {
-		t.Fatalf("etag = %q, want %q (server version was never applied, #495)", res.Etag, `"etag-before"`)
-	}
-
-	// The conflict row is now recorded and left open, so the user can resolve
-	// the divergence by hand instead of it vanishing (issue #610).
-	if result.conflicts != 1 || result.autoResolved != 0 {
-		t.Fatalf("result = conflicts %d, autoResolved %d; want 1 open, 0 resolved", result.conflicts, result.autoResolved)
-	}
-	open, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
-	if err != nil {
-		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
-	}
-	if len(open) != 1 || open[0].Uid != "srv-wins-empty" {
-		t.Fatalf("open conflicts = %+v, want the srv-wins-empty row", open)
 	}
 }

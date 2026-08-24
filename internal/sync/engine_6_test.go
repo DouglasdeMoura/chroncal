@@ -5,7 +5,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-
+	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/event"
+	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,16 +21,198 @@ import (
 	gosync "sync"
 	"testing"
 	"time"
-
-	"github.com/douglasdemoura/chroncal/internal/auth"
-
-	"github.com/douglasdemoura/chroncal/internal/event"
-	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
-
-	"github.com/douglasdemoura/chroncal/internal/model"
-	"github.com/douglasdemoura/chroncal/internal/storage"
-	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
+
+// TestEnginePushServerWinsPreservesConcurrentEditAfterPersist reproduces issue
+// #494. A local edit that commits between the accept-server import's persist
+// commit and the dirty clear must not be dropped in silence. The engine's
+// afterImportPersist hook fires in that window, after persistImported committed
+// and before clearDirtyAfterImport. It bumps rev and re-marks dirty exactly as
+// a real service-layer mutation would. persistImported now captures the
+// post-import rev inside its own transaction. It does not re-read it after
+// commit, where this edit's bump would be read and matched. The rev-guarded
+// clear then leaves the resource dirty. With the old after-commit re-read this
+// test fails. The clear reads the edit's bumped rev and wipes dirty.
+func TestEnginePushServerWinsPreservesConcurrentEditAfterPersist(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := linkCalendarToTestAccount(t, ctx, q)
+
+	insertTestEvent(t, db, calendarID, "srv-wins-persist-race")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "srv-wins-persist-race",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/srv-wins-persist-race.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	// Simulate a concurrent local edit landing after the import committed but
+	// before the dirty clear. persistImported already released its connection,
+	// so this auto-commit write is safe under SetMaxOpenConns(1).
+	var fired int
+	engine.testHooks = &engineTestHooks{
+		afterImportPersist: func() {
+			fired++
+			if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-persist-race", "event"); err != nil {
+				t.Errorf("simulate concurrent edit: %v", err)
+			}
+		},
+	}
+
+	client := serverWinsConflictClient(t, "srv-wins-persist-race", nil)
+	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if fired != 1 {
+		t.Fatalf("afterImportPersist fired %d times, want 1", fired)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "srv-wins-persist-race"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Fatalf("dirty = %d, want 1 (concurrent edit must not be dropped, #494)", res.Dirty)
+	}
+	// The ETag still advances to the server's version, mirroring
+	// FinalizePushedResource on the push path.
+	if res.Etag != "etag-server" {
+		t.Fatalf("etag = %q, want %q", res.Etag, "etag-server")
+	}
+
+	// Dirty survived, so the recorded conflict row stays open (see the
+	// srv-wins-race twin above).
+	if result.conflicts != 1 || result.autoResolved != 0 {
+		t.Fatalf("result = conflicts %d, autoResolved %d; want 1 open, 0 resolved", result.conflicts, result.autoResolved)
+	}
+	open, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("open conflicts = %d, want 1", len(open))
+	}
+}
+
+// emptyServerWinsConflictClient is like serverWinsConflictClient but its GET
+// returns a VCALENDAR that carries only a VTIMEZONE. That is a non-empty body
+// the encoder accepts, yet with no importable VEVENT/VTODO/VJOURNAL. It
+// simulates a 412'd resource whose server body has nothing to apply
+// (issue #495).
+func emptyServerWinsConflictClient(t *testing.T, uid string) *caldav.Client {
+	t.Helper()
+	path := "/calendar/" + uid + ".ics"
+	return newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		switch r.Method {
+		case http.MethodPut:
+			return &http.Response{
+				StatusCode: http.StatusPreconditionFailed,
+				Status:     "412 Precondition Failed",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("precondition failed")),
+				Request:    r,
+			}, nil
+		case http.MethodGet:
+			if r.URL.Path != path {
+				t.Fatalf("GET path = %s, want %s", r.URL.Path, path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"text/calendar; charset=utf-8"},
+					"Etag":         []string{`"etag-server"`},
+				},
+				Body: io.NopCloser(strings.NewReader("BEGIN:VCALENDAR\r\n" +
+					"VERSION:2.0\r\n" +
+					"PRODID:-//chroncal//tests//EN\r\n" +
+					"BEGIN:VTIMEZONE\r\n" +
+					"TZID:UTC\r\n" +
+					"BEGIN:STANDARD\r\n" +
+					"DTSTART:19700101T000000\r\n" +
+					"TZOFFSETFROM:+0000\r\n" +
+					"TZOFFSETTO:+0000\r\n" +
+					"END:STANDARD\r\n" +
+					"END:VTIMEZONE\r\n" +
+					"END:VCALENDAR\r\n")),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			return nil, nil
+		}
+	})
+}
+
+// TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty reproduces issue #495.
+// On a 412 with ConflictServerWins, if the re-fetched server body carries no
+// importable VEVENT/VTODO/VJOURNAL, importICal applies nothing. The auto-resolve
+// must not clear dirty or stamp the server ETag. That would drop the local
+// edit behind a server version that was never adopted. The manual
+// ResolveConflict path already guards against that asymmetry (#466). With the
+// previous unconditional clear this test fails. Dirty is wiped. The ETag is
+// advanced with nothing applied.
+func TestEnginePushServerWinsKeepsDirtyWhenServerBodyEmpty(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := linkCalendarToTestAccount(t, ctx, q)
+
+	insertTestEvent(t, db, calendarID, "srv-wins-empty")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "srv-wins-empty",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/srv-wins-empty.ics",
+		Etag:         `"etag-before"`,
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	client := emptyServerWinsConflictClient(t, "srv-wins-empty")
+	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "srv-wins-empty"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if res.Dirty != 1 {
+		t.Fatalf("dirty = %d, want 1 (nothing was applied, local edit must survive, #495)", res.Dirty)
+	}
+	// The ETag must NOT be stamped to the server version: nothing from the server
+	// was adopted, so claiming the local row matches the server would let the next
+	// pull overwrite the still-pending local edit.
+	if res.Etag != `"etag-before"` {
+		t.Fatalf("etag = %q, want %q (server version was never applied, #495)", res.Etag, `"etag-before"`)
+	}
+
+	// The conflict row is now recorded and left open, so the user can resolve
+	// the divergence by hand instead of it vanishing (issue #610).
+	if result.conflicts != 1 || result.autoResolved != 0 {
+		t.Fatalf("result = conflicts %d, autoResolved %d; want 1 open, 0 resolved", result.conflicts, result.autoResolved)
+	}
+	open, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
+	}
+	if len(open) != 1 || open[0].Uid != "srv-wins-empty" {
+		t.Fatalf("open conflicts = %+v, want the srv-wins-empty row", open)
+	}
+}
 
 // TestPersistImportedPrunesStaleOverrides verifies that when a CalDAV server
 // deletes a recurring instance, persistImported soft-deletes the stale local
@@ -112,6 +300,47 @@ func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
 	}
 	if master.Exdates == nil || *master.Exdates == "" {
 		t.Fatalf("master EXDATE not set; expected %q", deletedRID)
+	}
+}
+
+// pruneTestEvent builds a minimal imported event for override-prune tests. A
+// non-empty rid must be an RFC 3339 time; it doubles as the instance start.
+func pruneTestEvent(uid string, calendarID int64, rid, rrule string) event.Event {
+	start := time.Date(2026, 6, 18, 17, 0, 0, 0, time.UTC)
+	if rid != "" {
+		parsed, err := time.Parse(time.RFC3339, rid)
+		if err != nil {
+			panic(err)
+		}
+		start = parsed
+	}
+	return event.Event{
+		UID:            uid,
+		CalendarID:     calendarID,
+		Title:          "Prune " + uid,
+		StartTime:      start,
+		EndTime:        start.Add(time.Hour),
+		RecurrenceRule: rrule,
+		RecurrenceID:   rid,
+	}
+}
+
+// seedCleanSyncResource records uid as a synced, clean (dirty=0) resource,
+// the state a completed pull leaves behind.
+func seedCleanSyncResource(t *testing.T, q *storage.Queries, calendarID int64, uid string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: uid, OwnerType: "event",
+		RemoteUrl: "https://example.com/cal/" + uid + ".ics", Etag: "v1",
+		Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if err := q.ClearSyncResourceDirty(ctx, storage.ClearSyncResourceDirtyParams{
+		Etag: "v1", CalendarID: calendarID, Uid: uid,
+	}); err != nil {
+		t.Fatalf("ClearSyncResourceDirty: %v", err)
 	}
 }
 
@@ -728,99 +957,5 @@ func TestPersistImportedDropsInvalidAlarm(t *testing.T) {
 		if !strings.Contains(warnings[0], want) {
 			t.Errorf("warning %q does not name %q", warnings[0], want)
 		}
-	}
-}
-
-// A failure that is not an invalid alarm still fails the resource, so the
-// caller keeps it dirty and retries.
-func TestPersistImportedStillFailsOnOtherErrors(t *testing.T) {
-	t.Parallel()
-
-	engine, _, q := newTestEngine(t)
-	ctx := context.Background()
-	cals, err := q.ListCalendars(ctx)
-	if err != nil {
-		t.Fatalf("ListCalendars: %v", err)
-	}
-	calendarID := cals[0].ID
-
-	start := time.Date(2026, 6, 18, 17, 0, 0, 0, time.UTC)
-	// An attendee outside the PARTSTAT CHECK constraint fails the write.
-	// That is not an alarm error, so it must still fail the resource.
-	result := icalPkg.ImportResult{
-		Events: []event.Event{{
-			UID:        "bad-attendee-uid",
-			CalendarID: calendarID,
-			Title:      "Carries a bad attendee",
-			StartTime:  start,
-			EndTime:    start.Add(time.Hour),
-			Attendees: []model.Attendee{
-				{Email: "alice@example.com", RSVPStatus: "NOT-A-PARTSTAT", Role: "REQ-PARTICIPANT"},
-			},
-		}},
-	}
-	if _, _, err := engine.persistImported(ctx, calendarID, result); err == nil {
-		t.Fatal("persistImported must still fail for a non-alarm error")
-	}
-}
-
-func TestBuildRemoteResourcePathUsesUID(t *testing.T) {
-	got := buildRemoteResourcePath("https://caldav.example.com/cal/123/", "some-uid-42")
-	want := "https://caldav.example.com/cal/123/some-uid-42.ics"
-	if got != want {
-		t.Errorf("buildRemoteResourcePath = %q, want %q", got, want)
-	}
-
-	// A UID with path-hostile characters must not escape its segment. The
-	// URL encoder escapes the '%' of each escape sequence once more.
-	got = buildRemoteResourcePath("https://caldav.example.com/cal", "a/b c?d")
-	want = "https://caldav.example.com/cal/a%252Fb%20c%253Fd.ics"
-	if got != want {
-		t.Errorf("buildRemoteResourcePath = %q, want %q", got, want)
-	}
-}
-
-// TestBuildRemoteResourcePathDistinctForEscapeBytes is a regression test.
-// The old sanitizer replaced '/', '?', '#', and '%' with '_', so the UID
-// pairs below collapsed to one name. Two resources then wrote the same
-// remote object, and one of them clobbered the other. The percent encoding
-// keeps every pair on a distinct href.
-func TestBuildRemoteResourcePathDistinctForEscapeBytes(t *testing.T) {
-	pairs := [][2]string{
-		{"x/y", "x_y"},
-		{"x?y", "x_y"},
-		{"x#y", "x_y"},
-		{"x%y", "x_y"},
-		{"x/y", "x%2Fy"},
-	}
-	for _, pair := range pairs {
-		a := buildRemoteResourcePath("https://caldav.example.com/cal/", pair[0])
-		b := buildRemoteResourcePath("https://caldav.example.com/cal/", pair[1])
-		if a == b {
-			t.Errorf("UIDs %q and %q map to the same href %q", pair[0], pair[1], a)
-		}
-	}
-
-	// The encoded name must stay one path segment: the href gains no '/'
-	// beyond the calendar collection delimiter.
-	href := buildRemoteResourcePath("https://caldav.example.com/cal/", "x/y")
-	if strings.Count(href, "/") != strings.Count("https://caldav.example.com/cal/x_y.ics", "/") {
-		t.Errorf("href %q adds a path segment; the UID must stay in one segment", href)
-	}
-}
-
-func TestBuildRemoteResourcePathDeterministic(t *testing.T) {
-	a := buildRemoteResourcePath("https://caldav.example.com/cal/", "uid-1")
-	b := buildRemoteResourcePath("https://caldav.example.com/cal/", "uid-1")
-	if a != b {
-		t.Errorf("two calls disagree: %q vs %q; the name must be deterministic so a lost bookkeeping write cannot create a second object for the same UID", a, b)
-	}
-}
-
-func TestBuildRemoteResourcePathEmptyUIDStillWorks(t *testing.T) {
-	overrideRemoteObjectNameGenerator(t, "fallback-name.ics")
-	got := buildRemoteResourcePath("https://caldav.example.com/cal/", "")
-	if !strings.HasSuffix(got, "/fallback-name.ics") {
-		t.Errorf("buildRemoteResourcePath with empty UID = %q, want fallback name suffix", got)
 	}
 }

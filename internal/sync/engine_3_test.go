@@ -4,221 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"io"
-
 	"net/http"
-
 	"strings"
 	"testing"
-
-	"github.com/douglasdemoura/chroncal/internal/storage"
 )
-
-// TestEnginePushSkipsUIDWithOpenConflict verifies that once a prompt-mode
-// conflict has been recorded for a UID, later syncs do not re-PUT the
-// still-dirty resource. They do not insert duplicate sync_conflicts rows. See
-// issue #104. The original code left the resource dirty with its stale ETag.
-// Every tick then issued a wasted failed PUT and appended another conflict row.
-func TestEnginePushSkipsUIDWithOpenConflict(t *testing.T) {
-	t.Parallel()
-
-	engine, db, q := newTestEngine(t)
-	ctx := context.Background()
-
-	cals, err := q.ListCalendars(ctx)
-	if err != nil {
-		t.Fatalf("ListCalendars: %v", err)
-	}
-	calendarID := cals[0].ID
-
-	insertTestEvent(t, db, calendarID, "conflict-event")
-
-	var puts int
-	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
-		switch r.Method {
-		case http.MethodPut:
-			puts++
-			return &http.Response{
-				StatusCode: http.StatusPreconditionFailed,
-				Status:     "412 Precondition Failed",
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader("precondition failed")),
-				Request:    r,
-			}, nil
-		case http.MethodGet:
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Status:     "200 OK",
-				Header: http.Header{
-					"Content-Type": []string{"text/calendar; charset=utf-8"},
-					"Etag":         []string{`"etag-server"`},
-				},
-				Body: io.NopCloser(strings.NewReader(`BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//chroncal//tests//EN
-BEGIN:VEVENT
-UID:conflict-event
-DTSTAMP:20260403T120000Z
-DTSTART:20260403T120000Z
-DTEND:20260403T130000Z
-SUMMARY:Server version
-END:VEVENT
-END:VCALENDAR
-`)),
-				Request: r,
-			}, nil
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-			return nil, nil
-		}
-	})
-
-	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-		CalendarID:   calendarID,
-		Uid:          "conflict-event",
-		OwnerType:    "event",
-		RemoteUrl:    "/calendar/conflict-event.ics",
-		Etag:         `"etag-before"`,
-		Dirty:        1,
-		SyncStrategy: "sync-token",
-	}); err != nil {
-		t.Fatalf("UpsertSyncResource conflict-event: %v", err)
-	}
-
-	// First sync: detects the 412 and records the conflict.
-	if _, err := engine.push(ctx, client, calendarID, "", "", ConflictPrompt, false); err != nil {
-		t.Fatalf("first push: %v", err)
-	}
-	if puts != 1 {
-		t.Fatalf("PUTs after first push = %d, want 1", puts)
-	}
-
-	// Second sync: the conflict is still unresolved, so the resource must be
-	// skipped entirely — no second PUT, no duplicate conflict row. The skip
-	// is counted so callers can report it. Issue #610, invariant: the
-	// count must equal the open rows this pass produced.
-	result, err := engine.push(ctx, client, calendarID, "", "", ConflictPrompt, false)
-	if err != nil {
-		t.Fatalf("second push: %v", err)
-	}
-	if puts != 1 {
-		t.Fatalf("PUTs after second push = %d, want 1 (resource with open conflict must not be re-PUT)", puts)
-	}
-	if result.conflicts != 0 {
-		t.Fatalf("second push conflicts = %d, want 0", result.conflicts)
-	}
-	if result.skippedConflicts != 1 {
-		t.Fatalf("second push skippedConflicts = %d, want 1", result.skippedConflicts)
-	}
-
-	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
-	if err != nil {
-		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
-	}
-	if len(conflicts) != 1 {
-		t.Fatalf("sync conflicts = %d, want 1 (no duplicate rows)", len(conflicts))
-	}
-}
-
-// TestEnginePushLocalEditsRefreshesOpenConflict guards issue #610:
-// opportunistic save-time push. A dirty row with an open conflict must not be
-// skipped: the PUT runs, and the 412 it earns refreshes the recorded local
-// body to the newest edit instead of leaving a stale capture behind. Without
-// the refresh, later writes sit unpushed behind a row whose LocalIcal no
-// longer matches the local edit.
-func TestEnginePushLocalEditsRefreshesOpenConflict(t *testing.T) {
-	t.Parallel()
-
-	engine, db, q := newTestEngine(t)
-	ctx := context.Background()
-
-	cals, err := q.ListCalendars(ctx)
-	if err != nil {
-		t.Fatalf("ListCalendars: %v", err)
-	}
-	calendarID := cals[0].ID
-
-	insertTestEvent(t, db, calendarID, "conflict-event")
-
-	var puts int
-	client := serverWinsConflictClient(t, "conflict-event", &puts)
-
-	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-		CalendarID:   calendarID,
-		Uid:          "conflict-event",
-		OwnerType:    "event",
-		RemoteUrl:    "/calendar/conflict-event.ics",
-		Etag:         `"etag-before"`,
-		Dirty:        1,
-		SyncStrategy: "sync-token",
-	}); err != nil {
-		t.Fatalf("UpsertSyncResource conflict-event: %v", err)
-	}
-
-	// A conflict from an earlier write is already open. Its recorded local
-	// body is stale: the user has edited the row again since.
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
-		CalendarID: calendarID,
-		OwnerType:  "event",
-		Uid:        "conflict-event",
-		LocalIcal:  "stale recorded body",
-		ServerIcal: "old server body",
-		ServerEtag: `"etag-old"`,
-	}); err != nil {
-		t.Fatalf("CreateSyncConflict: %v", err)
-	}
-
-	// The opportunistic push (PushLocalEdits drives push with
-	// opportunistic=true) must PUT anyway.
-	result, err := engine.push(ctx, client, calendarID, "", "", ConflictPrompt, true)
-	if err != nil {
-		t.Fatalf("push: %v", err)
-	}
-	if puts != 1 {
-		t.Fatalf("PUTs = %d, want 1 (open conflict must not block the opportunistic push)", puts)
-	}
-	if result.conflicts != 1 {
-		t.Fatalf("conflicts = %d, want 1", result.conflicts)
-	}
-	if len(result.errors) != 0 {
-		t.Fatalf("errors = %d, want 0", len(result.errors))
-	}
-
-	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calendarID)
-	if err != nil {
-		t.Fatalf("ListSyncConflictsByCalendar: %v", err)
-	}
-	if len(conflicts) != 1 {
-		t.Fatalf("sync conflicts = %d, want 1 (upsert, no duplicate row)", len(conflicts))
-	}
-	wantLocal, err := engine.exportResource(ctx, "event", "conflict-event")
-	if err != nil {
-		t.Fatalf("exportResource: %v", err)
-	}
-	if conflicts[0].LocalIcal != string(wantLocal) {
-		t.Fatalf("LocalIcal = %q, want the refreshed export %q", conflicts[0].LocalIcal, string(wantLocal))
-	}
-	if conflicts[0].ServerEtag != "etag-server" {
-		t.Fatalf("ServerEtag = %q, want the refreshed server etag", conflicts[0].ServerEtag)
-	}
-
-	// The local edit survives: still dirty, never adopted the server body.
-	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "conflict-event"})
-	if err != nil {
-		t.Fatalf("GetSyncResource: %v", err)
-	}
-	if res.Dirty != 1 {
-		t.Fatalf("Dirty = %d, want 1 (opportunistic push never adopts the server body)", res.Dirty)
-	}
-	evt, err := q.GetEventByUID(ctx, "conflict-event")
-	if err != nil {
-		t.Fatalf("GetEventByUID: %v", err)
-	}
-	if evt.Title != "Test conflict-event" {
-		t.Fatalf("Title = %q, want the local title", evt.Title)
-	}
-}
 
 // TestEnginePushConflictRecordFailureSurfacesError guards issue #610: a failed
 // conflict insert must surface as an error and count nothing. The old code
@@ -957,5 +748,155 @@ func TestEnginePushEscapesUIDWhenAssigningNewResourcePath(t *testing.T) {
 	}
 	if res.RemoteUrl != "/calendar/..%2F..%2Fescape.ics" {
 		t.Fatalf("RemoteUrl = %q, want /calendar/..%%2F..%%2Fescape.ics", res.RemoteUrl)
+	}
+}
+
+func TestEnginePushRejectsOffOriginStoredRemoteURL(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "off-origin-push")
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "off-origin-push",
+		OwnerType:    "event",
+		RemoteUrl:    "https://attacker.example/calendar/off-origin-push.ics",
+		Etag:         "",
+		Dirty:        1,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	requests := 0
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		requests++
+		return newResponse(http.StatusCreated, map[string]string{"ETag": `"etag-off-origin"`}), nil
+	})
+
+	result, err := engine.push(ctx, client, calendarID, "/calendar/", "", ConflictServerWins, false)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if result.pushed != 0 {
+		t.Fatalf("pushed = %d, want 0", result.pushed)
+	}
+	if len(result.errors) != 1 {
+		t.Fatalf("errors = %d, want 1", len(result.errors))
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want 0", requests)
+	}
+}
+
+func TestEngineProcessTombstonesRejectsOffOriginRemoteURL(t *testing.T) {
+	t.Parallel()
+
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	if err := q.CreateTombstone(ctx, storage.CreateTombstoneParams{
+		CalendarID: calendarID,
+		Uid:        "off-origin-tombstone",
+		RemoteUrl:  "https://attacker.example/calendar/off-origin-tombstone.ics",
+	}); err != nil {
+		t.Fatalf("CreateTombstone: %v", err)
+	}
+
+	requests := 0
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		requests++
+		return newResponse(http.StatusNoContent, nil), nil
+	})
+
+	result, err := engine.processTombstones(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("processTombstones: %v", err)
+	}
+	if result.deleted != 0 {
+		t.Fatalf("deleted = %d, want 0", result.deleted)
+	}
+	if len(result.errors) != 1 {
+		t.Fatalf("errors = %d, want 1", len(result.errors))
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want 0", requests)
+	}
+}
+
+func TestEnginePullDeletesLocalResourceWhenServerRemovesIt(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "remote-deleted")
+
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          "remote-deleted",
+		OwnerType:    "event",
+		RemoteUrl:    "/calendar/remote-deleted.ics",
+		Etag:         "etag-remote",
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body: io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav"></d:multistatus>`)),
+			Request: r,
+		}, nil
+	})
+
+	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if pullResult.deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", pullResult.deleted)
+	}
+	if pullResult.pulled != 0 {
+		t.Fatalf("pulled = %d, want 0", pullResult.pulled)
+	}
+
+	if _, err := q.GetEventByUID(ctx, "remote-deleted"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetEventByUID err = %v, want sql.ErrNoRows", err)
+	}
+	if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        "remote-deleted",
+	}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetSyncResource err = %v, want sql.ErrNoRows", err)
 	}
 }
