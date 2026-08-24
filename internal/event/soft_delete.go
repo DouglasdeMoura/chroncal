@@ -743,8 +743,6 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 	return err
 }
 
-// it overwrote the master's recurrence_rule in the DB before this runs.
-
 // HasLiveOverrideFrom reports whether any live override of the series has a
 // RECURRENCE-ID at or after from. The --following scope guard uses it: a
 // truncation removes such overrides even when an imported EXDATE hides every
@@ -781,6 +779,7 @@ func (s *Service) HasLiveOverrideFrom(ctx context.Context, uid string, from time
 // bound). Pairs with restoreTruncatedOverrides / restoreTruncatedRDates.
 //
 // prevRRule is the master's pre-truncation RRULE. The caller passes it because
+// it overwrote the master's recurrence_rule in the DB before this runs.
 func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time, prevRRule string) error {
 	uid := master.Uid
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
