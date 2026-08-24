@@ -32,13 +32,66 @@ func osc8Count(s string) int {
 	return strings.Count(s, osc8Introducer)
 }
 
-func hasReverseVideo(s string) bool {
-	sample := lipgloss.NewStyle().Reverse(true).Render("x")
-	i := strings.Index(sample, "x")
-	if i <= 0 {
-		return strings.Contains(s, "\x1b[7m")
+func canonSGR(p string) string {
+	p = strings.TrimLeft(p, "0")
+	if p == "" {
+		return "0"
 	}
-	return strings.Contains(s, sample[:i])
+	return p
+}
+
+func sgrParamSets(s string) []map[string]bool {
+	var sets []map[string]bool
+	for {
+		i := strings.Index(s, "\x1b[")
+		if i < 0 {
+			return sets
+		}
+		s = s[i+2:]
+		j := strings.IndexByte(s, 'm')
+		if j < 0 {
+			return sets
+		}
+		set := make(map[string]bool)
+		for _, p := range strings.Split(s[:j], ";") {
+			set[canonSGR(p)] = true
+		}
+		sets = append(sets, set)
+		s = s[j+1:]
+	}
+}
+
+func hasSGRCode(s, code string) bool {
+	want := canonSGR(code)
+	for _, set := range sgrParamSets(s) {
+		if set[want] {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSGRCodesTogether(s string, codes ...string) bool {
+	for _, set := range sgrParamSets(s) {
+		ok := true
+		for _, c := range codes {
+			if !set[canonSGR(c)] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// hasReverseVideo reports SGR reverse (parameter 7), including combined
+// attributes such as bold+reverse (`\x1b[1;7m`). Matching a lone `\x1b[7m`
+// would miss those sequences.
+func hasReverseVideo(s string) bool {
+	return hasSGRCode(s, "7")
 }
 
 func backgroundSeq(c color.Color) string {

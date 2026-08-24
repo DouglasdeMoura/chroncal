@@ -123,7 +123,9 @@ func TestRenderLinkValue_AppliesRewriterToTargetNotVisibleText(t *testing.T) {
 	assert.Contains(t, out, osc8Open("https://meet.google.com/abc?authuser=me%40example.com"))
 
 	// Visible text (between the OSC 8 open and close) stays the original URL.
-	assert.Contains(t, stripANSI(out), "https://meet.google.com/abc")
+	plain := stripANSI(out)
+	assert.Contains(t, plain, "https://meet.google.com/abc")
+	assert.NotContains(t, plain, "authuser=")
 
 	// MouseMark click target also uses the rewritten URL. mouseSweep must
 	// run first to register the zone with the tracker.

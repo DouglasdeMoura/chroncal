@@ -146,6 +146,7 @@ func TestRenderHTMLDescription_RejectsUnsafeHref(t *testing.T) {
 }
 
 func TestRenderHTMLDescription_ZonesAddMouseMark(t *testing.T) {
+	isolateMouseTracker(t)
 	withZones := strings.Join(renderHTMLDescription(`<a href="https://ok.test">x</a>`, 80, nil, true), "\n")
 	noZones := strings.Join(renderHTMLDescription(`<a href="https://ok.test">x</a>`, 80, nil, false), "\n")
 	// Both render the OSC 8 hyperlink; only the interactive variant adds a

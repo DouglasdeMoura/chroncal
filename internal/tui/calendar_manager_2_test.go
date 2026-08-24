@@ -564,6 +564,7 @@ func TestCalendarManagerDetailLeftPopsAccountToCalendar(t *testing.T) {
 // CalendarVisibilityToggledMsg as the keyboard path. Regression: the mouse
 // branch used to return before the pre/post visibility comparison.
 func TestCalendarManagerDetailVisibilityMouseToggleEmitsDesiredState(t *testing.T) {
+	isolateMouseTracker(t)
 	m := newFlatManager().selectCalendar(1).SetSize(120, 40)
 	pushed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if pushed.calendarForm == nil || pushed.list.IsHidden(1) {
