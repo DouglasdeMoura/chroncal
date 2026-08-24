@@ -65,6 +65,7 @@ type UndoMeta struct {
 // recurrence_id. Undo then un-hides exactly that instance. Without it, undo
 // falls back to a UID-wide restore that would also resurrect other
 // soft-deleted overrides of the same series.
+
 func (s *Service) DeleteWithUndo(ctx context.Context, id int64) (UndoMeta, error) {
 	r, err := s.q.GetEvent(ctx, id)
 	if err != nil {
