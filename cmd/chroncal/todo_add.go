@@ -319,11 +319,6 @@ and percent-complete to 100.`,
 	cmd.Flags().StringArrayVar(&resourceFlags, "resource", nil, "resource needed (e.g. PROJECTOR, WHITEBOARD; repeatable)")
 	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable)")
 	// Aliases
-	cmd.Flags().StringVar(&rrule, "rrule", "", "alias for --recurrence-rule")
-	cmd.Flags().StringArrayVar(&exdates, "exdate", nil, "alias for --exception-date-times")
-	cmd.Flags().StringArrayVar(&rdates, "rdate", nil, "alias for --recurrence-date-times")
-	cmd.Flags().Lookup("rrule").Usage = "alias for --recurrence-rule"
-	cmd.Flags().Lookup("exdate").Usage = "alias for --exception-date-times"
-	cmd.Flags().Lookup("rdate").Usage = "alias for --recurrence-date-times"
+	registerRecurrenceAliases(cmd, &rrule, &exdates, &rdates)
 	return cmd
 }
