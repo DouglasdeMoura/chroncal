@@ -296,7 +296,7 @@ func normalizeRemoteRef(ref string) string {
 // second object for the same UID on a later push. An empty UID uses a
 // random name.
 func buildRemoteResourcePath(calendarRef, uid string) string {
-	name := ""
+	var name string
 	if uid != "" {
 		name = sanitizeRemoteObjectName(uid)
 	} else {
