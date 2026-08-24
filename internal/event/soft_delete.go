@@ -756,6 +756,7 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 //
 // prevRRule is the master's pre-truncation RRULE. The caller passes it because
 // it overwrote the master's recurrence_rule in the DB before this runs.
+
 // HasLiveOverrideFrom reports whether any live override of the series has a
 // RECURRENCE-ID at or after from. The --following scope guard uses it: a
 // truncation removes such overrides even when an imported EXDATE hides every
