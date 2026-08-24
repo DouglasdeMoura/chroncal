@@ -738,6 +738,30 @@ func (s *Service) DeleteInstance(ctx context.Context, uid string, instanceTime t
 // after instanceTime are removed. It sets UNTIL on the RRULE. It soft-deletes
 // any overrides at or after the cutoff. It records the pre-truncation
 // RRULE in event_truncate_deletes so the trash view can restore it atomically.
+// HasLiveOverrideFrom reports whether any live override of the series has a
+// RECURRENCE-ID at or after from. The --following scope guard uses it: a
+// truncation removes such overrides even when an imported EXDATE hides every
+// generated slot, so their presence keeps the scope meaningful.
+func (s *Service) HasLiveOverrideFrom(ctx context.Context, uid string, from time.Time) (bool, error) {
+	rows, err := s.q.ListOverridesByUIDs(ctx, []string{uid})
+	if err != nil {
+		return false, err
+	}
+	for _, r := range rows {
+		if r.DeletedAt != nil || r.RecurrenceID == "" {
+			continue
+		}
+		at, err := timeutil.ParseRecurrenceID(r.RecurrenceID)
+		if err != nil {
+			continue
+		}
+		if !at.Before(from) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTime time.Time) error {
 	_, err := s.deleteFromInstance(ctx, uid, instanceTime)
 	return err
