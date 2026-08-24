@@ -70,18 +70,27 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 				master, mErr := m.app.Events.GetByUID(context.Background(), ev.UID)
 				if mErr != nil {
 					scopeErr = mErr
-				} else {
+				} else if msg.Choice == 0 || msg.Choice == 1 {
+					ok := false
 					switch msg.Choice {
 					case 0:
-						if !recurrence.OccurrenceExistsAt(master, scopeAt) {
-							scopeErr = fmt.Errorf("no occurrence matches %s", scopeAt.Format(time.RFC3339))
-						}
+						ok = recurrence.OccurrenceExistsAt(master, scopeAt)
 					case 1:
-						if !recurrence.HasOccurrenceFrom(master, scopeAt) {
-							scopeErr = fmt.Errorf("no occurrences at or after %s", scopeAt.Format(time.RFC3339))
+						ok = recurrence.HasOccurrenceFrom(master, scopeAt)
+					}
+					if !ok {
+						// A live override at that RECURRENCE-ID stays
+						// deletable even when an imported EXDATE hides the
+						// master slot; the override row is its own key.
+						if _, oErr := m.app.Events.GetByUIDAndRecurrenceID(
+							context.Background(), ev.UID, scopeAt.UTC().Format(time.RFC3339)); oErr != nil {
+							scopeErr = fmt.Errorf("no occurrence matches %s", scopeAt.Format(time.RFC3339))
 						}
 					}
 				}
+			}
+			if scopeErr != nil {
+				return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title, err: scopeErr}
 			}
 			switch msg.Choice {
 			case 0: // This event
