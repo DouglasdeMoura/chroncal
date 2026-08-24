@@ -398,16 +398,18 @@ func TestService_ResolveConflict_ServerPreservesConcurrentEdit(t *testing.T) {
 // TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist is the
 // regression test for issue #510 (a reopen of #494 on the manual path). A
 // local edit that commits in the persist-commit→read window of an accept-server
-// ResolveConflict must not be dropped in silence. The afterImportPersist hook
-// fires inside importICal right after persistImported commits. That is the
-// exact window the old post-commit GetSyncResource re-read exposed. It bumps
-// rev and re-marks dirty as a real service-layer mutation would. The rev is
-// now captured inside persistImported's transaction and fed back via the revs
-// map. It is not re-read after commit. The rev-guarded clear then leaves the
-// resource dirty. With the old after-commit re-read this test fails. The read
-// returns the edit's bumped rev. The guard matches. Dirty is wiped. Serial
-// (no t.Parallel) because it mutates the package-level hook.
+// ResolveConflict must not be dropped in silence. The service engine's
+// afterImportPersist hook fires inside importICal right after persistImported
+// commits. That is the exact window the old post-commit GetSyncResource re-read
+// exposed. It bumps rev and re-marks dirty as a real service-layer mutation
+// would. The rev is now captured inside persistImported's transaction and fed
+// back via the revs map. It is not re-read after commit. The rev-guarded clear
+// then leaves the resource dirty. With the old after-commit re-read this test
+// fails. The read returns the edit's bumped rev. The guard matches. Dirty is
+// wiped.
 func TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist(t *testing.T) {
+	t.Parallel()
+
 	svc, db, q := newTestServiceWithDB(t)
 	ctx := context.Background()
 
@@ -473,13 +475,14 @@ func TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist(t *te
 	// auto-commit write is safe. It bumps rev and re-marks the resource dirty,
 	// exactly as a real service-layer mutation would.
 	var fired int
-	afterImportPersist = func() {
-		fired++
-		if err := storage.MarkResourceDirty(ctx, db, calID, uid, "event"); err != nil {
-			t.Errorf("simulate concurrent edit: %v", err)
-		}
+	svc.engine.testHooks = &engineTestHooks{
+		afterImportPersist: func() {
+			fired++
+			if err := storage.MarkResourceDirty(ctx, db, calID, uid, "event"); err != nil {
+				t.Errorf("simulate concurrent edit: %v", err)
+			}
+		},
 	}
-	t.Cleanup(func() { afterImportPersist = nil })
 
 	conflicts, _ := q.ListSyncConflicts(ctx)
 	if _, err := svc.ResolveConflict(ctx, conflicts[0].ID, "server"); err != nil {

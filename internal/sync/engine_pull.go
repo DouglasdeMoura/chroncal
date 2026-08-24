@@ -1,17 +1,12 @@
 package sync
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
-
-	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/chroncal/internal/caldav"
-	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -144,6 +139,10 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 	// one we stored, so path-based comparison produces false "deleted on
 	// server" signals and nukes healthy local resources.
 	remoteUIDs := make(map[string]bool, len(resources))
+	// persistFailures counts bodies QueryAll delivered but the local store
+	// refused. The accounting mirrors the sync-collection path: a nonzero
+	// count makes the pull incomplete (see the note after the loop).
+	persistFailures := 0
 	for _, res := range resources {
 		resPath, hrefErr := client.CanonicalObjectRef(remoteURL, res.Path)
 		if hrefErr != nil {
@@ -166,76 +165,37 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 		if res.Data == nil {
 			continue
 		}
-		var buf bytes.Buffer
-		enc := ical.NewEncoder(&buf)
-		if err := enc.Encode(res.Data); err != nil {
-			e.logger.Warn("encode fetched resource failed", "path", res.Path, "error", err)
-			continue
+		uid, imported, warnings, persistErr := e.importFetchedResource(ctx, calendarID, tombstonedUIDs, fetchedResource{
+			path: resPath,
+			href: res.Path,
+			etag: res.ETag,
+			data: res.Data,
+		})
+		result.warnings = append(result.warnings, warnings...)
+		if uid != "" {
+			remoteUIDs[uid] = true
 		}
-
-		importResult, err := icalPkg.ImportFileRemote(strings.NewReader(buf.String()))
-		if err != nil {
-			e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
-			continue
-		}
-		result.warnings = append(result.warnings, e.noteImportWarnings(res.Path, importResult)...)
-
-		// Extract UID from imported data
-		uid := extractUID(importResult)
-		if uid == "" {
-			e.logger.Warn("no UID in fetched resource", "path", res.Path)
-			continue
-		}
-		remoteUIDs[uid] = true
-		if tombstonedUIDs[uid] {
-			e.logger.Debug("skip tombstoned remote resource by uid", "uid", uid, "path", resPath)
-			continue
-		}
-		if e.hasOpenConflict(ctx, calendarID, uid) {
-			e.logger.Debug("skip pull: open conflict pending resolution", "uid", uid)
-			// The fetched body is newer than the recorded one. Record it so
-			// a later resolve picks current server data.
-			e.refreshConflictServerBody(ctx, calendarID, uid, buf.String(), res.ETag)
-			continue
-		}
-
-		// Persist imported data to the database
-		ownerType := detectOwnerType(importResult)
-		revs, alarmWarnings, persistErr := e.persistImported(ctx, calendarID, importResult)
 		if persistErr != nil {
-			e.logger.Error("persist imported resource", "uid", uid, "path", res.Path, "error", persistErr)
+			persistFailures++
 			continue
 		}
-		result.warnings = append(result.warnings, e.notePersistWarnings(res.Path, uid, alarmWarnings)...)
-
-		// Upsert sync resource tracking. UpsertSyncResource's ON CONFLICT is
-		// keyed by (calendar_id, uid), so a stale remote_url from a prior
-		// sync cycle (or from our PUT before the server rewrote the href)
-		// gets replaced here with the authoritative server path.
-		if err := e.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-			CalendarID:   calendarID,
-			Uid:          uid,
-			OwnerType:    ownerType,
-			RemoteUrl:    resPath,
-			Etag:         res.ETag,
-			Dirty:        0,
-			SyncStrategy: "sync-token",
-		}); err != nil {
-			e.logger.Error("upsert sync resource", "uid", uid, "error", err)
+		if imported {
+			result.pulled++
 		}
-		// persistImported flips dirty=1 via the Replace* services'
-		// MarkResourceDirty side effect, and UpsertSyncResource's MAX
-		// clause preserves it. Clear dirty — the server's version is now
-		// authoritative — but guard the clear on the rev persistImported
-		// captured inside its transaction so a concurrent local edit is not
-		// silently dropped (issues #417 and #494). See applySyncCollection
-		// for the full note.
-		if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag, revs[uid]); err != nil {
-			e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
-		}
+	}
 
-		result.pulled++
-		e.logger.Debug("pulled resource", "uid", uid, "path", res.Path, "etag", res.ETag)
+	// A persist failure makes this pull incomplete, with the same
+	// accounting as the sync-collection path: the failed resource keeps its
+	// old etag so the next snapshot re-fetches the change, and the error
+	// below withholds the healthy-sync stamp (LastSyncAt stays unset and
+	// LastSyncError records why). This path stores no sync-token by
+	// construction, so no token can advance past the failure. The surfaced
+	// error is what stops a persist that never converges on a fallback
+	// server from masquerading as a clean sync.
+	if persistFailures > 0 {
+		e.logger.Warn("incomplete full-snapshot pull", "calendar_id", calendarID, "persist_failures", persistFailures)
+		result.errors = append(result.errors, fmt.Errorf(
+			"incomplete pull: %d persist failure(s) on the full-snapshot path", persistFailures))
 	}
 
 	// Deletions go through the same chokepoint as the sync-collection path.

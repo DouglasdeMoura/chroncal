@@ -74,9 +74,9 @@ Case-insensitive Unicode search uses FTS5 (`unicode61 remove_diacritics 2` token
 
 Do not add `strings.ToLower` case folding. That fold is simple case folding only. It does not match the diacritic-insensitive FTS tokenizer.
 
-`backfillAlarmUIDs` in `connect.go` assigns UUIDs to alarms from the pre-UID schema. The function runs on every startup. It does nothing when all alarms have UIDs.
+`Open` in `connect.go` composes four phases: `openDB` in `open.go` (connection settings), `runMigrations` in `migrate.go`, `ensureCredentialNamespace` in `credentials.go`, and the heal steps. The declared `healSteps` slice in `heal.go` holds every startup heal in run order. Each heal is idempotent and lives in its own file. `backfillAlarmUIDs` in `heal_alarm_uids.go` assigns UUIDs to alarms from the pre-UID schema. The function runs on every startup. It does nothing when all alarms have UIDs.
 
-SQLite pragmas in `connect.go:Open()`:
+SQLite pragmas in `open.go:openDB()`:
 
 - WAL mode
 - foreign keys ON
