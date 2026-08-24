@@ -229,7 +229,7 @@ linked to one CalDAV account. The two flags are mutually exclusive.`,
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "Sync only this calendar")
 	cmd.Flags().StringVar(&accountName, "account", "", "Sync only calendars linked to this account")
-	cmd.Flags().StringVar(&conflict, "conflict", "server-wins", "Conflict strategy: server-wins or prompt (default: the sync.conflict_strategy config value; unset means prompt)")
+	cmd.Flags().StringVar(&conflict, "conflict", "", "Conflict strategy: server-wins or prompt (default: the sync.conflict_strategy config value, which defaults to prompt)")
 	mutuallyExclusive(cmd, "calendar", "account")
 	return cmd
 }

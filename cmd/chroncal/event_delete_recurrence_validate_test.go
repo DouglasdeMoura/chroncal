@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -72,7 +73,8 @@ func TestEventDelete_MovedOverrideOriginalSlotSucceeds(t *testing.T) {
 
 	const orig = "2026-09-02T10:00:00Z"
 	if _, _, err := runChroncalCommand(t, "event", "update", master.UID,
-		"--recurrence-id", orig, "--title", "Moved slot"); err != nil {
+		"--recurrence-id", orig, "--date", "2026-09-07", "--time", "15:00",
+		"--title", "Moved slot"); err != nil {
 		t.Fatalf("create override: %v", err)
 	}
 
@@ -104,3 +106,38 @@ func TestEventDelete_MovedOverrideOriginalSlotSucceeds(t *testing.T) {
 		}
 	}
 }
+
+// TestEventDelete_OverrideRowIDCannotPhantomExdate guards the numeric-ID
+// path: a reference that resolves to an override row must validate against
+// its series master, so deleting at the moved display start fails instead of
+// writing an EXDATE for a slot the master never generates (issue #745).
+func TestEventDelete_OverrideRowIDCannotPhantomExdate(t *testing.T) {
+	t.Setenv("TZ", "UTC")
+	dbPath := setupCalendarCLITestEnv(t)
+	master := addOverrideGapSeries(t)
+
+	const orig = "2026-09-02T10:00:00Z"
+	if _, _, err := runChroncalCommand(t, "event", "update", master.UID,
+		"--recurrence-id", orig, "--date", "2026-09-07", "--time", "15:00"); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	a := openPlaintextApp(t, dbPath)
+	override, err := a.Events.GetByUIDAndRecurrenceID(t.Context(), master.UID, orig)
+	if err != nil {
+		t.Fatalf("override row missing: %v", err)
+	}
+	a.Close()
+
+	_, stderr, err := runChroncalCommand(t,
+		"event", "delete", strconvFormat(override.ID),
+		"--recurrence-id", "2026-09-07T15:00:00Z", "--yes")
+	if err == nil {
+		t.Fatal("delete at the moved time via the override row ID must fail")
+	}
+	if !strings.Contains(stderr, "no occurrence of") {
+		t.Fatalf("stderr = %q, want the no-occurrence error", stderr)
+	}
+}
+
+func strconvFormat(id int64) string { return fmt.Sprintf("%d", id) }

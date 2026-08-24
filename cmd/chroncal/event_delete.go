@@ -53,6 +53,10 @@ var eventResource = resource{
 // The check runs on the raw rule set, so the original RECURRENCE-ID of a moved
 // override stays deletable.
 func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at time.Time) error {
+	master, err := masterForScope(ctx, a, master)
+	if err != nil {
+		return err
+	}
 	if recurrence.OccurrenceExistsAt(master, at) {
 		return nil
 	}
@@ -67,10 +71,32 @@ func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at
 // requireOccurrenceFrom verifies that truncating at at removes at least one
 // instance, so --following cannot silently do nothing.
 func requireOccurrenceFrom(ctx context.Context, a *app.App, master event.Event, at time.Time) error {
+	master, err := masterForScope(ctx, a, master)
+	if err != nil {
+		return err
+	}
 	if recurrence.HasOccurrenceFrom(master, at) {
 		return nil
 	}
+	// Truncation also removes every live override at or after the cutoff,
+	// so one of those makes the scope meaningful even when an imported
+	// EXDATE hides every generated slot.
+	hasOverride, oErr := a.Events.HasLiveOverrideFrom(ctx, master.UID, at)
+	if oErr == nil && hasOverride {
+		return nil
+	}
 	return noSuchOccurrenceErr(master, at)
+}
+
+// masterForScope resolves a numeric-ID reference that hit an override row to
+// its series master. The scope validators reason about the raw rule set;
+// validating against an override's own (empty) rule set would let a moved
+// display start pass and write a phantom EXDATE.
+func masterForScope(ctx context.Context, a *app.App, resolved event.Event) (event.Event, error) {
+	if resolved.RecurrenceID == "" {
+		return resolved, nil
+	}
+	return a.Events.GetByUID(ctx, resolved.UID)
 }
 
 func noSuchOccurrenceErr(master event.Event, at time.Time) error {

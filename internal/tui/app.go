@@ -628,7 +628,7 @@ func (m Model) Init() tea.Cmd {
 // occurrence and opens its view dialog after the first load.
 // SyncConflictStrategy is the configured full-pass strategy name (from
 // cfg.Sync.ConflictStrategy). An empty or invalid name falls back to
-// server-wins.
+// prompt.
 type RunOptions struct {
 	Event                event.Event
 	WeekStart            time.Weekday
