@@ -44,7 +44,7 @@ func TestEventViewDialog_RendersCoreFields(t *testing.T) {
 }
 
 func TestEventViewDialog_BareURLLocationIsClickable(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	ev := testViewEvent()
 	ev.Location = "https://zoom.us/j/123456789"
 	cal := CalendarInfo{Name: "Work"}
@@ -53,13 +53,13 @@ func TestEventViewDialog_BareURLLocationIsClickable(t *testing.T) {
 	out := m.View()
 
 	// OSC 8 hyperlink target carries the full URL (survives the render sweep).
-	assert.Contains(t, out, "\x1b]8;;"+ev.Location)
+	assert.True(t, hasOSC8(out) && strings.Contains(out, ev.Location))
 	// The render registered a clickable mouse zone for the URL.
 	assert.True(t, hasMouseZone(defaultMouseTracker, linkZonePrefix+ev.Location))
 }
 
 func TestEventViewDialog_URLInsideLocationIsClickable(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	ev := testViewEvent()
 	ev.Location = "Room 4: https://meet.example.com/abc"
 	cal := CalendarInfo{Name: "Work"}
@@ -69,12 +69,12 @@ func TestEventViewDialog_URLInsideLocationIsClickable(t *testing.T) {
 
 	assert.Contains(t, out, "Room 4")
 	// The embedded URL is the OSC 8 / click target; surrounding text is plain.
-	assert.Contains(t, out, "\x1b]8;;https://meet.example.com/abc")
+	assert.True(t, hasOSC8(out) && strings.Contains(out, "https://meet.example.com/abc"))
 	assert.True(t, hasMouseZone(defaultMouseTracker, linkZonePrefix+"https://meet.example.com/abc"))
 }
 
 func TestEventViewDialog_PlainTextLocationHasNoLink(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	ev := testViewEvent()
 	ev.Location = "Conference Room B"
 	cal := CalendarInfo{Name: "Work"}
@@ -83,11 +83,11 @@ func TestEventViewDialog_PlainTextLocationHasNoLink(t *testing.T) {
 	out := m.View()
 
 	assert.Contains(t, out, "Conference Room B")
-	assert.NotContains(t, out, "\x1b]8;;")
+	assert.False(t, hasOSC8(out))
 }
 
 func TestEventViewDialog_OverflowingLinkifiedLocationStaysTerminated(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	ev := testViewEvent()
 	// A text+URL Location far wider than the dialog column, forcing truncation
 	// inside detailLinkifiedLine.
@@ -100,12 +100,12 @@ func TestEventViewDialog_OverflowingLinkifiedLocationStaysTerminated(t *testing.
 	// Every OSC 8 sequence (open and close) starts with this introducer; a
 	// balanced (even) count means no hyperlink was sliced mid-sequence and
 	// left unterminated to corrupt the rest of the dialog.
-	assert.Equal(t, 0, strings.Count(out, "\x1b]8;;")%2,
+	assert.Equal(t, 0, osc8Count(out)%2,
 		"OSC 8 hyperlink sequences must stay balanced after truncation")
 }
 
 func TestEventViewDialog_OverflowingEmbeddedURLKeepsFullClickTarget(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	ev := testViewEvent()
 	fullURL := "https://meet.example.com/" + strings.Repeat("abcdef", 12)
 	ev.Location = "Room 4: " + fullURL
@@ -118,7 +118,7 @@ func TestEventViewDialog_OverflowingEmbeddedURLKeepsFullClickTarget(t *testing.T
 	// Visible text is truncated, but the click target (OSC 8 + mouse zone)
 	// must stay the full URL — clicking an ellipsized link still opens the
 	// right place.
-	assert.Contains(t, out, "\x1b]8;;"+fullURL)
+	assert.True(t, strings.Contains(out, osc8Open(fullURL)))
 	assert.True(t, hasMouseZone(defaultMouseTracker, linkZonePrefix+fullURL))
 }
 

@@ -23,12 +23,12 @@ func TestTrimURLTail_StripsTrailingPunctuation(t *testing.T) {
 }
 
 func TestLinkifyText_WrapsURLsWithOSC8AndMouseZone(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	in := "see https://example.com/foo for details."
 	out := linkifyText(in, nil)
 
-	assert.Contains(t, out, "\x1b]8;;https://example.com/foo\x1b\\", "expected OSC 8 hyperlink open")
-	assert.Contains(t, out, "\x1b]8;;\x1b\\", "expected OSC 8 hyperlink close")
+	assert.Contains(t, out, osc8Open("https://example.com/foo"), "expected OSC 8 hyperlink open")
+	assert.Contains(t, out, osc8Close(), "expected OSC 8 hyperlink close")
 	assert.True(t, strings.HasSuffix(out, " for details."), "trailing text should remain")
 
 	// mouseSweep removes the markers and records a clickable zone.
@@ -42,7 +42,7 @@ func TestLinkifyText_WrapsURLsWithOSC8AndMouseZone(t *testing.T) {
 }
 
 func TestLinkifyText_PreservesTrailingPunctuationOutsideZone(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	out := linkifyText("Open https://example.com.", nil)
 	cleaned := mouseSweep(out)
 	assert.True(t, strings.HasSuffix(cleaned, "."), "period should survive outside link, got %q", cleaned)
@@ -114,16 +114,18 @@ func TestIsGoogleAccountServer(t *testing.T) {
 }
 
 func TestRenderLinkValue_AppliesRewriterToTargetNotVisibleText(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	rw := googleAuthuserRewriter("me@example.com")
 	out := renderLinkValue("https://meet.google.com/abc", 80, rw, true)
 
 	// OSC 8 target carries the rewritten URL so modifier-click in honoring
 	// terminals opens the right account.
-	assert.Contains(t, out, "\x1b]8;;https://meet.google.com/abc?authuser=me%40example.com\x1b\\")
+	assert.Contains(t, out, osc8Open("https://meet.google.com/abc?authuser=me%40example.com"))
 
 	// Visible text (between the OSC 8 open and close) stays the original URL.
-	assert.Contains(t, out, "\\https://meet.google.com/abc\x1b]8;;")
+	plain := stripANSI(out)
+	assert.Contains(t, plain, "https://meet.google.com/abc")
+	assert.NotContains(t, plain, "authuser=")
 
 	// MouseMark click target also uses the rewritten URL. mouseSweep must
 	// run first to register the zone with the tracker.
@@ -133,35 +135,35 @@ func TestRenderLinkValue_AppliesRewriterToTargetNotVisibleText(t *testing.T) {
 }
 
 func TestRenderLinkValue_KeepsExactTargetForTrailingSubDelimiter(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	// A structured URL field whose value legitimately ends in a URL
 	// sub-delimiter must keep that character in the click target — the prose
 	// trimURLTail behavior would wrongly drop it.
 	raw := "https://example.com/confirm!"
 	out := renderLinkValue(raw, 80, nil, true)
 
-	assert.Contains(t, out, "\x1b]8;;"+raw+"\x1b\\", "OSC 8 target must keep the trailing '!'")
+	assert.Contains(t, out, osc8Open(raw), "OSC 8 target must keep the trailing '!'")
 
 	_ = mouseSweep(out)
 	assert.Equal(t, "link:"+raw, mouseResolve(0, 0), "mouse target must keep the trailing '!'")
 }
 
 func TestRenderLinkValue_WrapsNonHTTPScheme(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	// Known URI fields may hold non-http schemes (an imported CONFERENCE
 	// zoommtg:// link, a mailto: URL). renderLinkValue wraps the whole value
 	// regardless of scheme rather than regressing to plain text.
 	raw := "zoommtg://zoom.us/join?confno=123"
 	out := renderLinkValue(raw, 80, nil, true)
 
-	assert.Contains(t, out, "\x1b]8;;"+raw+"\x1b\\", "non-http URI must still get an OSC 8 link")
+	assert.Contains(t, out, osc8Open(raw), "non-http URI must still get an OSC 8 link")
 
 	_ = mouseSweep(out)
 	assert.Equal(t, "link:"+raw, mouseResolve(0, 0))
 }
 
 func TestRenderLinkifiedValue_TruncationMidURLKeepsFullClickTarget(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	value := "https://example.com/really/long/path/that/overflows"
 
 	out := renderLinkifiedValue(value, 20, nil, true)
@@ -172,7 +174,7 @@ func TestRenderLinkifiedValue_TruncationMidURLKeepsFullClickTarget(t *testing.T)
 }
 
 func TestRenderLinkifiedValue_TwoURLsSecondTruncatedAwayFirstStillClickable(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	first := "https://one.example.com/path"
 	second := "https://two.example.com/path"
 	value := "See " + first + " and " + second
@@ -186,7 +188,7 @@ func TestRenderLinkifiedValue_TwoURLsSecondTruncatedAwayFirstStillClickable(t *t
 }
 
 func TestRenderLinkifiedValue_TrailingPunctuationAfterTruncateToStaysOutsideZone(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	value := "Open https://example.com/path), and additional text"
 
 	out := renderLinkifiedValue(value, 34, nil, true)
@@ -195,7 +197,7 @@ func TestRenderLinkifiedValue_TrailingPunctuationAfterTruncateToStaysOutsideZone
 	punctX := len("Open ") + len(url)
 
 	assert.Contains(t, cleaned, url)
-	assert.Contains(t, cleaned, "\x1b]8;;\x1b\\),")
+	assert.Contains(t, cleaned, osc8Close()+"),")
 	assert.Equal(t, "link:"+url, mouseResolve(len("Open ")+3, 0))
 	assert.Equal(t, "", mouseResolve(punctX, 0))
 }

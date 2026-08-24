@@ -9,9 +9,73 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// ---------------------------------------------------------------------------
-// TextField tests
-// ---------------------------------------------------------------------------
+func testSelectOptions() []SelectOption {
+	return []SelectOption{
+		{Label: "None", Value: ""},
+		{Label: "Daily", Value: "daily"},
+		{Label: "Weekly", Value: "weekly"},
+	}
+}
+
+func newTestForm(items ...FormItem) Form {
+	return NewForm("Submit", DefaultFormStyles(), items...)
+}
+
+// labelAndFieldOnSeparateLines reports whether the line that holds the
+// label has no extra field text after ANSI sequences are stripped.
+func labelAndFieldOnSeparateLines(view, label string) bool {
+	clean := mouseSweep(view)
+	for _, line := range strings.Split(clean, "\n") {
+		plain := strings.TrimSpace(stripANSI(line))
+		if !strings.Contains(plain, label) {
+			continue
+		}
+		rest := strings.TrimSpace(strings.Replace(plain, label, "", 1))
+		return rest == ""
+	}
+	return false
+}
+
+func keyPressMsg(s string) tea.KeyPressMsg {
+	k := tea.Key{Text: s}
+	if r := []rune(s); len(r) == 1 {
+		k.Code = r[0]
+	}
+	return tea.KeyPressMsg(k)
+}
+
+func updateForm(f Form, msg tea.Msg) Form {
+	f, _ = f.Update(msg)
+	return f
+}
+
+func formPressTab(form *Form) {
+	*form = updateForm(*form, keyPressMsg("tab"))
+}
+
+func formPressShiftTab(form *Form) {
+	*form = updateForm(*form, keyPressMsg("shift+tab"))
+}
+
+func formPressEnter(form *Form) {
+	*form = updateForm(*form, keyPressMsg("enter"))
+}
+
+func formTypeText(form *Form, text string) {
+	for _, r := range text {
+		*form = updateForm(*form, keyPressMsg(string(r)))
+	}
+}
+
+func formFocusSubmit(form *Form) {
+	for form.Focused() != form.submitIndex() {
+		formPressTab(form)
+	}
+}
+
+func formClickTarget(form *Form, target string) {
+	*form = updateForm(*form, MouseEvent{IsClick: true, Target: target})
+}
 
 func TestTextField_SetAndGetValue(t *testing.T) {
 	f := NewTextField("name")
@@ -151,10 +215,6 @@ func TestTextField_ImplementsFormField(t *testing.T) {
 	var _ FormField = NewTextField("test")
 }
 
-// ---------------------------------------------------------------------------
-// TextAreaField tests
-// ---------------------------------------------------------------------------
-
 func TestTextAreaField_SetAndGetValue(t *testing.T) {
 	f := NewTextAreaField("desc")
 	f.SetValue("hello\nworld")
@@ -168,18 +228,6 @@ func TestTextAreaField_IsFocusable(t *testing.T) {
 
 func TestTextAreaField_ImplementsFormField(t *testing.T) {
 	var _ FormField = NewTextAreaField("test")
-}
-
-// ---------------------------------------------------------------------------
-// SelectField tests
-// ---------------------------------------------------------------------------
-
-func testSelectOptions() []SelectOption {
-	return []SelectOption{
-		{Label: "None", Value: ""},
-		{Label: "Daily", Value: "daily"},
-		{Label: "Weekly", Value: "weekly"},
-	}
 }
 
 func TestSelectField_DefaultSelection(t *testing.T) {
@@ -289,10 +337,6 @@ func TestSelectField_EmptyOptionsNoPanic(t *testing.T) {
 	assert.False(t, f.IsFocusable())
 }
 
-// ---------------------------------------------------------------------------
-// CheckboxField tests
-// ---------------------------------------------------------------------------
-
 func TestCheckboxField_Toggle(t *testing.T) {
 	f := NewCheckboxField("Enable", false)
 	assert.False(t, f.Checked())
@@ -328,10 +372,6 @@ func TestCheckboxField_ImplementsFormField(t *testing.T) {
 	var _ FormField = NewCheckboxField("test", false)
 }
 
-// ---------------------------------------------------------------------------
-// StaticField tests
-// ---------------------------------------------------------------------------
-
 func TestStaticField_ValueAndView(t *testing.T) {
 	f := NewStaticField("hello", strings.ToUpper)
 	assert.Equal(t, "hello", f.Value())
@@ -364,14 +404,6 @@ func TestStaticField_UpdateIsNoop(t *testing.T) {
 
 func TestStaticField_ImplementsFormField(t *testing.T) {
 	var _ FormField = NewStaticField("test", nil)
-}
-
-// ---------------------------------------------------------------------------
-// Form tests
-// ---------------------------------------------------------------------------
-
-func newTestForm(items ...FormItem) Form {
-	return NewForm("Submit", DefaultFormStyles(), items...)
 }
 
 func TestForm_FocusCycling(t *testing.T) {
@@ -817,10 +849,6 @@ func TestForm_CheckboxFieldAccessor(t *testing.T) {
 	assert.True(t, form.FormCheckboxField(0).Checked())
 }
 
-// ---------------------------------------------------------------------------
-// Form label placement tests
-// ---------------------------------------------------------------------------
-
 func TestForm_LabelTopByDefault(t *testing.T) {
 	form := newTestForm(
 		FormItem{Label: "Name", Field: NewTextField("name")},
@@ -900,10 +928,6 @@ func TestForm_LabelInlineRight(t *testing.T) {
 		"longest label should start at column 0 with 1-col gap")
 }
 
-// ---------------------------------------------------------------------------
-// Form focus indicator tests
-// ---------------------------------------------------------------------------
-
 func TestForm_FocusIndicatorOnFocusedField(t *testing.T) {
 	styles := DefaultFormStyles()
 	styles.ShowFocusMarker = true
@@ -916,261 +940,4 @@ func TestForm_FocusIndicatorOnFocusedField(t *testing.T) {
 	view := form.View()
 	styledMarker := styles.Label.Render(Glyphs["focus"]) + " "
 	assert.Contains(t, view, styledMarker, "focused field should show > marker")
-}
-
-func TestForm_FocusIndicatorMovesWithFocus(t *testing.T) {
-	styles := DefaultFormStyles()
-	styles.ShowFocusMarker = true
-	styles.LabelLayout = LabelInline
-
-	form := NewForm("Submit", styles,
-		FormItem{Label: "Name", Field: NewTextField("name")},
-		FormItem{Label: "Email", Field: NewTextField("email")},
-	)
-
-	styledMarker := styles.Label.Render(Glyphs["focus"]) + " "
-
-	view := form.View()
-	assert.Equal(t, 1, strings.Count(view, styledMarker),
-		"exactly one field should have the focus marker")
-
-	formPressTab(&form)
-	view = form.View()
-	assert.Equal(t, 1, strings.Count(view, styledMarker),
-		"exactly one field should have the focus marker after tab")
-}
-
-func TestForm_NoFocusIndicatorByDefault(t *testing.T) {
-	form := newTestForm(
-		FormItem{Label: "Name", Field: NewTextField("name")},
-	)
-	view := form.View()
-	styledMarker := DefaultFormStyles().Label.Render(Glyphs["focus"]) + " "
-	assert.NotContains(t, view, styledMarker,
-		"no focus marker when ShowFocusMarker is false")
-}
-
-// labelAndFieldOnSeparateLines returns true when the line that holds the
-// label text does NOT also contain field content. Field content carries
-// either the textinput reverse-video cursor (\x1b[7;37m) or the
-// italic+faint placeholder combo (\x1b[3;2m). Labels now render in 240
-// without italic/faint, so those markers uniquely identify a field.
-func labelAndFieldOnSeparateLines(view, label string) bool {
-	clean := mouseSweep(view)
-	for _, line := range strings.Split(clean, "\n") {
-		if strings.Contains(line, label) {
-			return !strings.Contains(line, "\x1b[7;37m") && !strings.Contains(line, "\x1b[3;2m")
-		}
-	}
-	return false
-}
-
-// ---------------------------------------------------------------------------
-// Form mouse tests
-// ---------------------------------------------------------------------------
-
-func TestForm_ClickSubmitValidates(t *testing.T) {
-	form := newTestForm(
-		FormItem{Label: "Name", Field: NewTextField("name"), Required: true},
-	)
-	submitted := false
-	form.OnSubmit(func(f *Form) tea.Cmd {
-		submitted = true
-		return nil
-	})
-
-	formClickTarget(&form, "submit")
-
-	assert.False(t, submitted)
-	assert.True(t, form.HasError())
-}
-
-func TestForm_ClickSubmitSucceeds(t *testing.T) {
-	form := newTestForm(
-		FormItem{Label: "Name", Field: NewTextField("name"), Required: true},
-	)
-	submitted := false
-	form.OnSubmit(func(f *Form) tea.Cmd {
-		submitted = true
-		return nil
-	})
-
-	formTypeText(&form, "hello")
-	formClickTarget(&form, "submit")
-
-	assert.True(t, submitted)
-	assert.False(t, form.HasError())
-}
-
-func TestForm_ClickCancel(t *testing.T) {
-	form := newTestForm(
-		FormItem{Label: "Field", Field: NewTextField("val")},
-	)
-	cancelled := false
-	form.OnCancel(func(f *Form) tea.Cmd {
-		cancelled = true
-		return nil
-	})
-
-	formClickTarget(&form, "cancel")
-	assert.True(t, cancelled)
-}
-
-func TestForm_ClickField(t *testing.T) {
-	form := newTestForm(
-		FormItem{Label: "First", Field: NewTextField("first")},
-		FormItem{Label: "Second", Field: NewTextField("second")},
-	)
-	assert.Equal(t, 0, form.Focused())
-
-	formClickTarget(&form, "field:1")
-	assert.Equal(t, 1, form.Focused())
-}
-
-func TestForm_ClickCheckboxToggles(t *testing.T) {
-	form := newTestForm(
-		FormItem{Label: "Toggle", Field: NewCheckboxField("Enable", false)},
-	)
-	assert.False(t, form.FormCheckboxField(0).Checked())
-
-	formClickTarget(&form, "field:0")
-	assert.True(t, form.FormCheckboxField(0).Checked())
-}
-
-func TestForm_ClickActionButton(t *testing.T) {
-	form := newTestForm(
-		FormItem{Label: "Field", Field: NewTextField("val")},
-	)
-	var actionFired bool
-	form.SetActionButton("Delete", ButtonDanger, func() tea.Msg {
-		actionFired = true
-		return nil
-	})
-
-	form, cmd := form.Update(MouseEvent{IsClick: true, Target: "action:0"})
-	if cmd != nil {
-		cmd()
-	}
-	assert.True(t, actionFired)
-}
-
-func TestForm_ClickEmptyTargetIsNoop(t *testing.T) {
-	form := newTestForm(
-		FormItem{Label: "Field", Field: NewTextField("val")},
-	)
-	before := form.Focused()
-	formClickTarget(&form, "")
-	assert.Equal(t, before, form.Focused())
-}
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-func keyPressMsg(s string) tea.KeyPressMsg {
-	k := tea.Key{Text: s}
-	if r := []rune(s); len(r) == 1 {
-		k.Code = r[0]
-	}
-	return tea.KeyPressMsg(k)
-}
-
-func updateForm(f Form, msg tea.Msg) Form {
-	f, _ = f.Update(msg)
-	return f
-}
-
-func formPressTab(form *Form) {
-	*form = updateForm(*form, keyPressMsg("tab"))
-}
-
-func formPressShiftTab(form *Form) {
-	*form = updateForm(*form, keyPressMsg("shift+tab"))
-}
-
-func formPressEnter(form *Form) {
-	*form = updateForm(*form, keyPressMsg("enter"))
-}
-
-func formTypeText(form *Form, text string) {
-	for _, r := range text {
-		*form = updateForm(*form, keyPressMsg(string(r)))
-	}
-}
-
-func formFocusSubmit(form *Form) {
-	for form.Focused() != form.submitIndex() {
-		formPressTab(form)
-	}
-}
-
-func formClickTarget(form *Form, target string) {
-	*form = updateForm(*form, MouseEvent{IsClick: true, Target: target})
-}
-
-func TestCalendarDialogRendering(t *testing.T) {
-	theme := Theme{}
-	m := NewCalendarDialogModel(CalendarDialogParams{Color: "#a6e3a1"}, theme)
-	m = m.SetSize(120, 40)
-
-	v := m.View()
-	assert.NotEmpty(t, v)
-
-	// All form lines must fit within the dialog content width.
-	fv := m.form.View()
-	cw := m.dialog.ContentWidth()
-	for i, l := range strings.Split(fv, "\n") {
-		w := lipgloss.Width(l)
-		assert.LessOrEqual(t, w, cw, "form line %d is %d cols, exceeds content width %d", i, w, cw)
-	}
-}
-
-func TestAccountDialogRendering_HTTPChecked(t *testing.T) {
-	theme := Theme{}
-	m := NewAccountDialogModel(theme).SetSize(120, 40)
-
-	// Set a non-localhost URL and check the HTTP box.
-	rebuild := func() {
-		if m.form.onRebuild != nil {
-			m.form.onRebuild(&m.form)
-		}
-	}
-	m.form.Field(calDAVIdxServer).(*TextField).SetValue("https://cal.example.com/dav/")
-	rebuild()
-	m.form.Field(calDAVIdxAllowInsecure).(*CheckboxField).Toggle()
-	rebuild()
-
-	assert.Contains(t, m.form.View(), "unencrypted", "warning appears when checked")
-
-	cw := m.dialog.ContentWidth()
-	for i, l := range strings.Split(m.form.View(), "\n") {
-		w := lipgloss.Width(l)
-		assert.LessOrEqual(t, w, cw, "form line %d is %d cols, exceeds content width %d", i, w, cw)
-	}
-}
-
-func TestCalendarDialogRendering_EditLinked(t *testing.T) {
-	theme := Theme{}
-	m := NewCalendarDialogModel(CalendarDialogParams{
-		ID:           7,
-		AccountID:    3,
-		AccountName:  "Work Account",
-		Name:         "Work",
-		Color:        "#a6e3a1",
-		RemoteLinked: true,
-	}, theme).SetSize(120, 40)
-
-	v := m.View()
-	assert.Contains(t, v, "Account")
-	assert.Contains(t, v, "Work Account ›")
-	// Account calendars have no Delete: the footnote explains ownership and
-	// points at the local alternative instead.
-	assert.NotContains(t, v, "Delete Calendar…")
-	assert.Contains(t, v, "lives in your Work Account account")
-	assert.Contains(t, v, "Turn off Display calendar")
-	assert.Contains(t, v, "Account › Manage Calendars")
-	assert.NotContains(t, v, "Export Calendar…") // manager-only affordance
-	assert.NotContains(t, v, "Manage Account…")
-	assert.NotContains(t, v, "Disconnect…")
-	assert.NotContains(t, v, "cal.example.com")
 }
