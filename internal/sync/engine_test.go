@@ -846,3 +846,25 @@ func TestEnginePersistImportedKeepsDirtyOnChildReplaceError(t *testing.T) {
 		t.Fatalf("resource %q no longer dirty after child-replace failure; sync would never retry", uid)
 	}
 }
+
+// TestParseConflictStrategy_EmptyMeansPrompt pins the safe default: an unset
+// strategy must resolve to prompt, never to the destructive server-wins mode
+// (issue #744).
+func TestParseConflictStrategy_EmptyMeansPrompt(t *testing.T) {
+	got, err := ParseConflictStrategy("")
+	if err != nil {
+		t.Fatalf("empty strategy: %v", err)
+	}
+	if got != ConflictPrompt {
+		t.Fatalf("empty strategy = %q, want prompt", got)
+	}
+	if got, err := ParseConflictStrategy("prompt"); err != nil || got != ConflictPrompt {
+		t.Fatalf("prompt = %q err=%v", got, err)
+	}
+	if got, err := ParseConflictStrategy("server-wins"); err != nil || got != ConflictServerWins {
+		t.Fatalf("server-wins = %q err=%v", got, err)
+	}
+	if _, err := ParseConflictStrategy("nonsense"); err == nil {
+		t.Fatal("invalid name must error")
+	}
+}

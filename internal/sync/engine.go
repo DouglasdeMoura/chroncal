@@ -94,13 +94,14 @@ const (
 )
 
 // ParseConflictStrategy maps a configured strategy name to its constant. An
-// empty name means the default, server-wins. Any other name is an error.
+// empty name means unset and resolves to prompt, the safe default.
+// Server-wins is an explicit opt-in (issue #744). Any other name is an error.
 func ParseConflictStrategy(s string) (ConflictStrategy, error) {
 	switch ConflictStrategy(s) {
-	case "", ConflictServerWins:
-		return ConflictServerWins, nil
-	case ConflictPrompt:
+	case "", ConflictPrompt:
 		return ConflictPrompt, nil
+	case ConflictServerWins:
+		return ConflictServerWins, nil
 	default:
 		return "", fmt.Errorf("invalid conflict strategy %q (use %q or %q)",
 			s, ConflictServerWins, ConflictPrompt)

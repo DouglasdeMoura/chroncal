@@ -195,3 +195,20 @@ func TestRootCommandDoesNotRegisterTopLevelTick(t *testing.T) {
 		}
 	}
 }
+
+// TestBakedConflictStrategyOmitsPromptDefault guards the issue #744 review
+// fix: the prompt default must not be baked into installed units. A unit with
+// CHRONCAL_SYNC_CONFLICT_STRATEGY=prompt would pin the value at install time,
+// so a later config.toml edit would be silently ignored until reinstall.
+func TestBakedConflictStrategyOmitsPromptDefault(t *testing.T) {
+	cases := map[string]string{
+		"":            "", // unset -> prompt default -> nothing baked
+		"prompt":      "",
+		"server-wins": "server-wins",
+	}
+	for in, want := range cases {
+		if got := bakedConflictStrategy(in); got != want {
+			t.Errorf("bakedConflictStrategy(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

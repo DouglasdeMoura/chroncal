@@ -164,8 +164,10 @@ back to every 15 minutes when it is unset.`,
 				}
 			}
 			// The configured strategy is interpolated into the service
-			// environment, so reject an invalid name here. An empty name is
-			// the server-wins default and stays valid.
+			// environment, so reject an invalid name here. The prompt
+			// default is NOT baked in: the unit then stays config-driven,
+			// and a later config.toml edit takes effect on restart. Only an
+			// explicit non-default value lands in the environment.
 			if _, err := syncPkg.ParseConflictStrategy(cfg.Sync.ConflictStrategy); err != nil {
 				return errInvalidInputf("sync.conflict_strategy: %s", err.Error())
 			}
@@ -173,7 +175,7 @@ back to every 15 minutes when it is unset.`,
 			data := map[string]string{
 				"BinaryPath":                     binPath,
 				"SyncInterval":                   effectiveSyncInterval,
-				"SyncConflictStrategy":           cfg.Sync.ConflictStrategy,
+				"SyncConflictStrategy":           bakedConflictStrategy(cfg.Sync.ConflictStrategy),
 				"AllowUnsafeAlarmAudioAttach":    "",
 				"AllowUnsafeAlarmEmailAttendees": "",
 			}
@@ -523,4 +525,17 @@ On Windows it proxies "schtasks /Query /TN chroncal-alarm /V /FO LIST".`,
 		},
 	}
 	return cmd
+}
+
+// bakedConflictStrategy maps the configured strategy to the value the service
+// templates embed. The prompt default embeds as empty so the installed unit
+// reads config.toml on every start; only an explicit server-wins lands in the
+// environment. An empty value would otherwise freeze the default at install
+// time and silently ignore later config edits (issue #744 review).
+func bakedConflictStrategy(name string) string {
+	strategy, err := syncPkg.ParseConflictStrategy(name)
+	if err != nil || strategy == syncPkg.ConflictPrompt {
+		return ""
+	}
+	return string(strategy)
 }

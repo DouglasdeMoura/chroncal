@@ -636,15 +636,15 @@ type RunOptions struct {
 }
 
 // resolveFullSyncStrategy maps the configured conflict-strategy name to the
-// value the TUI's full sync passes use. An empty or invalid name falls back
-// to server-wins. The install command rejects invalid names up front, so the
-// fallback only covers a hand-edited config file. The warning goes to the
-// state-dir log file. A write to stderr would print over the display.
+// value the TUI's full sync passes use. An empty name parses to prompt. An
+// invalid name falls back to prompt as well, so a hand-edited config file can
+// not silently enable server-wins. The warning goes to the state-dir log
+// file. A write to stderr would print over the display.
 func resolveFullSyncStrategy(name string) syncpkg.ConflictStrategy {
 	strategy, err := syncpkg.ParseConflictStrategy(name)
 	if err != nil {
-		config.SharedStateDirLogger().Warn("invalid sync.conflict_strategy; full syncs fall back to server-wins", "value", name, "error", err.Error())
-		return syncpkg.ConflictServerWins
+		config.SharedStateDirLogger().Warn("invalid sync.conflict_strategy; full syncs fall back to prompt", "value", name, "error", err.Error())
+		return syncpkg.ConflictPrompt
 	}
 	return strategy
 }
