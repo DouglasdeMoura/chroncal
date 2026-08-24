@@ -24,6 +24,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/gen2brain/beeep"
 )
 
 func TestFormatNotification_Basic(t *testing.T) {
@@ -656,4 +657,13 @@ func runMinimalSMTPDialog(conn net.Conn) error {
 		return fmt.Errorf("expected QUIT, got %q", line)
 	}
 	return send("221 Bye")
+}
+
+// TestAppNameIsChroncal pins the sender name the notification daemon shows.
+// beeep defaults to "DefaultAppName"; users see that string verbatim in every
+// desktop notification unless the package overrides it (issue found in QA).
+func TestAppNameIsChroncal(t *testing.T) {
+	if beeep.AppName != "Chroncal" {
+		t.Fatalf("beeep.AppName = %q, want Chroncal", beeep.AppName)
+	}
 }

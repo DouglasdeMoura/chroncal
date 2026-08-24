@@ -27,6 +27,15 @@ type ExecutionPolicy struct {
 	AllowUnsafeEmailAttendees bool
 }
 
+// appName is the name the desktop notification daemon shows as the sender.
+// beeep defaults to "DefaultAppName"; the daemon renders that string
+// verbatim, so set the product name before any notification goes out.
+const appName = "Chroncal"
+
+func init() {
+	beeep.AppName = appName
+}
+
 // FormatNotification formats a DueAlarm into a title and body suitable for display.
 // Title is the event title. Body contains the formatted time and, when present,
 // the location. The description is included only when it is not generic reminder boilerplate.
