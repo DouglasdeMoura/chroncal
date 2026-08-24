@@ -1,15 +1,10 @@
 package sync
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"strings"
-
-	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/chroncal/internal/caldav"
-	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -144,75 +139,30 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			if res.Data == nil {
 				continue
 			}
-			var buf bytes.Buffer
-			enc := ical.NewEncoder(&buf)
-			if err := enc.Encode(res.Data); err != nil {
-				e.logger.Warn("encode fetched resource failed", "path", res.Path, "error", err)
-				continue
+			uid, imported, warnings, persistErr := e.importFetchedResource(ctx, calendarID, tombstonedUIDs, fetchedResource{
+				path: resPath,
+				href: res.Path,
+				etag: res.ETag,
+				data: res.Data,
+			})
+			result.warnings = append(result.warnings, warnings...)
+			if uid != "" {
+				seenUIDs[uid] = true
 			}
-			importResult, err := icalPkg.ImportFileRemote(strings.NewReader(buf.String()))
-			if err != nil {
-				e.logger.Warn("import fetched resource failed", "path", res.Path, "error", err)
-				continue
-			}
-			result.warnings = append(result.warnings, e.noteImportWarnings(res.Path, importResult)...)
-			uid := extractUID(importResult)
-			if uid == "" {
-				e.logger.Warn("no UID in fetched resource", "path", res.Path)
-				continue
-			}
-			seenUIDs[uid] = true
-			if tombstonedUIDs[uid] {
-				pending.forget(ctx, resPath)
-				continue
-			}
-			if e.hasOpenConflict(ctx, calendarID, uid) {
-				e.logger.Debug("skip pull: open conflict pending resolution", "uid", uid)
-				// The fetched body is newer than the recorded one. Record it so
-				// a later resolve picks current server data. The sync-token may
-				// then advance: the row, not the token, carries the obligation.
-				e.refreshConflictServerBody(ctx, calendarID, uid, buf.String(), res.ETag)
-				continue
-			}
-			ownerType := detectOwnerType(importResult)
-			revs, alarmWarnings, persistErr := e.persistImported(ctx, calendarID, importResult)
 			if persistErr != nil {
-				// A changed body we fetched but couldn't store (transient
-				// SQLite busy/lock, or a malformed component a Replace*
-				// rejects). Leave the sync_resource on its old etag and count
-				// the failure so the inventory is treated as incomplete: the
-				// token is withheld and the next REPORT re-lists this change
-				// for another attempt. Advancing the token here would skip the
-				// change permanently until the server touches it again.
+				// Count the failure so the inventory is treated as
+				// incomplete: the sync-token is withheld below and the next
+				// REPORT re-lists this change. See importFetchedResource.
 				view.persistFailures++
-				e.logger.Error("persist imported resource", "uid", uid, "path", res.Path, "error", persistErr)
 				continue
 			}
-			result.warnings = append(result.warnings, e.notePersistWarnings(res.Path, uid, alarmWarnings)...)
-			if err := e.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-				CalendarID:   calendarID,
-				Uid:          uid,
-				OwnerType:    ownerType,
-				RemoteUrl:    resPath,
-				Etag:         res.ETag,
-				Dirty:        0,
-				SyncStrategy: "sync-token",
-			}); err != nil {
-				e.logger.Error("upsert sync resource", "uid", uid, "error", err)
-			}
-			// persistImported goes through the event/todo/journal services,
-			// whose Replace* methods all flip dirty=1 via MarkResourceDirty
-			// as a side effect (correct for user-initiated edits, wrong for
-			// sync-driven imports). UpsertSyncResource's `dirty = MAX(...)`
-			// clause then preserves that 1, so without an explicit clear here
-			// every pull re-dirties everything it just absorbed and the next
-			// push round-trips it back to the server. Clear dirty since the
-			// server's version is now authoritative locally, but guard the
-			// clear on the rev persistImported captured inside its transaction
-			// so a concurrent local edit is not silently dropped (issues #417
-			// and #494).
-			if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.ETag, revs[uid]); err != nil {
-				e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
+			if !imported {
+				// A tombstoned UID never comes back; drop its retry
+				// obligation. Any other skip keeps it for the next pull.
+				if tombstonedUIDs[uid] {
+					pending.forget(ctx, resPath)
+				}
+				continue
 			}
 			pending.forget(ctx, resPath)
 			result.pulled++

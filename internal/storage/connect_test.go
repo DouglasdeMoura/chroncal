@@ -173,7 +173,7 @@ func TestBackfillAlarmUIDs_TodoOnly(t *testing.T) {
 		t.Fatalf("insert todo alarm: %v", err)
 	}
 
-	if err := backfillAlarmUIDs(db, q); err != nil {
+	if err := backfillAlarmUIDs(context.Background(), db, q); err != nil {
 		t.Fatalf("backfillAlarmUIDs error: %v", err)
 	}
 
@@ -303,7 +303,7 @@ func TestNormalizeAlarmRepeatPairs(t *testing.T) {
 		ids[i], _ = res.LastInsertId()
 	}
 
-	if err := normalizeAlarmRepeatPairs(db); err != nil {
+	if err := normalizeAlarmRepeatPairs(context.Background(), db); err != nil {
 		t.Fatalf("normalizeAlarmRepeatPairs: %v", err)
 	}
 
@@ -367,7 +367,7 @@ func TestNormalizeAlarmRepeatPairs_KeepsUnreadableTriggers(t *testing.T) {
 		ids[i], _ = res.LastInsertId()
 	}
 
-	if err := normalizeAlarmRepeatPairs(db); err != nil {
+	if err := normalizeAlarmRepeatPairs(context.Background(), db); err != nil {
 		t.Fatalf("normalizeAlarmRepeatPairs: %v", err)
 	}
 
@@ -514,7 +514,7 @@ func TestBackfillAlarmUIDs_SkipsSyncOnlyActions(t *testing.T) {
 		}
 	}
 
-	if err := backfillAlarmUIDs(db, q); err != nil {
+	if err := backfillAlarmUIDs(context.Background(), db, q); err != nil {
 		t.Fatalf("backfillAlarmUIDs error: %v", err)
 	}
 

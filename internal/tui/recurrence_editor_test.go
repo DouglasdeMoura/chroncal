@@ -193,9 +193,7 @@ func TestRecurrenceEditor_EnterOnEndsOnDateOpensPicker(t *testing.T) {
 }
 
 func TestRecurrenceEditor_ClickOnWeekdayTogglesThroughViewMouseZones(t *testing.T) {
-	saved := *defaultMouseTracker
-	defer func() { *defaultMouseTracker = saved }()
-	*defaultMouseTracker = mouseTracker{}
+	isolateMouseTracker(t)
 
 	m := NewRecurrenceEditorModel(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC), 120, 40, Theme{})
 	_ = m.View()
@@ -241,8 +239,9 @@ func TestRecurrenceOnField_FocusedDayDoesNotUseFaintText(t *testing.T) {
 	view := f.View()
 
 	assert.Contains(t, view, "Mo")
-	assert.NotContains(t, view, "[2;7mMo")
-	assert.False(t, strings.Contains(view, "\x1b[2;7mMo"), "focused day should invert colors without faint text")
+	if hasSGRCodesTogether(view, "2", "7") {
+		t.Fatalf("focused day should invert colors without faint text: %q", view)
+	}
 }
 
 func TestQuantitySelectField_DefaultsToOneWeek(t *testing.T) {
