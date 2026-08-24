@@ -544,6 +544,11 @@ func setupCalendarCLITestEnv(t *testing.T) string {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
 	// Isolate hidden_calendars from the developer's real TUI state.
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
+	// Linux CI (GitHub Ubuntu and the Nix sandbox) has no secret-service
+	// daemon. CLI tests that open a credential store must opt in to
+	// plaintext; set the env here so a missed --allow-plaintext flag does
+	// not fail the suite. Tests that assert the no-keyring error unset it.
+	t.Setenv("CHRONCAL_SECURITY_ALLOW_PLAINTEXT", "true")
 	return dbPath
 }
 

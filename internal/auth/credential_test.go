@@ -835,6 +835,7 @@ func TestKeyringProbeAcceptsAbsenceVariants(t *testing.T) {
 	for _, msg := range []string{
 		"secret not found in keyring",
 		"the name was not provided by any .service files",
+		"The name org.freedesktop.secrets was not provided by any .service files",
 	} {
 		keyringGetFn = func(service, user string) (string, error) {
 			return "", errors.New(msg)

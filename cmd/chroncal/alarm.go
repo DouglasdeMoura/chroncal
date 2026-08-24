@@ -129,7 +129,7 @@ type dueClaim struct {
 // overlap, both observe the expired-snoozed row. Only the UPDATE that clears
 // snoozed_to first affects a row and wins the claim. The loser sees
 // claimed == false. That is likewise a non-fired, non-error result.
-func claimAndFireAlarm(ctx context.Context, a *app.App, c dueClaim, policy alarmExecutionPolicy) fireResult {
+func claimAndFireAlarm(ctx context.Context, c dueClaim, policy alarmExecutionPolicy) fireResult {
 	stateID := c.stateID
 	var markErr error
 	op := "mark-fired"
@@ -167,7 +167,7 @@ func claimAndFireAlarm(ctx context.Context, a *app.App, c dueClaim, policy alarm
 // markAndFireEventAlarm claims and fires one event alarm through the shared
 // protocol.
 func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) fireResult {
-	return claimAndFireAlarm(ctx, a, dueClaim{
+	return claimAndFireAlarm(ctx, dueClaim{
 		stateID:    da.StateID,
 		markRefire: a.Alarms.MarkRefired,
 		markFired: func(ctx context.Context) (int64, error) {
@@ -183,7 +183,7 @@ func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, p
 // markAndFireTodoAlarm claims and fires one todo alarm through the shared
 // protocol.
 func markAndFireTodoAlarm(ctx context.Context, a *app.App, tda alarm.TodoDueAlarm, policy alarmExecutionPolicy) fireResult {
-	return claimAndFireAlarm(ctx, a, dueClaim{
+	return claimAndFireAlarm(ctx, dueClaim{
 		stateID:    tda.StateID,
 		markRefire: a.Alarms.MarkTodoRefired,
 		markFired: func(ctx context.Context) (int64, error) {
