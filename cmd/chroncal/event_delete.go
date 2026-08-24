@@ -43,12 +43,6 @@ var eventResource = resource{
 	errNotDeleted: event.ErrNotDeleted,
 }
 
-// eventDeleteCmd composes the shared delete verb with the two event-only
-// scopes. --recurrence-id excludes one occurrence (an EXDATE on the master
-// plus an override soft-delete). --following truncates the series from a
-// date. Both scopes act on the series master, so this wrapper resolves the
-// master row and bypasses the shared single-row flow.
-
 // requireOccurrenceAt verifies that the series behind master generates an
 // instance exactly at at. A timestamp that matches nothing previously wrote a
 // phantom EXDATE and exited 0 while the real occurrence survived (issue #745).
@@ -118,6 +112,11 @@ func noSuchOccurrenceErr(master event.Event, at time.Time) error {
 	return errInvalidInputf("%s", msg)
 }
 
+// eventDeleteCmd composes the shared delete verb with the two event-only
+// scopes. --recurrence-id excludes one occurrence (an EXDATE on the master
+// plus an override soft-delete). --following truncates the series from a
+// date. Both scopes act on the series master, so this wrapper resolves the
+// master row and bypasses the shared single-row flow.
 func eventDeleteCmd() *cobra.Command {
 	cmd := newDeleteCmd(eventResource, verbHelp{
 		short: "Delete an event",

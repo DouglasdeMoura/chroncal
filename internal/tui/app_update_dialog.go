@@ -2,10 +2,13 @@ package tui
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 )
@@ -62,48 +65,13 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 	case pendingActionEventDeleteScope:
 		ev := act.target.ev
 		return m, func() tea.Msg {
-			// Validate the scope against the master's raw rule set before
-			// touching storage. The deletion key is the original
-			// RECURRENCE-ID, never a moved override's display start.
-			// Whole-series delete needs no scope time; validate only the
-			// instance scopes against the master's raw rule set.
-			if msg.Choice == 0 || msg.Choice == 1 {
-				scopeAt, scopeErr := recurrence.ScopeInstanceTime(ev)
-				if scopeErr == nil {
-					var master event.Event
-					master, scopeErr = m.app.Events.GetByUID(context.Background(), ev.UID)
-					if scopeErr == nil {
-						ok := false
-						if msg.Choice == 0 {
-							ok = recurrence.OccurrenceExistsAt(master, scopeAt)
-							if !ok {
-								// A live override at that RECURRENCE-ID stays
-								// deletable even when an imported EXDATE hides
-								// the master slot.
-								_, oErr := m.app.Events.GetByUIDAndRecurrenceID(
-									context.Background(), ev.UID, scopeAt.UTC().Format(time.RFC3339))
-								ok = oErr == nil
-							}
-						} else {
-							ok = recurrence.HasOccurrenceFrom(master, scopeAt)
-							if !ok {
-								ok, _ = m.app.Events.HasLiveOverrideFrom(context.Background(), ev.UID, scopeAt)
-							}
-						}
-						if !ok {
-							scopeErr = fmt.Errorf("no occurrence matches %s", scopeAt.Format(time.RFC3339))
-						}
-					}
-				}
-				if scopeErr != nil {
-					return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title, err: scopeErr}
-				}
+			if verr := validateEventDeleteScope(context.Background(), m.app, ev, msg.Choice); verr != nil {
+				return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title, err: verr}
 			}
-			scopeAt := ev.StartTime
-			if ev.RecurrenceID != "" {
-				if parsed, perr := time.Parse(time.RFC3339, ev.RecurrenceID); perr == nil {
-					scopeAt = parsed
-				}
+			scopeAt, dErr := recurrence.ScopeInstanceTime(ev)
+			if dErr != nil {
+				return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title,
+					err: fmt.Errorf("invalid recurrence id %q: %w", ev.RecurrenceID, dErr)}
 			}
 			switch msg.Choice {
 			case 0: // This event
@@ -213,4 +181,48 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 		// action fires.
 		return m, nil
 	}
+}
+
+// validateEventDeleteScope checks an instance-scoped recurring delete against
+// the series master's raw rule set before any storage call runs. Whole-series
+// deletes need no scope time and pass through. The deletion key is the
+// original RECURRENCE-ID, never a moved override's display start; a live
+// override at that RECURRENCE-ID stays deletable even when an imported EXDATE
+// hides the master slot.
+func validateEventDeleteScope(ctx context.Context, a *app.App, ev event.Event, choice int) error {
+	if choice != 0 && choice != 1 {
+		return nil
+	}
+	scopeAt, err := recurrence.ScopeInstanceTime(ev)
+	if err != nil {
+		return fmt.Errorf("invalid recurrence id %q: %w", ev.RecurrenceID, err)
+	}
+	master, err := a.Events.GetByUID(ctx, ev.UID)
+	if err != nil {
+		return fmt.Errorf("get series master: %w", err)
+	}
+	switch choice {
+	case 0:
+		if recurrence.OccurrenceExistsAt(master, scopeAt) {
+			return nil
+		}
+		if _, oErr := a.Events.GetByUIDAndRecurrenceID(
+			ctx, ev.UID, scopeAt.UTC().Format(time.RFC3339)); oErr == nil {
+			return nil
+		} else if !errors.Is(oErr, sql.ErrNoRows) {
+			return fmt.Errorf("look up override: %w", oErr)
+		}
+	case 1:
+		if recurrence.HasOccurrenceFrom(master, scopeAt) {
+			return nil
+		}
+		has, hErr := a.Events.HasLiveOverrideFrom(ctx, ev.UID, scopeAt)
+		if hErr != nil {
+			return fmt.Errorf("check overrides: %w", hErr)
+		}
+		if has {
+			return nil
+		}
+	}
+	return fmt.Errorf("no occurrence matches %s", scopeAt.Format(time.RFC3339))
 }
