@@ -2,9 +2,12 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
 )
 
 func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, tea.Cmd) {
@@ -59,9 +62,30 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 	case pendingActionEventDeleteScope:
 		ev := act.target.ev
 		return m, func() tea.Msg {
+			// Validate the scope against the master's raw rule set before
+			// touching storage. The deletion key is the original
+			// RECURRENCE-ID, never a moved override's display start.
+			scopeAt, scopeErr := recurrence.ScopeInstanceTime(ev)
+			if scopeErr == nil {
+				master, mErr := m.app.Events.GetByUID(context.Background(), ev.UID)
+				if mErr != nil {
+					scopeErr = mErr
+				} else {
+					switch msg.Choice {
+					case 0:
+						if !recurrence.OccurrenceExistsAt(master, scopeAt) {
+							scopeErr = fmt.Errorf("no occurrence matches %s", scopeAt.Format(time.RFC3339))
+						}
+					case 1:
+						if !recurrence.HasOccurrenceFrom(master, scopeAt) {
+							scopeErr = fmt.Errorf("no occurrences at or after %s", scopeAt.Format(time.RFC3339))
+						}
+					}
+				}
+			}
 			switch msg.Choice {
 			case 0: // This event
-				meta, err := m.app.Events.DeleteInstanceWithUndo(context.Background(), ev.UID, ev.StartTime)
+				meta, err := m.app.Events.DeleteInstanceWithUndo(context.Background(), ev.UID, scopeAt)
 				return eventDeletedMsg{
 					calendarID: ev.CalendarID,
 					meta:       meta,
@@ -69,7 +93,7 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 					err:        err,
 				}
 			case 1: // This and following
-				meta, err := m.app.Events.DeleteFromInstanceWithUndo(context.Background(), ev.UID, ev.StartTime)
+				meta, err := m.app.Events.DeleteFromInstanceWithUndo(context.Background(), ev.UID, scopeAt)
 				return eventDeletedMsg{
 					calendarID: ev.CalendarID,
 					meta:       meta,

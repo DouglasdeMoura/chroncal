@@ -9,6 +9,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
 )
 
 // eventResource adapts the event service to the shared verb builders.
@@ -46,44 +47,35 @@ var eventResource = resource{
 // date. Both scopes act on the series master, so this wrapper resolves the
 // master row and bypasses the shared single-row flow.
 
-// occurrenceHorizon bounds how far ahead the validators search for the next
-// valid instance. A yearly series can legitimately have none within it; the
-// error then names the timestamp alone.
-const occurrenceHorizon = 366 * 24 * time.Hour
-
 // requireOccurrenceAt verifies that the series behind master generates an
 // instance exactly at at. A timestamp that matches nothing previously wrote a
 // phantom EXDATE and exited 0 while the real occurrence survived (issue #745).
+// The check runs on the raw rule set, so the original RECURRENCE-ID of a moved
+// override stays deletable.
 func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at time.Time) error {
-	return scanOccurrences(ctx, a, master, at, func(inst time.Time) bool { return inst.Equal(at) })
+	if recurrence.OccurrenceExistsAt(master, at) {
+		return nil
+	}
+	return noSuchOccurrenceErr(master, at)
 }
 
 // requireOccurrenceFrom verifies that truncating at at removes at least one
-// instance, so `--following` cannot silently do nothing.
+// instance, so --following cannot silently do nothing.
 func requireOccurrenceFrom(ctx context.Context, a *app.App, master event.Event, at time.Time) error {
-	return scanOccurrences(ctx, a, master, at, func(inst time.Time) bool { return !inst.Before(at) })
+	if recurrence.HasOccurrenceFrom(master, at) {
+		return nil
+	}
+	return noSuchOccurrenceErr(master, at)
 }
 
-func scanOccurrences(ctx context.Context, a *app.App, master event.Event, at time.Time, match func(time.Time) bool) error {
-	expanded, err := a.Recurrences.ListExpandedEvents(ctx, at.Add(-time.Minute), at.Add(occurrenceHorizon))
-	if err != nil {
-		return fmt.Errorf("expand series: %w", err)
-	}
-	for _, inst := range expanded {
-		if inst.Event.UID != master.UID {
-			continue
-		}
-		if match(inst.InstanceTime) {
-			return nil
-		}
+func noSuchOccurrenceErr(master event.Event, at time.Time) error {
+	if recurrence.IsCancelledSeries(master) {
+		return errInvalidInputf("series %q is cancelled; delete it whole with \"event delete %d --yes\"",
+			safeText(master.Title), master.ID)
 	}
 	msg := fmt.Sprintf("no occurrence of %q matches %s", safeText(master.Title), at.Format(time.RFC3339))
-	for _, inst := range expanded {
-		if inst.Event.UID != master.UID || !inst.InstanceTime.After(at) {
-			continue
-		}
-		msg += fmt.Sprintf("; the next occurrence is %s", inst.InstanceTime.Format(time.RFC3339))
-		break
+	if next, ok := recurrence.NextOccurrenceAfter(master, at); ok {
+		msg += fmt.Sprintf("; the next occurrence is %s", next.Format(time.RFC3339))
 	}
 	return errInvalidInputf("%s", msg)
 }

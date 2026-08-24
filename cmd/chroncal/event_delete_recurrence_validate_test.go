@@ -59,3 +59,48 @@ func TestEventDelete_FollowingMustRemoveSomething(t *testing.T) {
 		t.Fatalf("stderr = %q, want the no-occurrence error", stderr)
 	}
 }
+
+// TestEventDelete_MovedOverrideOriginalSlotSucceeds locks the raw-set
+// semantics: a moved override keeps its original RECURRENCE-ID as the delete
+// key. Deleting at the original slot must remove the occurrence, while
+// deleting at the moved display start must be rejected without writing a
+// phantom EXDATE.
+func TestEventDelete_MovedOverrideOriginalSlotSucceeds(t *testing.T) {
+	t.Setenv("TZ", "UTC")
+	dbPath := setupCalendarCLITestEnv(t)
+	master := addOverrideGapSeries(t) // daily COUNT=3 from 2026-09-01T10:00Z
+
+	const orig = "2026-09-02T10:00:00Z"
+	if _, _, err := runChroncalCommand(t, "event", "update", master.UID,
+		"--recurrence-id", orig, "--title", "Moved slot"); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	// The moved display start is not a deletion key.
+	_, stderr, err := runChroncalCommand(t,
+		"event", "delete", master.UID, "--recurrence-id", "2026-09-02T13:00:00Z", "--yes")
+	if err == nil {
+		t.Fatal("delete at the moved time must fail")
+	}
+	if !strings.Contains(stderr, "no occurrence of") {
+		t.Fatalf("stderr = %q, want the no-occurrence error", stderr)
+	}
+
+	// The original RECURRENCE-ID still deletes the override.
+	if _, _, err := runChroncalCommand(t,
+		"event", "delete", master.UID, "--recurrence-id", orig, "--yes"); err != nil {
+		t.Fatalf("delete at original slot: %v", err)
+	}
+
+	a := openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Events.GetByUID(t.Context(), master.UID)
+	if err != nil {
+		t.Fatalf("master vanished: %v", err)
+	}
+	for _, ex := range strings.Split(got.ExDates, ",") {
+		if strings.TrimSpace(ex) == "2026-09-02T13:00:00Z" {
+			t.Fatal("phantom EXDATE written for the moved time")
+		}
+	}
+}
