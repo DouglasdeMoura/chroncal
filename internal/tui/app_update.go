@@ -29,7 +29,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if next, cmd, handled := m.captureOverlayInput(msg); handled {
+	if next, cmd, handled := m.routeOverlay(msg); handled {
 		return next, cmd
 	}
 

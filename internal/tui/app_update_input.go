@@ -7,10 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-func (m Model) captureOverlayInput(msg tea.Msg) (Model, tea.Cmd, bool) {
-	return m.routeOverlay(msg)
-}
-
 func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if !m.dialogOpen && !m.choiceOpen && !m.confirmOpen && !m.oauthFlowOpen {
 		switch m.viewMode {
