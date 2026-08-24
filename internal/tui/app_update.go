@@ -530,6 +530,7 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 			promoteName = info.Name
 		}
 		id, name := act.target.calendarID, act.label
+		m = m.armCalendarDeleteCount(id, promoteID, name)
 		return m, func() tea.Msg {
 			count, _ := m.app.Events.CountByCalendar(context.Background(), id)
 			return calendarDeleteCountMsg{
