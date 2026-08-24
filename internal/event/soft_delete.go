@@ -65,7 +65,6 @@ type UndoMeta struct {
 // recurrence_id. Undo then un-hides exactly that instance. Without it, undo
 // falls back to a UID-wide restore that would also resurrect other
 // soft-deleted overrides of the same series.
-
 func (s *Service) DeleteWithUndo(ctx context.Context, id int64) (UndoMeta, error) {
 	r, err := s.q.GetEvent(ctx, id)
 	if err != nil {
@@ -744,18 +743,6 @@ func (s *Service) DeleteFromInstance(ctx context.Context, uid string, instanceTi
 	return err
 }
 
-// softDeleteOverridesAndRecordTruncation trims the master's post-cutoff RDATEs.
-// It hides every live override at or after cutoff. It records the truncation
-// so the trash view can restore it. It captures the recurrence_ids it hides
-// and the RDATEs it drops BEFORE it removes them. Restore then re-shows
-// exactly those overrides and re-adds exactly those RDATEs.
-//
-// It does not restore an override the user deleted on its own (issue #287).
-// It does not leave a post-cutoff RDATE to reappear on the next expansion
-// (issue #463, since rrule-go expands RDATEs independently of the RRULE UNTIL
-// bound). Pairs with restoreTruncatedOverrides / restoreTruncatedRDates.
-//
-// prevRRule is the master's pre-truncation RRULE. The caller passes it because
 // it overwrote the master's recurrence_rule in the DB before this runs.
 
 // HasLiveOverrideFrom reports whether any live override of the series has a
@@ -782,6 +769,18 @@ func (s *Service) HasLiveOverrideFrom(ctx context.Context, uid string, from time
 	return false, nil
 }
 
+// softDeleteOverridesAndRecordTruncation trims the master's post-cutoff RDATEs.
+// It hides every live override at or after cutoff. It records the truncation
+// so the trash view can restore it. It captures the recurrence_ids it hides
+// and the RDATEs it drops BEFORE it removes them. Restore then re-shows
+// exactly those overrides and re-adds exactly those RDATEs.
+//
+// It does not restore an override the user deleted on its own (issue #287).
+// It does not leave a post-cutoff RDATE to reappear on the next expansion
+// (issue #463, since rrule-go expands RDATEs independently of the RRULE UNTIL
+// bound). Pairs with restoreTruncatedOverrides / restoreTruncatedRDates.
+//
+// prevRRule is the master's pre-truncation RRULE. The caller passes it because
 func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time, prevRRule string) error {
 	uid := master.Uid
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
