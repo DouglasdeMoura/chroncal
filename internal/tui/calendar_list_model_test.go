@@ -638,6 +638,12 @@ func TestCalendarList_DefaultBlurredHasNoSelectedStyling(t *testing.T) {
 	if strings.Contains(out, active) {
 		t.Fatalf("default blurred list must not paint a selected background: %q", out)
 	}
+	if hasReverseVideo(out) {
+		t.Fatalf("default blurred list must not invert a selected row: %q", out)
+	}
+	if bg := backgroundSeq(lipgloss.Color("#112233")); bg != "" && strings.Contains(out, bg) {
+		t.Fatalf("default blurred list must not paint selected background seq %q: %q", bg, out)
+	}
 }
 
 // TestCalendarList_InactiveAccountHeaderFillsRowAroundWarning verifies that an
