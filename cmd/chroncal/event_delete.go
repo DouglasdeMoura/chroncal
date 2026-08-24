@@ -45,6 +45,49 @@ var eventResource = resource{
 // plus an override soft-delete). --following truncates the series from a
 // date. Both scopes act on the series master, so this wrapper resolves the
 // master row and bypasses the shared single-row flow.
+
+// occurrenceHorizon bounds how far ahead the validators search for the next
+// valid instance. A yearly series can legitimately have none within it; the
+// error then names the timestamp alone.
+const occurrenceHorizon = 366 * 24 * time.Hour
+
+// requireOccurrenceAt verifies that the series behind master generates an
+// instance exactly at at. A timestamp that matches nothing previously wrote a
+// phantom EXDATE and exited 0 while the real occurrence survived (issue #745).
+func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at time.Time) error {
+	return scanOccurrences(ctx, a, master, at, func(inst time.Time) bool { return inst.Equal(at) })
+}
+
+// requireOccurrenceFrom verifies that truncating at at removes at least one
+// instance, so `--following` cannot silently do nothing.
+func requireOccurrenceFrom(ctx context.Context, a *app.App, master event.Event, at time.Time) error {
+	return scanOccurrences(ctx, a, master, at, func(inst time.Time) bool { return !inst.Before(at) })
+}
+
+func scanOccurrences(ctx context.Context, a *app.App, master event.Event, at time.Time, match func(time.Time) bool) error {
+	expanded, err := a.Recurrences.ListExpandedEvents(ctx, at.Add(-time.Minute), at.Add(occurrenceHorizon))
+	if err != nil {
+		return fmt.Errorf("expand series: %w", err)
+	}
+	for _, inst := range expanded {
+		if inst.Event.UID != master.UID {
+			continue
+		}
+		if match(inst.InstanceTime) {
+			return nil
+		}
+	}
+	msg := fmt.Sprintf("no occurrence of %q matches %s", safeText(master.Title), at.Format(time.RFC3339))
+	for _, inst := range expanded {
+		if inst.Event.UID != master.UID || !inst.InstanceTime.After(at) {
+			continue
+		}
+		msg += fmt.Sprintf("; the next occurrence is %s", inst.InstanceTime.Format(time.RFC3339))
+		break
+	}
+	return errInvalidInputf("%s", msg)
+}
+
 func eventDeleteCmd() *cobra.Command {
 	cmd := newDeleteCmd(eventResource, verbHelp{
 		short: "Delete an event",
@@ -110,6 +153,14 @@ any override at that time). --following truncates the series at that date.`,
 		e, err := resolveEvent(ctx, a, args[0], "")
 		if err != nil {
 			return fmt.Errorf("get event: %w", err)
+		}
+
+		if following != "" {
+			if err := requireOccurrenceFrom(ctx, a, e, followingAt); err != nil {
+				return err
+			}
+		} else if err := requireOccurrenceAt(ctx, a, e, occurrenceAt); err != nil {
+			return err
 		}
 
 		question := fmt.Sprintf("Delete this occurrence of %q at %s?", safeText(e.Title), occurrenceAt.Format(time.RFC3339))

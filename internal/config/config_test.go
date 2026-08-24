@@ -283,3 +283,17 @@ func TestLoad_UIWeekStartFromEnv(t *testing.T) {
 		t.Errorf("UI.WeekStart = %q, want monday from env", cfg.UI.WeekStart)
 	}
 }
+
+// TestLoad_ConflictStrategyDefaultsToPrompt pins the safe default. With no
+// config file and no env, unset must mean prompt: a full sync pass records
+// conflicts instead of adopting the server body (issue #744).
+func TestLoad_ConflictStrategyDefaultsToPrompt(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CHRONCAL_SYNC_CONFLICT_STRATEGY", "")
+
+	cfg := mustLoad(t)
+
+	if cfg.Sync.ConflictStrategy != "prompt" {
+		t.Fatalf("Sync.ConflictStrategy = %q, want prompt", cfg.Sync.ConflictStrategy)
+	}
+}
