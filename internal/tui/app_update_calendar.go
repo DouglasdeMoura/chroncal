@@ -414,6 +414,20 @@ func (m Model) handleCalendarTestRequested(msg CalendarTestRequestedMsg) (tea.Mo
 	}
 }
 
+// armCalendarDeleteCount records that a calendar-delete confirm is in
+// flight while CountByCalendar runs. handleCalendarDeleteCount then
+// ignores a count that arrives after clearPending (ctrl+c, cancel,
+// manager close), so a stale result cannot re-arm a destructive confirm
+// over quit or after the user has left the manager.
+func (m Model) armCalendarDeleteCount(id, promoteID int64, name string) Model {
+	m.pending = pendingAction{
+		kind:   pendingActionCalendarDelete,
+		target: pendingTarget{calendarID: id, promoteID: promoteID},
+		label:  name,
+	}
+	return m
+}
+
 func (m Model) handleCalendarDeleteRequested(msg CalendarDeleteRequestedMsg) (tea.Model, tea.Cmd) {
 	// Fetch the event count before the confirm dialog. The user then
 	// knows how many events will be deleted alongside the calendar.
@@ -427,6 +441,7 @@ func (m Model) handleCalendarDeleteRequested(msg CalendarDeleteRequestedMsg) (te
 		if len(candidates) == 0 {
 			// Last calendar: service will return ErrLastCalendar; let
 			// the normal confirm flow surface the error verbatim.
+			m = m.armCalendarDeleteCount(id, 0, name)
 			return m, func() tea.Msg {
 				count, _ := m.app.Events.CountByCalendar(context.Background(), id)
 				return calendarDeleteCountMsg{id: id, name: name, eventCount: count}
@@ -448,6 +463,7 @@ func (m Model) handleCalendarDeleteRequested(msg CalendarDeleteRequestedMsg) (te
 			NewChoiceDialogModel(message, m.theme, labels...),
 		), nil
 	}
+	m = m.armCalendarDeleteCount(id, 0, name)
 	return m, func() tea.Msg {
 		count, _ := m.app.Events.CountByCalendar(context.Background(), id)
 		return calendarDeleteCountMsg{id: id, name: name, eventCount: count}
@@ -455,6 +471,9 @@ func (m Model) handleCalendarDeleteRequested(msg CalendarDeleteRequestedMsg) (te
 }
 
 func (m Model) handleCalendarDeleteCount(msg calendarDeleteCountMsg) (tea.Model, tea.Cmd) {
+	if m.pending.kind != pendingActionCalendarDelete || m.pending.target.calendarID != msg.id {
+		return m, nil
+	}
 	// Keep the edit dialog open behind the confirm. If the user
 	// cancels the confirm, they return to the edit dialog. They do
 	// not lose their in-progress changes. The confirm dialog takes
