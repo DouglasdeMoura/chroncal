@@ -154,6 +154,21 @@ func mutuallyExclusive(cmd *cobra.Command, flags ...string) {
 	}
 }
 
+// registerRecurrenceAliases binds the hidden --rrule, --exdate, and
+// --rdate alias flags to the same variables as --recurrence-rule,
+// --exception-date-times, and --recurrence-date-times. Every add and
+// update command of event, todo, and journal calls it. One call site per
+// command then keeps the alias surface identical across the three
+// domains.
+func registerRecurrenceAliases(cmd *cobra.Command, rrule *string, exdates, rdates *[]string) {
+	cmd.Flags().StringVar(rrule, "rrule", "", "alias for --recurrence-rule")
+	cmd.Flags().StringArrayVar(exdates, "exdate", nil, "alias for --exception-date-times")
+	cmd.Flags().StringArrayVar(rdates, "rdate", nil, "alias for --recurrence-date-times")
+	cmd.Flags().MarkHidden("rrule")
+	cmd.Flags().MarkHidden("exdate")
+	cmd.Flags().MarkHidden("rdate")
+}
+
 const (
 	groupPlanning    = "planning"
 	groupIntegration = "integration"

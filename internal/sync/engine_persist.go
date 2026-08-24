@@ -1,12 +1,15 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
@@ -484,10 +487,116 @@ func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) 
 		return false, nil, nil, err
 	}
 	warnings = append(warnings, e.notePersistWarnings("", "", alarmWarnings)...)
-	if afterImportPersist != nil {
-		afterImportPersist()
+	if e.testHooks != nil && e.testHooks.afterImportPersist != nil {
+		e.testHooks.afterImportPersist()
 	}
 	return imported, revs, warnings, nil
+}
+
+// fetchedResource is one remote resource body queued for import during a
+// pull: the canonical remote path (the bookkeeping key for
+// UpsertSyncResource), the href exactly as the server reported it (the log
+// label), the etag, and the parsed iCal body.
+type fetchedResource struct {
+	path string
+	href string
+	etag string
+	data *ical.Calendar
+}
+
+// importFetchedResource imports one fetched remote body and persists it with
+// sync bookkeeping: encode → ImportFileRemote → note warnings → extract UID
+// → tombstone check → conflict refresh → persist → UpsertSyncResource →
+// clear-dirty. applySyncCollection and pullFullSnapshot share it, so a
+// safety gate added for one pull path holds for the other too.
+//
+// uid is the UID the body carried. It is set even for a body the gates below
+// skipped, because both pull loops count a fetched UID as still present on
+// the server before they decide not to import it. imported reports whether
+// the body produced a live import. warnings carries the import and persist
+// warnings for the pull result. err is non-nil only when the import reached
+// persistImported and the persist failed; the caller must then treat the
+// pull as incomplete and withhold the sync-token.
+func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, tombstonedUIDs map[string]bool, res fetchedResource) (uid string, imported bool, warnings []ImportWarning, err error) {
+	var buf bytes.Buffer
+	enc := ical.NewEncoder(&buf)
+	if encErr := enc.Encode(res.data); encErr != nil {
+		e.logger.Warn("encode fetched resource failed", "path", res.href, "error", encErr)
+		return "", false, nil, nil
+	}
+	importResult, impErr := icalPkg.ImportFileRemote(strings.NewReader(buf.String()))
+	if impErr != nil {
+		e.logger.Warn("import fetched resource failed", "path", res.href, "error", impErr)
+		return "", false, nil, nil
+	}
+	warnings = append(warnings, e.noteImportWarnings(res.href, importResult)...)
+
+	// Extract UID from imported data
+	uid = extractUID(importResult)
+	if uid == "" {
+		e.logger.Warn("no UID in fetched resource", "path", res.href)
+		return "", false, warnings, nil
+	}
+	if tombstonedUIDs[uid] {
+		e.logger.Debug("skip tombstoned remote resource by uid", "uid", uid, "path", res.path)
+		return uid, false, warnings, nil
+	}
+	if e.hasOpenConflict(ctx, calendarID, uid) {
+		e.logger.Debug("skip pull: open conflict pending resolution", "uid", uid)
+		// The fetched body is newer than the recorded one. Record it so a
+		// later resolve picks current server data. The sync-token may then
+		// advance: the row, not the token, carries the obligation.
+		e.refreshConflictServerBody(ctx, calendarID, uid, buf.String(), res.etag)
+		return uid, false, warnings, nil
+	}
+
+	// Persist imported data to the database
+	revs, alarmWarnings, persistErr := e.persistImported(ctx, calendarID, importResult)
+	if persistErr != nil {
+		// A changed body we fetched but couldn't store (transient SQLite
+		// busy/lock, or a malformed component a Replace* rejects). Leave the
+		// sync_resource on its old etag and report the failure so the caller
+		// treats the pull as incomplete and withholds the sync-token. The
+		// next pull then re-lists or re-fetches this change for another
+		// attempt. Advancing past it would skip the change permanently
+		// until the server touches it again.
+		e.logger.Error("persist imported resource", "uid", uid, "path", res.href, "error", persistErr)
+		return uid, false, warnings, persistErr
+	}
+	warnings = append(warnings, e.notePersistWarnings(res.href, uid, alarmWarnings)...)
+
+	// Upsert sync resource tracking. UpsertSyncResource's ON CONFLICT is
+	// keyed by (calendar_id, uid), so a stale remote_url from a prior sync
+	// cycle (or from our PUT before the server rewrote the href) gets
+	// replaced here with the authoritative server path.
+	ownerType := detectOwnerType(importResult)
+	if err := e.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID:   calendarID,
+		Uid:          uid,
+		OwnerType:    ownerType,
+		RemoteUrl:    res.path,
+		Etag:         res.etag,
+		Dirty:        0,
+		SyncStrategy: "sync-token",
+	}); err != nil {
+		e.logger.Error("upsert sync resource", "uid", uid, "error", err)
+	}
+	// persistImported goes through the event/todo/journal services, whose
+	// Replace* methods all flip dirty=1 via MarkResourceDirty as a side
+	// effect (correct for user-initiated edits, wrong for sync-driven
+	// imports). UpsertSyncResource's `dirty = MAX(...)` clause then preserves
+	// that 1, so without an explicit clear here every pull re-dirties
+	// everything it just absorbed and the next push round-trips it back to
+	// the server. Clear dirty since the server's version is now
+	// authoritative locally, but guard the clear on the rev persistImported
+	// captured inside its transaction so a concurrent local edit is not
+	// silently dropped (issues #417 and #494).
+	if err := e.clearDirtyAfterImport(ctx, calendarID, uid, res.etag, revs[uid]); err != nil {
+		e.logger.Warn("clear post-import dirty", "uid", uid, "error", err)
+	}
+
+	e.logger.Debug("pulled resource", "uid", uid, "path", res.href, "etag", res.etag)
+	return uid, true, warnings, nil
 }
 
 // dropTombstonedFromImport removes events/todos/journals whose UID is
