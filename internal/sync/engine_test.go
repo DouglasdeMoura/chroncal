@@ -4080,6 +4080,110 @@ END:VCALENDAR
 	}
 }
 
+// TestEnginePullFullSnapshotWithholdsHealthOnPersistFailure covers issue
+// #734. The QueryAll fallback has no RFC 6578 sync-token to advance, but a
+// persist failure used to log-and-continue and leave LastSyncAt stamped as
+// healthy. It must now surface on the pull result so updateSyncHealth
+// withholds the healthy stamp, matching the sync-collection path.
+func TestEnginePullFullSnapshotWithholdsHealthOnPersistFailure(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "victim")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "victim", OwnerType: "event",
+		RemoteUrl: "/calendar/victim.ics", Etag: "old", Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource victim: %v", err)
+	}
+
+	const victimICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:victim
+DTSTAMP:20260403T120000Z
+DTSTART:20260403T120000Z
+DTEND:20260403T130000Z
+SUMMARY:Updated meeting
+BEGIN:VALARM
+ACTION:DISPLAY
+TRIGGER:-PT15M
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR
+`
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		body := string(raw)
+		if strings.Contains(body, "sync-collection") {
+			return &http.Response{
+				StatusCode: http.StatusUnprocessableEntity,
+				Status:     "422 Unprocessable Entity",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><error xmlns="DAV:"/>`)),
+				Request:    r,
+			}, nil
+		}
+		queryBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/victim.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;new&quot;</d:getetag>
+        <cal:calendar-data>` + victimICS + `</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{StatusCode: http.StatusMultiStatus, Status: "207 Multi-Status",
+			Header: http.Header{"Content-Type": []string{"application/xml"}},
+			Body:   io.NopCloser(strings.NewReader(queryBody)), Request: r}, nil
+	})
+
+	if _, err := db.ExecContext(ctx, "DROP TABLE event_alarms"); err != nil {
+		t.Fatalf("drop event_alarms table: %v", err)
+	}
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if result == nil || len(result.errors) == 0 {
+		t.Fatal("legacy persist failure must surface as pull errors so LastSyncAt is withheld")
+	}
+
+	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "victim"})
+	if err != nil {
+		t.Fatalf("GetSyncResource victim: %v", err)
+	}
+	if res.Etag != "old" {
+		t.Fatalf("victim etag = %q, want old preserved (persist failed)", res.Etag)
+	}
+
+	if err := engine.updateSyncHealth(ctx, calendarID, "2026-04-03T12:00:00Z", &SyncResult{Errors: result.errors}, nil); err != nil {
+		t.Fatalf("updateSyncHealth: %v", err)
+	}
+	calRow, err := q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if at := storage.NullableToString(calRow.LastSyncAt); at != "" {
+		t.Fatalf("LastSyncAt = %q, want empty (legacy persist failure must withhold the healthy stamp)", at)
+	}
+}
+
 // TestPersistImportedRollsBackOnReplaceFailure verifies that persistImported is
 // atomic per resource. If any Replace* step fails after the event row and some
 // of its child collections have already been written, the entire resource is
@@ -4284,12 +4388,13 @@ func serverWinsConflictClient(t *testing.T, uid string, puts *int) *caldav.Clien
 
 // TestEnginePushServerWinsPreservesConcurrentEdit reproduces issue #417. A local
 // edit that lands in the window between the accept-server import and the dirty
-// clear must not be dropped in silence. The afterImportRevCapture hook simulates
-// that edit. The rev-guarded clear must leave the resource dirty. The next
-// push then sends it. With the previous unconditional clear this test fails
-// because the edit's dirty flag is wiped. Serial (no t.Parallel) because it
-// mutates the package-level hook.
+// clear must not be dropped in silence. The engine's afterImportRevCapture hook
+// simulates that edit. The rev-guarded clear must leave the resource dirty. The
+// next push then sends it. With the previous unconditional clear this test fails
+// because the edit's dirty flag is wiped.
 func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
+	t.Parallel()
+
 	engine, db, q := newTestEngine(t)
 	ctx := context.Background()
 	calendarID := linkCalendarToTestAccount(t, ctx, q)
@@ -4311,13 +4416,14 @@ func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
 	// server version but before the dirty flag is cleared: it bumps rev and
 	// re-marks the resource dirty, exactly as a real service-layer mutation would.
 	var fired int
-	afterImportRevCapture = func() {
-		fired++
-		if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-race", "event"); err != nil {
-			t.Errorf("simulate concurrent edit: %v", err)
-		}
+	engine.testHooks = &engineTestHooks{
+		afterImportRevCapture: func() {
+			fired++
+			if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-race", "event"); err != nil {
+				t.Errorf("simulate concurrent edit: %v", err)
+			}
+		},
 	}
-	t.Cleanup(func() { afterImportRevCapture = nil })
 
 	client := serverWinsConflictClient(t, "srv-wins-race", nil)
 	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
@@ -4358,16 +4464,17 @@ func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
 
 // TestEnginePushServerWinsPreservesConcurrentEditAfterPersist reproduces issue
 // #494. A local edit that commits between the accept-server import's persist
-// commit and the dirty clear must not be dropped in silence. The
+// commit and the dirty clear must not be dropped in silence. The engine's
 // afterImportPersist hook fires in that window, after persistImported committed
 // and before clearDirtyAfterImport. It bumps rev and re-marks dirty exactly as
 // a real service-layer mutation would. persistImported now captures the
 // post-import rev inside its own transaction. It does not re-read it after
 // commit, where this edit's bump would be read and matched. The rev-guarded
 // clear then leaves the resource dirty. With the old after-commit re-read this
-// test fails. The clear reads the edit's bumped rev and wipes dirty. Serial
-// (no t.Parallel) because it mutates the package-level hook.
+// test fails. The clear reads the edit's bumped rev and wipes dirty.
 func TestEnginePushServerWinsPreservesConcurrentEditAfterPersist(t *testing.T) {
+	t.Parallel()
+
 	engine, db, q := newTestEngine(t)
 	ctx := context.Background()
 	calendarID := linkCalendarToTestAccount(t, ctx, q)
@@ -4389,13 +4496,14 @@ func TestEnginePushServerWinsPreservesConcurrentEditAfterPersist(t *testing.T) {
 	// before the dirty clear. persistImported already released its connection,
 	// so this auto-commit write is safe under SetMaxOpenConns(1).
 	var fired int
-	afterImportPersist = func() {
-		fired++
-		if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-persist-race", "event"); err != nil {
-			t.Errorf("simulate concurrent edit: %v", err)
-		}
+	engine.testHooks = &engineTestHooks{
+		afterImportPersist: func() {
+			fired++
+			if err := storage.MarkResourceDirty(ctx, db, calendarID, "srv-wins-persist-race", "event"); err != nil {
+				t.Errorf("simulate concurrent edit: %v", err)
+			}
+		},
 	}
-	t.Cleanup(func() { afterImportPersist = nil })
 
 	client := serverWinsConflictClient(t, "srv-wins-persist-race", nil)
 	result, err := engine.push(ctx, client, calendarID, "", "", ConflictServerWins, false)
