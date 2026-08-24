@@ -40,8 +40,16 @@ func HasOccurrenceFrom(evt event.Event, from time.Time) bool {
 	if !ok {
 		return !evt.StartTime.Before(from)
 	}
+	// rs.between keeps occurrences that merely overlap the window (a
+	// multi-day instance started earlier still runs at from). Deletion keys
+	// on starts, so only a start at or after the cutoff counts.
 	lo := from.UTC()
-	return len(rs.between(lo, lo.Add(instanceScopeHorizon))) > 0
+	for _, occ := range rs.between(lo, lo.Add(instanceScopeHorizon)) {
+		if !occ.Before(lo) {
+			return true
+		}
+	}
+	return false
 }
 
 // NextOccurrenceAfter returns the first instance strictly after after, or

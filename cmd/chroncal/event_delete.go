@@ -56,6 +56,11 @@ func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at
 	if recurrence.OccurrenceExistsAt(master, at) {
 		return nil
 	}
+	// A live override at that RECURRENCE-ID is deletable even when an
+	// imported EXDATE hides the master slot; the override row is its own key.
+	if _, err := a.Events.GetByUIDAndRecurrenceID(ctx, master.UID, at.UTC().Format(time.RFC3339)); err == nil {
+		return nil
+	}
 	return noSuchOccurrenceErr(master, at)
 }
 
