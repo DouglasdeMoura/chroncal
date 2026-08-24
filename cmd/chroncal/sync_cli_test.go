@@ -196,6 +196,7 @@ func TestSyncCommandsFailWhenCredentialStoreUnavailable(t *testing.T) {
 		t.Skip("the session bus probe only applies on Linux")
 	}
 	setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_SECURITY_ALLOW_PLAINTEXT", "false")
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
 
 	commands := [][]string{
