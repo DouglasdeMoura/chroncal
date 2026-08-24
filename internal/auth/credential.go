@@ -296,7 +296,9 @@ func (s *PlaintextFileStore) Set(cred Credential) error {
 	if err != nil {
 		return fmt.Errorf("open credential dir: %w", err)
 	}
-	dir.Sync()
+	// Some platforms reject fsync on a directory. The data file is already
+	// synced; losing the directory entry on a crash is the remaining risk.
+	_ = dir.Sync()
 	dir.Close()
 	w := s.warnWriter()
 	fmt.Fprintf(w, "Warning: credentials stored in plaintext at %s\n", path)
@@ -495,6 +497,12 @@ func newKeyringAvailabilityProbe() func() error {
 // broad text match reads a broken backend as an absent item.
 func secretServiceReportsAbsentItem(err error) bool {
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "org.freedesktop.secret") ||
-		strings.Contains(msg, "org.freedesktop.dbus.error")
+	// Match Secret Service / D-Bus *error identities* for a missing item
+	// (NoSuchObject, UnknownObject). Do not match the bus name
+	// org.freedesktop.secrets: "The name org.freedesktop.secrets was not
+	// provided by any .service files" means the daemon is absent, not that
+	// the probe item is missing. A substring match on org.freedesktop.secret
+	// treats GitHub Ubuntu runners as having a keyring, then Set fails.
+	return strings.Contains(msg, "org.freedesktop.secret.error") ||
+		strings.Contains(msg, "org.freedesktop.dbus.error.unknownobject")
 }
