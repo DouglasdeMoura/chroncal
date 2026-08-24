@@ -442,7 +442,7 @@ Narrow a run with `--calendar NAME` (one local calendar) or `--account NAME` (ev
 Conflict handling:
 
 - Every write fires an opportunistic push. When the server answers 412, chroncal records a conflict and keeps the local edit. The edit stays dirty. The command prints a note on stderr. The note tells you to run `chroncal sync conflicts`.
-- The conflict strategy (`server-wins` or `prompt`) governs full sync passes only. A full pass is `sync run`, the background service, or a TUI sync. A `server-wins` pass adopts the server body, clears the dirty flag, and marks the conflict resolved as `server-auto`. A `prompt` pass records the conflict and skips that row until you resolve it.
+- The conflict strategy (`server-wins` or `prompt`) governs full sync passes only. The default is `prompt`; set `server-wins` in `config.toml` under `[sync]` to adopt the server body automatically. A full pass is `sync run`, the background service, or a TUI sync. A `server-wins` pass adopts the server body, clears the dirty flag, and marks the conflict resolved as `server-auto`. A `prompt` pass records the conflict and skips that row until you resolve it.
 - A resolved conflict keeps its row. Run `chroncal sync conflicts --resolved` to list resolved conflicts. Run `chroncal sync resolve <id> --pick local` on a resolved conflict to restore the recorded local version.
 
 ### Google Calendar via CalDAV

@@ -140,6 +140,9 @@ func newViper() *viper.Viper {
 	v.BindEnv("smtp.password")
 	v.BindEnv("smtp.from")
 	v.BindEnv("smtp.tls")
+	// An unset conflict strategy must mean the safe mode: record the
+	// conflict and wait for the user. Server-wins is an explicit opt-in.
+	v.SetDefault("sync.conflict_strategy", "prompt")
 	v.BindEnv("sync.interval")
 	v.BindEnv("sync.conflict_strategy")
 	v.BindEnv("security.allow_unsafe_alarm_audio_attach")
