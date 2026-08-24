@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -64,6 +66,8 @@ func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at
 	// imported EXDATE hides the master slot; the override row is its own key.
 	if _, err := a.Events.GetByUIDAndRecurrenceID(ctx, master.UID, at.UTC().Format(time.RFC3339)); err == nil {
 		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("look up override: %w", err)
 	}
 	return noSuchOccurrenceErr(master, at)
 }
@@ -82,7 +86,10 @@ func requireOccurrenceFrom(ctx context.Context, a *app.App, master event.Event, 
 	// so one of those makes the scope meaningful even when an imported
 	// EXDATE hides every generated slot.
 	hasOverride, oErr := a.Events.HasLiveOverrideFrom(ctx, master.UID, at)
-	if oErr == nil && hasOverride {
+	if oErr != nil && !errors.Is(oErr, sql.ErrNoRows) {
+		return fmt.Errorf("check overrides: %w", oErr)
+	}
+	if hasOverride {
 		return nil
 	}
 	return noSuchOccurrenceErr(master, at)
