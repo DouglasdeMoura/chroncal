@@ -45,6 +45,10 @@ func TestDeleteScopeValidationBlocksAndSurfaces(t *testing.T) {
 	m.pending.target.ev = ev
 
 	next, cmd := m.handleChoiceDialogResult(ChoiceDialogResultMsg{Choice: 0}) // This event
+	after := next.(Model)
+	if after.confirmOpen {
+		t.Fatal("the failed scope left the choice dialog open")
+	}
 	if cmd == nil {
 		t.Fatal("expected a command carrying the validation result")
 	}
