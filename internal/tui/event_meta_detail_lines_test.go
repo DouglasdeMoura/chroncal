@@ -31,16 +31,16 @@ func metaOptsWithURLs(interactive bool) eventMetaDetailLinesOptions {
 // markers would then leak as raw escapes. Non-interactive rows must emit OSC 8
 // links only.
 func TestEventMetaDetailLines_NonInteractiveEmitsNoMouseZones(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	out := strings.Join(eventMetaDetailLines(metaOptsWithURLs(false)), "\n")
 
-	assert.Contains(t, out, "\x1b]8;;", "non-interactive rows should still carry OSC 8 links")
+	assert.True(t, hasOSC8(out), "non-interactive rows should still carry OSC 8 links")
 	assert.NotRegexp(t, mouseZoneMarker, out, "non-interactive rows must not emit mouse-zone markers")
 }
 
 // The full event view sweeps its own output, so it opts into clickable zones.
 func TestEventMetaDetailLines_InteractiveEmitsMouseZones(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	out := strings.Join(eventMetaDetailLines(metaOptsWithURLs(true)), "\n")
 
 	assert.Regexp(t, mouseZoneMarker, out, "interactive rows should emit mouse-zone markers")
@@ -49,9 +49,9 @@ func TestEventMetaDetailLines_InteractiveEmitsMouseZones(t *testing.T) {
 // The Conference field holds a whole URI (here a non-http scheme). It must be
 // wrapped as an OSC 8 link verbatim rather than a regress to plain text.
 func TestEventMetaDetailLines_ConferenceNonHTTPStaysLinked(t *testing.T) {
-	defaultMouseTracker = &mouseTracker{}
+	isolateMouseTracker(t)
 	out := strings.Join(eventMetaDetailLines(metaOptsWithURLs(false)), "\n")
 
-	assert.Contains(t, out, "\x1b]8;;zoommtg://zoom.us/join?confno=1\x1b\\",
+	assert.Contains(t, out, osc8Open("zoommtg://zoom.us/join?confno=1"),
 		"a non-http Conference URI must still get an OSC 8 link")
 }
