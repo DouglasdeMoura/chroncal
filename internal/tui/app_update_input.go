@@ -13,7 +13,7 @@ func (m Model) captureOverlayInput(msg tea.Msg) (Model, tea.Cmd, bool) {
 	// palette, and text-entry dialogs), so it must own input whenever it's
 	// up. Without this, keystrokes like y/n/esc would be swallowed by
 	// whatever dialog happens to be underneath.
-	if m.confirmOpen && m.pendingQuit {
+	if m.confirmOpen && m.pending.kind == pendingActionQuit {
 		switch msg.(type) {
 		case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.PasteMsg:
 			var cmd tea.Cmd
@@ -26,7 +26,7 @@ func (m Model) captureOverlayInput(msg tea.Msg) (Model, tea.Cmd, bool) {
 	// (below only the quit guard). Flow lifecycle messages, loads, and
 	// sizes fall through to the main switch, which routes them to the
 	// modal and dispatches the outcome.
-	if m.oauthFlowOpen && (!m.confirmOpen || !m.pendingQuit) {
+	if m.oauthFlowOpen && (!m.confirmOpen || m.pending.kind != pendingActionQuit) {
 		switch msg.(type) {
 		case tea.KeyPressMsg, tea.MouseClickMsg:
 			var cmd tea.Cmd

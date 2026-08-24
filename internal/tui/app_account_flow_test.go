@@ -243,10 +243,10 @@ func TestAppAccountSettingsRemoveConfirmsAccountIdentityAndKeepsCalendarsLocal(t
 	updated, cmd := m.Update(AccountSettingsRemoveRequestedMsg{AccountID: 7})
 	m = updated.(Model)
 	if cmd != nil || !m.confirmOpen || !accountManagerOpen(m) ||
-		m.pendingAccountRemoveID != 7 || m.pendingAccountRemoveName != "Personal Google" {
+		m.pending.target.accountID != 7 || m.pending.label != "Personal Google" {
 		t.Fatalf("remove request: cmd=%v confirm=%v settings=%v pending=%d/%q",
 			cmd, m.confirmOpen, accountManagerOpen(m),
-			m.pendingAccountRemoveID, m.pendingAccountRemoveName)
+			m.pending.target.accountID, m.pending.label)
 	}
 	plain := m.confirmDialog.form.Field(0).(*StaticField).Value()
 	for _, want := range []string{
@@ -263,10 +263,10 @@ func TestAppAccountSettingsRemoveConfirmsAccountIdentityAndKeepsCalendarsLocal(t
 	updated, cmd = m.Update(ConfirmDialogResultMsg{Confirmed: false})
 	m = updated.(Model)
 	if cmd != nil || m.confirmOpen || !accountManagerOpen(m) ||
-		m.pendingAccountRemoveID != 0 || m.pendingAccountRemoveName != "" {
+		m.pending.target.accountID != 0 || m.pending.label != "" {
 		t.Fatalf("cancel removal: cmd=%v confirm=%v settings=%v pending=%d/%q",
 			cmd, m.confirmOpen, accountManagerOpen(m),
-			m.pendingAccountRemoveID, m.pendingAccountRemoveName)
+			m.pending.target.accountID, m.pending.label)
 	}
 
 	updated, _ = m.Update(AccountSettingsRemoveRequestedMsg{AccountID: 7})
@@ -274,10 +274,10 @@ func TestAppAccountSettingsRemoveConfirmsAccountIdentityAndKeepsCalendarsLocal(t
 	updated, cmd = m.Update(ConfirmDialogResultMsg{Confirmed: true})
 	m = updated.(Model)
 	if cmd == nil || !m.syncing || accountManagerOpen(m) ||
-		m.pendingAccountRemoveID != 0 || m.pendingAccountRemoveName != "" {
+		m.pending.target.accountID != 0 || m.pending.label != "" {
 		t.Fatalf("confirm removal: cmd=%v syncing=%v settings=%v pending=%d/%q",
 			cmd == nil, m.syncing, accountManagerOpen(m),
-			m.pendingAccountRemoveID, m.pendingAccountRemoveName)
+			m.pending.target.accountID, m.pending.label)
 	}
 
 	updated, reload := m.Update(accountRemovalFinishedMsg{accountID: 7, name: "Personal Google"})
@@ -712,9 +712,9 @@ func TestAppAccountCalendarRemovalRequiresDestructiveConfirmation(t *testing.T) 
 	})
 	m = updated.(Model)
 
-	if cmd != nil || !m.confirmOpen || !m.calendarManagerOpen || m.pendingAccountSelection == nil {
+	if cmd != nil || !m.confirmOpen || !m.calendarManagerOpen || m.pending.target.selection == nil {
 		t.Fatalf("removal selection: cmd=%v confirm=%v manager=%v pending=%v",
-			cmd, m.confirmOpen, m.calendarManagerOpen, m.pendingAccountSelection)
+			cmd, m.confirmOpen, m.calendarManagerOpen, m.pending.target.selection)
 	}
 	plain := stripANSI(m.confirmDialog.View())
 	for _, want := range []string{
@@ -730,9 +730,9 @@ func TestAppAccountCalendarRemovalRequiresDestructiveConfirmation(t *testing.T) 
 
 	updated, cmd = m.Update(ConfirmDialogResultMsg{Confirmed: false})
 	m = updated.(Model)
-	if cmd != nil || m.confirmOpen || m.pendingAccountSelection != nil || !m.calendarManagerOpen {
+	if cmd != nil || m.confirmOpen || m.pending.target.selection != nil || !m.calendarManagerOpen {
 		t.Fatalf("cancel removal: cmd=%v confirm=%v pending=%v manager=%v",
-			cmd, m.confirmOpen, m.pendingAccountSelection, m.calendarManagerOpen)
+			cmd, m.confirmOpen, m.pending.target.selection, m.calendarManagerOpen)
 	}
 
 	updated, _ = m.Update(AccountCalendarsReconcileRequestedMsg{
@@ -770,9 +770,9 @@ func TestAppAccountCalendarDefaultRemovalOffersKeptAndNewReplacements(t *testing
 		SelectedPaths: []string{"/primary/"},
 	})
 	m = updated.(Model)
-	if cmd != nil || !m.choiceOpen || m.confirmOpen || len(m.pendingAccountDefaultCandidates) != 2 {
+	if cmd != nil || !m.choiceOpen || m.confirmOpen || len(m.pending.target.defaultCands) != 2 {
 		t.Fatalf("default removal: cmd=%v choice=%v confirm=%v candidates=%+v",
-			cmd, m.choiceOpen, m.confirmOpen, m.pendingAccountDefaultCandidates)
+			cmd, m.choiceOpen, m.confirmOpen, m.pending.target.defaultCands)
 	}
 	plain := stripANSI(m.choiceDialog.View())
 	for _, want := range []string{"Choose a new default", "Local", "Primary"} {
@@ -782,21 +782,21 @@ func TestAppAccountCalendarDefaultRemovalOffersKeptAndNewReplacements(t *testing
 	}
 
 	newPathChoice := -1
-	for idx, candidate := range m.pendingAccountDefaultCandidates {
+	for idx, candidate := range m.pending.target.defaultCands {
 		if candidate.path == "/primary/" {
 			newPathChoice = idx
 			break
 		}
 	}
 	if newPathChoice < 0 {
-		t.Fatalf("newly selected calendar is not a default candidate: %+v", m.pendingAccountDefaultCandidates)
+		t.Fatalf("newly selected calendar is not a default candidate: %+v", m.pending.target.defaultCands)
 	}
 	updated, _ = m.Update(ChoiceDialogResultMsg{Choice: newPathChoice})
 	m = updated.(Model)
-	if m.choiceOpen || !m.confirmOpen || m.pendingAccountSelection == nil ||
-		m.pendingAccountSelection.params.NewDefaultPath != "/primary/" {
+	if m.choiceOpen || !m.confirmOpen || m.pending.target.selection == nil ||
+		m.pending.target.selection.params.NewDefaultPath != "/primary/" {
 		t.Fatalf("replacement choice: choice=%v confirm=%v pending=%+v",
-			m.choiceOpen, m.confirmOpen, m.pendingAccountSelection)
+			m.choiceOpen, m.confirmOpen, m.pending.target.selection)
 	}
 }
 
@@ -827,9 +827,9 @@ func TestAppRemovingEveryAccountCalendarAlsoRemovesAccount(t *testing.T) {
 	m := accountManagementAppModel(t)
 	updated, cmd := m.Update(AccountCalendarsReconcileRequestedMsg{AccountID: 7})
 	m = updated.(Model)
-	if cmd != nil || !m.confirmOpen || m.pendingAccountSelection == nil {
+	if cmd != nil || !m.confirmOpen || m.pending.target.selection == nil {
 		t.Fatalf("empty selection: cmd=%v confirm=%v pending=%v",
-			cmd, m.confirmOpen, m.pendingAccountSelection)
+			cmd, m.confirmOpen, m.pending.target.selection)
 	}
 	plain := strings.Join(strings.Fields(stripANSI(m.confirmDialog.View())), " ")
 	for _, want := range []string{"stored", "sign-in", "Remove Account"} {
@@ -840,8 +840,8 @@ func TestAppRemovingEveryAccountCalendarAlsoRemovesAccount(t *testing.T) {
 
 	updated, cmd = m.Update(ConfirmDialogResultMsg{Confirmed: true})
 	m = updated.(Model)
-	if cmd == nil || !m.syncing || m.pendingAccountSelection != nil {
+	if cmd == nil || !m.syncing || m.pending.target.selection != nil {
 		t.Fatalf("confirmed empty selection: cmd=%v syncing=%v pending=%v",
-			cmd, m.syncing, m.pendingAccountSelection)
+			cmd, m.syncing, m.pending.target.selection)
 	}
 }

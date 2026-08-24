@@ -275,8 +275,8 @@ func (m Model) View() tea.View {
 	}
 	// Regular confirms belong in the normal stack. The quit guard must
 	// sit above palette and help (which otherwise render on top). It
-	// owns input whenever pendingQuit is set.
-	if m.confirmOpen && !m.pendingQuit {
+	// owns input whenever the armed quit action is set.
+	if m.confirmOpen && m.pending.kind != pendingActionQuit {
 		bw, bh := m.confirmDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.confirmDialog.View(), bw, bh)
 	}
@@ -288,7 +288,7 @@ func (m Model) View() tea.View {
 		bw, bh := m.helpDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.helpDialog.View(), bw, bh)
 	}
-	if m.confirmOpen && m.pendingQuit {
+	if m.confirmOpen && m.pending.kind == pendingActionQuit {
 		bw, bh := m.confirmDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.confirmDialog.View(), bw, bh)
 	}

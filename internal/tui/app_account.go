@@ -623,13 +623,16 @@ func (m Model) showAccountCalendarRemovalConfirmation(selection *accountCalendar
 	if selection.removedCurrent {
 		message += "\n\nYour unsaved calendar edits will be discarded."
 	}
-	m.pendingAccountSelection = selection
-	m.confirmDialog = NewConfirmDialogModel(message, buttonLabel, m.theme).
-		Destructive().
-		SetSize(m.width, m.height)
-	m.confirmOpen = true
-	return m
+	return m.armConfirm(
+		pendingAction{
+			kind:   pendingActionAccountSelection,
+			target: pendingTarget{selection: selection},
+		},
+		NewConfirmDialogModel(message, buttonLabel, m.theme).
+			Destructive(),
+	)
 }
+
 func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
