@@ -273,8 +273,7 @@ func TestHarness_CtrlCSupersede_KeepLocalNotFiredLater(t *testing.T) {
 	m.pendingDelete = event.Event{ID: seeded.ID, CalendarID: 1, Title: "Standup"}
 	m.confirmOpen = true
 
-	updated, cmd := m.Update(ConfirmDialogResultMsg{Confirmed: true})
-	m = updated.(Model)
+	_, cmd := m.Update(ConfirmDialogResultMsg{Confirmed: true})
 	require.NotNil(t, cmd, "the confirmed delete dispatched no command")
 	result := cmd()
 	done, ok := result.(eventDeletedMsg)
