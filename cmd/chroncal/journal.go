@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -45,6 +46,7 @@ func journalListCmd() *cobra.Command {
 		fromStr        string
 		toStr          string
 		compact        bool
+		noHeader       bool
 		includeDeleted bool
 	)
 	cmd := &cobra.Command{
@@ -101,11 +103,7 @@ CANCELLED entries.`,
 					fmt.Fprintln(w, "No journal entries found.")
 					return nil
 				}
-				useColor := compactTableColorEnabled(w)
-				fmt.Fprintln(w, formatCompactJournalHeader(useColor))
-				for _, j := range journals {
-					fmt.Fprintln(w, formatCompactJournal(j, useColor))
-				}
+				writeCompactJournalTable(w, journals, !noHeader, compactTableColorEnabled(w))
 				return nil
 			}
 			printJournals(w, journals)
@@ -118,41 +116,43 @@ CANCELLED entries.`,
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD); with no date flags, past entries are included")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days after --from)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per entry (ID  DATE  CATEGORIES  SUMMARY)")
+	cmd.Flags().BoolVar(&noHeader, "no-header", false, "omit the compact table header (for scripts)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted journals (see `journal restore`)")
 	return cmd
 }
 
-const (
-	compactJournalIDWidth         = 6
-	compactJournalDateWidth       = 12 // YYYY-MM-DD + 2 trailing spaces
-	compactJournalCategoriesWidth = 20
-)
-
-func formatCompactJournalHeader(useColor bool) string {
-	header := fmt.Sprintf("%-*s%-*s%-*s%s",
-		compactJournalIDWidth, "ID",
-		compactJournalDateWidth, "DATE",
-		compactJournalCategoriesWidth, "CATEGORIES",
-		"SUMMARY")
-	return compactTableColor(useColor, "1;36", header)
-}
-
-// formatCompactJournal renders one journal entry as a table row:
-// "19    2026-05-15  work                Notes". ID, date, and categories are
-// minimum-width columns; missing dates and categories show "-". Summary is
-// last so arbitrary text does not disturb the preceding columns.
-func formatCompactJournal(j journal.Journal, useColor bool) string {
-	categories := textsafe.Display(j.Categories)
-	if categories == "" {
-		categories = "-"
+// writeCompactJournalTable renders the journal compact table. The categories
+// column disappears when no entry in the result set carries one.
+func writeCompactJournalTable(w io.Writer, journals []journal.Journal, showHeader, useColor bool) {
+	termWidth := terminalWidth(w)
+	headers := []string{"ID", "DATE", "CATEGORIES", "SUMMARY"}
+	codes := []string{"1;36", "2", "33", ""}
+	rows := make([][]compactCell, len(journals))
+	hasCategories := false
+	for i, j := range journals {
+		categories := textsafe.Display(j.Categories)
+		if categories == "" {
+			categories = "-"
+		} else {
+			hasCategories = true
+		}
+		rows[i] = []compactCell{
+			{fmt.Sprintf("%d", j.ID), "1;36"},
+			{compactDateColumn(j.StartDate), "2"},
+			{categories, "33"},
+			{textsafe.Display(j.Summary), ""},
+		}
 	}
-	idCell := fmt.Sprintf("%-*d", compactJournalIDWidth, j.ID)
-	dateCell := fmt.Sprintf("%-*s", compactJournalDateWidth, compactDateColumn(j.StartDate))
-	categoriesCell := fmt.Sprintf("%-*s", compactJournalCategoriesWidth, categories)
-	return compactTableColor(useColor, "1;36", idCell) +
-		compactTableColor(useColor, "2", dateCell) +
-		compactTableColor(useColor, "33", categoriesCell) +
-		textsafe.Display(j.Summary)
+	flex := map[int]bool{2: true, 3: true}
+	if !hasCategories {
+		headers = dropCompactColumn(headers, 2)
+		codes = dropCompactColumn(codes, 2)
+		flex = remapFlex(flex, 2, len(headers))
+		for i := range rows {
+			rows[i] = dropCompactCell(rows[i], 2)
+		}
+	}
+	writeCompactTable(w, headers, codes, rows, flex, useColor, showHeader, termWidth)
 }
 
 func journalGetCmd() *cobra.Command {
