@@ -32,7 +32,6 @@ func assertASCII(t *testing.T, s string) {
 	}
 }
 
-
 func TestToJSONEvent_ExposesConferenceURI(t *testing.T) {
 	t.Parallel()
 
