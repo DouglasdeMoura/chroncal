@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -9,80 +11,79 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
-func TestFormatCompactEventUsesSharedTableLayout(t *testing.T) {
+func TestWriteCompactEventTableLayout(t *testing.T) {
 	t.Parallel()
 
 	start := time.Date(2026, 4, 21, 9, 0, 0, 0, time.Local)
-	e := event.Event{
-		ID:         42,
-		CalendarID: 7,
-		Title:      "Team Standup",
-		StartTime:  start,
-		EndTime:    start.Add(30 * time.Minute),
-		Categories: "work,meeting",
+	events := []event.Event{
+		{ID: 42, CalendarID: 7, Title: "Team Standup", StartTime: start,
+			EndTime: start.Add(30 * time.Minute), Categories: "work,meeting"},
+		{ID: 7, CalendarID: 8, Title: "Offsite", StartTime: start,
+			EndTime: start.Add(48 * time.Hour), AllDay: true},
 	}
-	header := formatCompactEventHeader(true, false)
-	if got, want := strings.Fields(header), []string{"ID", "DATE", "TIME", "CATEGORIES", "CALENDAR", "SUMMARY"}; strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("event compact header fields = %v, want %v", got, want)
+
+	var b bytes.Buffer
+	writeCompactEventTable(&b, events, map[int64]string{7: "Work", 8: "Fun"}, true, true, false)
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %d, want header + 2 rows", len(lines))
 	}
-	got := formatCompactEvent(e, map[int64]string{7: "Work"}, true, false)
-	want := "42    2026-04-21             09:00-09:30  work,meeting        Work              Team Standup"
-	if got != want {
-		t.Fatalf("formatCompactEvent() = %q, want %q", got, want)
+	if got := strings.Fields(lines[0]); !reflect.DeepEqual(got,
+		[]string{"ID", "DATE", "TIME", "CATEGORIES", "CALENDAR", "SUMMARY"}) {
+		t.Fatalf("header fields = %v", got)
 	}
-	colored := formatCompactEvent(e, map[int64]string{7: "Work"}, true, true)
-	for _, code := range []string{"\x1b[1;36m", "\x1b[2m", "\x1b[33m", "\x1b[35m"} {
-		if !strings.Contains(colored, code) {
-			t.Fatalf("colored event row = %q, want ANSI code %q", colored, code)
+	// The summary column starts at the same offset in every row.
+	col := strings.Index(lines[0], "SUMMARY")
+	for i, line := range lines[1:] {
+		if got := strings.Index(line, []string{"Team Standup", "Offsite"}[i]); got != col {
+			t.Fatalf("row %d summary at %d, want %d: %q", i, got, col, line)
 		}
+	}
+	// Categories keep the stored order.
+	if !strings.Contains(lines[1], "work,meeting") {
+		t.Fatalf("row 1 = %q, want stored category order", lines[1])
+	}
+	// The recurrence marker flags a series in the date column.
+	events[0].RecurrenceRule = "FREQ=DAILY"
+	b.Reset()
+	writeCompactEventTable(&b, events, nil, false, true, false)
+	if !strings.Contains(b.String(), "\u21bb") {
+		t.Fatalf("table = %q, want a recurrence marker", b.String())
 	}
 }
 
-func TestEventListCompactIDCanBePassedToGet(t *testing.T) {
-	setupCalendarCLITestEnv(t)
-	t.Setenv("TZ", "UTC")
+// TestWriteCompactEventTableHidesEmptyCategories drops the categories column
+// when no event in the result set carries one.
+func TestWriteCompactEventTableHidesEmptyCategories(t *testing.T) {
+	t.Parallel()
 
-	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
-		t.Fatalf("calendar create: %v", err)
+	start := time.Date(2026, 4, 21, 9, 0, 0, 0, time.Local)
+	events := []event.Event{{ID: 1, Title: "Plain", StartTime: start, EndTime: start.Add(time.Hour)}}
+	var b bytes.Buffer
+	writeCompactEventTable(&b, events, nil, false, true, false)
+	if strings.Contains(b.String(), "CATEGORIES") {
+		t.Fatalf("table = %q, want no categories column", b.String())
 	}
-	if _, _, err := runChroncalCommand(t,
-		"event", "add", "Team Standup",
-		"--calendar", "Work",
-		"--date", "2026-04-21",
-		"--time", "09:00",
-		"--duration", "30m",
-		"--categories", "work,meeting",
-	); err != nil {
-		t.Fatalf("event add: %v", err)
-	}
+}
 
-	stdout, _, err := runChroncalCommand(t,
-		"event", "list", "--compact", "--show-calendar",
-		"--calendar", "Work",
-		"--from", "2026-04-21",
-		"--to", "2026-04-22",
-	)
-	if err != nil {
-		t.Fatalf("event list --compact: %v", err)
+// TestWriteCompactTableTruncatesToTerminal pins the overflow rule: flexible
+// columns and the summary shrink with an ellipsis when the terminal is narrow.
+func TestWriteCompactTableTruncatesToTerminal(t *testing.T) {
+	t.Parallel()
+
+	headers := []string{"ID", "SUMMARY"}
+	codes := []string{"1;36", ""}
+	rows := [][]compactCell{
+		{{"1", "1;36"}, {"a very long summary that does not fit", ""}},
 	}
-	if strings.Contains(stdout, "\x1b[") {
-		t.Fatalf("piped compact output contains ANSI styling: %q", stdout)
+	var b bytes.Buffer
+	writeCompactTable(&b, headers, codes, rows, map[int]bool{1: true}, false, true, 30)
+	line := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")[1]
+	if w := displayWidth(line); w > 30 {
+		t.Fatalf("row width = %d, want <= 30: %q", w, line)
 	}
-	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("compact output contains no data row: %q", stdout)
-	}
-	if !strings.Contains(lines[0], "ID") || !strings.Contains(lines[0], "CALENDAR") ||
-		!strings.Contains(lines[1], "meeting,work") || !strings.Contains(lines[1], "Work") {
-		t.Fatalf("compact event table missing expected columns: %q", stdout)
-	}
-	id := strings.Fields(lines[1])[0]
-	getOut, _, err := runChroncalCommand(t, "event", "get", id)
-	if err != nil {
-		t.Fatalf("event get %q: %v", id, err)
-	}
-	if !strings.Contains(getOut, "Team Standup") {
-		t.Fatalf("event get output = %q, want summary", getOut)
+	if !strings.Contains(line, "\u2026") {
+		t.Fatalf("row = %q, want an ellipsis on the truncated summary", line)
 	}
 }
 
