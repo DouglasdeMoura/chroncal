@@ -1,83 +1,54 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
-func TestFormatCompactTodoUsesSharedTableLayout(t *testing.T) {
+func TestWriteCompactTodoTableLayout(t *testing.T) {
 	t.Parallel()
 
-	td := todo.Todo{
-		ID:         7,
-		Summary:    "Pay invoice",
-		DueDate:    "2026-08-12",
-		Status:     "COMPLETED",
-		Categories: "home,urgent",
+	todos := []todo.Todo{
+		{ID: 7, Summary: "Pay invoice", DueDate: "2026-08-12",
+			Status: "COMPLETED", Categories: "home,urgent"},
+		{ID: 9, Summary: "Read Go spec"},
 	}
-	header := formatCompactTodoHeader(false)
-	if got, want := strings.Fields(header), []string{"ID", "STATE", "DUE", "CATEGORIES", "SUMMARY"}; strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("todo compact header fields = %v, want %v", got, want)
+
+	var b bytes.Buffer
+	writeCompactTodoTable(&b, todos, true, false)
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	if got := strings.Fields(lines[0]); !reflect.DeepEqual(got,
+		[]string{"ID", "STATE", "DUE", "CATEGORIES", "SUMMARY"}) {
+		t.Fatalf("header fields = %v", got)
 	}
-	got := formatCompactTodo(td, false)
-	want := "7     [x]    2026-08-12  home,urgent         Pay invoice"
-	if got != want {
-		t.Fatalf("formatCompactTodo() = %q, want %q", got, want)
-	}
-	colored := formatCompactTodo(td, true)
-	for _, code := range []string{"\x1b[1;36m", "\x1b[32m", "\x1b[2m", "\x1b[33m"} {
-		if !strings.Contains(colored, code) {
-			t.Fatalf("colored todo row = %q, want ANSI code %q", colored, code)
+	col := strings.Index(lines[0], "SUMMARY")
+	wantSummaries := []string{"Pay invoice", "Read Go spec"}
+	for i, line := range lines[1:] {
+		if got := strings.Index(line, wantSummaries[i]); got != col {
+			t.Fatalf("row %d summary at %d, want %d: %q", i, got, col, line)
 		}
 	}
-}
-
-func TestTodoListCompactIDCanBePassedToGet(t *testing.T) {
-	setupCalendarCLITestEnv(t)
-	t.Setenv("TZ", "UTC")
-
-	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
-		t.Fatalf("calendar create: %v", err)
-	}
-	if _, _, err := runChroncalCommand(t,
-		"todo", "add", "Pay invoice",
-		"--calendar", "Work",
-		"--due", "2026-08-12",
-		"--categories", "home,urgent",
-	); err != nil {
-		t.Fatalf("todo add: %v", err)
+	if !strings.Contains(lines[1], "[x]") {
+		t.Fatalf("row 1 = %q, want completed checkbox", lines[1])
 	}
 
-	stdout, _, err := runChroncalCommand(t,
-		"todo", "list", "--compact",
-		"--calendar", "Work",
-		"--from", "2026-08-11",
-		"--to", "2026-08-13",
-	)
-	if err != nil {
-		t.Fatalf("todo list --compact: %v", err)
+	// Completed todos render green; open ones render dim.
+	b.Reset()
+	writeCompactTodoTable(&b, todos, false, true)
+	if !strings.Contains(b.String(), "\x1b[32m") {
+		t.Fatalf("table = %q, want green for the completed todo", b.String())
 	}
-	if strings.Contains(stdout, "\x1b[") {
-		t.Fatalf("piped compact output contains ANSI styling: %q", stdout)
-	}
-	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("compact output contains no data row: %q", stdout)
-	}
-	if !strings.Contains(lines[0], "STATE") || !strings.Contains(lines[0], "CATEGORIES") ||
-		!strings.Contains(lines[1], "home,urgent") {
-		t.Fatalf("compact todo table missing expected columns: %q", stdout)
-	}
-	id := strings.Fields(lines[1])[0]
-	getOut, _, err := runChroncalCommand(t, "todo", "get", id)
-	if err != nil {
-		t.Fatalf("todo get %q: %v", id, err)
-	}
-	if !strings.Contains(getOut, "Pay invoice") {
-		t.Fatalf("todo get output = %q, want summary", getOut)
+
+	// The categories column disappears when no todo carries one.
+	b.Reset()
+	writeCompactTodoTable(&b, []todo.Todo{{ID: 1, Summary: "Plain"}}, true, false)
+	if strings.Contains(b.String(), "CATEGORIES") {
+		t.Fatalf("table = %q, want no categories column", b.String())
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -19,6 +20,7 @@ func todoListCmd() *cobra.Command {
 		fromStr        string
 		toStr          string
 		compact        bool
+		noHeader       bool
 		includeDeleted bool
 	)
 	cmd := &cobra.Command{
@@ -74,11 +76,7 @@ By default completed and cancelled todos are hidden unless you pass
 					fmt.Fprintln(w, "No todos found.")
 					return nil
 				}
-				useColor := compactTableColorEnabled(w)
-				fmt.Fprintln(w, formatCompactTodoHeader(useColor))
-				for _, t := range todos {
-					fmt.Fprintln(w, formatCompactTodo(t, useColor))
-				}
+				writeCompactTodoTable(w, todos, !noHeader, compactTableColorEnabled(w))
 				return nil
 			}
 			printTodos(w, todos)
@@ -91,6 +89,7 @@ By default completed and cancelled todos are hidden unless you pass
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD); with no date flags, overdue todos are included")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days after --from)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per todo (ID  STATE  DUE  CATEGORIES  SUMMARY)")
+	cmd.Flags().BoolVar(&noHeader, "no-header", false, "omit the compact table header (for scripts)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted todos (see `todo restore`)")
 	return cmd
 }
@@ -112,21 +111,46 @@ func formatCompactTodoHeader(useColor bool) string {
 	return compactTableColor(useColor, "1;36", header)
 }
 
-// formatCompactTodo renders one todo as a table row. The state uses [x] when
-// completed and [ ] otherwise; missing due dates and categories show "-".
-// Summary remains last so arbitrary text does not disturb earlier columns.
-func formatCompactTodo(t todo.Todo, useColor bool) string {
-	categories := textsafe.Display(t.Categories)
-	if categories == "" {
-		categories = "-"
+// writeCompactTodoTable renders the todo compact table. The categories
+// column disappears when no todo in the result set carries one, and a
+// recurrence marker (\u21bb) flags recurring todos in the due column.
+func writeCompactTodoTable(w io.Writer, todos []todo.Todo, showHeader, useColor bool) {
+	termWidth := terminalWidth(w)
+	headers := []string{"ID", "STATE", "DUE", "CATEGORIES", "SUMMARY"}
+	codes := []string{"1;36", "", "2", "33", ""}
+	rows := make([][]compactCell, len(todos))
+	hasCategories := false
+	for i, td := range todos {
+		due := compactDateColumn(td.DueDate)
+		if td.RecurrenceRule != "" || td.RecurrenceID != "" {
+			due += " \u21bb"
+		}
+		categories := textsafe.Display(td.Categories)
+		if categories == "" {
+			categories = "-"
+		} else {
+			hasCategories = true
+		}
+		stateColor := "2"
+		if td.IsCompleted() {
+			stateColor = "32"
+		}
+		rows[i] = []compactCell{
+			{fmt.Sprintf("%d", td.ID), "1;36"},
+			{todoCheckbox(td), stateColor},
+			{due, "2"},
+			{categories, "33"},
+			{textsafe.Display(td.Summary), ""},
+		}
 	}
-	stateColor := "2"
-	if t.IsCompleted() {
-		stateColor = "32"
+	flex := map[int]bool{3: true, 4: true}
+	if !hasCategories {
+		headers = dropCompactColumn(headers, 3)
+		codes = dropCompactColumn(codes, 3)
+		flex = remapFlex(flex, 3, len(headers))
+		for i := range rows {
+			rows[i] = dropCompactCell(rows[i], 3)
+		}
 	}
-	return compactTableColor(useColor, "1;36", fmt.Sprintf("%-*d", compactTodoIDWidth, t.ID)) +
-		compactTableColor(useColor, stateColor, fmt.Sprintf("%-*s", compactTodoStateWidth, todoCheckbox(t))) +
-		compactTableColor(useColor, "2", fmt.Sprintf("%-*s", compactTodoDueWidth, compactDateColumn(t.DueDate))) +
-		compactTableColor(useColor, "33", fmt.Sprintf("%-*s", compactTodoCategoriesWidth, categories)) +
-		textsafe.Display(t.Summary)
+	writeCompactTable(w, headers, codes, rows, flex, useColor, showHeader, termWidth)
 }
