@@ -474,10 +474,11 @@ func replaceCategoriesTx(ctx context.Context, qtx *storage.Queries, journalID in
 	if err := qtx.DeleteCategoriesByJournalID(ctx, journalID); err != nil {
 		return fmt.Errorf("delete categories: %w", err)
 	}
-	for _, c := range categories {
+	for i, c := range categories {
 		_, err := qtx.CreateJournalCategory(ctx, storage.CreateJournalCategoryParams{
 			JournalID: journalID,
 			Category:  c,
+			Position:  int64(i),
 		})
 		if err != nil {
 			return fmt.Errorf("create category: %w", err)

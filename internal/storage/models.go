@@ -145,6 +145,7 @@ type EventAttendee struct {
 type EventCategory struct {
 	EventID  int64
 	Category string
+	Position int64
 }
 
 type EventComment struct {
@@ -250,6 +251,7 @@ type JournalAttendee struct {
 type JournalCategory struct {
 	JournalID int64
 	Category  string
+	Position  int64
 }
 
 type JournalComment struct {
@@ -420,6 +422,7 @@ type TodoAttendee struct {
 type TodoCategory struct {
 	TodoID   int64
 	Category string
+	Position int64
 }
 
 type TodoComment struct {

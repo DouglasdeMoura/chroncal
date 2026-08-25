@@ -49,10 +49,11 @@ func replaceCategoriesTx(ctx context.Context, qtx *storage.Queries, todoID int64
 	if err := qtx.DeleteCategoriesByTodoID(ctx, todoID); err != nil {
 		return fmt.Errorf("delete categories: %w", err)
 	}
-	for _, c := range categories {
+	for i, c := range categories {
 		if _, err := qtx.CreateTodoCategory(ctx, storage.CreateTodoCategoryParams{
 			TodoID:   todoID,
 			Category: c,
+			Position: int64(i),
 		}); err != nil {
 			return fmt.Errorf("create category: %w", err)
 		}

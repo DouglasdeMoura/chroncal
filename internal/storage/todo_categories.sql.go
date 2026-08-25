@@ -10,18 +10,19 @@ import (
 )
 
 const createTodoCategory = `-- name: CreateTodoCategory :one
-INSERT INTO todo_categories (todo_id, category) VALUES (?, ?) RETURNING todo_id, category
+INSERT INTO todo_categories (todo_id, category, position) VALUES (?, ?, ?) RETURNING todo_id, category, position
 `
 
 type CreateTodoCategoryParams struct {
 	TodoID   int64
 	Category string
+	Position int64
 }
 
 func (q *Queries) CreateTodoCategory(ctx context.Context, arg CreateTodoCategoryParams) (TodoCategory, error) {
-	row := q.db.QueryRowContext(ctx, createTodoCategory, arg.TodoID, arg.Category)
+	row := q.db.QueryRowContext(ctx, createTodoCategory, arg.TodoID, arg.Category, arg.Position)
 	var i TodoCategory
-	err := row.Scan(&i.TodoID, &i.Category)
+	err := row.Scan(&i.TodoID, &i.Category, &i.Position)
 	return i, err
 }
 
@@ -62,7 +63,7 @@ func (q *Queries) ListAllTodoCategories(ctx context.Context) ([]string, error) {
 }
 
 const listCategoriesByTodoID = `-- name: ListCategoriesByTodoID :many
-SELECT todo_id, category FROM todo_categories WHERE todo_id = ? ORDER BY category
+SELECT todo_id, category, position FROM todo_categories WHERE todo_id = ? ORDER BY position
 `
 
 func (q *Queries) ListCategoriesByTodoID(ctx context.Context, todoID int64) ([]TodoCategory, error) {
@@ -74,7 +75,7 @@ func (q *Queries) ListCategoriesByTodoID(ctx context.Context, todoID int64) ([]T
 	var items []TodoCategory
 	for rows.Next() {
 		var i TodoCategory
-		if err := rows.Scan(&i.TodoID, &i.Category); err != nil {
+		if err := rows.Scan(&i.TodoID, &i.Category, &i.Position); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

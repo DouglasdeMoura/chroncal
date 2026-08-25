@@ -1,8 +1,8 @@
 -- name: CreateJournalCategory :one
-INSERT INTO journal_categories (journal_id, category) VALUES (?, ?) RETURNING *;
+INSERT INTO journal_categories (journal_id, category, position) VALUES (?, ?, ?) RETURNING *;
 
 -- name: ListCategoriesByJournalID :many
-SELECT * FROM journal_categories WHERE journal_id = ? ORDER BY category;
+SELECT * FROM journal_categories WHERE journal_id = ? ORDER BY position;
 
 -- name: DeleteCategoriesByJournalID :exec
 DELETE FROM journal_categories WHERE journal_id = ?;
