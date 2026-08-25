@@ -18,6 +18,7 @@ func eventSearchCmd() *cobra.Command {
 		toStr        string
 		status       string
 		compact      bool
+		noHeader     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "search <query>",
@@ -93,11 +94,7 @@ roughly when the event occurred.`,
 				return nil
 			}
 			if compact {
-				useColor := compactTableColorEnabled(w)
-				fmt.Fprintln(w, formatCompactEventHeader(false, useColor))
-				for _, e := range events {
-					fmt.Fprintln(w, formatCompactEvent(e, nil, false, useColor))
-				}
+				writeCompactEventTable(w, events, nil, false, !noHeader, compactTableColorEnabled(w))
 				return nil
 			}
 			fmt.Fprint(w, tui.FormatEventList(tui.FormatEventListOptions{
@@ -113,5 +110,6 @@ roughly when the event occurred.`,
 	cmd.Flags().StringVar(&toStr, "to", "", "end date filter (YYYY-MM-DD, inclusive)")
 	cmd.Flags().StringVar(&status, "status", "", "status filter (TENTATIVE, CONFIRMED, CANCELLED)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per event; same shape as event list --compact")
+	cmd.Flags().BoolVar(&noHeader, "no-header", false, "omit the compact table header (for scripts)")
 	return cmd
 }

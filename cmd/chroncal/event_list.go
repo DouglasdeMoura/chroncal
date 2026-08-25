@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -22,6 +22,7 @@ func eventListCmd() *cobra.Command {
 		showWeekday    bool
 		verbose        bool
 		compact        bool
+		noHeader       bool
 		showID         bool
 		showCalendar   bool
 		includeDeleted bool
@@ -94,11 +95,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 				return nil
 			}
 			if compact {
-				useColor := compactTableColorEnabled(w)
-				fmt.Fprintln(w, formatCompactEventHeader(showCalendar, useColor))
-				for _, e := range events {
-					fmt.Fprintln(w, formatCompactEvent(e, calendarNames, showCalendar, useColor))
-				}
+				writeCompactEventTable(w, events, calendarNames, showCalendar, !noHeader, compactTableColorEnabled(w))
 				return nil
 			}
 			// ShowAllDays:false suppresses date-only stub lines for days
@@ -127,40 +124,74 @@ Without flags, the window defaults to today through the next 30 days.`,
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "render a detailed time-rail view for each event")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per event (ID  DATE  TIME  CATEGORIES  SUMMARY); skips empty-day stubs")
 	cmd.Flags().BoolVar(&showID, "show-id", false, "show each event's numeric ID in non-compact text output (compact always includes it)")
+	cmd.Flags().BoolVar(&noHeader, "no-header", false, "omit the compact table header (for scripts)")
 	cmd.Flags().BoolVar(&showCalendar, "show-calendar", false, "show the calendar name in text output")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted events (see `events restore`)")
 	mutuallyExclusive(cmd, "compact", "verbose")
 	return cmd
 }
 
-const (
-	compactEventIDWidth         = 6
-	compactEventDateWidth       = 23 // "YYYY-MM-DD/YYYY-MM-DD" + 2 trailing spaces
-	compactEventTimeWidth       = 13 // "HH:MM-HH:MM" + 2 trailing spaces
-	compactEventCategoriesWidth = 20
-	compactEventCalendarWidth   = 18
-)
-
-func formatCompactEventHeader(showCalendar, useColor bool) string {
-	header := fmt.Sprintf("%-*s%-*s%-*s%-*s",
-		compactEventIDWidth, "ID",
-		compactEventDateWidth, "DATE",
-		compactEventTimeWidth, "TIME",
-		compactEventCategoriesWidth, "CATEGORIES")
+// writeCompactEventTable renders the event compact table: one header row and
+// one row per event. The categories column disappears when no event in the
+// result set carries one, and a recurrence marker (\u21bb) flags series and
+// moved overrides in the date column.
+func writeCompactEventTable(w io.Writer, events []event.Event, calendarNames map[int64]string, showCalendar, showHeader, useColor bool) {
+	termWidth := terminalWidth(w)
+	headers := []string{"ID", "DATE", "TIME", "CATEGORIES", "SUMMARY"}
+	codes := []string{"1;36", "2", "2", "33", ""}
 	if showCalendar {
-		header += fmt.Sprintf("%-*s", compactEventCalendarWidth, "CALENDAR")
+		headers = append(headers[:4], append([]string{"CALENDAR"}, headers[4:]...)...)
+		codes = append(codes[:4], append([]string{"35"}, codes[4:]...)...)
 	}
-	header += "SUMMARY"
-	return compactTableColor(useColor, "1;36", header)
+	rows := make([][]compactCell, len(events))
+	hasCategories := false
+	for i, e := range events {
+		dateCol, timeCol := compactEventDateColumns(e)
+		if e.RecurrenceRule != "" || e.RecurrenceID != "" {
+			dateCol += " \u21bb"
+		}
+		categories := textsafe.Display(e.Categories)
+		if categories == "" {
+			categories = "-"
+		} else {
+			hasCategories = true
+		}
+		row := []compactCell{
+			{fmt.Sprintf("%d", e.ID), "1;36"},
+			{dateCol, "2"},
+			{timeCol, "2"},
+			{categories, "33"},
+			{textsafe.Display(e.Title), ""},
+		}
+		if showCalendar {
+			name := "-"
+			if calendarName, ok := calendarNames[e.CalendarID]; ok && calendarName != "" {
+				name = textsafe.Display(calendarName)
+			}
+			row = append(row[:4], append([]compactCell{{name, "35"}}, row[4:]...)...)
+		}
+		rows[i] = row
+	}
+	flex := map[int]bool{3: true, len(headers) - 1: true}
+	if showCalendar {
+		flex[4] = true
+	}
+	if !hasCategories {
+		headers = dropCompactColumn(headers, 3)
+		codes = dropCompactColumn(codes, 3)
+		flex = remapFlex(flex, 3, len(headers))
+		for i := range rows {
+			rows[i] = dropCompactCell(rows[i], 3)
+		}
+	}
+	writeCompactTable(w, headers, codes, rows, flex, useColor, showHeader, termWidth)
 }
 
-// formatCompactEvent renders one event as a table row. Date ranges use ISO
-// 8601 interval syntax (start/end); summary remains last so arbitrary text
-// does not disturb the preceding columns.
-func formatCompactEvent(e event.Event, calendarNames map[int64]string, showCalendar, useColor bool) string {
+// compactEventDateColumns formats the date and time columns for one event.
+// Date ranges use ISO 8601 interval syntax (start/end).
+func compactEventDateColumns(e event.Event) (dateCol, timeCol string) {
 	start := e.StartTime.Local()
 	end := e.EndTime.Local()
-	var dateCol, timeCol string
 	if e.AllDay {
 		last := end.AddDate(0, 0, -1)
 		if start.Year() == last.Year() && start.YearDay() == last.YearDay() {
@@ -168,31 +199,11 @@ func formatCompactEvent(e event.Event, calendarNames map[int64]string, showCalen
 		} else {
 			dateCol = start.Format("2006-01-02") + "/" + last.Format("2006-01-02")
 		}
-		timeCol = "all-day"
-	} else if start.Year() == end.Year() && start.YearDay() == end.YearDay() {
-		dateCol = start.Format("2006-01-02")
-		timeCol = start.Format("15:04") + "-" + end.Format("15:04")
-	} else {
-		dateCol = start.Format("2006-01-02") + "/" + end.Format("2006-01-02")
-		timeCol = start.Format("15:04") + "-" + end.Format("15:04")
+		return dateCol, "all-day"
 	}
-	categories := textsafe.Display(e.Categories)
-	if categories == "" {
-		categories = "-"
+	if start.Year() == end.Year() && start.YearDay() == end.YearDay() {
+		return start.Format("2006-01-02"), start.Format("15:04") + "-" + end.Format("15:04")
 	}
-
-	var b strings.Builder
-	b.WriteString(compactTableColor(useColor, "1;36", fmt.Sprintf("%-*d", compactEventIDWidth, e.ID)))
-	b.WriteString(compactTableColor(useColor, "2", fmt.Sprintf("%-*s", compactEventDateWidth, dateCol)))
-	b.WriteString(compactTableColor(useColor, "2", fmt.Sprintf("%-*s", compactEventTimeWidth, timeCol)))
-	b.WriteString(compactTableColor(useColor, "33", fmt.Sprintf("%-*s", compactEventCategoriesWidth, categories)))
-	if showCalendar {
-		name := "-"
-		if calendarName, ok := calendarNames[e.CalendarID]; ok && calendarName != "" {
-			name = textsafe.Display(calendarName)
-		}
-		b.WriteString(compactTableColor(useColor, "35", fmt.Sprintf("%-*s", compactEventCalendarWidth, name)))
-	}
-	b.WriteString(textsafe.Display(e.Title))
-	return b.String()
+	return start.Format("2006-01-02") + "/" + end.Format("2006-01-02"),
+		start.Format("15:04") + "-" + end.Format("15:04")
 }
