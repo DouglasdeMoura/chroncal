@@ -10,18 +10,19 @@ import (
 )
 
 const createEventCategory = `-- name: CreateEventCategory :one
-INSERT INTO event_categories (event_id, category) VALUES (?, ?) RETURNING event_id, category
+INSERT INTO event_categories (event_id, category, position) VALUES (?, ?, ?) RETURNING event_id, category, position
 `
 
 type CreateEventCategoryParams struct {
 	EventID  int64
 	Category string
+	Position int64
 }
 
 func (q *Queries) CreateEventCategory(ctx context.Context, arg CreateEventCategoryParams) (EventCategory, error) {
-	row := q.db.QueryRowContext(ctx, createEventCategory, arg.EventID, arg.Category)
+	row := q.db.QueryRowContext(ctx, createEventCategory, arg.EventID, arg.Category, arg.Position)
 	var i EventCategory
-	err := row.Scan(&i.EventID, &i.Category)
+	err := row.Scan(&i.EventID, &i.Category, &i.Position)
 	return i, err
 }
 
@@ -65,15 +66,20 @@ const listAllEventCategoriesWithIDs = `-- name: ListAllEventCategoriesWithIDs :m
 SELECT event_id, category FROM event_categories ORDER BY event_id, category
 `
 
-func (q *Queries) ListAllEventCategoriesWithIDs(ctx context.Context) ([]EventCategory, error) {
+type ListAllEventCategoriesWithIDsRow struct {
+	EventID  int64
+	Category string
+}
+
+func (q *Queries) ListAllEventCategoriesWithIDs(ctx context.Context) ([]ListAllEventCategoriesWithIDsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listAllEventCategoriesWithIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []EventCategory
+	var items []ListAllEventCategoriesWithIDsRow
 	for rows.Next() {
-		var i EventCategory
+		var i ListAllEventCategoriesWithIDsRow
 		if err := rows.Scan(&i.EventID, &i.Category); err != nil {
 			return nil, err
 		}
@@ -89,7 +95,7 @@ func (q *Queries) ListAllEventCategoriesWithIDs(ctx context.Context) ([]EventCat
 }
 
 const listCategoriesByEventID = `-- name: ListCategoriesByEventID :many
-SELECT event_id, category FROM event_categories WHERE event_id = ? ORDER BY category
+SELECT event_id, category, position FROM event_categories WHERE event_id = ? ORDER BY position
 `
 
 func (q *Queries) ListCategoriesByEventID(ctx context.Context, eventID int64) ([]EventCategory, error) {
@@ -101,7 +107,7 @@ func (q *Queries) ListCategoriesByEventID(ctx context.Context, eventID int64) ([
 	var items []EventCategory
 	for rows.Next() {
 		var i EventCategory
-		if err := rows.Scan(&i.EventID, &i.Category); err != nil {
+		if err := rows.Scan(&i.EventID, &i.Category, &i.Position); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

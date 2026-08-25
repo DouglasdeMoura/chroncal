@@ -49,10 +49,11 @@ func replaceCategoriesTx(ctx context.Context, qtx *storage.Queries, eventID int6
 	if err := qtx.DeleteCategoriesByEventID(ctx, eventID); err != nil {
 		return fmt.Errorf("delete categories: %w", err)
 	}
-	for _, c := range categories {
+	for i, c := range categories {
 		_, err := qtx.CreateEventCategory(ctx, storage.CreateEventCategoryParams{
 			EventID:  eventID,
 			Category: c,
+			Position: int64(i),
 		})
 		if err != nil {
 			return fmt.Errorf("create category: %w", err)

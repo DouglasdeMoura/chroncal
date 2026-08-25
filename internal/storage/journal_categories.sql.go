@@ -10,18 +10,19 @@ import (
 )
 
 const createJournalCategory = `-- name: CreateJournalCategory :one
-INSERT INTO journal_categories (journal_id, category) VALUES (?, ?) RETURNING journal_id, category
+INSERT INTO journal_categories (journal_id, category, position) VALUES (?, ?, ?) RETURNING journal_id, category, position
 `
 
 type CreateJournalCategoryParams struct {
 	JournalID int64
 	Category  string
+	Position  int64
 }
 
 func (q *Queries) CreateJournalCategory(ctx context.Context, arg CreateJournalCategoryParams) (JournalCategory, error) {
-	row := q.db.QueryRowContext(ctx, createJournalCategory, arg.JournalID, arg.Category)
+	row := q.db.QueryRowContext(ctx, createJournalCategory, arg.JournalID, arg.Category, arg.Position)
 	var i JournalCategory
-	err := row.Scan(&i.JournalID, &i.Category)
+	err := row.Scan(&i.JournalID, &i.Category, &i.Position)
 	return i, err
 }
 
@@ -62,7 +63,7 @@ func (q *Queries) ListAllJournalCategories(ctx context.Context) ([]string, error
 }
 
 const listCategoriesByJournalID = `-- name: ListCategoriesByJournalID :many
-SELECT journal_id, category FROM journal_categories WHERE journal_id = ? ORDER BY category
+SELECT journal_id, category, position FROM journal_categories WHERE journal_id = ? ORDER BY position
 `
 
 func (q *Queries) ListCategoriesByJournalID(ctx context.Context, journalID int64) ([]JournalCategory, error) {
@@ -74,7 +75,7 @@ func (q *Queries) ListCategoriesByJournalID(ctx context.Context, journalID int64
 	var items []JournalCategory
 	for rows.Next() {
 		var i JournalCategory
-		if err := rows.Scan(&i.JournalID, &i.Category); err != nil {
+		if err := rows.Scan(&i.JournalID, &i.Category, &i.Position); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

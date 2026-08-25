@@ -1,8 +1,8 @@
 -- name: CreateTodoCategory :one
-INSERT INTO todo_categories (todo_id, category) VALUES (?, ?) RETURNING *;
+INSERT INTO todo_categories (todo_id, category, position) VALUES (?, ?, ?) RETURNING *;
 
 -- name: ListCategoriesByTodoID :many
-SELECT * FROM todo_categories WHERE todo_id = ? ORDER BY category;
+SELECT * FROM todo_categories WHERE todo_id = ? ORDER BY position;
 
 -- name: DeleteCategoriesByTodoID :exec
 DELETE FROM todo_categories WHERE todo_id = ?;
