@@ -94,30 +94,12 @@ By default completed and cancelled todos are hidden unless you pass
 	return cmd
 }
 
-const (
-	compactTodoIDWidth         = 6
-	compactTodoStateWidth      = 7
-	compactTodoDueWidth        = 12 // YYYY-MM-DD + 2 trailing spaces
-	compactTodoCategoriesWidth = 20
-)
-
-func formatCompactTodoHeader(useColor bool) string {
-	header := fmt.Sprintf("%-*s%-*s%-*s%-*s%s",
-		compactTodoIDWidth, "ID",
-		compactTodoStateWidth, "STATE",
-		compactTodoDueWidth, "DUE",
-		compactTodoCategoriesWidth, "CATEGORIES",
-		"SUMMARY")
-	return compactTableColor(useColor, "1;36", header)
-}
-
 // writeCompactTodoTable renders the todo compact table. The categories
 // column disappears when no todo in the result set carries one, and a
 // recurrence marker (\u21bb) flags recurring todos in the due column.
 func writeCompactTodoTable(w io.Writer, todos []todo.Todo, showHeader, useColor bool) {
 	termWidth := terminalWidth(w)
 	headers := []string{"ID", "STATE", "DUE", "CATEGORIES", "SUMMARY"}
-	codes := []string{"1;36", "", "2", "33", ""}
 	rows := make([][]compactCell, len(todos))
 	hasCategories := false
 	for i, td := range todos {
@@ -146,11 +128,10 @@ func writeCompactTodoTable(w io.Writer, todos []todo.Todo, showHeader, useColor 
 	flex := map[int]bool{3: true, 4: true}
 	if !hasCategories {
 		headers = dropCompactColumn(headers, 3)
-		codes = dropCompactColumn(codes, 3)
-		flex = remapFlex(flex, 3, len(headers))
+		flex = remapFlex(flex, 3)
 		for i := range rows {
 			rows[i] = dropCompactCell(rows[i], 3)
 		}
 	}
-	writeCompactTable(w, headers, codes, rows, flex, useColor, showHeader, termWidth)
+	writeCompactTable(w, headers, rows, flex, useColor, showHeader, termWidth)
 }

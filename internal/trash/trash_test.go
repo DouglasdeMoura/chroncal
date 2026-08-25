@@ -313,10 +313,10 @@ func TestService_ListPopulatesCategories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	// Categories come back normalized (sorted) by JoinCategoryList.
+	// Categories come back in the order the user set them.
 	want := map[Kind]string{
-		KindEvent:   "urgent,work",
-		KindTodo:    "chores,home",
+		KindEvent:   "work,urgent",
+		KindTodo:    "home,chores",
 		KindJournal: "notes,personal",
 	}
 	got := make(map[Kind]string, len(entries))

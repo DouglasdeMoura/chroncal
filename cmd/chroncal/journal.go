@@ -126,7 +126,6 @@ CANCELLED entries.`,
 func writeCompactJournalTable(w io.Writer, journals []journal.Journal, showHeader, useColor bool) {
 	termWidth := terminalWidth(w)
 	headers := []string{"ID", "DATE", "CATEGORIES", "SUMMARY"}
-	codes := []string{"1;36", "2", "33", ""}
 	rows := make([][]compactCell, len(journals))
 	hasCategories := false
 	for i, j := range journals {
@@ -146,13 +145,12 @@ func writeCompactJournalTable(w io.Writer, journals []journal.Journal, showHeade
 	flex := map[int]bool{2: true, 3: true}
 	if !hasCategories {
 		headers = dropCompactColumn(headers, 2)
-		codes = dropCompactColumn(codes, 2)
-		flex = remapFlex(flex, 2, len(headers))
+		flex = remapFlex(flex, 2)
 		for i := range rows {
 			rows[i] = dropCompactCell(rows[i], 2)
 		}
 	}
-	writeCompactTable(w, headers, codes, rows, flex, useColor, showHeader, termWidth)
+	writeCompactTable(w, headers, rows, flex, useColor, showHeader, termWidth)
 }
 
 func journalGetCmd() *cobra.Command {
