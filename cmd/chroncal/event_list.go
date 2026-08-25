@@ -138,10 +138,8 @@ Without flags, the window defaults to today through the next 30 days.`,
 func writeCompactEventTable(w io.Writer, events []event.Event, calendarNames map[int64]string, showCalendar, showHeader, useColor bool) {
 	termWidth := terminalWidth(w)
 	headers := []string{"ID", "DATE", "TIME", "CATEGORIES", "SUMMARY"}
-	codes := []string{"1;36", "2", "2", "33", ""}
 	if showCalendar {
 		headers = append(headers[:4], append([]string{"CALENDAR"}, headers[4:]...)...)
-		codes = append(codes[:4], append([]string{"35"}, codes[4:]...)...)
 	}
 	rows := make([][]compactCell, len(events))
 	hasCategories := false
@@ -178,13 +176,12 @@ func writeCompactEventTable(w io.Writer, events []event.Event, calendarNames map
 	}
 	if !hasCategories {
 		headers = dropCompactColumn(headers, 3)
-		codes = dropCompactColumn(codes, 3)
-		flex = remapFlex(flex, 3, len(headers))
+		flex = remapFlex(flex, 3)
 		for i := range rows {
 			rows[i] = dropCompactCell(rows[i], 3)
 		}
 	}
-	writeCompactTable(w, headers, codes, rows, flex, useColor, showHeader, termWidth)
+	writeCompactTable(w, headers, rows, flex, useColor, showHeader, termWidth)
 }
 
 // compactEventDateColumns formats the date and time columns for one event.

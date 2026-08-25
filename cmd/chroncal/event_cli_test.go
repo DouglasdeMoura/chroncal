@@ -72,12 +72,11 @@ func TestWriteCompactTableTruncatesToTerminal(t *testing.T) {
 	t.Parallel()
 
 	headers := []string{"ID", "SUMMARY"}
-	codes := []string{"1;36", ""}
 	rows := [][]compactCell{
 		{{"1", "1;36"}, {"a very long summary that does not fit", ""}},
 	}
 	var b bytes.Buffer
-	writeCompactTable(&b, headers, codes, rows, map[int]bool{1: true}, false, true, 30)
+	writeCompactTable(&b, headers, rows, map[int]bool{1: true}, false, true, 30)
 	line := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")[1]
 	if w := displayWidth(line); w > 30 {
 		t.Fatalf("row width = %d, want <= 30: %q", w, line)

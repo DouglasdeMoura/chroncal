@@ -29,13 +29,6 @@ func compactTableColorEnabled(w io.Writer) bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
-func compactTableColor(enabled bool, code, text string) string {
-	if !enabled {
-		return text
-	}
-	return "\x1b[" + code + "m" + text + "\x1b[0m"
-}
-
 type jsonEvent struct {
 	ID             int64            `json:"id"`
 	UID            string           `json:"uid"`
@@ -667,7 +660,7 @@ type compactCell struct {
 // the total width exceeds termWidth (0 = unlimited); the summary absorbs any
 // remaining overflow first. Padding measures display width, so wide glyphs
 // (CJK) keep the columns aligned.
-func writeCompactTable(w io.Writer, headers []string, codes []string, rows [][]compactCell, flex map[int]bool, useColor, header bool, termWidth int) {
+func writeCompactTable(w io.Writer, headers []string, rows [][]compactCell, flex map[int]bool, useColor, header bool, termWidth int) {
 	last := len(headers) - 1
 	widths := make([]int, len(headers))
 	for i, h := range headers {
@@ -747,17 +740,6 @@ func writeCompactTable(w io.Writer, headers []string, codes []string, rows [][]c
 	}
 }
 
-// compactCategoriesColumn reports whether any row carries a category. When
-// none does, the caller drops the column instead of printing a wall of "-".
-func compactCategoriesColumn(rows [][]compactCell, categoriesIdx int) bool {
-	for _, row := range rows {
-		if row[categoriesIdx].text != "-" {
-			return true
-		}
-	}
-	return false
-}
-
 func displayWidth(s string) int { return runewidth.StringWidth(s) }
 
 // terminalWidth returns the terminal width of w, or 0 when w is not a
@@ -783,7 +765,7 @@ func dropCompactCell(s []compactCell, i int) []compactCell {
 }
 
 // remapFlex shifts the flexible-column indexes after a column removal.
-func remapFlex(flex map[int]bool, removed, newLen int) map[int]bool {
+func remapFlex(flex map[int]bool, removed int) map[int]bool {
 	out := make(map[int]bool, len(flex))
 	for i, v := range flex {
 		switch {
