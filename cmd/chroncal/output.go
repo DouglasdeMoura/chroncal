@@ -10,6 +10,8 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/mattn/go-runewidth"
+
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
@@ -651,3 +653,106 @@ func printJournals(w io.Writer, journals []journal.Journal) {
 		printJournal(w, j)
 	}
 }
+
+// compactCell is one table cell: the sanitized text and its ANSI color code.
+// An empty code means unstyled.
+type compactCell struct {
+	text string
+	code string
+}
+
+// compactTable renders a fixed-column table. Columns pad to the widest cell;
+// two spaces separate columns, and the last column (the summary) is never
+// padded. Columns whose index appears in flex truncate with an ellipsis when
+// the total width exceeds termWidth (0 = unlimited); the summary absorbs any
+// remaining overflow first. Padding measures display width, so wide glyphs
+// (CJK) keep the columns aligned.
+func writeCompactTable(w io.Writer, headers []string, codes []string, rows [][]compactCell, flex map[int]bool, useColor, header bool, termWidth int) {
+	last := len(headers) - 1
+	widths := make([]int, len(headers))
+	for i, h := range headers {
+		widths[i] = displayWidth(h)
+	}
+	for _, row := range rows {
+		for i, c := range row {
+			if w := displayWidth(c.text); w > widths[i] {
+				widths[i] = w
+			}
+		}
+	}
+	trimFlex := func(budget int) {
+		for i := last; i >= 0 && budget < 0; i-- {
+			if !flex[i] {
+				continue
+			}
+			shrink := -budget
+			if shrink > widths[i] {
+				shrink = widths[i]
+			}
+			widths[i] -= shrink
+			budget += shrink
+		}
+	}
+	if termWidth > 0 {
+		fixed := 0
+		for i := range headers {
+			if i < last {
+				fixed += widths[i] + 2
+			}
+		}
+		if over := fixed + widths[last] - termWidth; over > 0 {
+			before := append([]int(nil), widths...)
+			trimFlex(over)
+			summary := termWidth - (fixed - (before[last] - widths[last]) + widths[last] + 2*last)
+			if summary < 8 {
+				summary = 8
+			}
+			widths[last] = summary
+		}
+	}
+	writeCell := func(text, code string, width int) {
+		text = runewidth.Truncate(text, width, "…")
+		if useColor && code != "" {
+			fmt.Fprintf(w, "\x1b[%sm%s\x1b[0m", code, text)
+		} else {
+			fmt.Fprint(w, text)
+		}
+		if pad := width - displayWidth(text); pad > 0 {
+			fmt.Fprint(w, strings.Repeat(" ", pad))
+		}
+	}
+	if header {
+		for i, h := range headers {
+			if i < last {
+				writeCell(h, "1;36", widths[i])
+				fmt.Fprint(w, "  ")
+			}
+		}
+		writeCell(headers[last], "1;36", widths[last])
+		fmt.Fprintln(w)
+	}
+	for _, row := range rows {
+		for i := range headers {
+			cell := row[i]
+			if i < last {
+				writeCell(cell.text, cell.code, widths[i])
+				fmt.Fprint(w, "  ")
+			}
+		}
+		writeCell(row[last].text, row[last].code, widths[last])
+		fmt.Fprintln(w)
+	}
+}
+
+// compactCategoriesColumn reports whether any row carries a category. When
+// none does, the caller drops the column instead of printing a wall of "-".
+func compactCategoriesColumn(rows [][]compactCell, categoriesIdx int) bool {
+	for _, row := range rows {
+		if row[categoriesIdx].text != "-" {
+			return true
+		}
+	}
+	return false
+}
+
+func displayWidth(s string) int { return runewidth.StringWidth(s) }
