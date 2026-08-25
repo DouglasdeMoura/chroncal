@@ -63,7 +63,7 @@ func (q *Queries) ListAllTodoCategories(ctx context.Context) ([]string, error) {
 }
 
 const listCategoriesByTodoID = `-- name: ListCategoriesByTodoID :many
-SELECT todo_id, category, position FROM todo_categories WHERE todo_id = ? ORDER BY position
+SELECT todo_id, category, position FROM todo_categories WHERE todo_id = ? ORDER BY category
 `
 
 func (q *Queries) ListCategoriesByTodoID(ctx context.Context, todoID int64) ([]TodoCategory, error) {

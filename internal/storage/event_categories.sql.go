@@ -95,7 +95,7 @@ func (q *Queries) ListAllEventCategoriesWithIDs(ctx context.Context) ([]ListAllE
 }
 
 const listCategoriesByEventID = `-- name: ListCategoriesByEventID :many
-SELECT event_id, category, position FROM event_categories WHERE event_id = ? ORDER BY position
+SELECT event_id, category, position FROM event_categories WHERE event_id = ? ORDER BY category
 `
 
 func (q *Queries) ListCategoriesByEventID(ctx context.Context, eventID int64) ([]EventCategory, error) {

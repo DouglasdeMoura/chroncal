@@ -9,7 +9,7 @@ import "context"
 func (q *Queries) ListCategoriesByEventIDs(ctx context.Context, ids []int64) ([]EventCategory, error) {
 	return loadByIDChunks(ctx, ids, func(ctx context.Context, chunk []int64) ([]EventCategory, error) {
 		placeholders, args := expandInPlaceholders(chunk)
-		query := "SELECT event_id, category FROM event_categories WHERE event_id IN (" + placeholders + ") ORDER BY event_id, position"
+		query := "SELECT event_id, category FROM event_categories WHERE event_id IN (" + placeholders + ") ORDER BY event_id, category"
 
 		rows, err := q.db.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -34,7 +34,7 @@ func (q *Queries) ListCategoriesByEventIDs(ctx context.Context, ids []int64) ([]
 func (q *Queries) ListCategoriesByTodoIDs(ctx context.Context, ids []int64) ([]TodoCategory, error) {
 	return loadByIDChunks(ctx, ids, func(ctx context.Context, chunk []int64) ([]TodoCategory, error) {
 		placeholders, args := expandInPlaceholders(chunk)
-		query := "SELECT todo_id, category FROM todo_categories WHERE todo_id IN (" + placeholders + ") ORDER BY todo_id, position"
+		query := "SELECT todo_id, category FROM todo_categories WHERE todo_id IN (" + placeholders + ") ORDER BY todo_id, category"
 
 		rows, err := q.db.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -59,7 +59,7 @@ func (q *Queries) ListCategoriesByTodoIDs(ctx context.Context, ids []int64) ([]T
 func (q *Queries) ListCategoriesByJournalIDs(ctx context.Context, ids []int64) ([]JournalCategory, error) {
 	return loadByIDChunks(ctx, ids, func(ctx context.Context, chunk []int64) ([]JournalCategory, error) {
 		placeholders, args := expandInPlaceholders(chunk)
-		query := "SELECT journal_id, category FROM journal_categories WHERE journal_id IN (" + placeholders + ") ORDER BY journal_id, position"
+		query := "SELECT journal_id, category FROM journal_categories WHERE journal_id IN (" + placeholders + ") ORDER BY journal_id, category"
 
 		rows, err := q.db.QueryContext(ctx, query, args...)
 		if err != nil {

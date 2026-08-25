@@ -63,7 +63,7 @@ func (q *Queries) ListAllJournalCategories(ctx context.Context) ([]string, error
 }
 
 const listCategoriesByJournalID = `-- name: ListCategoriesByJournalID :many
-SELECT journal_id, category, position FROM journal_categories WHERE journal_id = ? ORDER BY position
+SELECT journal_id, category, position FROM journal_categories WHERE journal_id = ? ORDER BY category
 `
 
 func (q *Queries) ListCategoriesByJournalID(ctx context.Context, journalID int64) ([]JournalCategory, error) {

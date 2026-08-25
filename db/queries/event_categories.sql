@@ -2,7 +2,7 @@
 INSERT INTO event_categories (event_id, category, position) VALUES (?, ?, ?) RETURNING *;
 
 -- name: ListCategoriesByEventID :many
-SELECT * FROM event_categories WHERE event_id = ? ORDER BY position;
+SELECT * FROM event_categories WHERE event_id = ? ORDER BY category;
 
 -- name: DeleteCategoriesByEventID :exec
 DELETE FROM event_categories WHERE event_id = ?;

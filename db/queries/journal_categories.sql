@@ -2,7 +2,7 @@
 INSERT INTO journal_categories (journal_id, category, position) VALUES (?, ?, ?) RETURNING *;
 
 -- name: ListCategoriesByJournalID :many
-SELECT * FROM journal_categories WHERE journal_id = ? ORDER BY position;
+SELECT * FROM journal_categories WHERE journal_id = ? ORDER BY category;
 
 -- name: DeleteCategoriesByJournalID :exec
 DELETE FROM journal_categories WHERE journal_id = ?;

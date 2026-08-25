@@ -2,7 +2,7 @@
 INSERT INTO todo_categories (todo_id, category, position) VALUES (?, ?, ?) RETURNING *;
 
 -- name: ListCategoriesByTodoID :many
-SELECT * FROM todo_categories WHERE todo_id = ? ORDER BY position;
+SELECT * FROM todo_categories WHERE todo_id = ? ORDER BY category;
 
 -- name: DeleteCategoriesByTodoID :exec
 DELETE FROM todo_categories WHERE todo_id = ?;
