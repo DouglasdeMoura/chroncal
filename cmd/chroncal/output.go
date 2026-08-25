@@ -710,12 +710,15 @@ func writeCompactTable(w io.Writer, headers []string, codes []string, rows [][]c
 			widths[last] = summary
 		}
 	}
-	writeCell := func(text, code string, width int) {
+	writeCell := func(text, code string, width int, pad bool) {
 		text = runewidth.Truncate(text, width, "…")
 		if useColor && code != "" {
 			fmt.Fprintf(w, "\x1b[%sm%s\x1b[0m", code, text)
 		} else {
 			fmt.Fprint(w, text)
+		}
+		if !pad {
+			return
 		}
 		if pad := width - displayWidth(text); pad > 0 {
 			fmt.Fprint(w, strings.Repeat(" ", pad))
@@ -724,22 +727,22 @@ func writeCompactTable(w io.Writer, headers []string, codes []string, rows [][]c
 	if header {
 		for i, h := range headers {
 			if i < last {
-				writeCell(h, "1;36", widths[i])
+				writeCell(h, "1;36", widths[i], true)
 				fmt.Fprint(w, "  ")
 			}
 		}
-		writeCell(headers[last], "1;36", widths[last])
+		writeCell(headers[last], "1;36", widths[last], false)
 		fmt.Fprintln(w)
 	}
 	for _, row := range rows {
 		for i := range headers {
 			cell := row[i]
 			if i < last {
-				writeCell(cell.text, cell.code, widths[i])
+				writeCell(cell.text, cell.code, widths[i], true)
 				fmt.Fprint(w, "  ")
 			}
 		}
-		writeCell(row[last].text, row[last].code, widths[last])
+		writeCell(row[last].text, row[last].code, widths[last], false)
 		fmt.Fprintln(w)
 	}
 }
@@ -756,3 +759,39 @@ func compactCategoriesColumn(rows [][]compactCell, categoriesIdx int) bool {
 }
 
 func displayWidth(s string) int { return runewidth.StringWidth(s) }
+
+// terminalWidth returns the terminal width of w, or 0 when w is not a
+// terminal or the size is unavailable. 0 means "no limit" for tables.
+func terminalWidth(w io.Writer) int {
+	f, ok := w.(*os.File)
+	if !ok {
+		return 0
+	}
+	width, _, err := term.GetSize(int(f.Fd()))
+	if err != nil || width <= 0 {
+		return 0
+	}
+	return width
+}
+
+func dropCompactColumn(s []string, i int) []string {
+	return append(s[:i:i], s[i+1:]...)
+}
+
+func dropCompactCell(s []compactCell, i int) []compactCell {
+	return append(s[:i:i], s[i+1:]...)
+}
+
+// remapFlex shifts the flexible-column indexes after a column removal.
+func remapFlex(flex map[int]bool, removed, newLen int) map[int]bool {
+	out := make(map[int]bool, len(flex))
+	for i, v := range flex {
+		switch {
+		case i < removed:
+			out[i] = v
+		case i > removed:
+			out[i-1] = v
+		}
+	}
+	return out
+}
