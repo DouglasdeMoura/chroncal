@@ -597,7 +597,7 @@ The CLI is for shells and language models, not only for hand input. The agent-fr
   Codes are `not_found`, `invalid_input`, `aborted`, or `error` (catch-all). The `error` field is the user-facing message. The output strips internal call-chain prefixes (for example `get event:`). Dispatch on `code` and show `error` directly.
 - References accept either the numeric `id` or the string `uid`. Commands take `--recurrence-id <RFC3339>` to address one instance of a recurring series. On `event delete`, the flag deletes that occurrence.
 - Dates are `YYYY-MM-DD`. Times are `HH:MM` local unless a command accepts `--timezone`. Durations are Go-style (`30m`, `1h30m`). Some flags also accept RFC 5545 (`PT1H30M`).
-- If you want plain text (no JSON), pass `--compact` for one line per row. That form works with `grep` and `awk`. It is available on `event list`, `event search`, `todo list`, `journal list`, and `calendar list`.
+- If you want plain text (no JSON), pass `--compact` for a fixed-column table with a header row: ID, date, time, categories, and summary. The table colors itself on a terminal and stays plain when you pipe it. Skip the header with `--no-header`; after that, the output works with `grep` and `awk`. The form is available on `event list`, `event search`, `todo list`, `journal list`, and `calendar list`.
 
 ```bash
 # Round-trip: create the event, then read it back
