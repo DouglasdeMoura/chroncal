@@ -170,6 +170,7 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			href: res.Path,
 			etag: res.ETag,
 			data: res.Data,
+			raw:  res.RawData,
 		})
 		result.warnings = append(result.warnings, warnings...)
 		if uid != "" {

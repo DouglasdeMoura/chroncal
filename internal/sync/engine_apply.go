@@ -144,6 +144,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				href: res.Path,
 				etag: res.ETag,
 				data: res.Data,
+				raw:  res.RawData,
 			})
 			result.warnings = append(result.warnings, warnings...)
 			if uid != "" {

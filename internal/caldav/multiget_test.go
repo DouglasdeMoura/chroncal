@@ -89,6 +89,9 @@ END:VCALENDAR
 	if result.Resources[0].ETag != "etag-alive" {
 		t.Fatalf("alive etag = %q, want etag-alive", result.Resources[0].ETag)
 	}
+	if !strings.Contains(result.Resources[0].RawData, "UID:alive-uid") {
+		t.Fatalf("alive raw data missing UID: %q", result.Resources[0].RawData)
+	}
 	if len(result.Missing) != 2 {
 		t.Fatalf("Missing = %v, want 2 entries", result.Missing)
 	}

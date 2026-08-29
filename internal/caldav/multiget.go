@@ -88,9 +88,10 @@ func (c *Client) MultiGetTolerant(ctx context.Context, calendarPath string, href
 			continue
 		}
 		result.Resources = append(result.Resources, Resource{
-			Path: href,
-			ETag: etag,
-			Data: cal,
+			Path:    href,
+			ETag:    etag,
+			Data:    cal,
+			RawData: data,
 		})
 	}
 	return result, nil

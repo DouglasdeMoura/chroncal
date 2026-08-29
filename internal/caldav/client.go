@@ -35,6 +35,12 @@ type Resource struct {
 	Path string
 	ETag string
 	Data *ical.Calendar
+	// RawData is the calendar-data payload exactly as the server returned it.
+	// An iCloud REPORT response can omit VCALENDAR PRODID.
+	// go-ical decodes such a payload but cannot encode it again.
+	// A pull imports RawData to avoid data loss.
+	// QueryAll and GetResource can leave it empty.
+	RawData string
 }
 
 // Change represents a changed or deleted resource from a sync-collection report.
@@ -473,9 +479,16 @@ func (c *Client) CanonicalObjectRef(calendarRef, objectRef string) (string, erro
 	if !sameOrigin(endpointURL, resolved) {
 		return "", fmt.Errorf("calendar object href must stay on the configured CalDAV origin")
 	}
+	// Check the resolved URL before path.Clean removes its final slash.
+	// An RFC 6578 response can include the calendar collection with changed resources.
+	// Apple iCloud does this during the initial sync.
+	// A calendar-multiget request with this href does not return on iCloud.
+	if escapedPath := resolved.EscapedPath(); escapedPath == "" || strings.HasSuffix(escapedPath, "/") {
+		return "", fmt.Errorf("calendar object href must point to a resource, not a collection")
+	}
 
 	objectPath := normalizePath(resolved.Path)
-	if objectPath == "" || strings.HasSuffix(objectPath, "/") {
+	if objectPath == "" || objectPath == normalizePath(collectionPath) {
 		return "", fmt.Errorf("calendar object href must point to a resource, not a collection")
 	}
 	return objectPath, nil

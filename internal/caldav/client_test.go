@@ -126,6 +126,34 @@ func TestNormalizeAndFormatIfMatch(t *testing.T) {
 	}
 }
 
+func TestCanonicalObjectRefRejectsCollectionHrefsBeforeCleaning(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient(http.DefaultClient, "https://example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	for _, objectRef := range []string{
+		"/calendars/work/",
+		"/calendars/work",
+		"/calendars/work/.",
+		"https://example.com/calendars/work/",
+	} {
+		if got, err := client.CanonicalObjectRef("/calendars/work/", objectRef); err == nil {
+			t.Errorf("CanonicalObjectRef(%q) = %q, want collection error", objectRef, got)
+		}
+	}
+
+	got, err := client.CanonicalObjectRef("/calendars/work/", "/calendars/work/event.ics")
+	if err != nil {
+		t.Fatalf("CanonicalObjectRef(event): %v", err)
+	}
+	if got != "/calendars/work/event.ics" {
+		t.Fatalf("CanonicalObjectRef(event) = %q, want /calendars/work/event.ics", got)
+	}
+}
+
 // TestClientPutResourceWeakETagOmitsIfMatch verifies that a weak validator is
 // not echoed into If-Match as a strong tag. Doing so makes the strong
 // comparison fail server-side and produces perpetual 412s.

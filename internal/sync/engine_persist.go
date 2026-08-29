@@ -496,12 +496,14 @@ func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) 
 // fetchedResource is one remote resource body queued for import during a
 // pull: the canonical remote path (the bookkeeping key for
 // UpsertSyncResource), the href exactly as the server reported it (the log
-// label), the etag, and the parsed iCal body.
+// label), the etag, and the parsed iCal body. It also keeps the exact
+// calendar-data payload when the server supplies it.
 type fetchedResource struct {
 	path string
 	href string
 	etag string
 	data *ical.Calendar
+	raw  string
 }
 
 // importFetchedResource imports one fetched remote body and persists it with
@@ -518,13 +520,17 @@ type fetchedResource struct {
 // persistImported and the persist failed; the caller must then treat the
 // pull as incomplete and withhold the sync-token.
 func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, tombstonedUIDs map[string]bool, res fetchedResource) (uid string, imported bool, warnings []ImportWarning, err error) {
-	var buf bytes.Buffer
-	enc := ical.NewEncoder(&buf)
-	if encErr := enc.Encode(res.data); encErr != nil {
-		e.logger.Warn("encode fetched resource failed", "path", res.href, "error", encErr)
-		return "", false, nil, nil
+	body := res.raw
+	if body == "" {
+		var buf bytes.Buffer
+		enc := ical.NewEncoder(&buf)
+		if encErr := enc.Encode(res.data); encErr != nil {
+			e.logger.Warn("encode fetched resource failed", "path", res.href, "error", encErr)
+			return "", false, nil, nil
+		}
+		body = buf.String()
 	}
-	importResult, impErr := icalPkg.ImportFileRemote(strings.NewReader(buf.String()))
+	importResult, impErr := icalPkg.ImportFileRemote(strings.NewReader(body))
 	if impErr != nil {
 		e.logger.Warn("import fetched resource failed", "path", res.href, "error", impErr)
 		return "", false, nil, nil
@@ -546,7 +552,7 @@ func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, to
 		// The fetched body is newer than the recorded one. Record it so a
 		// later resolve picks current server data. The sync-token may then
 		// advance: the row, not the token, carries the obligation.
-		e.refreshConflictServerBody(ctx, calendarID, uid, buf.String(), res.etag)
+		e.refreshConflictServerBody(ctx, calendarID, uid, body, res.etag)
 		return uid, false, warnings, nil
 	}
 
