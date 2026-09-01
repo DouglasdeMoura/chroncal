@@ -25,7 +25,8 @@ func (s *Service) journalOverridesByUID(ctx context.Context, masters []storage.J
 	}
 	byUID := make(map[string][]storage.Journal, len(rows))
 	for _, r := range rows {
-		byUID[r.Uid] = append(byUID[r.Uid], r)
+		key := seriesKey(r.CalendarID, r.Uid)
+		byUID[key] = append(byUID[key], r)
 	}
 	return byUID, nil
 }
@@ -150,7 +151,7 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 			}
 			return jj
 		},
-		uid:            func(r storage.Journal) string { return r.Uid },
+		uid:            func(r storage.Journal) string { return seriesKey(r.CalendarID, r.Uid) },
 		status:         func(r storage.Journal) string { return r.Status },
 		recurrenceID:   func(r storage.Journal) string { return r.RecurrenceID },
 		overridesByUID: s.journalOverridesByUID,

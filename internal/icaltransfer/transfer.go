@@ -96,12 +96,12 @@ func ParseFile(path string) (Preview, error) {
 	return preview, nil
 }
 
-// ValidateDestination validates every present component family and every
-// cross-calendar UID source row before the first write. This blocks both
-// partial mixed imports and UID upserts that would move data out of a
-// read-only remote collection. Each present family must be writable at the
-// destination. Any row already matched by UID must live in a calendar the
-// caller can write to.
+// ValidateDestination validates every present component family before the
+// first write. Each present family must be writable at the destination.
+// Event UIDs are unique per calendar (issue #756), so an event that already
+// lives on another calendar does not move. Todos and journals still use a
+// global UID. A todo or journal UID that already lives in another calendar
+// must live in a calendar the caller can write to.
 func ValidateDestination(ctx context.Context, a *app.App, calendarID int64, preview Preview) error {
 	result := preview.Result
 
@@ -135,18 +135,6 @@ func ValidateDestination(ctx context.Context, a *app.App, calendarID int64, prev
 			return fmt.Errorf("import %s UID %q from calendar %d: %w", component, uid, sourceID, err)
 		}
 		return nil
-	}
-	for _, imported := range result.Events {
-		existing, err := a.Queries.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
-			Uid: imported.UID, RecurrenceID: imported.RecurrenceID,
-		})
-		if err == nil {
-			if err := checkSource(existing.CalendarID, FamilyEvent, imported.UID); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check existing %s UID %q: %w", FamilyEvent, imported.UID, err)
-		}
 	}
 	for _, imported := range result.Todos {
 		existing, err := a.Queries.GetTodoByUIDAndRecurrenceID(ctx, storage.GetTodoByUIDAndRecurrenceIDParams{
@@ -199,7 +187,7 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 
 	// Import events.
 	for _, e := range result.Events {
-		_, lookupErr := lookupEvent(ctx, a.Events, e.UID, e.RecurrenceID)
+		_, lookupErr := lookupEvent(ctx, a.Events, calendarID, e.UID, e.RecurrenceID)
 		saved, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
 			UID: e.UID, CalendarID: calendarID,
 			Title: e.Title, Description: e.Description, Location: e.Location,
@@ -440,11 +428,11 @@ func ExportCalendarFile(ctx context.Context, a *app.App, calendarID int64, calen
 // lookupEvent reports whether an imported event row already exists. An
 // override (a non-empty recurrence_id) must match its own row, not the
 // master, so the summary counts a first-time override as new.
-func lookupEvent(ctx context.Context, svc *event.Service, uid, recurrenceID string) (event.Event, error) {
+func lookupEvent(ctx context.Context, svc *event.Service, calendarID int64, uid, recurrenceID string) (event.Event, error) {
 	if recurrenceID != "" {
-		return svc.GetByUIDAndRecurrenceID(ctx, uid, recurrenceID)
+		return svc.GetByCalendarUIDAndRecurrenceID(ctx, calendarID, uid, recurrenceID)
 	}
-	return svc.GetByUID(ctx, uid)
+	return svc.GetByCalendarUID(ctx, calendarID, uid)
 }
 
 // lookupTodo reports whether an imported todo row already exists.

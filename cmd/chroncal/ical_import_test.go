@@ -208,8 +208,8 @@ func TestEnsureICalImportAllowedRejectsCollectionPolicyViolations(t *testing.T) 
 	sourceResult := ical.ImportResult{Events: []event.Event{sourceEvent}}
 	sourcePreview := icaltransfer.Preview{Result: sourceResult}
 	sourcePreview.Events = len(sourceResult.Events)
-	if err := icaltransfer.ValidateDestination(ctx, a, target.ID, sourcePreview); err == nil || !strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("read-only source import error = %v, want source rejection", err)
+	if err := icaltransfer.ValidateDestination(ctx, a, target.ID, sourcePreview); err != nil {
+		t.Fatalf("cross-calendar event UID import: %v", err)
 	}
 }
 

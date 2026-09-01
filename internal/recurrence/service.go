@@ -3,6 +3,7 @@ package recurrence
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,12 @@ type Service struct {
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
 	return &Service{db: db, q: q}
+}
+
+// seriesKey identifies a recurring series. UID is unique per calendar
+// (issue #756), so the key includes calendar_id.
+func seriesKey(calendarID int64, uid string) string {
+	return strconv.FormatInt(calendarID, 10) + "\x00" + uid
 }
 
 // tzForExpansion returns the *time.Location to use for rrule expansion.

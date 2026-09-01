@@ -325,12 +325,11 @@ func TestImport_ReimportRemovesStaleChildren(t *testing.T) {
 	}
 }
 
-// TestValidateDestination_CrossCalendarReadOnlyUIDRejectedBeforeWrite locks
-// in the cross-calendar UID guard. An import of a UID that already lives in a
-// read-only remote collection into a different calendar must be rejected
-// before any write occurs. The upsert then cannot move data out of the
-// read-only source.
-func TestValidateDestination_CrossCalendarReadOnlyUIDRejectedBeforeWrite(t *testing.T) {
+// TestValidateDestination_CrossCalendarEventUIDAllowed locks in issue #756.
+// An event UID that already lives on a read-only calendar can still import
+// into a different writable calendar. The upsert inserts a second copy. It
+// does not move the source row.
+func TestValidateDestination_CrossCalendarEventUIDAllowed(t *testing.T) {
 	ctx := context.Background()
 	a := newTestApp(t)
 
@@ -372,20 +371,27 @@ func TestValidateDestination_CrossCalendarReadOnlyUIDRejectedBeforeWrite(t *test
 	preview := icaltransfer.Preview{Result: ical.ImportResult{Events: []event.Event{sourceEvt}}}
 	preview.Events = 1
 
-	if err := icaltransfer.ValidateDestination(ctx, a, target.ID, preview); err == nil ||
-		!strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("cross-calendar error = %v, want read-only source rejection", err)
+	if err := icaltransfer.ValidateDestination(ctx, a, target.ID, preview); err != nil {
+		t.Fatalf("ValidateDestination: %v", err)
 	}
-
-	// Validation must have rejected before Import could write, so the row
-	// still belongs to the source calendar.
-	got, err := a.Events.GetByUID(ctx, "uid-cross-cal")
+	summary := icaltransfer.Import(ctx, a, target.ID, &preview.Result)
+	if summary.Failed != 0 || summary.NewEvents != 1 {
+		t.Fatalf("import Failed=%d NewEvents=%d, want Failed=0 NewEvents=1",
+			summary.Failed, summary.NewEvents)
+	}
+	src, err := a.Events.GetByCalendarUID(ctx, source.ID, "uid-cross-cal")
 	if err != nil {
-		t.Fatalf("GetByUID: %v", err)
+		t.Fatalf("source copy: %v", err)
 	}
-	if got.CalendarID != source.ID {
-		t.Errorf("event.CalendarID = %d, want %d (no write should have happened)",
-			got.CalendarID, source.ID)
+	if src.Title != "Existing" {
+		t.Errorf("source title = %q, want Existing", src.Title)
+	}
+	dst, err := a.Events.GetByCalendarUID(ctx, target.ID, "uid-cross-cal")
+	if err != nil {
+		t.Fatalf("destination copy: %v", err)
+	}
+	if dst.ID == src.ID {
+		t.Fatalf("import reused id %d; each calendar must keep its own copy", src.ID)
 	}
 }
 
