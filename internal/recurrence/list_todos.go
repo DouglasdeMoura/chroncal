@@ -25,7 +25,8 @@ func (s *Service) todoOverridesByUID(ctx context.Context, masters []storage.Todo
 	}
 	byUID := make(map[string][]storage.Todo, len(rows))
 	for _, r := range rows {
-		byUID[r.Uid] = append(byUID[r.Uid], r)
+		key := seriesKey(r.CalendarID, r.Uid)
+		byUID[key] = append(byUID[key], r)
 	}
 	return byUID, nil
 }
@@ -166,7 +167,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 			}
 			return t
 		},
-		uid:            func(r storage.Todo) string { return r.Uid },
+		uid:            func(r storage.Todo) string { return seriesKey(r.CalendarID, r.Uid) },
 		status:         func(r storage.Todo) string { return r.Status },
 		recurrenceID:   func(r storage.Todo) string { return r.RecurrenceID },
 		overridesByUID: s.todoOverridesByUID,

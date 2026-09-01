@@ -24,8 +24,14 @@ SELECT * FROM events WHERE id = ? AND deleted_at IS NULL;
 -- name: GetEventByUID :one
 SELECT * FROM events WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
 
+-- name: GetEventByCalendarUID :one
+SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
+
 -- name: GetEventByUIDAndRecurrenceID :one
 SELECT * FROM events WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
+
+-- name: GetEventByCalendarUIDAndRecurrenceID :one
+SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
 
 -- name: GetEventIncludingDeleted :one
 SELECT * FROM events WHERE id = ?;
@@ -58,11 +64,12 @@ UPDATE events SET
 WHERE id = ? RETURNING *;
 
 -- name: UpsertEventByUID :one
--- NOTE: ON CONFLICT UPDATE clears deleted_at. This query resurrects
--- soft-deleted rows. Callers outside the pull path in the sync engine
--- must know this. The pull path is safe. The engine excludes
--- tombstoned UIDs before this query runs (engine.go loads tombstones
--- first and skips them during pull).
+-- NOTE: ON CONFLICT matches (calendar_id, uid, recurrence_id). The same
+-- UID on a second calendar inserts a new row (issue #756). ON CONFLICT
+-- UPDATE clears deleted_at. This query resurrects soft-deleted rows.
+-- Callers outside the pull path in the sync engine must know this. The
+-- pull path is safe. The engine excludes tombstoned UIDs before this
+-- query runs (engine.go loads tombstones first and skips them during pull).
 INSERT INTO events (
     uid, calendar_id, title, description, location,
     start_time, end_time, all_day, recurrence_rule,
@@ -70,8 +77,7 @@ INSERT INTO events (
     class, url, exdates, rdates, recurrence_id, geo, duration, dtstamp,
     conference_uri
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(uid, recurrence_id) DO UPDATE SET
-    calendar_id = excluded.calendar_id,
+ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     title = excluded.title, description = excluded.description,
     location = excluded.location, start_time = excluded.start_time,
     end_time = excluded.end_time, all_day = excluded.all_day,

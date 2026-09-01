@@ -30,7 +30,8 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 	}
 	byUID := make(map[string][]storage.Event, len(rows))
 	for _, r := range rows {
-		byUID[r.Uid] = append(byUID[r.Uid], r)
+		key := seriesKey(r.CalendarID, r.Uid)
+		byUID[key] = append(byUID[key], r)
 	}
 	return byUID, nil
 }
@@ -245,7 +246,7 @@ func expandedEventKind(s *Service) recurringKind[storage.Event, ExpandedEvent, E
 		},
 		instTime:       func(i ExpandedEvent) time.Time { return i.InstanceTime },
 		applyInstance:  func(i ExpandedEvent) ExpandedEvent { return i },
-		uid:            func(r storage.Event) string { return r.Uid },
+		uid:            func(r storage.Event) string { return seriesKey(r.CalendarID, r.Uid) },
 		status:         func(r storage.Event) string { return r.Status },
 		recurrenceID:   func(r storage.Event) string { return r.RecurrenceID },
 		overridesByUID: s.eventOverridesByUID,
@@ -272,7 +273,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 			e.EndTime = i.InstanceTime.Add(dur)
 			return e
 		},
-		uid:            func(r storage.Event) string { return r.Uid },
+		uid:            func(r storage.Event) string { return seriesKey(r.CalendarID, r.Uid) },
 		status:         func(r storage.Event) string { return r.Status },
 		recurrenceID:   func(r storage.Event) string { return r.RecurrenceID },
 		overridesByUID: s.eventOverridesByUID,

@@ -117,8 +117,35 @@ func (s *Service) GetByUID(ctx context.Context, uid string) (Event, error) {
 	return e, nil
 }
 
+func (s *Service) GetByCalendarUID(ctx context.Context, calendarID int64, uid string) (Event, error) {
+	r, err := s.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{
+		CalendarID: calendarID,
+		Uid:        uid,
+	})
+	if err != nil {
+		return Event{}, err
+	}
+	e := FromStorage(r)
+	s.populateSingleCategories(ctx, &e)
+	return e, nil
+}
+
 func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID string) (Event, error) {
 	r, err := s.q.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+		Uid:          uid,
+		RecurrenceID: recurrenceID,
+	})
+	if err != nil {
+		return Event{}, err
+	}
+	e := FromStorage(r)
+	s.populateSingleCategories(ctx, &e)
+	return e, nil
+}
+
+func (s *Service) GetByCalendarUIDAndRecurrenceID(ctx context.Context, calendarID int64, uid, recurrenceID string) (Event, error) {
+	r, err := s.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID:   calendarID,
 		Uid:          uid,
 		RecurrenceID: recurrenceID,
 	})

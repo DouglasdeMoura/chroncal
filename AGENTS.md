@@ -85,7 +85,7 @@ SQLite pragmas in `open.go:openDB()`:
 
 ### Recurrence
 
-The database stores a recurring event as one row with `recurrence_rule`. Each override is a separate row with the same `uid` and a non-empty `recurrence_id`. EXDATEs and RDATEs are comma-separated RFC 3339 strings. The service expands recurrences at query time with `recurrence.ListExpandedEvents()`. Time ranges are half-open everywhere: `[start, end)`.
+The database stores a recurring event as one row with `recurrence_rule`. Each override is a separate row with the same `uid` and a non-empty `recurrence_id`. The unique key is `(calendar_id, uid, recurrence_id)`, so two calendars can store the same UID. EXDATEs and RDATEs are comma-separated RFC 3339 strings. The service expands recurrences at query time with `recurrence.ListExpandedEvents()`. Time ranges are half-open everywhere: `[start, end)`.
 
 ### Alarms
 
@@ -130,6 +130,7 @@ Confirm dialogs focus Cancel by default (`form.FocusCancel()`). A quick Enter ca
 ```go
 evt, err := svc.Get(ctx, id)                                        // numeric ID
 evt, err := svc.GetByUID(ctx, uid)                                  // string UID
+evt, err := svc.GetByCalendarUID(ctx, calendarID, uid)              // UID on one calendar
 evt, err := svc.GetByUIDAndRecurrenceID(ctx, uid, recurrenceID)     // override instance
 ```
 

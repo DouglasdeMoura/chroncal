@@ -169,6 +169,95 @@ func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
 	return i, err
 }
 
+const getEventByCalendarUID = `-- name: GetEventByCalendarUID :one
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' AND deleted_at IS NULL
+`
+
+type GetEventByCalendarUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) GetEventByCalendarUID(ctx context.Context, arg GetEventByCalendarUIDParams) (Event, error) {
+	row := q.db.QueryRowContext(ctx, getEventByCalendarUID, arg.CalendarID, arg.Uid)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.Uid,
+		&i.CalendarID,
+		&i.Title,
+		&i.Description,
+		&i.Location,
+		&i.StartTime,
+		&i.EndTime,
+		&i.AllDay,
+		&i.RecurrenceRule,
+		&i.Timezone,
+		&i.Status,
+		&i.Transp,
+		&i.Sequence,
+		&i.Priority,
+		&i.Class,
+		&i.Url,
+		&i.Exdates,
+		&i.Rdates,
+		&i.RecurrenceID,
+		&i.Geo,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Duration,
+		&i.Dtstamp,
+		&i.ConferenceUri,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getEventByCalendarUIDAndRecurrenceID = `-- name: GetEventByCalendarUIDAndRecurrenceID :one
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NULL
+`
+
+type GetEventByCalendarUIDAndRecurrenceIDParams struct {
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+}
+
+func (q *Queries) GetEventByCalendarUIDAndRecurrenceID(ctx context.Context, arg GetEventByCalendarUIDAndRecurrenceIDParams) (Event, error) {
+	row := q.db.QueryRowContext(ctx, getEventByCalendarUIDAndRecurrenceID, arg.CalendarID, arg.Uid, arg.RecurrenceID)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.Uid,
+		&i.CalendarID,
+		&i.Title,
+		&i.Description,
+		&i.Location,
+		&i.StartTime,
+		&i.EndTime,
+		&i.AllDay,
+		&i.RecurrenceRule,
+		&i.Timezone,
+		&i.Status,
+		&i.Transp,
+		&i.Sequence,
+		&i.Priority,
+		&i.Class,
+		&i.Url,
+		&i.Exdates,
+		&i.Rdates,
+		&i.RecurrenceID,
+		&i.Geo,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Duration,
+		&i.Dtstamp,
+		&i.ConferenceUri,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getEventByUID = `-- name: GetEventByUID :one
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
 `
@@ -1015,8 +1104,7 @@ INSERT INTO events (
     class, url, exdates, rdates, recurrence_id, geo, duration, dtstamp,
     conference_uri
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(uid, recurrence_id) DO UPDATE SET
-    calendar_id = excluded.calendar_id,
+ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     title = excluded.title, description = excluded.description,
     location = excluded.location, start_time = excluded.start_time,
     end_time = excluded.end_time, all_day = excluded.all_day,
