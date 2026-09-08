@@ -1,6 +1,6 @@
 module github.com/douglasdemoura/chroncal
 
-go 1.25.7
+go 1.26.0
 
 toolchain go1.26.6
 
@@ -26,7 +26,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/net v0.58.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.41.0
