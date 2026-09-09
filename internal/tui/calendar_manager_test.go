@@ -469,7 +469,7 @@ func TestCalendarManagerAddMenuRowsAndNoCancel(t *testing.T) {
 	m.list.selectIdentity(calendarRowIdentity{kind: accountHeaderRow, id: 0})
 	m = m.openAddMenu()
 	view := stripANSI(m.View())
-	for _, want := range []string{"New Calendar…", "Add Account…", "Import Calendar File…"} {
+	for _, want := range []string{"New Calendar…", "Add Account…", "Import Calendar File or Directory…"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("menu missing row %q\n%s", want, view)
 		}

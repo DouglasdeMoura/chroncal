@@ -14,6 +14,10 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
 )
 
+// calendarImportTitle names the import dialog. The path it reads is one
+// .ics file or one directory of .ics files.
+const calendarImportTitle = "Import iCal file or directory"
+
 type CalendarTransferClosedMsg struct{}
 
 type CalendarImportPreviewRequestedMsg struct {
@@ -97,7 +101,7 @@ type CalendarTransferDialogModel struct {
 func NewCalendarImportDialogModel(theme Theme, generation ...uint64) CalendarTransferDialogModel {
 	gen := firstGeneration(generation)
 	m := CalendarTransferDialogModel{
-		dialog:     NewDialog("Import iCal file", DefaultDialogStyles()),
+		dialog:     NewDialog(calendarImportTitle, DefaultDialogStyles()),
 		help:       newThemedHelp(theme),
 		theme:      theme,
 		mode:       calendarTransferImport,
@@ -105,7 +109,7 @@ func NewCalendarImportDialogModel(theme Theme, generation ...uint64) CalendarTra
 		generation: gen,
 	}
 	m.dialog.SetWidth(68)
-	m.form = m.pathForm("Preview", "Path", "", func(path string) tea.Msg {
+	m.form = m.pathForm("Preview", "File or directory", "", func(path string) tea.Msg {
 		return CalendarImportPreviewRequestedMsg{Generation: gen, Path: path}
 	})
 	return m
@@ -166,7 +170,7 @@ func (m CalendarTransferDialogModel) WithPreview(path string, preview icaltransf
 	m.preview = preview
 	m.phase = calendarTransferDestination
 	m.errText = ""
-	m.dialog = NewDialog("Import iCal file", DefaultDialogStyles())
+	m.dialog = NewDialog(calendarImportTitle, DefaultDialogStyles())
 	m.dialog.SetWidth(68)
 
 	styles := DefaultFormStyles()
@@ -292,10 +296,15 @@ func (m CalendarTransferDialogModel) View() string {
 	return mouseSweep(m.dialog.Box(strings.Join(parts, "\n")))
 }
 
+// icalCalendarName proposes the new-calendar name for an imported path. It
+// removes an .ics suffix only. A directory keeps its full name, so a
+// collection directory such as "2026.work" does not lose its last segment.
 func icalCalendarName(path string) string {
 	base := filepath.Base(strings.TrimSpace(path))
-	ext := filepath.Ext(base)
-	name := strings.TrimSpace(strings.TrimSuffix(base, ext))
+	if strings.EqualFold(filepath.Ext(base), ".ics") {
+		base = base[:len(base)-len(".ics")]
+	}
+	name := strings.TrimSpace(base)
 	if name == "" || name == "." {
 		return "Imported calendar"
 	}

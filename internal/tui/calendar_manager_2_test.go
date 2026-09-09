@@ -917,7 +917,7 @@ func TestCalendarManagerWideImportKeepsHierarchyMounted(t *testing.T) {
 	if !strings.Contains(view, "Local") || !strings.Contains(view, "Primary") {
 		t.Fatalf("wide import did not keep hierarchy mounted:\n%s", view)
 	}
-	if !strings.Contains(view, "Import iCal file") || !strings.Contains(view, "Path") {
+	if !strings.Contains(view, "Import iCal file") || !strings.Contains(view, "File or directory") {
 		t.Fatalf("wide import missing inline form:\n%s", view)
 	}
 }
