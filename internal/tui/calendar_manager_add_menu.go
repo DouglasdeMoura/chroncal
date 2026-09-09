@@ -24,7 +24,7 @@ type calendarManagerAddItem struct {
 var calendarManagerAddItems = [...]calendarManagerAddItem{
 	{label: "New Calendar…", target: CalendarManagerTargetLocalCreate},
 	{label: "Add Account…", target: CalendarManagerTargetAccountConnect},
-	{label: "Import Calendar File…", target: CalendarManagerTargetImport},
+	{label: "Import Calendar File or Directory…", target: CalendarManagerTargetImport},
 }
 
 // calendarManagerMenuTrailing is the blank padding reserved after the longest
