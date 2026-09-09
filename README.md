@@ -435,7 +435,7 @@ An account stores one credential. It discovers every CalDAV calendar collection 
 
 If you select none, the command also removes the empty account and credential. `account remove` deletes the credential and remote links. It keeps downloaded calendars as local copies.
 
-`account credentials` rotates the stored secret of a basic or bearer account. It reads the new value from `CHRONCAL_PASSWORD` (basic) or `CHRONCAL_BEARER_TOKEN` (bearer). `account reauth` repeats the Google OAuth consent flow for an oauth2 account; the client secret comes from `GOOGLE_CLIENT_SECRET` or the stored value, and `--oauth-client-id` replaces the stored client ID. Neither command accepts a secret as a CLI flag.
+`account credentials` rotates the stored secret of a basic or bearer account. It reads the new value from `CHRONCAL_PASSWORD` (basic) or `CHRONCAL_BEARER_TOKEN` (bearer). For a basic account, `--password-cmd` stores a command instead of a password. See [Command-retrieved passwords](#command-retrieved-passwords). `account reauth` repeats the Google OAuth consent flow for an oauth2 account; the client secret comes from `GOOGLE_CLIENT_SECRET` or the stored value, and `--oauth-client-id` replaces the stored client ID. Neither command accepts a secret as a CLI flag.
 
 You can open read-only collections locally and sync them pull-only. Chroncal does not send metadata changes, resources, or tombstones to them.
 
@@ -467,6 +467,8 @@ You can still use remote flags with `create` or `update` to attach one local cal
 ```
 
 For script setup, the commands read credentials from environment variables, not from prompts: `CHRONCAL_PASSWORD` (basic), `CHRONCAL_BEARER_TOKEN` (bearer), and `GOOGLE_CLIENT_SECRET` (oauth2). The commands do not accept these values as CLI flags.
+
+A basic account also accepts `--password-cmd` or `CHRONCAL_PASSWORD_CMD`. The value is a command, not a secret, so a flag is safe. See [Command-retrieved passwords](#command-retrieved-passwords).
 
 Pass `--disconnect-remote` on `update` to remove the remote link of a calendar.
 
@@ -770,6 +772,55 @@ from = "you@example.com"
 ```
 
 Or via environment: `CHRONCAL_SMTP_HOST`, `CHRONCAL_SMTP_PORT`, `CHRONCAL_SMTP_USERNAME`, `CHRONCAL_SMTP_PASSWORD`, `CHRONCAL_SMTP_FROM`.
+
+To keep the SMTP password out of the config file, set `smtp.password_cmd` or `CHRONCAL_SMTP_PASSWORD_CMD`:
+
+```toml
+[smtp]
+host = "smtp.example.com"
+password_cmd = "pass show smtp/example"
+```
+
+`smtp.password` and `smtp.password_cmd` are mutually exclusive. Chroncal rejects a config file that sets both.
+
+### Command-retrieved passwords
+
+Chroncal can read a password from a command at the time of use. The password stays in your password manager. Chroncal stores the command only.
+
+Two settings use this feature:
+
+- `--password-cmd` or `CHRONCAL_PASSWORD_CMD` for a CalDAV basic-auth password
+- `smtp.password_cmd` or `CHRONCAL_SMTP_PASSWORD_CMD` for the SMTP password
+
+```bash
+chroncal account add "Work server" \
+    --server https://cal.example.com/dav/ --username alice --auth basic \
+    --password-cmd "pass show caldav/work"
+
+chroncal account credentials "Work server" --password-cmd "pass show caldav/work"
+```
+
+The rules for a password command are:
+
+- Chroncal runs the command through the system shell.
+- The secret is the first line of the standard output. Chroncal discards each later line, because `pass` prints metadata after the password.
+- Chroncal discards the standard error. A noisy command cannot damage the TUI display.
+- The deadline is 30 seconds. A command that is too slow gives an error.
+- An empty first line gives an error.
+- The keyring holds the command, not the secret. Chroncal runs the command at discovery and at each sync.
+
+A password and a password command are mutually exclusive. Every write path rejects the pair.
+
+Chroncal reads a basic-auth secret from these sources, in this order:
+
+1. The `--password-cmd` flag
+2. The `CHRONCAL_PASSWORD_CMD` variable
+3. The `CHRONCAL_PASSWORD` variable
+4. The interactive prompt
+
+A command source plus `CHRONCAL_PASSWORD` is an error.
+
+In the TUI, the Add Account form and the Update Credentials dialog show a Password cmd field next to Password. Fill one field, not both. Bearer auth and OAuth ignore the command field.
 
 ### Desktop notification backends
 
