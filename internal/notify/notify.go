@@ -271,7 +271,14 @@ func Email(da alarm.DueAlarm, smtpCfg config.SMTPConfig, policy ExecutionPolicy)
 
 	var auth smtp.Auth
 	if smtpCfg.Username != "" {
-		auth = smtp.PlainAuth("", smtpCfg.Username, smtpCfg.Password, smtpCfg.Host)
+		// Resolve the password at send time. A password command keeps the
+		// secret out of the config file, so it exists only here and in the
+		// SMTP handshake.
+		password, err := smtpCfg.ResolvePassword(context.Background())
+		if err != nil {
+			return fmt.Errorf("smtp password: %w", err)
+		}
+		auth = smtp.PlainAuth("", smtpCfg.Username, password, smtpCfg.Host)
 	}
 
 	if useImplicitTLS(smtpCfg) {

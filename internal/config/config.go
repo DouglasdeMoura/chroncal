@@ -1,12 +1,14 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"github.com/douglasdemoura/chroncal/internal/secretcmd"
 	"github.com/spf13/viper"
 )
 
@@ -16,7 +18,11 @@ type SMTPConfig struct {
 	Port     int    `mapstructure:"port"`
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
-	From     string `mapstructure:"from"`
+	// PasswordCommand holds a shell command that prints the SMTP password
+	// on its first standard-output line. It keeps the password out of the
+	// config file. Password and PasswordCommand are mutually exclusive.
+	PasswordCommand string `mapstructure:"password_cmd"`
+	From            string `mapstructure:"from"`
 	// TLSMode controls how TLS is established for the SMTP connection.
 	// Valid values:
 	//   ""           – auto-detect: port 465 uses implicit TLS (SMTPS), all
@@ -118,7 +124,41 @@ func Load() (Config, error) {
 	if !v.IsSet("soft_delete.purge_days") {
 		cfg.SoftDelete.PurgeDays = DefaultSoftDeletePurgeDays
 	}
+	if err := cfg.SMTP.Validate(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// ErrSMTPPasswordSourceConflict reports a config that sets both an SMTP
+// password and an SMTP password command. Two sources hide which secret the
+// program sends, so Load rejects the pair.
+var ErrSMTPPasswordSourceConflict = errors.New(
+	"smtp.password and smtp.password_cmd are mutually exclusive; set only one")
+
+// Validate reports a conflict between the two SMTP password sources.
+func (c SMTPConfig) Validate() error {
+	if strings.TrimSpace(c.Password) != "" && strings.TrimSpace(c.PasswordCommand) != "" {
+		return ErrSMTPPasswordSourceConflict
+	}
+	return nil
+}
+
+// ResolvePassword returns the SMTP password. It runs smtp.password_cmd when
+// that key has a value. The caller must not log or print the result.
+func (c SMTPConfig) ResolvePassword(ctx context.Context) (string, error) {
+	if err := c.Validate(); err != nil {
+		return "", err
+	}
+	command := strings.TrimSpace(c.PasswordCommand)
+	if command == "" {
+		return c.Password, nil
+	}
+	secret, err := secretcmd.Run(ctx, command)
+	if err != nil {
+		return "", fmt.Errorf("resolve smtp.password_cmd: %w", err)
+	}
+	return secret, nil
 }
 
 // newViper creates a pre-configured Viper instance with CHRONCAL_ env prefix
@@ -138,6 +178,7 @@ func newViper() *viper.Viper {
 	v.BindEnv("smtp.port")
 	v.BindEnv("smtp.username")
 	v.BindEnv("smtp.password")
+	v.BindEnv("smtp.password_cmd")
 	v.BindEnv("smtp.from")
 	v.BindEnv("smtp.tls")
 	// An unset conflict strategy must mean the safe mode: record the
