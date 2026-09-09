@@ -44,11 +44,12 @@ account share one stored credential.`,
 
 func accountAddCmd() *cobra.Command {
 	var (
-		serverURL     string
-		username      string
-		authType      string
-		oauthClientID string
-		allowInsecure bool
+		serverURL       string
+		username        string
+		authType        string
+		passwordCommand string
+		oauthClientID   string
+		allowInsecure   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add <name>",
@@ -69,7 +70,8 @@ exposes, import every usable collection, and complete their initial sync.`,
 				return fmt.Errorf("credential store: %w", err)
 			}
 			cred, err := buildCalendarCredential(ctx, calendarRemoteFlags{
-				Username: username, AuthType: authType, OAuthClientID: oauthClientID,
+				Username: username, AuthType: authType,
+				PasswordCommand: passwordCommand, OAuthClientID: oauthClientID,
 			})
 			if err != nil {
 				return err
@@ -122,6 +124,7 @@ exposes, import every usable collection, and complete their initial sync.`,
 	cmd.Flags().StringVar(&serverURL, "server", "", "CalDAV discovery endpoint (required)")
 	cmd.Flags().StringVar(&username, "username", "", "username or account email (required)")
 	cmd.Flags().StringVar(&authType, "auth", "basic", "authentication type: basic, bearer, oauth2")
+	cmd.Flags().StringVar(&passwordCommand, "password-cmd", "", "shell command that prints the basic-auth password on its first line")
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "Google OAuth desktop client ID")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "allow an HTTP endpoint for local development")
 	_ = cmd.MarkFlagRequired("server")
@@ -230,6 +233,7 @@ authentication type, or stored credential.`,
 }
 
 func accountCredentialsCmd() *cobra.Command {
+	var passwordCommand string
 	cmd := &cobra.Command{
 		Use:   "credentials <name|id>",
 		Short: "Rotate a basic or bearer account secret",
@@ -242,9 +246,19 @@ Secrets come from the environment, never from flags:
   basic   CHRONCAL_PASSWORD
   bearer  CHRONCAL_BEARER_TOKEN
 
+For basic auth, --password-cmd or CHRONCAL_PASSWORD_CMD stores a shell
+command instead of a password. Chroncal runs the command at each
+connection and reads the password from the first output line. The
+command is not a secret, so a flag can carry it. A password command
+and CHRONCAL_PASSWORD are mutually exclusive.
+
+The rotation clears the source you do not use. You can therefore
+switch a stored password to a password command, and back.
+
 A missing or identity-mismatched keyring entry is repaired. Other
 backend failures leave the previous secret unchanged.`,
 		Example: `  CHRONCAL_PASSWORD=... chroncal account credentials Work --output json
+  chroncal account credentials Work --password-cmd "pass show caldav/work"
   CHRONCAL_BEARER_TOKEN=... chroncal account credentials 3 --output json`,
 		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -260,7 +274,7 @@ backend failures leave the previous secret unchanged.`,
 			}
 
 			authType := strings.ToLower(strings.TrimSpace(configured.AuthType))
-			var secret string
+			var secret basicSecret
 			switch authType {
 			case "oauth2":
 				return errInvalidInputf(
@@ -268,9 +282,15 @@ backend failures leave the previous secret unchanged.`,
 					configured.DisplayName,
 				)
 			case "bearer":
-				secret, err = readBearerToken()
+				if strings.TrimSpace(passwordCommand) != "" {
+					return errInvalidInputf(
+						"account %q uses bearer auth; --password-cmd applies to basic auth only",
+						configured.DisplayName,
+					)
+				}
+				secret.Password, err = readBearerToken()
 			case "basic", "":
-				secret, err = readBasicPassword()
+				secret, err = readBasicSecret(passwordCommand)
 			default:
 				return errInvalidInputf("unsupported auth type %q", configured.AuthType)
 			}
@@ -291,9 +311,12 @@ backend failures leave the previous secret unchanged.`,
 				return err
 			}
 			if authType == "bearer" {
-				cred.AccessToken = secret
+				cred.AccessToken = secret.Password
 			} else {
-				cred.Password = secret
+				// Clear the source the user does not use. A stale value in
+				// the other field would conflict with the new one.
+				cred.Password = secret.Password
+				cred.PasswordCommand = secret.Command
 			}
 			if err := a.Accounts.StoreCredential(ctx, configured.ID, fingerprint, cred, store); err != nil {
 				return err
@@ -307,6 +330,7 @@ backend failures leave the previous secret unchanged.`,
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&passwordCommand, "password-cmd", "", "shell command that prints the basic-auth password on its first line")
 	return cmd
 }
 

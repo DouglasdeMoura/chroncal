@@ -873,6 +873,112 @@ func TestAccountCredentialsMissingEnvLeavesPreviousSecret(t *testing.T) {
 	}
 }
 
+// A rotation to --password-cmd stores the command and clears the password.
+// The credential store must never hold the resolved secret.
+func TestAccountCredentialsStoresThePasswordCommand(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/dav/",
+		Username: "alice", AuthType: "basic",
+	}, auth.Credential{Password: "old-password"}, store)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	a.Close()
+
+	t.Setenv("CHRONCAL_PASSWORD", "")
+	t.Setenv("CHRONCAL_PASSWORD_CMD", "")
+	stdout, _, err := runChroncalCommand(t,
+		"account", "credentials", "Work",
+		"--password-cmd", "echo resolved-secret",
+		"--output", "json", "--allow-plaintext",
+	)
+	if err != nil {
+		t.Fatalf("account credentials with a password command: %v", err)
+	}
+	if strings.Contains(stdout, "resolved-secret") || strings.Contains(stdout, "old-password") {
+		t.Fatalf("json leaked a secret: %s", stdout)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if got.PasswordCommand != "echo resolved-secret" {
+		t.Fatalf("PasswordCommand = %q, want %q", got.PasswordCommand, "echo resolved-secret")
+	}
+	if got.Password != "" {
+		t.Fatalf("Password = %q, want empty after the rotation", got.Password)
+	}
+}
+
+// A rotation back to a password clears the stored command. Without the
+// clear, the two sources would conflict and every connection would fail.
+func TestAccountCredentialsRotationClearsThePasswordCommand(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/dav/",
+		Username: "alice", AuthType: "basic",
+	}, auth.Credential{PasswordCommand: "echo resolved-secret"}, store)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	a.Close()
+
+	t.Setenv("CHRONCAL_PASSWORD_CMD", "")
+	t.Setenv("CHRONCAL_PASSWORD", "new-password")
+	if _, _, err := runChroncalCommand(t,
+		"account", "credentials", "Work",
+		"--output", "json", "--allow-plaintext",
+	); err != nil {
+		t.Fatalf("account credentials with a password: %v", err)
+	}
+
+	a = openPlaintextApp(t, dbPath)
+	defer a.Close()
+	got, err := a.Accounts.LoadCredential(ctx, created.ID, openPlaintextStore(t, a))
+	if err != nil {
+		t.Fatalf("load credential: %v", err)
+	}
+	if got.Password != "new-password" {
+		t.Fatalf("Password = %q, want new-password", got.Password)
+	}
+	if got.PasswordCommand != "" {
+		t.Fatalf("PasswordCommand = %q, want empty after the rotation", got.PasswordCommand)
+	}
+}
+
+func TestAccountCredentialsRejectsAPasswordCommandForBearer(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+	a := openPlaintextApp(t, dbPath)
+	store := openPlaintextStore(t, a)
+	if _, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name: "API Token", ServerURL: "https://cal.example.test/dav/",
+		Username: "alice", AuthType: "bearer",
+	}, auth.Credential{AccessToken: "old-token"}, store); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	a.Close()
+
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "new-token")
+	if _, _, err := runChroncalCommand(t,
+		"account", "credentials", "API Token",
+		"--password-cmd", "echo resolved-secret",
+		"--output", "json", "--allow-plaintext",
+	); err == nil {
+		t.Fatal("a password command on a bearer account should fail")
+	}
+}
+
 func TestAccountCredentialsRepairsBrokenKeyring(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	ctx := context.Background()
