@@ -42,11 +42,16 @@
             "-X main.date=${self.lastModifiedDate or "unknown"}"
           ];
 
-          checkPhase = ''
-            runHook preCheck
-            HOME="$TMPDIR" GOFLAGS="" go test ./...
-            runHook postCheck
-          '';
+          # Do not run the Go test suite in the Nix sandbox. The sandbox has
+          # no OS keyring, so the credential tests fail with exit status 195.
+          # The passwd home directory of the build user is /var/empty, so the
+          # account lock root is not writable. The lock root comes from the
+          # passwd entry on purpose, because every process of one OS user must
+          # resolve the same root. See issue #761.
+          # The CI workflow .github/workflows/ci.yml runs the full suite with
+          # the race detector on Linux and macOS for every push and every pull
+          # request.
+          doCheck = false;
 
           meta = {
             description = "Terminal-first calendar, todo, and journal manager";

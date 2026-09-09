@@ -762,7 +762,16 @@ func TestEngineSyncCalendarSerializesWholeCycle(t *testing.T) {
 		_, err := engine.SyncCalendar(ctx, calendarID, ConflictServerWins)
 		results <- err
 	}()
-	<-firstEntered
+	// Do not wait for firstEntered alone. A sync that stops before the server
+	// call never closes that channel, and the test then hangs for the whole
+	// package timeout (issue #761).
+	select {
+	case <-firstEntered:
+	case err := <-results:
+		t.Fatalf("first sync stopped before the server call: %v", err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("first sync did not reach the server")
+	}
 	go func() {
 		_, err := engine.SyncCalendar(ctx, calendarID, ConflictServerWins)
 		results <- err
