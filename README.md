@@ -11,10 +11,7 @@
 
 <p align="center">
   <a href="https://terminaltrove.com/chroncal/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="assets/terminal-trove-tool-of-the-week-dark.svg">
-      <img src="assets/terminal-trove-tool-of-the-week-light.svg" alt="Terminal Trove Tool of the Week" height="48">
-    </picture>
+    <img src="assets/terminal-trove-tool-of-the-week.svg" alt="Terminal Trove Tool of the Week" height="48">
   </a>
 </p>
 
