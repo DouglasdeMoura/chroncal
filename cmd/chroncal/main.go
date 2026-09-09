@@ -235,9 +235,7 @@ Helpful conventions:
 		if cfg.ProductID != "" {
 			ical.ProductID = cfg.ProductID
 		}
-		if err := applyCalDAVHTTPTimeout(cfg.Sync.HTTPTimeout); err != nil {
-			return err
-		}
+		applyCalDAVHTTPTimeout(cfg.Sync.HTTPTimeout)
 		switch outputFmt {
 		case "text", "json":
 			return nil
@@ -281,21 +279,35 @@ Helpful conventions:
 
 // applyCalDAVHTTPTimeout sets the CalDAV request timeout from the config
 // key sync.http_timeout. An empty value keeps the built-in default. The
-// value is a Go duration string, for example "5m". A malformed or
-// non-positive value is a config error, not a silent fallback.
-func applyCalDAVHTTPTimeout(raw string) error {
+// value is a Go duration string, for example "5m".
+//
+// A malformed or non-positive value gives a warning, and the program keeps
+// the built-in default. It does not give an error. This key affects the
+// CalDAV requests only, and this function runs for every command. An error
+// here would stop a local command such as `chroncal event list`, which never
+// opens a network connection.
+func applyCalDAVHTTPTimeout(raw string) {
 	if raw == "" {
-		return nil
+		return
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil {
-		return errInvalidInputf("invalid sync.http_timeout %q: %v", raw, err)
+		warnBadHTTPTimeout(raw, err.Error())
+		return
 	}
 	if d <= 0 {
-		return errInvalidInputf("invalid sync.http_timeout %q: the timeout must be positive", raw)
+		warnBadHTTPTimeout(raw, "the timeout must be positive")
+		return
 	}
 	caldav.SetHTTPTimeout(d)
-	return nil
+}
+
+// warnBadHTTPTimeout reports an unusable sync.http_timeout value. The
+// program continues with the built-in default.
+func warnBadHTTPTimeout(raw, reason string) {
+	fmt.Fprintf(os.Stderr,
+		"chroncal: warning: invalid sync.http_timeout %q (%s); chroncal uses the default of %s\n",
+		raw, reason, caldav.HTTPTimeout())
 }
 
 func initApp() (*app.App, error) {
