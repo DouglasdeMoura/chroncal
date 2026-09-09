@@ -73,10 +73,14 @@ type CalendarSavedMsg struct {
 // CalendarDiscoveryRequestedMsg starts discovery from the Add Account flow.
 // Remote collection metadata supplies the local calendars after sign-in.
 type CalendarDiscoveryRequestedMsg struct {
-	ServerURL         string
-	Username          string
-	AuthType          string
-	Secret            string
+	ServerURL string
+	Username  string
+	AuthType  string
+	Secret    string
+	// SecretCommand holds a shell command that prints the basic-auth
+	// password. Secret and SecretCommand are mutually exclusive. Bearer and
+	// OAuth ignore this field.
+	SecretCommand     string
 	OAuthClientID     string
 	OAuthClientSecret string
 	AllowInsecure     bool
@@ -122,11 +126,14 @@ type CalendarKeepLocalRequestedMsg struct {
 // CalendarTestRequestedMsg is emitted when the user presses Test. The parent
 // runs a CalDAV authenticated ping and replies with CalendarTestResultMsg.
 type CalendarTestRequestedMsg struct {
-	URL           string
-	Username      string
-	AuthType      string
-	Password      string
-	AllowInsecure bool
+	URL      string
+	Username string
+	AuthType string
+	Password string
+	// PasswordCommand holds a shell command that prints the basic-auth
+	// password. The parent runs it before the ping.
+	PasswordCommand string
+	AllowInsecure   bool
 }
 
 // CalendarTestResultMsg is the outcome of a CalendarTestRequestedMsg.
@@ -161,19 +168,65 @@ const (
 	cdIdxEmail       = 3
 )
 
+// Form field indices for the Add Account form. The first three rows never
+// move. The tail after them depends on the auth type:
+//
+//   - basic:  Password, Password cmd, HTTP
+//   - bearer: Token, HTTP
+//   - oauth2: Client ID, Client secret, HTTP
+//
+// calDAVInsecureIdx returns the HTTP row for the active tail.
 const (
 	calDAVIdxServer = iota
 	calDAVIdxUsername
 	calDAVIdxAuth
 	calDAVIdxSecret
+	calDAVIdxSecretCommand
 	calDAVIdxAllowInsecure
 )
 
 const (
 	calDAVIdxOAuthClientID      = calDAVIdxSecret
-	calDAVIdxOAuthClientSecret  = calDAVIdxAllowInsecure
-	calDAVIdxOAuthAllowInsecure = calDAVIdxAllowInsecure + 1
+	calDAVIdxOAuthClientSecret  = calDAVIdxSecret + 1
+	calDAVIdxOAuthAllowInsecure = calDAVIdxSecret + 2
 )
+
+// calDAVIdxBearerAllowInsecure is the HTTP row of the bearer tail. Bearer
+// auth has no password command, so its tail is one row shorter.
+const calDAVIdxBearerAllowInsecure = calDAVIdxSecret + 1
+
+// calDAVTailLayout names the tail the Add Account form shows.
+type calDAVTailLayout int
+
+const (
+	calDAVTailBasic calDAVTailLayout = iota
+	calDAVTailBearer
+	calDAVTailOAuth
+)
+
+// calDAVTailFor maps an auth-type string to the tail layout it needs.
+func calDAVTailFor(authType string) calDAVTailLayout {
+	switch {
+	case calendarAuthIsOAuth(authType):
+		return calDAVTailOAuth
+	case accountAuthIsBearer(authType):
+		return calDAVTailBearer
+	default:
+		return calDAVTailBasic
+	}
+}
+
+// calDAVInsecureIdx returns the index of the HTTP checkbox for one tail.
+func calDAVInsecureIdx(layout calDAVTailLayout) int {
+	switch layout {
+	case calDAVTailOAuth:
+		return calDAVIdxOAuthAllowInsecure
+	case calDAVTailBearer:
+		return calDAVIdxBearerAllowInsecure
+	default:
+		return calDAVIdxAllowInsecure
+	}
+}
 
 var authOptions = []SelectOption{
 	{Label: "Basic", Value: "basic"},
@@ -348,6 +401,16 @@ func newPasswordField() *TextField {
 	f := NewTextField("your password")
 	f.SetCharLimit(256)
 	f.SetEchoPassword(true)
+	return f
+}
+
+// newPasswordCommandField builds the Password cmd input. The value is a
+// shell command, not a secret, so the field does not mask what the user
+// types. Chroncal stores the command and runs it at each connection.
+func newPasswordCommandField(value string) *TextField {
+	f := NewTextField("pass show caldav/work")
+	f.SetValue(value)
+	f.SetCharLimit(512)
 	return f
 }
 

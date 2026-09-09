@@ -285,11 +285,14 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 
 	insecure := NewCheckboxField("", false)
 	insecure.SetContent("allow plain HTTP")
+	// Basic auth accepts a password or a password command. Neither row is
+	// required on its own, so OnSubmit checks the pair instead.
 	form := NewForm("Sign In", styles,
 		FormItem{Label: "Server URL", Field: newRemoteURLField(""), Required: true},
 		FormItem{Label: "Username", Field: newUsernameField(usernamePrefill), Required: true},
 		FormItem{Label: "Auth", Field: newAuthField("basic"), Required: true},
-		FormItem{Label: "Password", Field: newPasswordField(), Required: true},
+		FormItem{Label: "Password", Field: newPasswordField()},
+		FormItem{Label: "Password cmd", Field: newPasswordCommandField("")},
 		FormItem{Label: "HTTP", Field: insecure},
 	)
 	form.SetActionButton("Test", Button, func() tea.Msg {
@@ -300,24 +303,30 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 	})
 
 	var snapshot struct {
-		secret, clientID, clientSecret string
-		allowInsecure                  bool
+		secret, secretCommand, clientID, clientSecret string
+		allowInsecure                                 bool
 	}
-	oauthLayout := new(bool)
+	layout := new(calDAVTailLayout)
 	snapshotTail := func(f *Form) {
-		if *oauthLayout {
+		snapshot.allowInsecure = f.Field(calDAVInsecureIdx(*layout)).(*CheckboxField).Checked()
+		switch *layout {
+		case calDAVTailOAuth:
 			snapshot.clientID = f.Field(calDAVIdxOAuthClientID).(*TextField).Value()
 			snapshot.clientSecret = f.Field(calDAVIdxOAuthClientSecret).(*TextField).Value()
-			snapshot.allowInsecure = f.Field(calDAVIdxOAuthAllowInsecure).(*CheckboxField).Checked()
-			return
+		case calDAVTailBasic:
+			snapshot.secret = f.Field(calDAVIdxSecret).(*TextField).Value()
+			snapshot.secretCommand = f.Field(calDAVIdxSecretCommand).(*TextField).Value()
+		case calDAVTailBearer:
+			snapshot.secret = f.Field(calDAVIdxSecret).(*TextField).Value()
 		}
-		snapshot.secret = f.Field(calDAVIdxSecret).(*TextField).Value()
-		snapshot.allowInsecure = f.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
 	}
-	appendTail := func(f *Form, authType string) {
+	appendTail := func(f *Form, next calDAVTailLayout) {
 		allow := NewCheckboxField("", snapshot.allowInsecure)
 		allow.SetContent("allow plain HTTP")
-		if calendarAuthIsOAuth(authType) {
+		secret := newPasswordField()
+		secret.SetValue(snapshot.secret)
+		switch next {
+		case calDAVTailOAuth:
 			clientSecret := newOAuthClientSecretField()
 			clientSecret.SetValue(snapshot.clientSecret)
 			f.AppendItems(
@@ -325,41 +334,33 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 				FormItem{Label: "Client secret", Field: clientSecret, Required: true},
 				FormItem{Label: "HTTP", Field: allow},
 			)
-			*oauthLayout = true
-			return
+		case calDAVTailBearer:
+			// Bearer auth has no password command. Command retrieval covers
+			// the basic-auth password only.
+			secret.SetPlaceholder("paste your API token")
+			f.AppendItems(
+				FormItem{Label: "Token", Field: secret, Required: true},
+				FormItem{Label: "HTTP", Field: allow},
+			)
+		case calDAVTailBasic:
+			f.AppendItems(
+				FormItem{Label: "Password", Field: secret},
+				FormItem{Label: "Password cmd", Field: newPasswordCommandField(snapshot.secretCommand)},
+				FormItem{Label: "HTTP", Field: allow},
+			)
 		}
-		secret := newPasswordField()
-		secret.SetValue(snapshot.secret)
-		f.AppendItems(
-			FormItem{Label: "Password", Field: secret, Required: true},
-			FormItem{Label: "HTTP", Field: allow},
-		)
-		*oauthLayout = false
+		*layout = next
 	}
 	form.OnRebuild(func(f *Form) {
 		authType := f.Field(calDAVIdxAuth).(*SelectField).Value()
-		if calendarAuthIsOAuth(authType) != *oauthLayout {
+		if next := calDAVTailFor(authType); next != *layout {
 			snapshotTail(f)
 			f.RemoveItems(calDAVIdxSecret)
 			f.ClearError()
-			appendTail(f, authType)
-		}
-		if !*oauthLayout {
-			secret := f.Field(calDAVIdxSecret).(*TextField)
-			if authType == "bearer" {
-				f.SetItemLabel(calDAVIdxSecret, "Token")
-				secret.SetPlaceholder("paste your API token")
-			} else {
-				f.SetItemLabel(calDAVIdxSecret, "Password")
-				secret.SetPlaceholder("your password")
-			}
+			appendTail(f, next)
 		}
 
-		insecureIdx := calDAVIdxAllowInsecure
-		if *oauthLayout {
-			insecureIdx = calDAVIdxOAuthAllowInsecure
-		}
-		allow := f.Field(insecureIdx).(*CheckboxField)
+		allow := f.Field(calDAVInsecureIdx(*layout)).(*CheckboxField)
 		wasAuto := allow.AutoChecked()
 		if isLocalhostHTTP(f.Field(calDAVIdxServer).(*TextField).Value()) {
 			allow.SetChecked(true)
@@ -408,12 +409,28 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 				f.SetError(calDAVIdxOAuthClientSecret, "Client secret is required")
 				return nil
 			}
-		} else {
+		} else if accountAuthIsBearer(msg.AuthType) {
 			msg.Secret = f.Field(calDAVIdxSecret).(*TextField).Value()
-			msg.AllowInsecure = f.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
+			msg.AllowInsecure = f.Field(calDAVIdxBearerAllowInsecure).(*CheckboxField).Checked()
 			if strings.TrimSpace(msg.Secret) == "" {
 				f.SetError(calDAVIdxSecret, "Credential is required")
 				return nil
+			}
+		} else {
+			msg.Secret = f.Field(calDAVIdxSecret).(*TextField).Value()
+			msg.SecretCommand = strings.TrimSpace(f.Field(calDAVIdxSecretCommand).(*TextField).Value())
+			msg.AllowInsecure = f.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
+			hasPassword := strings.TrimSpace(msg.Secret) != ""
+			if hasPassword && msg.SecretCommand != "" {
+				f.SetError(calDAVIdxSecretCommand, "Enter a password or a password command, not both")
+				return nil
+			}
+			if !hasPassword && msg.SecretCommand == "" {
+				f.SetError(calDAVIdxSecret, "Enter a password or a password command")
+				return nil
+			}
+			if msg.SecretCommand != "" {
+				msg.Secret = ""
 			}
 		}
 		return func() tea.Msg { return msg }

@@ -303,10 +303,11 @@ func (m Model) handleCalendarDiscoveryRequested(msg CalendarDiscoveryRequestedMs
 		return m.startOAuthFlow(msg.OAuthClientID, msg.OAuthClientSecret)
 	}
 	cred := auth.Credential{Username: msg.Username}
-	if msg.AuthType == "bearer" {
+	if accountAuthIsBearer(msg.AuthType) {
 		cred.AccessToken = msg.Secret
 	} else {
 		cred.Password = msg.Secret
+		cred.PasswordCommand = msg.SecretCommand
 	}
 	m.syncing = true
 	m.syncStatus = "Adding account…"

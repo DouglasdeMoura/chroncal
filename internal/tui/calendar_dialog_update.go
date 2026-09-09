@@ -138,9 +138,20 @@ func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) 
 	user := strings.TrimSpace(m.form.Field(calDAVIdxUsername).(*TextField).Value())
 	auth := m.form.Field(calDAVIdxAuth).(*SelectField).Value()
 	pass := m.form.Field(calDAVIdxSecret).(*TextField).Value()
-	ins := m.form.Field(calDAVIdxAllowInsecure).(*CheckboxField).Checked()
 
-	if url == "" || user == "" || pass == "" {
+	layout := calDAVTailFor(auth)
+	var passCommand string
+	if layout == calDAVTailBasic {
+		passCommand = strings.TrimSpace(m.form.Field(calDAVIdxSecretCommand).(*TextField).Value())
+	}
+	ins := m.form.Field(calDAVInsecureIdx(layout)).(*CheckboxField).Checked()
+
+	if pass != "" && passCommand != "" {
+		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
+			Render("✗ Enter a password or a password command, not both")
+		return m, nil
+	}
+	if url == "" || user == "" || (pass == "" && passCommand == "") {
 		m.testStatus = lipgloss.NewStyle().Foreground(m.theme.Error).
 			Render("✗ Fill URL, Username, and Password first")
 		return m, nil
@@ -150,11 +161,12 @@ func (m CalendarDialogModel) handleTestPressed() (CalendarDialogModel, tea.Cmd) 
 		Render("Testing…")
 	return m, func() tea.Msg {
 		return CalendarTestRequestedMsg{
-			URL:           url,
-			Username:      user,
-			AuthType:      auth,
-			Password:      pass,
-			AllowInsecure: ins,
+			URL:             url,
+			Username:        user,
+			AuthType:        auth,
+			Password:        pass,
+			PasswordCommand: passCommand,
+			AllowInsecure:   ins,
 		}
 	}
 }
