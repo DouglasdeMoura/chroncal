@@ -383,8 +383,10 @@ func emitResources(props ical.Props, resources []string) {
 	}
 }
 
-// emitRelations appends one RELATED-TO property per relation. The RELTYPE
-// parameter is omitted for the default PARENT type.
+// emitRelations appends one RELATED-TO property per relation. The function
+// leaves out the RELTYPE parameter for the default PARENT type. Any other
+// token goes out as it is stored, which keeps the round-trip exact for a
+// server-specific token such as X-APPLE-SOMETHING (issue #768).
 func emitRelations(props ical.Props, relations []model.Relation) {
 	for _, r := range relations {
 		p := &ical.Prop{Name: ical.PropRelatedTo, Params: make(ical.Params)}

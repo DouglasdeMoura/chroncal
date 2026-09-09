@@ -596,10 +596,16 @@ func parseResourcesFromProps(props ical.Props) []string {
 	return out
 }
 
+// parseRelationsFromProps reads every RELATED-TO property. RELTYPE is an
+// extensible token in RFC 5545, so the function keeps the token that the
+// file carries. It does not map an unknown token onto PARENT, CHILD, or
+// SIBLING: that mapping would lose the value on export (issue #768). The
+// only change is the case fold to upper case. A token compares without
+// regard to case, so the fold keeps the meaning.
 func parseRelationsFromProps(props ical.Props) []model.Relation {
 	var out []model.Relation
 	for _, prop := range props.Values(ical.PropRelatedTo) {
-		relType := prop.Params.Get("RELTYPE")
+		relType := strings.TrimSpace(prop.Params.Get("RELTYPE"))
 		if relType == "" {
 			relType = "PARENT" // default per RFC 5545
 		}

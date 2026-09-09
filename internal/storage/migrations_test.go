@@ -556,3 +556,84 @@ func TestMigration045PatternMatchesTokenRule(t *testing.T) {
 		}
 	}
 }
+
+// Verifies migration 051 (the wide RELTYPE CHECK) rolls back and re-applies
+// cleanly with live rows in the three relation tables. RELTYPE is an
+// extensible token in RFC 5545, so the widened CHECK must accept a
+// server-specific token such as X-APPLE-SOMETHING (issue #768). The Down step
+// restores the narrow CHECK and drops each row that carries another token.
+func TestMigration051UpDown(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig051.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec, count := migHelpers(t, ctx, conn)
+
+	mustExec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time)
+		VALUES (1, 'mig051-evt', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
+	mustExec(`INSERT INTO todos (id, uid, calendar_id, summary) VALUES (1, 'mig051-todo', 1, 'Mig')`)
+	mustExec(`INSERT INTO journals (id, uid, calendar_id, summary, start_date)
+		VALUES (1, 'mig051-jnl', 1, 'Mig', '2026-01-01')`)
+
+	// One standard token and one server-specific token per table. The
+	// widened CHECK must accept both.
+	mustExec(`INSERT INTO event_relations (id, event_id, rel_type, rel_uid)
+		VALUES (5, 1, 'CHILD', 'evt-child')`)
+	mustExec(`INSERT INTO event_relations (id, event_id, rel_type, rel_uid)
+		VALUES (6, 1, 'X-APPLE-SOMETHING', 'evt-apple')`)
+	mustExec(`INSERT INTO todo_relations (id, todo_id, rel_type, rel_uid)
+		VALUES (5, 1, 'SIBLING', 'todo-sibling')`)
+	mustExec(`INSERT INTO todo_relations (id, todo_id, rel_type, rel_uid)
+		VALUES (6, 1, 'X-APPLE-SOMETHING', 'todo-apple')`)
+	mustExec(`INSERT INTO journal_relations (id, journal_id, rel_type, rel_uid)
+		VALUES (5, 1, 'PARENT', 'jnl-parent')`)
+	mustExec(`INSERT INTO journal_relations (id, journal_id, rel_type, rel_uid)
+		VALUES (6, 1, 'X-APPLE-SOMETHING', 'jnl-apple')`)
+
+	// The widened CHECK still refuses an empty token.
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO event_relations (event_id, rel_type, rel_uid) VALUES (1, '', 'evt-empty')`,
+	); err == nil {
+		t.Errorf("wide CHECK accepted an empty rel_type")
+	}
+
+	provider := migProvider(t, conn)
+	if _, err := provider.DownTo(ctx, 50); err != nil {
+		t.Fatalf("down to 50: %v", err)
+	}
+
+	for _, table := range []string{"event_relations", "todo_relations", "journal_relations"} {
+		if n := count(`SELECT COUNT(*) FROM ` + table); n != 1 {
+			t.Errorf("%s rows after Down = %d, want 1 (the unknown token is dropped)", table, n)
+		}
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE id = 5`); n != 1 {
+			t.Errorf("%s row id 5 after Down = %d, want 1 (id-intact restore)", table, n)
+		}
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO event_relations (event_id, rel_type, rel_uid) VALUES (1, 'X-APPLE-SOMETHING', 'evt-again')`,
+	); err == nil {
+		t.Errorf("narrow CHECK accepted an unknown rel_type after Down")
+	}
+
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("re-up: %v", err)
+	}
+
+	for _, table := range []string{"event_relations", "todo_relations", "journal_relations"} {
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE id = 5`); n != 1 {
+			t.Errorf("%s row id 5 after re-Up = %d, want 1 (id-intact restore)", table, n)
+		}
+	}
+	// The widened CHECK accepts a server-specific token again, and the
+	// recreated foreign key still cascades a delete of the owner row.
+	mustExec(`INSERT INTO event_relations (id, event_id, rel_type, rel_uid)
+		VALUES (9, 1, 'X-CALENDARSERVER-LINK', 'evt-link')`)
+	mustExec(`DELETE FROM events WHERE id = 1`)
+	if n := count(`SELECT COUNT(*) FROM event_relations`); n != 0 {
+		t.Errorf("event_relations after the owner delete = %d, want 0 (cascade recreated)", n)
+	}
+}
