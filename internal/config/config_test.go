@@ -1,8 +1,11 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -295,5 +298,112 @@ func TestLoad_ConflictStrategyDefaultsToPrompt(t *testing.T) {
 
 	if cfg.Sync.ConflictStrategy != "prompt" {
 		t.Fatalf("Sync.ConflictStrategy = %q, want prompt", cfg.Sync.ConflictStrategy)
+	}
+}
+
+func TestLoad_SMTPPasswordCommandFromFile(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+
+	content := `[smtp]
+host = "smtp.example.com"
+username = "user@example.com"
+password_cmd = "secret-tool lookup smtp"
+`
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_SMTP_PASSWORD", "")
+	t.Setenv("CHRONCAL_SMTP_PASSWORD_CMD", "")
+
+	cfg := mustLoad(t)
+
+	if cfg.SMTP.PasswordCommand != "secret-tool lookup smtp" {
+		t.Errorf("SMTP.PasswordCommand = %q, want %q", cfg.SMTP.PasswordCommand, "secret-tool lookup smtp")
+	}
+	if cfg.SMTP.Password != "" {
+		t.Errorf("SMTP.Password = %q, want empty", cfg.SMTP.Password)
+	}
+}
+
+func TestLoad_SMTPPasswordCommandFromEnv(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "chroncal"), 0o755)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_SMTP_PASSWORD", "")
+	t.Setenv("CHRONCAL_SMTP_PASSWORD_CMD", "secret-tool lookup smtp")
+
+	cfg := mustLoad(t)
+
+	if cfg.SMTP.PasswordCommand != "secret-tool lookup smtp" {
+		t.Errorf("SMTP.PasswordCommand = %q, want %q", cfg.SMTP.PasswordCommand, "secret-tool lookup smtp")
+	}
+}
+
+func TestLoad_RejectsBothSMTPPasswordSources(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+
+	content := `[smtp]
+host = "smtp.example.com"
+password = "secret123"
+password_cmd = "secret-tool lookup smtp"
+`
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_SMTP_PASSWORD", "")
+	t.Setenv("CHRONCAL_SMTP_PASSWORD_CMD", "")
+
+	if _, err := Load(); !errors.Is(err, ErrSMTPPasswordSourceConflict) {
+		t.Fatalf("Load() error = %v, want ErrSMTPPasswordSourceConflict", err)
+	}
+}
+
+func TestSMTPResolvePasswordReturnsTheLiteralPassword(t *testing.T) {
+	cfg := SMTPConfig{Password: "secret123"}
+	got, err := cfg.ResolvePassword(t.Context())
+	if err != nil {
+		t.Fatalf("ResolvePassword() error = %v", err)
+	}
+	if got != "secret123" {
+		t.Errorf("ResolvePassword() = %q, want %q", got, "secret123")
+	}
+}
+
+func TestSMTPResolvePasswordRunsTheCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the test uses a POSIX shell")
+	}
+	cfg := SMTPConfig{PasswordCommand: `printf 'from-command\nmetadata\n'`}
+	got, err := cfg.ResolvePassword(t.Context())
+	if err != nil {
+		t.Fatalf("ResolvePassword() error = %v", err)
+	}
+	if got != "from-command" {
+		t.Errorf("ResolvePassword() = %q, want %q", got, "from-command")
+	}
+}
+
+func TestSMTPResolvePasswordRejectsBothSources(t *testing.T) {
+	cfg := SMTPConfig{Password: "secret123", PasswordCommand: "true"}
+	if _, err := cfg.ResolvePassword(t.Context()); !errors.Is(err, ErrSMTPPasswordSourceConflict) {
+		t.Fatalf("ResolvePassword() error = %v, want ErrSMTPPasswordSourceConflict", err)
+	}
+}
+
+func TestSMTPResolvePasswordReportsACommandFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the test uses a POSIX shell")
+	}
+	cfg := SMTPConfig{PasswordCommand: "echo leaked-secret; exit 1"}
+	_, err := cfg.ResolvePassword(t.Context())
+	if err == nil {
+		t.Fatal("ResolvePassword() returned no error for a failed command")
+	}
+	if strings.Contains(err.Error(), "leaked-secret") {
+		t.Fatalf("ResolvePassword() error leaks the output: %q", err)
 	}
 }
