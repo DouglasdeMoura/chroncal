@@ -72,7 +72,7 @@ exposes, import every usable collection, and complete their initial sync.`,
 			cred, err := buildCalendarCredential(ctx, calendarRemoteFlags{
 				Username: username, AuthType: authType,
 				PasswordCommand: passwordCommand, OAuthClientID: oauthClientID,
-			})
+			}, store)
 			if err != nil {
 				return err
 			}
@@ -273,6 +273,17 @@ backend failures leave the previous secret unchanged.`,
 				return err
 			}
 
+			// Open the store before the prompt. A host that cannot keep a
+			// secret then reports the remedy first, and the user does not
+			// type a token that the store refuses (issue #777).
+			store, err := newCalendarCredentialStore(
+				a.CredentialNamespace, a.PreviousCredentialNamespaces,
+				a.MigrateLegacyCredentials, a.AllowPlaintext,
+			)
+			if err != nil {
+				return fmt.Errorf("credential store: %w", err)
+			}
+
 			authType := strings.ToLower(strings.TrimSpace(configured.AuthType))
 			var secret basicSecret
 			switch authType {
@@ -288,22 +299,17 @@ backend failures leave the previous secret unchanged.`,
 						configured.DisplayName,
 					)
 				}
+				if err = auth.EnsureCanStoreSecret(store); err != nil {
+					return err
+				}
 				secret.Password, err = readBearerToken()
 			case "basic", "":
-				secret, err = readBasicSecret(passwordCommand)
+				secret, err = readBasicSecretWithStore(passwordCommand, store)
 			default:
 				return errInvalidInputf("unsupported auth type %q", configured.AuthType)
 			}
 			if err != nil {
 				return err
-			}
-
-			store, err := newCalendarCredentialStore(
-				a.CredentialNamespace, a.PreviousCredentialNamespaces,
-				a.MigrateLegacyCredentials, a.AllowPlaintext,
-			)
-			if err != nil {
-				return fmt.Errorf("credential store: %w", err)
 			}
 			fingerprint := configured.CredentialFingerprint()
 			cred, err := credentialForRotation(store.Get(configured.ID, fingerprint))

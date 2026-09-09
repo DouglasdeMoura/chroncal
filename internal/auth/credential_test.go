@@ -225,21 +225,70 @@ func TestPlaintextFileStore_OAuthCredentials(t *testing.T) {
 	}
 }
 
-func TestNewCredentialStore_NoKeyring_NoPlaintext(t *testing.T) {
+// TestNewCredentialStore_NoKeyring_NoPlaintext_RefusesASecret covers the
+// write half of the no-keyring contract: the store opens, and a credential
+// that carries a password is refused with the remedy in its message.
+func TestNewCredentialStore_NoKeyring_NoPlaintext_RefusesASecret(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	overrideKeyringForTest(t, false, map[string]string{})
 
 	store, err := NewCredentialStore("test", nil, true, false)
-	if err == nil {
-		t.Errorf("expected error when no keyring and plaintext disabled, got store: %v", store)
+	if err != nil {
+		t.Fatalf("NewCredentialStore: %v", err)
+	}
+	err = store.Set(Credential{AccountID: 1, Username: "scott", Password: "hunter2"})
+	if !errors.Is(err, ErrPlaintextRequired) {
+		t.Fatalf("Set with a password: err = %v, want ErrPlaintextRequired", err)
+	}
+	for _, want := range []string{"--allow-plaintext", "security.allow_plaintext", "password command"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal does not name %q: %v", want, err)
+		}
 	}
 }
 
-func TestNewCredentialStore_IncludesKeyringProbeError(t *testing.T) {
+// TestNewCredentialStore_NoKeyring_NoPlaintext_StoresAPasswordCommand is the
+// fix for issue #777: a basic-auth account that resolves its password from a
+// command keeps no secret, so it needs no keyring and no plaintext opt-in.
+func TestNewCredentialStore_NoKeyring_NoPlaintext_StoresAPasswordCommand(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	overrideKeyringForTest(t, false, map[string]string{})
+
+	store, err := NewCredentialStore("test", nil, true, false)
+	if err != nil {
+		t.Fatalf("NewCredentialStore: %v", err)
+	}
+	fingerprint := AccountFingerprint("https://cloud.example.com", "basic", "scott")
+	cred := Credential{
+		AccountID:          1,
+		Username:           "scott",
+		PasswordCommand:    "pass show caldav",
+		AccountFingerprint: fingerprint,
+	}
+	if err := store.Set(cred); err != nil {
+		t.Fatalf("Set with a password command: %v", err)
+	}
+	got, err := store.Get(1, fingerprint)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.PasswordCommand != "pass show caldav" {
+		t.Fatalf("PasswordCommand = %q, want the stored command", got.PasswordCommand)
+	}
+	if got.Password != "" {
+		t.Fatalf("Password = %q, want no stored password", got.Password)
+	}
+}
+
+// TestNewCredentialStore_RefusalIncludesKeyringProbeError confirms the write
+// refusal repeats why the keyring is unavailable. A plain "not found" text
+// reports a broken backend, not an absent item, so the probe error must reach
+// the user instead of a scraped text.
+func TestNewCredentialStore_RefusalIncludesKeyringProbeError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	prevUnavailableReason := keyringUnavailableReasonFn
 	prevGet := keyringGetFn
 
-	// A plain "not found" text reports a broken backend, not an absent
-	// item. The probe must surface it instead of scraping the text.
 	probeErr := errors.New("dbus: secret service not found")
 	keyringGetFn = func(service, user string) (string, error) {
 		return "", probeErr
@@ -251,12 +300,16 @@ func TestNewCredentialStore_IncludesKeyringProbeError(t *testing.T) {
 		keyringGetFn = prevGet
 	})
 
-	_, err := NewCredentialStore("test", nil, true, false)
+	store, err := NewCredentialStore("test", nil, true, false)
+	if err != nil {
+		t.Fatalf("NewCredentialStore: %v", err)
+	}
+	err = store.Set(Credential{AccountID: 1, Password: "hunter2"})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected a refusal")
 	}
 	if !strings.Contains(err.Error(), probeErr.Error()) {
-		t.Fatalf("expected error to include probe failure %q, got %q", probeErr.Error(), err.Error())
+		t.Fatalf("expected the refusal to include probe failure %q, got %q", probeErr.Error(), err.Error())
 	}
 }
 
