@@ -23,11 +23,15 @@ var newCalendarCredentialStore = auth.NewCredentialStore
 var runGoogleOAuthFlow = auth.GoogleOAuthFlow
 
 type calendarRemoteFlags struct {
-	RemoteURL     string
-	Username      string
-	AuthType      string
-	OAuthClientID string
-	AllowInsecure bool
+	RemoteURL string
+	Username  string
+	AuthType  string
+	// PasswordCommand holds the --password-cmd value. It is a shell command
+	// that prints the basic-auth password. The command is not a secret, so a
+	// flag can carry it.
+	PasswordCommand string
+	OAuthClientID   string
+	AllowInsecure   bool
 }
 
 func validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID string, allowInsecure, disconnectRemote bool) error {
@@ -83,8 +87,15 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 	// fetch is whichever secret matches the auth type — basic password,
 	// bearer token, or OAuth access token.
 	metaPassword := cred.Password
-	if cred.AccessToken != "" {
+	switch {
+	case cred.AccessToken != "":
 		metaPassword = cred.AccessToken
+	case cred.HasPasswordCommand():
+		// The metadata fetch stays best effort. A password command that
+		// fails leaves the color unset. The next sync reports the failure.
+		if resolved, resolveErr := cred.ResolvePassword(ctx); resolveErr == nil {
+			metaPassword = resolved
+		}
 	}
 	metaCtx, metaCancel := context.WithTimeout(ctx, 10*time.Second)
 	meta, _ := caldav.FetchCalendarMetadata(metaCtx, flags.RemoteURL, flags.Username, metaPassword, flags.AuthType, flags.AllowInsecure)
@@ -122,11 +133,15 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags) (au
 		}
 		return auth.Credential{Username: flags.Username, AccessToken: token}, nil
 	case "basic":
-		password, err := readBasicPassword()
+		secret, err := readBasicSecret(flags.PasswordCommand)
 		if err != nil {
 			return auth.Credential{}, err
 		}
-		return auth.Credential{Username: flags.Username, Password: password}, nil
+		return auth.Credential{
+			Username:        flags.Username,
+			Password:        secret.Password,
+			PasswordCommand: secret.Command,
+		}, nil
 	case "oauth2":
 		clientSecret, err := readGoogleClientSecret()
 		if err != nil {
@@ -153,6 +168,45 @@ func normalizeAuthType(authType string) string {
 	return calendarpkg.NormalizeAuthType(authType)
 }
 
+// basicSecret carries one resolved source for a basic-auth secret. At most
+// one field has a value. Command holds a shell command that prints the
+// password. Password holds the password itself.
+type basicSecret struct {
+	Password string
+	Command  string
+}
+
+// readBasicSecret obtains the basic-auth secret source. A password command is
+// not a secret, so a flag can carry it. A password never comes from a flag.
+// That keeps the password out of /proc/<pid>/cmdline and the shell history.
+// Sources, in order:
+//
+//  1. The --password-cmd flag.
+//  2. The CHRONCAL_PASSWORD_CMD env var.
+//  3. The CHRONCAL_PASSWORD env var.
+//  4. The interactive prompt.
+//
+// A command source plus CHRONCAL_PASSWORD is an error. Two sources hide which
+// secret the program sends.
+func readBasicSecret(passwordCommand string) (basicSecret, error) {
+	command := strings.TrimSpace(passwordCommand)
+	if command == "" {
+		command = strings.TrimSpace(os.Getenv("CHRONCAL_PASSWORD_CMD"))
+	}
+	if command != "" {
+		if os.Getenv("CHRONCAL_PASSWORD") != "" {
+			return basicSecret{}, errInvalidInputf(
+				"a password command and CHRONCAL_PASSWORD are mutually exclusive; set only one")
+		}
+		return basicSecret{Command: command}, nil
+	}
+	password, err := readBasicPassword()
+	if err != nil {
+		return basicSecret{}, err
+	}
+	return basicSecret{Password: password}, nil
+}
+
 // readBasicPassword obtains the password for --auth basic. We never accept it
 // as a CLI flag. That keeps secrets out of /proc/<pid>/cmdline and shell
 // history. Sources, in order:
@@ -164,7 +218,7 @@ func readBasicPassword() (string, error) {
 		return s, nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return "", fmt.Errorf("a password is required: set CHRONCAL_PASSWORD or run interactively")
+		return "", fmt.Errorf("a password is required: set --password-cmd, CHRONCAL_PASSWORD_CMD, or CHRONCAL_PASSWORD, or run interactively")
 	}
 	fmt.Fprint(os.Stderr, "Password: ")
 	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))

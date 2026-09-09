@@ -287,14 +287,15 @@ func calendarGetCmd() *cobra.Command {
 
 func calendarCreateCmd() *cobra.Command {
 	var (
-		color         string
-		description   string
-		email         string
-		remoteURL     string
-		username      string
-		authType      string
-		oauthClientID string
-		allowInsecure bool
+		color           string
+		description     string
+		email           string
+		remoteURL       string
+		username        string
+		authType        string
+		passwordCommand string
+		oauthClientID   string
+		allowInsecure   bool
 	)
 	cmd := &cobra.Command{
 		Use:   `create "<name>"`,
@@ -334,11 +335,12 @@ behavior.`,
 
 			if strings.TrimSpace(remoteURL) != "" {
 				if err := connectCalendarRemote(cmd.Context(), a, c, calendarRemoteFlags{
-					RemoteURL:     remoteURL,
-					Username:      username,
-					AuthType:      authType,
-					OAuthClientID: oauthClientID,
-					AllowInsecure: allowInsecure,
+					RemoteURL:       remoteURL,
+					Username:        username,
+					AuthType:        authType,
+					PasswordCommand: passwordCommand,
+					OAuthClientID:   oauthClientID,
+					AllowInsecure:   allowInsecure,
 				}); err != nil {
 					return err
 				}
@@ -367,6 +369,7 @@ behavior.`,
 	cmd.Flags().StringVar(&remoteURL, "remote-url", "", "remote CalDAV calendar URL")
 	cmd.Flags().StringVar(&username, "username", "", "Username for remote authentication")
 	cmd.Flags().StringVar(&authType, "auth", "basic", "Auth type: basic, bearer, oauth2")
+	cmd.Flags().StringVar(&passwordCommand, "password-cmd", "", "shell command that prints the basic-auth password on its first line")
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "OAuth 2.0 client ID")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "Allow HTTP (non-HTTPS) remote URLs")
 	return cmd
@@ -381,6 +384,7 @@ func calendarUpdateCmd() *cobra.Command {
 		remoteURL        string
 		username         string
 		authType         string
+		passwordCommand  string
 		oauthClientID    string
 		allowInsecure    bool
 		disconnectRemote bool
@@ -466,11 +470,12 @@ Only the flags you pass are changed.`,
 				}
 			} else if strings.TrimSpace(remoteURL) != "" {
 				if err := connectCalendarRemote(ctx, a, c, calendarRemoteFlags{
-					RemoteURL:     remoteURL,
-					Username:      username,
-					AuthType:      authType,
-					OAuthClientID: oauthClientID,
-					AllowInsecure: allowInsecure,
+					RemoteURL:       remoteURL,
+					Username:        username,
+					AuthType:        authType,
+					PasswordCommand: passwordCommand,
+					OAuthClientID:   oauthClientID,
+					AllowInsecure:   allowInsecure,
 				}); err != nil {
 					return err
 				}
@@ -499,6 +504,7 @@ Only the flags you pass are changed.`,
 	cmd.Flags().StringVar(&remoteURL, "remote-url", "", "remote CalDAV calendar URL")
 	cmd.Flags().StringVar(&username, "username", "", "Username for remote authentication")
 	cmd.Flags().StringVar(&authType, "auth", "basic", "Auth type: basic, bearer, oauth2")
+	cmd.Flags().StringVar(&passwordCommand, "password-cmd", "", "shell command that prints the basic-auth password on its first line")
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "OAuth 2.0 client ID")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "Allow HTTP (non-HTTPS) remote URLs")
 	cmd.Flags().BoolVar(&disconnectRemote, "disconnect-remote", false, "Remove the remote CalDAV link from this calendar")
