@@ -97,9 +97,18 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 			metaPassword = resolved
 		}
 	}
-	metaCtx, metaCancel := context.WithTimeout(ctx, 10*time.Second)
-	meta, _ := caldav.FetchCalendarMetadata(metaCtx, flags.RemoteURL, flags.Username, metaPassword, flags.AuthType, flags.AllowInsecure)
+	// The metadata fetch is best effort: it seeds the color, the access mode,
+	// and the component set. A failure must not stop the link. The budget
+	// stays short because the user waits at the shell, but it tracks the
+	// configured request timeout so a slow server can still answer.
+	metaCtx, metaCancel := context.WithTimeout(ctx, calendarMetadataBudget())
+	meta, metaErr := caldav.FetchCalendarMetadata(metaCtx, flags.RemoteURL, flags.Username, metaPassword, flags.AuthType, flags.AllowInsecure)
 	metaCancel()
+	if metaErr != nil {
+		// Tell the user why the color and the access mode stay unset. A
+		// silent skip looks like a server with no color.
+		fmt.Fprintf(os.Stderr, "chroncal: warning: could not read the calendar metadata (%v); the color and the access mode stay unset\n", metaErr)
+	}
 
 	return a.Calendars.Connect(ctx, cal, calendarpkg.RemoteLink{
 		RemoteURL:        flags.RemoteURL,
@@ -110,6 +119,18 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 		RemoteAccess:     string(meta.Access),
 		RemoteComponents: meta.SupportedComponents,
 	}, cred, credStore)
+}
+
+// calendarMetadataBudget bounds the metadata PROPFIND that runs when a
+// calendar links to a server. The fetch is best effort and the user waits at
+// the shell, so the budget stays far below a sync budget. It still tracks the
+// configured request timeout, so a slow server can answer.
+func calendarMetadataBudget() time.Duration {
+	const ceiling = 30 * time.Second
+	if d := caldav.HTTPTimeout(); d < ceiling {
+		return d
+	}
+	return ceiling
 }
 
 func disconnectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Calendar) error {

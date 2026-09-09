@@ -8,15 +8,29 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/config"
 	syncpkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
-// syncOperationTimeout bounds one sync of one calendar from the TUI. A full
-// first pull of a large calendar needs many CalDAV requests. Each request
-// can take up to caldav.HTTPTimeout. A short budget cut the pull before the
-// server answered (issue #768).
-const syncOperationTimeout = 30 * time.Minute
+// syncCalendarBudget bounds one sync of one calendar from the TUI. A full
+// first pull of a large calendar needs many CalDAV requests, so the factor
+// is above one request. The budget derives from the configured request
+// timeout (sync.http_timeout), so it cannot become shorter than one
+// request.
+//
+// The TUI blocks the calendar list and the account manager while the sync
+// runs, so this budget is also the time that a hung server can hold the
+// screen. Keep the factor as small as a real first pull allows.
+func syncCalendarBudget() time.Duration {
+	return caldav.RequestBudget(3)
+}
+
+// syncAccountBudget bounds a sync that covers every calendar of one account.
+// It wraps the per-calendar budget of the engine, so the factor is larger.
+func syncAccountBudget() time.Duration {
+	return caldav.RequestBudget(6)
+}
 
 // caldavPushTimeout bounds one opportunistic push after a save. The push is
 // best-effort, and this budget stays short on purpose. The user waits for
@@ -62,7 +76,7 @@ func (m Model) runSyncOne(target syncTarget, index, total int) tea.Cmd {
 		if err != nil {
 			return syncCalendarFinishedMsg{index: index, total: total, name: target.Name, err: err}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), syncOperationTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), syncCalendarBudget())
 		defer cancel()
 		result, err := svc.SyncCalendar(ctx, target.ID, m.fullSyncStrategy)
 		return syncCalendarFinishedMsg{index: index, total: total, name: target.Name, result: result, err: err}
@@ -75,7 +89,7 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 		if err != nil {
 			return syncFinishedMsg{err: err}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), syncOperationTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), syncCalendarBudget())
 		defer cancel()
 		result, err := svc.SyncCalendar(ctx, id, m.fullSyncStrategy)
 		if err != nil {

@@ -79,6 +79,25 @@ func HTTPTimeout() time.Duration {
 	return defaultHTTPClient.Timeout
 }
 
+// RequestBudget returns a parent deadline that holds n sequential CalDAV
+// requests at the current request timeout.
+//
+// Every context that wraps a CalDAV call must take its deadline from this
+// function. The request timeout is configurable (sync.http_timeout), so a
+// fixed parent constant can become shorter than one request. The parent
+// deadline then expires first and the pull dies again, which is the failure
+// of issue #768. A derived budget grows with the configured timeout.
+//
+// Pick n from the number of requests that the operation sends in sequence.
+// A caller that wraps another budgeted operation must use a larger n than
+// the operation it wraps, or the inner budget never binds.
+func RequestBudget(n int) time.Duration {
+	if n < 1 {
+		n = 1
+	}
+	return time.Duration(n) * HTTPTimeout()
+}
+
 var errResponseTooLarge = errors.New("caldav response exceeds configured limits")
 
 // checkRedirect governs redirects for defaultHTTPClient. It rejects any

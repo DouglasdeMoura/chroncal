@@ -635,11 +635,17 @@ func (e *Engine) resolveMootConflicts(ctx context.Context, calendarID int64) (in
 	return resolved, nil
 }
 
-// accountCalendarSyncTimeout bounds the sync of one calendar inside an
+// accountCalendarSyncBudget bounds the sync of one calendar inside an
 // account pass. A full first pull of a large calendar needs many multiget
-// requests. Each request can take up to caldav.HTTPTimeout. Keep this
-// budget well above that ceiling (issue #768).
-const accountCalendarSyncTimeout = 30 * time.Minute
+// requests, so the factor is above one request.
+//
+// The factor stays below the factor of every caller that wraps a whole
+// account pass. A per-calendar budget equal to the budget of the run never
+// binds: one wedged calendar would consume the whole run budget and each
+// remaining calendar would fail at once.
+func accountCalendarSyncBudget() time.Duration {
+	return caldav.RequestBudget(3)
+}
 
 // SyncAccount syncs every calendar linked to one account serially. Calendars
 // that share a credential must not refresh or persist that credential
@@ -654,7 +660,7 @@ func (e *Engine) SyncAccount(ctx context.Context, accountID int64, strategy Conf
 		if err := ctx.Err(); err != nil {
 			return results, err
 		}
-		calendarCtx, cancel := context.WithTimeout(ctx, accountCalendarSyncTimeout)
+		calendarCtx, cancel := context.WithTimeout(ctx, accountCalendarSyncBudget())
 		result, err := e.SyncCalendar(calendarCtx, cal.ID, strategy)
 		cancel()
 		if err != nil {
