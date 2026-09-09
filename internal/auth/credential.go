@@ -131,10 +131,16 @@ func NewCredentialStoreWithWarnings(namespace string, previousNamespaces []Previ
 	} else {
 		// Encrypted file store needs a passphrase prompt; skip for now.
 		// TODO: implement EncryptedFileStore with argon2id + AES-256-GCM
-		if !allowPlaintext {
-			return nil, fmt.Errorf("no secure credential store available: %w; use --allow-plaintext to store credentials in plaintext, or install a keyring provider", keyringUnavailableReason())
-		}
+		//
+		// Without the opt-in the store still opens, but it accepts only a
+		// credential that carries no secret. A basic-auth account with a
+		// password command then works with no keyring and no flag
+		// (issue #777). A write that carries a secret fails with the
+		// remedy in its message.
 		primary = plaintext
+		if !allowPlaintext {
+			primary = &secretlessFileStore{inner: plaintext, reason: keyringUnavailableReason()}
+		}
 		for _, previous := range previousNamespaces {
 			if previous.Namespace != namespace && validCredentialNamespace(previous.Namespace) {
 				legacy = append(legacy, legacyCredentialStore{
@@ -311,6 +317,12 @@ func (s *PlaintextFileStore) Set(cred Credential) error {
 	// synced; losing the directory entry on a crash is the remaining risk.
 	_ = dir.Sync()
 	dir.Close()
+	// Warn only for a credential that carries a secret. A credential that
+	// holds a username and a password command keeps no secret in the file,
+	// so the plaintext warning would misreport what landed on disk.
+	if !cred.HasStoredSecret() {
+		return nil
+	}
 	w := s.warnWriter()
 	fmt.Fprintf(w, "Warning: credentials stored in plaintext at %s\n", path)
 	if cred.OAuthClientSecret != "" {
@@ -356,6 +368,8 @@ func StoreDescription(store CredentialStore) string {
 	switch typed := store.(type) {
 	case *PlaintextFileStore:
 		return "plaintext files"
+	case *secretlessFileStore:
+		return "files without a secret"
 	case *migratingCredentialStore:
 		return StoreDescription(typed.primary)
 	default:
