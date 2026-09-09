@@ -9,6 +9,15 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/douglasdemoura/chroncal.svg)](https://pkg.go.dev/github.com/douglasdemoura/chroncal)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+<p align="center">
+  <a href="https://terminaltrove.com/chroncal/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/terminal-trove-tool-of-the-week-dark.svg">
+      <img src="assets/terminal-trove-tool-of-the-week-light.svg" alt="Terminal Trove Tool of the Week" height="48">
+    </picture>
+  </a>
+</p>
+
 chroncal is a terminal calendar. SQLite stores the data. The program supports full iCal import and export, and CalDAV sync. Launch the TUI for an interactive calendar. Use the CLI to script access to events, todos, journals, alarms, free/busy queries, and calendars.
 
 chroncal keeps your calendar data local and portable. The data follows the calendar standards.
