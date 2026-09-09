@@ -416,11 +416,11 @@ Journal flags: `--date`, `--description`, `--calendar`, `--status`, `--class`, `
 ### CalDAV accounts
 
 ```
-chroncal account add              "<name>" --server URL --username USER [--auth {basic,bearer,oauth2}] [--oauth-client-id ID] [--allow-insecure]
+chroncal account add              "<name>" --server URL --username USER [--auth {basic,bearer,oauth2}] [--password-cmd CMD] [--oauth-client-id ID] [--allow-insecure]
 chroncal account get              <name|id>
 chroncal account list
 chroncal account update           <name|id> --name NAME
-chroncal account credentials      <name|id>
+chroncal account credentials      <name|id> [--password-cmd CMD]
 chroncal account reauth           <name|id> [--oauth-client-id ID]
 chroncal account calendars list   <name|id>
 chroncal account calendars add    <name|id> (--calendar NAME_OR_URL ... | --all)
@@ -439,6 +439,54 @@ If you select none, the command also removes the empty account and credential. `
 `account credentials` rotates the stored secret of a basic or bearer account. It reads the new value from `CHRONCAL_PASSWORD` (basic) or `CHRONCAL_BEARER_TOKEN` (bearer). For a basic account, `--password-cmd` stores a command instead of a password. See [Command-retrieved passwords](#command-retrieved-passwords). `account reauth` repeats the Google OAuth consent flow for an oauth2 account; the client secret comes from `GOOGLE_CLIENT_SECRET` or the stored value, and `--oauth-client-id` replaces the stored client ID. Neither command accepts a secret as a CLI flag.
 
 You can open read-only collections locally and sync them pull-only. Chroncal does not send metadata changes, resources, or tombstones to them.
+
+### Credential storage
+
+Chroncal keeps an account credential in the OS keyring: GNOME Keyring or KWallet on Linux, the Keychain on macOS, the Credential Manager on Windows. This needs no setup on a full desktop.
+
+Many terminal setups run no keyring. A tiling window manager such as sway is a common example. You have three options on such a host.
+
+**Option 1 — Use a password command (no opt-in).** The credential holds the command, never the password. The command must get the password from your password manager. Chroncal runs the command at each sync and reads the password from your password manager. This needs no keyring and no flag:
+
+```bash
+chroncal account add "Nextcloud" \
+    --server https://cloud.example.com/remote.php/dav/ --username scott --auth basic \
+    --password-cmd "pass show caldav/nextcloud"
+```
+
+The TUI offers the same field. Open **Calendars**, then **+ Add**, then **Add Account…**, and fill **Password cmd** instead of **Password**. See [Command-retrieved passwords](#command-retrieved-passwords).
+
+**Option 2 — Install a keyring provider.** On Linux, install `libsecret` and `gnome-keyring` (or KWallet). Start the daemon with your session. Chroncal then finds the keyring with no configuration.
+
+**Option 3 — Opt in to plaintext storage.** Chroncal writes the credential to a 0600-mode file under `~/.config/chroncal/credentials/`. Set the key once, so the TUI and every command agree:
+
+```toml
+[security]
+allow_plaintext = true
+```
+
+`--allow-plaintext` and `CHRONCAL_SECURITY_ALLOW_PLAINTEXT=true` do the same for one run. Both apply to the TUI: start it with `chroncal --allow-plaintext`. Prefer the config key. It holds for every run, and a TUI session that already runs cannot take a flag.
+
+> **Read the trade-off first.** The 0600 mode blocks a casual `cat`. It does not block backups, filesystem snapshots, or sync tools (Dropbox, iCloud, rsync) that ignore Unix permissions. A password command keeps the secret out of the file, so prefer option 1 when your password manager supports it.
+
+What needs the opt-in, and what does not:
+
+| Credential | Keyring absent, no opt-in |
+|---|---|
+| Basic auth with `--password-cmd` | Works. The file holds the command, not the password. |
+| Basic auth with a password | Refused for a new account. |
+| Bearer token | Refused for a new account. |
+| OAuth 2.0 (Google) | Refused for a new account. Chroncal does not open the browser. |
+| A credential an earlier run wrote | Read and rewritten in place. Sync, discovery, and free/busy keep working. |
+
+The last row wins over the three above it. An account whose file already holds a secret keeps that permission: you can rotate its password, reconnect it, and refresh its OAuth token with no keyring and no opt-in. Chroncal refuses a secret only where it would put a **new** one on the disk.
+
+Each refusal names the three remedies above. Chroncal refuses before it does the work, but the two front ends ask you for the secret at different times:
+
+- The CLI stops before the prompt.
+- The TUI takes the dialog first. It stops when you submit the dialog. It does not contact the server and it does not add the account.
+
+A read is always permitted, so an account you added once with `--allow-plaintext` keeps syncing on a later run without the flag. Chroncal also permits a rewrite of that same file. An OAuth access token expires after about an hour. Chroncal then writes the new token to the file it already wrote, and the account keeps working. The same applies to a credential that an older version of chroncal wrote: chroncal moves it to the current location and keeps it usable.
 
 ### Calendars
 
@@ -530,7 +578,7 @@ Google Calendar requires OAuth 2.0. It only exposes `VEVENT` over CalDAV.
 
 The OS keyring stores credentials by default. chroncal uses OAuth PKCE for installed-app flows. The Google token endpoint also requires the Desktop client `client_secret` even with PKCE. You need both the client ID and the client secret at setup time. After the first authorization, the keyring stores refresh tokens and the client secret. Later syncs then run with no prompt.
 
-> **Plaintext fallback warning.** Install a keyring provider (for example `libsecret` + `gnome-keyring` on Linux) before you use OAuth on a shared host or a host with backups. On a system with no OS keyring, `--allow-plaintext` writes credentials (and the Google `client_secret`) to a 0600-mode file under `~/.config/chroncal/`. The mode blocks a casual `cat`. It does not block backups, filesystem snapshots, or sync tools (Dropbox, iCloud, rsync) that ignore Unix permissions.
+> **Plaintext fallback warning.** Install a keyring provider (for example `libsecret` + `gnome-keyring` on Linux) before you use OAuth on a shared host or a host with backups. OAuth keeps a refresh token and the `client_secret`, so it always needs a store. A password command cannot replace it. On a system with no OS keyring, `security.allow_plaintext` (or `--allow-plaintext`) writes credentials to a 0600-mode file under `~/.config/chroncal/`. See [Credential storage](#credential-storage). The mode blocks a casual `cat`. It does not block backups, filesystem snapshots, or sync tools (Dropbox, iCloud, rsync) that ignore Unix permissions.
 
 1. Create a **Desktop app** OAuth client in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Record the client ID and the client secret.
 2. Add `https://www.googleapis.com/auth/calendar` to the OAuth consent screen. Add yourself as a Test user while the app is in Testing mode.
@@ -745,6 +793,14 @@ The source list has a bottom **+ Add** action. It opens an anchored menu for **N
 
 A calendar whose last sync failed shows a `⚠` next to it in the sidebar. Open it to see why and to get a fix. See [Google Calendar via CalDAV](#google-calendar-via-caldav) for the OAuth flow.
 
+**Sync in the TUI is manual.** Press `s` to sync every connected calendar. The TUI runs no sync timer. For a periodic sync, install the background service. It syncs whether or not the TUI is open:
+
+```bash
+chroncal service install --sync-interval 15m
+```
+
+See [Service (alarm background service)](#service-alarm-background-service). The TUI does not reload rows on a timer. Rows that the background service wrote appear when you press `s` or when you reopen the TUI.
+
 ## Configuration
 
 Configuration loads in this order of precedence:
@@ -765,6 +821,7 @@ Configuration loads in this order of precedence:
 | `sync.interval` | Minimum interval between background CalDAV syncs that `chroncal service run` performs. `service install` defaults to `15m` when this is unset. | (unset — no sync unless the installed service sets `CHRONCAL_SYNC_INTERVAL`) |
 | `sync.conflict_strategy` | Default conflict-resolution mode when you do not pass `sync run --conflict` | `prompt` |
 | `sync.http_timeout` | Time limit for one CalDAV request, as a Go duration (for example `10m`). Raise it for a server that answers a large multiget slowly. Lower it to fail faster against a hung server. Each sync deadline derives from this value, so a larger value also gives each sync pass more time. An unusable value gives a warning, and chroncal keeps the default. | `5m` |
+| `security.allow_plaintext` | Permit the plaintext credential store when no OS keyring is available. See [Credential storage](#credential-storage). Off by default. | `false` |
 | `security.allow_unsafe_alarm_audio_attach` | Allow AUDIO alarms to attach arbitrary URIs. Off by default. | `false` |
 | `security.allow_unsafe_alarm_email_attendees` | Allow EMAIL alarms to send to unverified attendee addresses. Off by default. | `false` |
 
@@ -829,7 +886,9 @@ The rules for a password command are:
 - Chroncal discards the standard error. A noisy command cannot damage the TUI display.
 - The deadline is 30 seconds. A command that is too slow gives an error.
 - An empty first line gives an error.
-- The keyring holds the command, not the secret. Chroncal runs the command at discovery and at each sync.
+- The store holds the command, not the secret. Chroncal runs the command at discovery and at each sync.
+- A password command needs no OS keyring and no `--allow-plaintext`. See [Credential storage](#credential-storage).
+- Write a command that gets the password from your password manager. Do not put the password in the command text. Chroncal stores the command, so a password in the command text becomes a password on the disk.
 
 A password and a password command are mutually exclusive. Every write path rejects the pair.
 
