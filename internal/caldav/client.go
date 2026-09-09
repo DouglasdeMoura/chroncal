@@ -44,7 +44,16 @@ type Change struct {
 	Deleted bool
 }
 
-const defaultHTTPTimeout = 30 * time.Second
+// defaultHTTPTimeout bounds one CalDAV request, from the dial to the last
+// byte of the body. A large server needs a long time for one full-calendar
+// multiget. iCloud answers such a report in 30 to 35 seconds for a calendar
+// with a few hundred resources. The former 30-second ceiling killed every
+// pull before the headers arrived (issue #768).
+//
+// Five minutes is a ceiling for a hung server, not an expectation. A healthy
+// server answers in under one second. Set sync.http_timeout in config.toml,
+// or CHRONCAL_SYNC_HTTP_TIMEOUT, to change it.
+const defaultHTTPTimeout = 5 * time.Minute
 const maxHTTPResponseBytes = 8 << 20
 const maxRedirects = 10
 
@@ -52,6 +61,24 @@ var defaultHTTPClient = &http.Client{
 	Timeout:       defaultHTTPTimeout,
 	CheckRedirect: checkRedirect,
 }
+
+// SetHTTPTimeout replaces the request timeout of the shared CalDAV HTTP
+// client. A value of zero or less keeps the current timeout.
+//
+// Call it once at startup, before the first CalDAV request. The client is a
+// package-level value, so a later call races with a request in flight.
+func SetHTTPTimeout(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	defaultHTTPClient.Timeout = d
+}
+
+// HTTPTimeout reports the request timeout of the shared CalDAV HTTP client.
+func HTTPTimeout() time.Duration {
+	return defaultHTTPClient.Timeout
+}
+
 var errResponseTooLarge = errors.New("caldav response exceeds configured limits")
 
 // checkRedirect governs redirects for defaultHTTPClient. It rejects any

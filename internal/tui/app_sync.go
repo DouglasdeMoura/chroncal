@@ -12,6 +12,18 @@ import (
 	syncpkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
+// syncOperationTimeout bounds one sync of one calendar from the TUI. A full
+// first pull of a large calendar needs many CalDAV requests. Each request
+// can take up to caldav.HTTPTimeout. A short budget cut the pull before the
+// server answered (issue #768).
+const syncOperationTimeout = 30 * time.Minute
+
+// caldavPushTimeout bounds one opportunistic push after a save. The push is
+// best-effort, and this budget stays short on purpose. The user waits for
+// the next screen, and a push carries one small resource per dirty edit. A
+// push that runs out of time keeps the dirty flag. The next sync retries it.
+const caldavPushTimeout = 30 * time.Second
+
 func (m Model) newSyncService() (*syncpkg.Service, error) {
 	credStore, err := m.openCredentialStore()
 	if err != nil {
@@ -50,7 +62,7 @@ func (m Model) runSyncOne(target syncTarget, index, total int) tea.Cmd {
 		if err != nil {
 			return syncCalendarFinishedMsg{index: index, total: total, name: target.Name, err: err}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), syncOperationTimeout)
 		defer cancel()
 		result, err := svc.SyncCalendar(ctx, target.ID, m.fullSyncStrategy)
 		return syncCalendarFinishedMsg{index: index, total: total, name: target.Name, result: result, err: err}
@@ -63,7 +75,7 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 		if err != nil {
 			return syncFinishedMsg{err: err}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), syncOperationTimeout)
 		defer cancel()
 		result, err := svc.SyncCalendar(ctx, id, m.fullSyncStrategy)
 		if err != nil {
@@ -193,7 +205,7 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 		if err != nil {
 			return opportunisticPushFinishedMsg{err: err}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), caldavPushTimeout)
 		defer cancel()
 		result, err := svc.PushLocalEdits(ctx, calendarID)
 		if err != nil {
