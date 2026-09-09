@@ -56,8 +56,14 @@ func httpClientFromCredential(cred auth.Credential, persist func(auth.Credential
 			}
 		}
 		return httpClient, nil
-	case cred.Password != "":
-		return webdav.HTTPClientWithBasicAuth(defaultHTTPClient, cred.Username, cred.Password), nil
+	case cred.Password != "" || cred.HasPasswordCommand():
+		// Resolve the password here. A password command keeps the secret out
+		// of the keyring, so it exists only in this client.
+		password, err := cred.ResolvePassword(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return webdav.HTTPClientWithBasicAuth(defaultHTTPClient, cred.Username, password), nil
 	default:
 		return nil, fmt.Errorf("credential has no password or access token")
 	}

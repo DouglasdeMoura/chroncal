@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"runtime"
 	"testing"
 	"time"
 
@@ -217,5 +219,71 @@ func TestNewClientFromCredential_UsesBoundedHTTPClient(t *testing.T) {
 	}
 	if oauthClient.inner.Timeout != defaultHTTPTimeout {
 		t.Fatalf("inner timeout = %s, want %s", oauthClient.inner.Timeout, defaultHTTPTimeout)
+	}
+}
+
+// A basic-auth credential with a password command sends the first stdout
+// line of the command as the password.
+func TestHTTPClientFromCredential_RunsThePasswordCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the test uses a POSIX shell")
+	}
+	httpClient, err := httpClientFromCredential(auth.Credential{
+		Username:        "alice",
+		PasswordCommand: `printf 'from-command\nlogin: alice\n'`,
+	}, nil)
+	if err != nil {
+		t.Fatalf("httpClientFromCredential: %v", err)
+	}
+
+	var gotUser, gotPassword string
+	var ok bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPassword, ok = r.BasicAuth()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext: %v", err)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	resp.Body.Close()
+
+	if !ok {
+		t.Fatal("the request carried no basic-auth header")
+	}
+	if gotUser != "alice" || gotPassword != "from-command" {
+		t.Fatalf("basic auth = %q/%q, want alice/from-command", gotUser, gotPassword)
+	}
+}
+
+func TestHTTPClientFromCredential_RejectsBothPasswordSources(t *testing.T) {
+	_, err := httpClientFromCredential(auth.Credential{
+		Username:        "alice",
+		Password:        "secret123",
+		PasswordCommand: "true",
+	}, nil)
+	if !errors.Is(err, auth.ErrPasswordSourceConflict) {
+		t.Fatalf("httpClientFromCredential error = %v, want ErrPasswordSourceConflict", err)
+	}
+}
+
+// An access-token credential stays on the OAuth path. A stray password
+// command must not divert it to basic auth.
+func TestHTTPClientFromCredential_AccessTokenIgnoresThePasswordCommand(t *testing.T) {
+	httpClient, err := httpClientFromCredential(auth.Credential{
+		AccessToken:     "token",
+		PasswordCommand: "exit 1",
+	}, nil)
+	if err != nil {
+		t.Fatalf("httpClientFromCredential: %v", err)
+	}
+	if _, ok := httpClient.(*oauth2HTTPClient); !ok {
+		t.Fatalf("client type = %T, want *oauth2HTTPClient", httpClient)
 	}
 }

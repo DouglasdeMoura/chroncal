@@ -18,9 +18,14 @@ import (
 
 // Credential holds authentication secrets for an account.
 type Credential struct {
-	AccountID          int64  `json:"account_id"`
-	Username           string `json:"username,omitempty"`
-	Password           string `json:"password,omitempty"`
+	AccountID int64  `json:"account_id"`
+	Username  string `json:"username,omitempty"`
+	Password  string `json:"password,omitempty"`
+	// PasswordCommand holds a shell command that prints the basic-auth
+	// password on its first standard-output line. The credential store keeps
+	// the command, never the password. Password and PasswordCommand are
+	// mutually exclusive.
+	PasswordCommand    string `json:"password_cmd,omitempty"`
 	AccessToken        string `json:"access_token,omitempty"`
 	RefreshToken       string `json:"refresh_token,omitempty"`
 	TokenExpiry        string `json:"token_expiry,omitempty"` // RFC 3339
@@ -193,6 +198,9 @@ func (s *KeyringStore) Get(accountID int64, accountFingerprint string) (Credenti
 }
 
 func (s *KeyringStore) Set(cred Credential) error {
+	if err := cred.ValidatePasswordSources(); err != nil {
+		return err
+	}
 	data, err := json.Marshal(cred)
 	if err != nil {
 		return fmt.Errorf("marshal credential: %w", err)
@@ -249,6 +257,9 @@ func (s *PlaintextFileStore) Get(accountID int64, accountFingerprint string) (Cr
 }
 
 func (s *PlaintextFileStore) Set(cred Credential) error {
+	if err := cred.ValidatePasswordSources(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(s.path(cred.AccountID)), 0o700); err != nil {
 		return fmt.Errorf("create credential dir: %w", err)
 	}
