@@ -82,5 +82,11 @@
           ];
         };
       }
-    );
+    )
+    // {
+      # The home-manager module is not per-system. It reads the pkgs of the
+      # host configuration, so it stays outside eachDefaultSystem.
+      homeModules.chroncal = import ./nix/hm-module.nix self;
+      homeModules.default = self.homeModules.chroncal;
+    };
 }
