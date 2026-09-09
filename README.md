@@ -155,7 +155,57 @@ Build the package from a clone:
 nix build .#chroncal
 ```
 
-The flake exposes `packages.default`, `packages.chroncal`, `apps.default`, and a developer shell with Go, GoReleaser, golangci-lint, govulncheck, and sqlc.
+The flake exposes `packages.default`, `packages.chroncal`, `apps.default`, `homeModules.chroncal`, `homeModules.default`, and a developer shell with Go, GoReleaser, golangci-lint, govulncheck, and sqlc.
+
+### home-manager
+
+The flake also exposes a [home-manager](https://github.com/nix-community/home-manager) module. The module installs the program and writes `$XDG_CONFIG_HOME/chroncal/config.toml`.
+
+Add the input to your `flake.nix`:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    home-manager.url = "github:nix-community/home-manager";
+    chroncal.url = "github:DouglasdeMoura/chroncal";
+  };
+}
+```
+
+Then import the module in your home-manager configuration:
+
+```nix
+{ inputs, ... }:
+{
+  imports = [ inputs.chroncal.homeModules.default ];
+
+  programs.chroncal = {
+    enable = true;
+    settings = {
+      product_id = "-//example//chroncal//EN";
+      ui = {
+        theme = "default";
+        week_start = "monday";
+      };
+      soft_delete.purge_days = 30;
+      sync.conflict_strategy = "prompt";
+    };
+  };
+}
+```
+
+The module has three options:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `programs.chroncal.enable` | boolean | Installs the package and writes the config file. |
+| `programs.chroncal.package` | package or null | The package to install. The default is the package of this flake for the system of the host. Set it to `null` to install the program with another method. |
+| `programs.chroncal.settings` | attribute set | The content of `config.toml`. See [Config keys](#config-keys) for each key. |
+
+Do not put a secret in `settings`. The Nix store is readable for every user of the machine. Pass a secret through an environment variable, for example `CHRONCAL_SMTP_PASSWORD`.
+
+On macOS the module writes the file to `~/Library/Application Support/chroncal/config.toml`, because the program reads that directory. With `xdg.enable = true` the module writes the file to `xdg.configHome` instead.
 
 ### Scoop (Windows)
 
