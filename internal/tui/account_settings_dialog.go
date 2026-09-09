@@ -375,11 +375,22 @@ func (m AccountOAuthConfigDialogModel) View() string {
 type AccountCredentialsUpdateSubmittedMsg struct {
 	AccountID int64
 	Secret    string
+	// SecretCommand holds a shell command that prints the basic-auth
+	// password. Secret and SecretCommand are mutually exclusive. Bearer auth
+	// ignores this field.
+	SecretCommand string
 }
 
 // AccountCredentialsUpdateClosedMsg reports a cancel from the credential
 // update dialog; no credential was changed.
 type AccountCredentialsUpdateClosedMsg struct{ AccountID int64 }
+
+// Form field indices for the credential-rotation form. Bearer auth shows the
+// Token row only. Basic auth adds the Password cmd row after it.
+const (
+	credentialsIdxSecret = iota
+	credentialsIdxSecretCommand
+)
 
 // AccountCredentialsDialogModel collects the single secret needed to rotate a
 // basic (password) or bearer (token) account credential in place. It is the
@@ -404,25 +415,47 @@ func NewAccountCredentialsDialogModel(
 	accountName, authType, username string,
 	theme Theme,
 ) AccountCredentialsDialogModel {
-	var fieldLabel string
+	bearer := accountAuthIsBearer(authType)
 	secret := newPasswordField()
-	if accountAuthIsBearer(authType) {
-		fieldLabel = "Token"
-		secret.SetPlaceholder("paste your API token")
-	} else {
-		fieldLabel = "Password"
-	}
 	styles := DefaultFormStyles()
 	styles.LabelLayout = LabelTop
-	form := NewForm(
-		"Update",
-		styles,
-		FormItem{Label: fieldLabel, Field: secret, Required: true},
-	)
+	var form Form
+	if bearer {
+		// Bearer auth has no password command. Command retrieval covers the
+		// basic-auth password only.
+		secret.SetPlaceholder("paste your API token")
+		form = NewForm(
+			"Update",
+			styles,
+			FormItem{Label: "Token", Field: secret, Required: true},
+		)
+	} else {
+		// Basic auth accepts a password or a password command. Neither row
+		// is required on its own, so OnSubmit checks the pair instead.
+		form = NewForm(
+			"Update",
+			styles,
+			FormItem{Label: "Password", Field: secret},
+			FormItem{Label: "Password cmd", Field: newPasswordCommandField("")},
+		)
+	}
 	form.OnSubmit(func(f *Form) tea.Cmd {
 		msg := AccountCredentialsUpdateSubmittedMsg{
 			AccountID: accountID,
-			Secret:    strings.TrimSpace(f.Field(0).(*TextField).Value()),
+			Secret:    strings.TrimSpace(f.Field(credentialsIdxSecret).(*TextField).Value()),
+		}
+		if !bearer {
+			msg.SecretCommand = strings.TrimSpace(
+				f.Field(credentialsIdxSecretCommand).(*TextField).Value())
+			if msg.Secret != "" && msg.SecretCommand != "" {
+				f.SetError(credentialsIdxSecretCommand,
+					"Enter a password or a password command, not both")
+				return nil
+			}
+			if msg.Secret == "" && msg.SecretCommand == "" {
+				f.SetError(credentialsIdxSecret, "Enter a password or a password command")
+				return nil
+			}
 		}
 		return func() tea.Msg { return msg }
 	})
@@ -474,7 +507,7 @@ func (m AccountCredentialsDialogModel) View() string {
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "update")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}))
-	noun := "password"
+	noun := "password or password command"
 	if accountAuthIsBearer(m.authType) {
 		noun = "token"
 	}

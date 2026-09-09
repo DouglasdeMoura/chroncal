@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
@@ -402,7 +404,19 @@ func (m Model) handleCalendarTestRequested(msg CalendarTestRequestedMsg) (tea.Mo
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		meta, err := caldav.VerifyCalendarURL(ctx, req.URL, req.Username, req.Password, req.AuthType, req.AllowInsecure)
+		password := req.Password
+		if strings.TrimSpace(req.PasswordCommand) != "" {
+			// Run the command here so the ping uses the same secret a later
+			// sync uses. The resolved secret never leaves this function.
+			resolved, err := auth.Credential{PasswordCommand: req.PasswordCommand}.
+				ResolvePassword(ctx)
+			if err != nil {
+				return CalendarTestResultMsg{Message: err.Error()}
+			}
+			password = resolved
+		}
+
+		meta, err := caldav.VerifyCalendarURL(ctx, req.URL, req.Username, password, req.AuthType, req.AllowInsecure)
 		if err != nil {
 			return CalendarTestResultMsg{Message: err.Error()}
 		}

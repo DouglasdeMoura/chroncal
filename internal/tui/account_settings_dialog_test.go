@@ -203,10 +203,13 @@ func TestAccountCredentialsDialogBasicCollectsPassword(t *testing.T) {
 	m := NewAccountCredentialsDialogModel(7, "Work", "basic", "alice@example.com", NewTheme(true)).
 		SetSize(80, 30)
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "Password") || !strings.Contains(view, "New password for Work") {
+	if !strings.Contains(view, "Password") || !strings.Contains(view, "New password or password command for Work") {
 		t.Fatalf("basic dialog missing Password field/context:\n%s", view)
 	}
-	m.form.Field(0).(*TextField).SetValue("hunter2")
+	if !strings.Contains(view, "Password cmd") {
+		t.Fatalf("basic dialog missing Password cmd field:\n%s", view)
+	}
+	m.form.Field(credentialsIdxSecret).(*TextField).SetValue("hunter2")
 	form, cmd := m.form.Submit()
 	m.form = form
 	if cmd == nil {
@@ -215,6 +218,49 @@ func TestAccountCredentialsDialogBasicCollectsPassword(t *testing.T) {
 	msg, ok := cmd().(AccountCredentialsUpdateSubmittedMsg)
 	if !ok || msg.AccountID != 7 || msg.Secret != "hunter2" {
 		t.Fatalf("basic submission = %#v, want account 7 secret hunter2", cmd())
+	}
+}
+
+// TestAccountCredentialsDialogBasicCollectsPasswordCommand checks the command
+// path. An empty password plus a command is a valid rotation.
+func TestAccountCredentialsDialogBasicCollectsPasswordCommand(t *testing.T) {
+	m := NewAccountCredentialsDialogModel(7, "Work", "basic", "alice@example.com", NewTheme(true)).
+		SetSize(80, 30)
+	m.form.Field(credentialsIdxSecretCommand).(*TextField).SetValue("pass show caldav/work")
+	form, cmd := m.form.Submit()
+	m.form = form
+	if cmd == nil {
+		t.Fatal("command-only credential form did not submit")
+	}
+	msg, ok := cmd().(AccountCredentialsUpdateSubmittedMsg)
+	if !ok || msg.Secret != "" || msg.SecretCommand != "pass show caldav/work" {
+		t.Fatalf("command submission = %#v, want an empty secret and the command", cmd())
+	}
+}
+
+// TestAccountCredentialsDialogBasicRejectsBothSources checks the pair. A
+// password plus a command hides which secret the program sends.
+func TestAccountCredentialsDialogBasicRejectsBothSources(t *testing.T) {
+	m := NewAccountCredentialsDialogModel(7, "Work", "basic", "alice@example.com", NewTheme(true)).
+		SetSize(80, 30)
+	m.form.Field(credentialsIdxSecret).(*TextField).SetValue("hunter2")
+	m.form.Field(credentialsIdxSecretCommand).(*TextField).SetValue("pass show caldav/work")
+	form, cmd := m.form.Submit()
+	m.form = form
+	if cmd != nil {
+		t.Fatalf("form submitted with both sources set: %#v", cmd())
+	}
+}
+
+// TestAccountCredentialsDialogBasicRejectsEmptySources checks that the form
+// needs one source. Neither row is required on its own.
+func TestAccountCredentialsDialogBasicRejectsEmptySources(t *testing.T) {
+	m := NewAccountCredentialsDialogModel(7, "Work", "basic", "alice@example.com", NewTheme(true)).
+		SetSize(80, 30)
+	form, cmd := m.form.Submit()
+	m.form = form
+	if cmd != nil {
+		t.Fatalf("empty form submitted: %#v", cmd())
 	}
 }
 
