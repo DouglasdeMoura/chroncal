@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -164,10 +165,22 @@ func parseOrganizerFlag(val string) model.Attendee {
 	}
 }
 
+// relationXTokenPattern matches an RFC 5545 x-name, for example
+// "X-APPLE-SOMETHING". A server may send a RELTYPE outside the three named
+// values, and the database stores the token as it arrives. The flag parser
+// accepts an x-name so a user can write that relation back. Without it, a
+// --related-to edit drops a stored x-name relation and the next push sends
+// the shortened body to the server.
+var relationXTokenPattern = regexp.MustCompile(`^X-[A-Z0-9-]+$`)
+
 // parseRelationFlags parses --related-to flag values into Relation models.
 // Each value can be:
 //   - A UID: "some-event-uid" (defaults to RELTYPE=PARENT)
 //   - "RELTYPE:uid": "PARENT:uid", "CHILD:uid", "SIBLING:uid"
+//   - "X-NAME:uid": an x-name RELTYPE, for example "X-APPLE-THING:uid"
+//
+// A prefix outside those values stays part of the UID. A URN UID such as
+// "urn:uuid:1234" therefore keeps its scheme.
 func parseRelationFlags(flags []string) ([]model.Relation, error) {
 	validTypes := map[string]bool{"PARENT": true, "CHILD": true, "SIBLING": true}
 	var out []model.Relation
@@ -176,7 +189,7 @@ func parseRelationFlags(flags []string) ([]model.Relation, error) {
 		uid := val
 		if idx := strings.Index(val, ":"); idx > 0 {
 			prefix := strings.ToUpper(val[:idx])
-			if validTypes[prefix] {
+			if validTypes[prefix] || relationXTokenPattern.MatchString(prefix) {
 				relType = prefix
 				uid = val[idx+1:]
 			}
