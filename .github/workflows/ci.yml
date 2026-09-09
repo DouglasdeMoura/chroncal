@@ -44,6 +44,18 @@ jobs:
         with:
           go-version: "1.26.6"
 
+      - name: gofmt
+        # The Makefile check runs locally only. Without this step, an
+        # unformatted file reaches master and `make check` then fails for
+        # every contributor.
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
