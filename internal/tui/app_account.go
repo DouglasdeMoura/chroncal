@@ -389,15 +389,20 @@ func existingCalendarDiscoveryAccount(accounts []account.Account, req CalendarDi
 	return account.Account{}, false
 }
 
-// accountDiscoveryTimeout bounds one account discovery. Discovery sends a
-// PROPFIND to the CalDAV server. One request can take up to
-// caldav.HTTPTimeout, and the retry helper repeats a transient failure. Keep
-// this budget above that ceiling (issue #768).
-const accountDiscoveryTimeout = 10 * time.Minute
+// accountDiscoveryBudget bounds one account discovery. Discovery sends a
+// small number of sequential PROPFIND requests, and the retry helper repeats
+// a transient failure. The budget derives from the configured request
+// timeout (sync.http_timeout), so it cannot become shorter than one request.
+//
+// The TUI blocks while discovery runs, so this budget is also the time that
+// a hung server can hold the screen.
+func accountDiscoveryBudget() time.Duration {
+	return caldav.RequestBudget(2)
+}
 
 func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cred auth.Credential) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryBudget())
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {
@@ -456,7 +461,7 @@ func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
 	}
 	discovery := m.calendarManager.DiscoveryPicker().discovery
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), syncOperationTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), syncAccountBudget())
 		defer cancel()
 		result, err := m.app.Accounts.Import(ctx, discovery, paths)
 		if err != nil {
@@ -487,7 +492,7 @@ func (m Model) reconcileAndSyncAccountCalendars(selection *accountCalendarSelect
 	discovery := selection.discovery
 	params := selection.params
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), syncOperationTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), syncAccountBudget())
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {
@@ -670,7 +675,7 @@ func (m Model) discoverAccountCalendars(accountID int64, generation uint64) tea.
 		}
 	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryBudget())
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {

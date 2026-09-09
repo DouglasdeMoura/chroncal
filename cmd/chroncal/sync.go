@@ -15,6 +15,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/caldav"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
@@ -76,7 +77,7 @@ func syncNewCalendars(
 	if len(calendarIDs) == 0 {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, syncRunTimeout)
+	ctx, cancel := context.WithTimeout(ctx, syncRunBudget())
 	defer cancel()
 	svc := syncPkg.NewService(
 		a.DB, a.Queries, store, a.Calendars, a.Events, a.Todos, a.Journals, nil,
@@ -99,11 +100,13 @@ func syncNewCalendars(
 	return errors.Join(syncErrs...)
 }
 
-// syncRunTimeout bounds one whole sync run. The run covers every selected
-// calendar. One CalDAV request can take up to caldav.HTTPTimeout, and the
-// retry helper repeats a transient failure. A short parent deadline cut a
-// slow first pull before the server answered (issue #768).
-const syncRunTimeout = 30 * time.Minute
+// syncRunBudget bounds one whole sync run. The run covers every selected
+// calendar, so it wraps the per-calendar budget of the engine and needs a
+// larger factor. The budget derives from the configured request timeout, so
+// a user who raises sync.http_timeout raises this budget with it.
+func syncRunBudget() time.Duration {
+	return caldav.RequestBudget(6)
+}
 
 func syncCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -159,7 +162,7 @@ linked to one CalDAV account. The two flags are mutually exclusive.`,
 				return err
 			}
 			defer a.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), syncRunTimeout)
+			ctx, cancel := context.WithTimeout(context.Background(), syncRunBudget())
 			defer cancel()
 
 			// Look up names for every calendar up front so both the JSON and

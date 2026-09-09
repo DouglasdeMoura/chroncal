@@ -398,10 +398,26 @@ func (m Model) handleCalendarSetDefaultRequested(msg CalendarSetDefaultRequested
 	}
 }
 
+// calendarProbeBudget bounds the "Test connection" probe. The probe sends
+// one PROPFIND, and the user waits in front of the dialog, so the budget
+// stays far below a sync budget.
+//
+// It still tracks the configured request timeout. A fixed short budget made
+// the probe fail against a slow server while the later sync succeeded, which
+// is confusing at the moment of setup. The probe therefore takes the smaller
+// of one request timeout and one minute.
+func calendarProbeBudget() time.Duration {
+	const ceiling = time.Minute
+	if d := caldav.HTTPTimeout(); d < ceiling {
+		return d
+	}
+	return ceiling
+}
+
 func (m Model) handleCalendarTestRequested(msg CalendarTestRequestedMsg) (tea.Model, tea.Cmd) {
 	req := msg
 	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), calendarProbeBudget())
 		defer cancel()
 
 		password := req.Password

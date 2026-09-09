@@ -82,7 +82,7 @@ func (m Model) beginCalendarMove(msg CalendarMoveToAccountRequestedMsg) (Model, 
 
 func (m Model) discoverCalendarMove(state calendarMoveState) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryBudget())
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {
