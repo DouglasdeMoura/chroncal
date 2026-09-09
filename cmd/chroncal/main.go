@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
@@ -234,6 +235,9 @@ Helpful conventions:
 		if cfg.ProductID != "" {
 			ical.ProductID = cfg.ProductID
 		}
+		if err := applyCalDAVHTTPTimeout(cfg.Sync.HTTPTimeout); err != nil {
+			return err
+		}
 		switch outputFmt {
 		case "text", "json":
 			return nil
@@ -273,6 +277,25 @@ Helpful conventions:
 		}
 		return tui.Run(a, cfg.UI.Theme, tui.RunOptions{Event: openEvent, WeekStart: weekStart, SyncConflictStrategy: cfg.Sync.ConflictStrategy})
 	},
+}
+
+// applyCalDAVHTTPTimeout sets the CalDAV request timeout from the config
+// key sync.http_timeout. An empty value keeps the built-in default. The
+// value is a Go duration string, for example "5m". A malformed or
+// non-positive value is a config error, not a silent fallback.
+func applyCalDAVHTTPTimeout(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return errInvalidInputf("invalid sync.http_timeout %q: %v", raw, err)
+	}
+	if d <= 0 {
+		return errInvalidInputf("invalid sync.http_timeout %q: the timeout must be positive", raw)
+	}
+	caldav.SetHTTPTimeout(d)
+	return nil
 }
 
 func initApp() (*app.App, error) {

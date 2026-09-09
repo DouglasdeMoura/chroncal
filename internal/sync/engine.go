@@ -635,7 +635,11 @@ func (e *Engine) resolveMootConflicts(ctx context.Context, calendarID int64) (in
 	return resolved, nil
 }
 
-const accountCalendarSyncTimeout = 5 * time.Minute
+// accountCalendarSyncTimeout bounds the sync of one calendar inside an
+// account pass. A full first pull of a large calendar needs many multiget
+// requests. Each request can take up to caldav.HTTPTimeout. Keep this
+// budget well above that ceiling (issue #768).
+const accountCalendarSyncTimeout = 30 * time.Minute
 
 // SyncAccount syncs every calendar linked to one account serially. Calendars
 // that share a credential must not refresh or persist that credential

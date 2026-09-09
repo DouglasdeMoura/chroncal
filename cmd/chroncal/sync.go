@@ -99,7 +99,11 @@ func syncNewCalendars(
 	return errors.Join(syncErrs...)
 }
 
-const syncRunTimeout = 5 * time.Minute
+// syncRunTimeout bounds one whole sync run. The run covers every selected
+// calendar. One CalDAV request can take up to caldav.HTTPTimeout, and the
+// retry helper repeats a transient failure. A short parent deadline cut a
+// slow first pull before the server answered (issue #768).
+const syncRunTimeout = 30 * time.Minute
 
 func syncCmd() *cobra.Command {
 	cmd := &cobra.Command{

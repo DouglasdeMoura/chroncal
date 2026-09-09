@@ -389,9 +389,15 @@ func existingCalendarDiscoveryAccount(accounts []account.Account, req CalendarDi
 	return account.Account{}, false
 }
 
+// accountDiscoveryTimeout bounds one account discovery. Discovery sends a
+// PROPFIND to the CalDAV server. One request can take up to
+// caldav.HTTPTimeout, and the retry helper repeats a transient failure. Keep
+// this budget above that ceiling (issue #768).
+const accountDiscoveryTimeout = 10 * time.Minute
+
 func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cred auth.Credential) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryTimeout)
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {
@@ -450,7 +456,7 @@ func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
 	}
 	discovery := m.calendarManager.DiscoveryPicker().discovery
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), syncOperationTimeout)
 		defer cancel()
 		result, err := m.app.Accounts.Import(ctx, discovery, paths)
 		if err != nil {
@@ -481,7 +487,7 @@ func (m Model) reconcileAndSyncAccountCalendars(selection *accountCalendarSelect
 	discovery := selection.discovery
 	params := selection.params
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), syncOperationTimeout)
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {
@@ -664,7 +670,7 @@ func (m Model) discoverAccountCalendars(accountID int64, generation uint64) tea.
 		}
 	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryTimeout)
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {

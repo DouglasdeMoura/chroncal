@@ -13,6 +13,11 @@ import (
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
+// opportunisticPushTimeout bounds the best-effort push after a CLI write.
+// The budget stays short on purpose, and it is independent of the CalDAV
+// request ceiling. The user waits at the shell for the command to return,
+// and a push carries one small resource per dirty edit. A push that runs out
+// of time keeps the dirty flag. The next sync retries it.
 const opportunisticPushTimeout = 30 * time.Second
 
 // opportunisticPush is what every write path calls. It derives the two

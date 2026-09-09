@@ -138,6 +138,7 @@ port = 25
 func TestLoad_SyncFromEnv(t *testing.T) {
 	t.Setenv("CHRONCAL_SYNC_INTERVAL", "15m")
 	t.Setenv("CHRONCAL_SYNC_CONFLICT_STRATEGY", "prompt")
+	t.Setenv("CHRONCAL_SYNC_HTTP_TIMEOUT", "10m")
 
 	cfg := mustLoad(t)
 
@@ -146,6 +147,17 @@ func TestLoad_SyncFromEnv(t *testing.T) {
 	}
 	if cfg.Sync.ConflictStrategy != "prompt" {
 		t.Fatalf("Sync.ConflictStrategy = %q, want prompt", cfg.Sync.ConflictStrategy)
+	}
+	if cfg.Sync.HTTPTimeout != "10m" {
+		t.Fatalf("Sync.HTTPTimeout = %q, want 10m", cfg.Sync.HTTPTimeout)
+	}
+}
+
+// An unset sync.http_timeout keeps the built-in default of the caldav
+// package. Load must not invent a value here (issue #768).
+func TestLoad_SyncHTTPTimeoutUnset(t *testing.T) {
+	if cfg := mustLoad(t); cfg.Sync.HTTPTimeout != "" {
+		t.Fatalf("Sync.HTTPTimeout = %q, want empty", cfg.Sync.HTTPTimeout)
 	}
 }
 
