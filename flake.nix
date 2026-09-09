@@ -19,16 +19,12 @@
         # Single source of truth for the released version; the release
         # workflow refuses to run if VERSION does not match the tag.
         version = pkgs.lib.trim (builtins.readFile ./VERSION);
-        # nixos-unstable still carries an older Go 1.26 patch.
-        # Pin Nix-built binaries to 1.26.6 until the nixpkgs input catches up.
-        go = pkgs.go_1_26.overrideAttrs (_: {
-          version = "1.26.6";
-          src = pkgs.fetchurl {
-            url = "https://go.dev/dl/go1.26.6.src.tar.gz";
-            hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
-          };
-        });
-        chroncal = pkgs.buildGoModule {
+        # One source of truth for the Go toolchain. The package build and the
+        # devShell both use this value. go.mod asks for a 1.26 toolchain, so
+        # the flake selects go_1_26 from nixpkgs. The binary cache holds that
+        # package, so a build does not compile Go from the source.
+        go = pkgs.go_1_26;
+        chroncal = (pkgs.buildGoModule.override { inherit go; }) {
           pname = "chroncal";
           inherit version;
 
@@ -36,7 +32,6 @@
           subPackages = [ "cmd/chroncal" ];
           vendorHash = "sha256-6i48BSXh1gRvrU9Hd0myPDLf783Rl4k3n6DwcAO1Y2Y=";
 
-          nativeBuildInputs = [ go ];
           env.CGO_ENABLED = "0";
 
           ldflags = [
