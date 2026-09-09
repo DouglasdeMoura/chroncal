@@ -5,14 +5,14 @@ package tui
 // vs plain Unicode) from a single place.
 var Glyphs = map[string]string{
 	// Focus / navigation
-	"focus":    ">",
+	"focus": ">",
 
 	// Checkbox
 	"checkbox.on":  "[x]",
 	"checkbox.off": "[ ]",
 
 	// Status
-	"status.ok":     "✓",
+	"status.ok": "✓",
 
 	// Select
 	"select.prev": "◀",
