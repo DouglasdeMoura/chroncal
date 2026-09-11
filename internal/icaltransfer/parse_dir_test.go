@@ -154,3 +154,61 @@ func TestParsePath_MissingPathIsWrapped(t *testing.T) {
 		t.Fatalf("err = %v, want an open file wrap", err)
 	}
 }
+
+func mustSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink %s -> %s: %v", link, target, err)
+	}
+}
+
+// TestParsePath_RootSymlinkFileIsAnError confirms a symbolic-link file is
+// not resolved to its target.
+func TestParsePath_RootSymlinkFileIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "one.ics")
+	writeFile(t, target, eventICS("link-root-file", "Link"))
+	link := filepath.Join(dir, "alias.ics")
+	mustSymlink(t, target, link)
+
+	_, err := icaltransfer.ParsePath(link)
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("err = %v, want a symbolic link error", err)
+	}
+}
+
+// TestParsePath_RootSymlinkDirectoryIsAnError confirms a symbolic-link
+// directory is not walked as its target.
+func TestParsePath_RootSymlinkDirectoryIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	collection := filepath.Join(dir, "work")
+	writeFile(t, filepath.Join(collection, "a.ics"), eventICS("link-root-dir", "Work"))
+	link := filepath.Join(dir, "alias")
+	mustSymlink(t, collection, link)
+
+	_, err := icaltransfer.ParsePath(link)
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("err = %v, want a symbolic link error", err)
+	}
+}
+
+// TestParsePath_DirectorySkipsChildSymlink confirms a symbolic-link .ics
+// file inside the tree is skipped, so the import cannot leave the tree.
+func TestParsePath_DirectorySkipsChildSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(root, "good.ics"), eventICS("link-good", "Good"))
+	writeFile(t, filepath.Join(outside, "secret.ics"), eventICS("link-secret", "Secret"))
+	mustSymlink(t, filepath.Join(outside, "secret.ics"), filepath.Join(root, "alias.ics"))
+
+	preview, err := icaltransfer.ParsePath(root)
+	if err != nil {
+		t.Fatalf("ParsePath: %v", err)
+	}
+	if preview.Events != 1 {
+		t.Fatalf("events = %d, want 1", preview.Events)
+	}
+	if preview.Result.Events[0].UID != "link-good" {
+		t.Fatalf("UID = %q, want link-good", preview.Result.Events[0].UID)
+	}
+}

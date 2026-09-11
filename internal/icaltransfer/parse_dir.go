@@ -27,16 +27,24 @@ var ErrTooManyICSFiles = fmt.Errorf("the directory holds more than %d .ics files
 //
 // A directory is read one level deep and deeper. A tool such as vdirsyncer
 // keeps one directory for each collection, so a parent directory holds many
-// collections. The parse merges every collection into one preview.
+// collections. The parse merges every collection into one preview. A
+// symbolic link at the path is an error. The walk skips a symbolic link
+// and any other non-regular entry.
 func ParsePath(path string) (Preview, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return Preview{}, fmt.Errorf("open file: %w", err)
 	}
-	if !info.IsDir() {
-		return ParseFile(path)
+	if info.Mode()&os.ModeSymlink != 0 {
+		return Preview{}, fmt.Errorf("open file: the import does not follow a symbolic link")
 	}
-	return ParseDir(path)
+	if info.IsDir() {
+		return ParseDir(path)
+	}
+	if !info.Mode().IsRegular() {
+		return Preview{}, fmt.Errorf("open file: %s is not a regular file or directory", path)
+	}
+	return ParseFile(path)
 }
 
 // ParseDir parses every .ics file in the tree below dir and merges the
@@ -104,6 +112,13 @@ func collectICSFiles(dir string) ([]string, error) {
 			return nil
 		}
 		if !strings.EqualFold(filepath.Ext(entry.Name()), ".ics") {
+			return nil
+		}
+		info, statErr := entry.Info()
+		if statErr != nil {
+			return statErr
+		}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 		if len(files) >= MaxDirFiles {
