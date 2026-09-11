@@ -325,8 +325,9 @@ chroncal event list --from 2026-04-01 --to 2026-04-30
 # Search
 chroncal event search "standup"
 
-# Import from iCal
+# Import from iCal (one file, or a directory of .ics files)
 chroncal ical import calendar.ics --calendar Work
+chroncal ical import ~/.calendars/work --calendar Work
 
 # Export to iCal
 chroncal ical export --calendar Work -f work.ics
@@ -475,11 +476,31 @@ Pass `--disconnect-remote` on `update` to remove the remote link of a calendar.
 ### iCal import/export
 
 ```
-chroncal ical import  <file.ics> [--calendar NAME]
+chroncal ical import  <file.ics|directory> [--calendar NAME]
 chroncal ical export  [--calendar NAME] [--from DATE] [--to DATE] [--category TEXT] [--status TEXT] [-f FILE] [--events] [--todos] [--journals] [--skip-unreadable]
 ```
 
-Imports have size limits to reduce resource exhaustion from untrusted calendar data. `chroncal ical import` rejects `.ics` payloads larger than 8 MiB. It also rejects inline base64 attachments larger than 1 MiB decoded.
+The import path is one `.ics` file or one directory. For a directory, chroncal reads every `.ics` file in that directory and in its subdirectories, and imports them into one calendar. A tool such as [vdirsyncer](https://vdirsyncer.pimutils.org/) writes one `.ics` file for each event, so point the import at the collection directory:
+
+```bash
+# One collection
+chroncal ical import ~/.calendars/work --calendar Work
+
+# Every collection below one parent directory, merged into one calendar
+chroncal ical import ~/.calendars --calendar Personal
+```
+
+Directory rules:
+
+- chroncal skips every file and directory whose name starts with a dot. A version-control directory and a partial file from a sync tool stay out of the import.
+- chroncal skips every file without an `.ics` extension, for example the `displayname` and `color` files that vdirsyncer writes.
+- A file that fails to parse becomes a warning. The rest of the directory still lands.
+- chroncal reads at most 10000 `.ics` files in one run.
+- The import does not follow a symbolic link.
+
+Entries are matched by UID, so a second import of the same path updates the existing items.
+
+Imports have size limits to reduce resource exhaustion from untrusted calendar data. `chroncal ical import` rejects `.ics` payloads larger than 8 MiB. It also rejects inline base64 attachments larger than 1 MiB decoded. The limit applies to each file, not to a whole directory.
 
 The export aborts when one relation read fails. It writes no file, so no incomplete backup exists. Pass `--skip-unreadable` to continue past records with unreadable relations. The file then carries a comment header that names each incomplete record. The command also lists those records on stderr.
 
@@ -720,7 +741,7 @@ Hidden state and scroll apply to calendar rows, not to group headings. Read-only
 
 Account headings collapse with Left/Right. Enter opens account settings. The root inspector keeps a calendar **Edit…** action or an account **Account Settings…** action at the bottom. Enter or a click on a calendar-row body opens metadata, export, default-calendar, and delete controls. The hierarchy stays mounted. Linked calendar details open account settings without a loss of unsaved calendar edits.
 
-The source list has a bottom **+ Add** action. It opens an anchored menu for **New Calendar…**, **Add Account…**, and **Import Calendar File…**. Account connection signs in once and adds every usable remote calendar. iCal import keeps its preview and the selection of a compatible destination. Todo and journal management live in the CLI for now.
+The source list has a bottom **+ Add** action. It opens an anchored menu for **New Calendar…**, **Add Account…**, and **Import Calendar File or Directory…**. Account connection signs in once and adds every usable remote calendar. iCal import accepts one `.ics` file or one directory of `.ics` files. It keeps its preview and the selection of a compatible destination. Todo and journal management live in the CLI for now.
 
 A calendar whose last sync failed shows a `⚠` next to it in the sidebar. Open it to see why and to get a fix. See [Google Calendar via CalDAV](#google-calendar-via-caldav) for the OAuth flow.
 
