@@ -20,7 +20,7 @@ func TestHasStoredSecret(t *testing.T) {
 		{name: "password command", cred: Credential{PasswordCommand: "pass show caldav"}, want: false},
 		{name: "oauth client id", cred: Credential{OAuthClientID: "cid.apps.googleusercontent.com"}, want: false},
 		{name: "password", cred: Credential{Password: "hunter2"}, want: true},
-		{name: "blank password", cred: Credential{Password: "   "}, want: false},
+		{name: "whitespace password", cred: Credential{Password: "   "}, want: true},
 		{name: "access token", cred: Credential{AccessToken: "ya29."}, want: true},
 		{name: "refresh token", cred: Credential{RefreshToken: "1//0xyz"}, want: true},
 		{name: "oauth client secret", cred: Credential{OAuthClientSecret: "GOCSPX-x"}, want: true},

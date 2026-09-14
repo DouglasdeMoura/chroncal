@@ -3,7 +3,6 @@ package auth
 import (
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // ErrPlaintextRequired reports a credential that carries a secret on a host
@@ -13,12 +12,14 @@ var ErrPlaintextRequired = errors.New("no secure credential store is available")
 
 // HasStoredSecret reports whether the credential carries secret material that
 // the store must keep. A password command is not secret material: the store
-// keeps the command, and chroncal runs it for each connection.
+// keeps the command, and chroncal runs it for each connection. Every non-empty
+// secret counts, even a whitespace-only password: the store would still write
+// it to disk.
 func (c Credential) HasStoredSecret() bool {
 	for _, secret := range []string{
 		c.Password, c.AccessToken, c.RefreshToken, c.OAuthClientSecret,
 	} {
-		if strings.TrimSpace(secret) != "" {
+		if secret != "" {
 			return true
 		}
 	}

@@ -390,6 +390,11 @@ kept.`,
 			if err != nil {
 				return fmt.Errorf("credential store: %w", err)
 			}
+			// Reauth always stores OAuth secrets, so refuse a secretless store
+			// before the prompt and the browser flow (issue #777).
+			if err := auth.EnsureCanStoreSecret(store); err != nil {
+				return err
+			}
 			// Reauth needs the stored credential: it carries the username and
 			// the OAuth client config the flow reuses. Unlike rotation, a
 			// missing entry cannot be repaired here, so any load failure
