@@ -49,7 +49,7 @@ jobs:
           ref: ${{ github.head_ref }}
           token: ${{ secrets.FLAKE_HASH_PAT }}
 
-      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/nix-installer-action@v23
         if: steps.pat.outputs.present == 'true'
 
       - name: Recompute and fix vendorHash if stale

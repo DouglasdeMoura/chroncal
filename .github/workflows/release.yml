@@ -21,7 +21,7 @@ jobs:
         with:
           go-version: "1.26.6"
 
-      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/nix-installer-action@v23
 
       # The flake derives its version from the VERSION file, so a tag whose
       # VERSION was not bumped would ship a release whose `nix run` reports
