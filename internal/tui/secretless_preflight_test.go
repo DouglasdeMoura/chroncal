@@ -96,12 +96,9 @@ func TestUpdateAccountCredentialsRefusesSecretOnSecretlessStore(t *testing.T) {
 // and back. A command-only rotation keeps no secret, so it stays available
 // with no keyring.
 func TestRotationCredential(t *testing.T) {
-	base := auth.Credential{
-		AccountID: 7, Username: "alice",
-		Password: "old", PasswordCommand: "pass show old",
-	}
 	cases := []struct {
 		name       string
+		base       auth.Credential
 		secret     string
 		command    string
 		bearer     bool
@@ -109,13 +106,26 @@ func TestRotationCredential(t *testing.T) {
 		wantSecret bool
 	}{
 		{
-			name:   "bearer sets the token",
+			name:   "bearer clears a password",
+			base:   auth.Credential{Password: "old"},
 			secret: "new-token", bearer: true,
-			check:      func(c auth.Credential) bool { return c.AccessToken == "new-token" },
+			check: func(c auth.Credential) bool {
+				return c.AccessToken == "new-token" && c.Password == "" && c.PasswordCommand == ""
+			},
+			wantSecret: true,
+		},
+		{
+			name:   "bearer clears a password command",
+			base:   auth.Credential{PasswordCommand: "pass show old"},
+			secret: "new-token", bearer: true,
+			check: func(c auth.Credential) bool {
+				return c.AccessToken == "new-token" && c.Password == "" && c.PasswordCommand == ""
+			},
 			wantSecret: true,
 		},
 		{
 			name:   "password clears a stale command",
+			base:   auth.Credential{PasswordCommand: "pass show old"},
 			secret: "new-pw",
 			check: func(c auth.Credential) bool {
 				return c.Password == "new-pw" && c.PasswordCommand == ""
@@ -124,6 +134,7 @@ func TestRotationCredential(t *testing.T) {
 		},
 		{
 			name:    "password command clears a stale password",
+			base:    auth.Credential{Password: "old"},
 			command: "pass show caldav",
 			check: func(c auth.Credential) bool {
 				return c.Password == "" && c.PasswordCommand == "pass show caldav"
@@ -133,7 +144,14 @@ func TestRotationCredential(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := rotationCredential(base, tc.secret, tc.command, tc.bearer)
+			tc.base.AccountID, tc.base.Username = 7, "alice"
+			if err := tc.base.ValidatePasswordSources(); err != nil {
+				t.Fatalf("invalid fixture: %v", err)
+			}
+			got := rotationCredential(tc.base, tc.secret, tc.command, tc.bearer)
+			if got.AccountID != 7 || got.Username != "alice" {
+				t.Fatal("rotation changed the credential identity")
+			}
 			if !tc.check(got) {
 				t.Fatalf("rotationCredential() = %+v", got)
 			}

@@ -46,10 +46,12 @@ type secretlessFileStore struct {
 	reason error
 }
 
+// Get reads an existing credential and checks its account identity.
 func (s *secretlessFileStore) Get(accountID int64, accountFingerprint string) (Credential, error) {
 	return s.inner.Get(accountID, accountFingerprint)
 }
 
+// Set refuses secrets before it changes the credential file.
 func (s *secretlessFileStore) Set(cred Credential) error {
 	if cred.HasStoredSecret() {
 		return s.refusal()
@@ -57,6 +59,7 @@ func (s *secretlessFileStore) Set(cred Credential) error {
 	return s.inner.Set(cred)
 }
 
+// Delete removes the credential file, even if it contains a secret.
 func (s *secretlessFileStore) Delete(accountID int64) error {
 	return s.inner.Delete(accountID)
 }
