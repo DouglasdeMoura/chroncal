@@ -88,7 +88,7 @@ func TestBuildCalendarCredentialCarriesThePasswordCommand(t *testing.T) {
 	t.Setenv("CHRONCAL_PASSWORD_CMD", "")
 	cred, err := buildCalendarCredential(t.Context(), calendarRemoteFlags{
 		Username: "alice", AuthType: "basic", PasswordCommand: "pass show caldav",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("buildCalendarCredential: %v", err)
 	}

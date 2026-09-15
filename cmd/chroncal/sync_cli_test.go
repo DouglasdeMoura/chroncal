@@ -186,12 +186,14 @@ func TestSyncRunUnknownAccountIsNotFound(t *testing.T) {
 	}
 }
 
-// TestSyncCommandsFailWhenCredentialStoreUnavailable guards the shared
-// service construction in newSyncService. A dead session bus makes the
-// keyring probe fail on every host. Each sync subcommand must then exit
-// non-zero with the credential store error. A command must not run on
-// with a nil store and fail later with a confusing error.
-func TestSyncCommandsFailWhenCredentialStoreUnavailable(t *testing.T) {
+// TestSyncCommandsOpenWithoutAKeyring is the read half of issue #777. A dead
+// session bus makes the keyring probe fail on every host. Sync reads a
+// credential; it never writes a new secret. Each sync subcommand must
+// therefore still open its store instead of refusing the whole command.
+//
+// The reporter passed --allow-plaintext once at setup, then every later sync
+// failed with the credential store error. That is the failure this guards.
+func TestSyncCommandsOpenWithoutAKeyring(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the session bus probe only applies on Linux")
 	}
@@ -204,18 +206,40 @@ func TestSyncCommandsFailWhenCredentialStoreUnavailable(t *testing.T) {
 		{"sync", "status"},
 		{"sync", "conflicts"},
 		{"sync", "doctor"},
-		{"sync", "resolve", "999999", "--pick", "local"},
-		{"sync", "reset", "no-such-calendar"},
 	}
 	for _, args := range commands {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			_, stderr, err := runChroncalCommand(t, args...)
-			if err == nil {
-				t.Fatalf("%v exited 0 with a broken credential store; want non-zero. stderr=%q", args, stderr)
+			if err != nil {
+				t.Fatalf("%v exited non-zero without a keyring: %v stderr=%q", args, err, stderr)
 			}
-			if !strings.Contains(stderr, "credential store") {
-				t.Fatalf("%v stderr = %q, want the credential store error", args, stderr)
+			if strings.Contains(stderr, "credential store") {
+				t.Fatalf("%v stderr = %q, want no credential store error", args, stderr)
 			}
 		})
+	}
+}
+
+// TestCalendarConnectRefusesAPasswordWithoutAKeyring is the write half of
+// issue #777. A password needs a place to live, so the connect flow must
+// refuse it and name every remedy.
+func TestCalendarConnectRefusesAPasswordWithoutAKeyring(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the session bus probe only applies on Linux")
+	}
+	setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_SECURITY_ALLOW_PLAINTEXT", "false")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
+	t.Setenv("CHRONCAL_PASSWORD", "hunter2")
+
+	_, stderr, err := runChroncalCommand(t, "account", "add", "Nextcloud",
+		"--server", "https://cloud.example.com", "--username", "scott", "--auth", "basic")
+	if err == nil {
+		t.Fatalf("account add with a password exited 0 without a keyring; stderr=%q", stderr)
+	}
+	for _, want := range []string{"--allow-plaintext", "security.allow_plaintext", "password command"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr = %q, want it to name %q", stderr, want)
+		}
 	}
 }
