@@ -189,7 +189,20 @@ func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
 	m.oauthFlow = m.oauthFlow.SetSize(m.width, m.height)
 	var cmd tea.Cmd
 	m.oauthFlow, cmd = m.oauthFlow.Start(clientID, clientSecret)
-	return m, cmd
+	// Refuse a secretless store before the browser opens. The consent
+	// would succeed and StoreCredential would reject the fresh tokens
+	// after, wasting the sign-in (issue #777). The failure lands the
+	// modal in its Failed state with the remedy; nothing opens a browser.
+	return m, func() tea.Msg {
+		credStore, err := m.openCredentialStore()
+		if err != nil {
+			return oauthFlowStartedMsg{err: err}
+		}
+		if err := auth.EnsureCanStoreSecret(credStore); err != nil {
+			return oauthFlowStartedMsg{err: err}
+		}
+		return cmd()
+	}
 }
 
 func (m Model) prepareAccountReauth(
@@ -200,6 +213,13 @@ func (m Model) prepareAccountReauth(
 		ctx := context.Background()
 		credStore, err := m.openCredentialStore()
 		if err != nil {
+			return accountReauthReadyMsg{accountID: configured.ID, name: configured.DisplayName, err: err}
+		}
+		// Refuse a secretless store before the browser opens. Reauth always
+		// stores OAuth secrets, so the flow would succeed and the write
+		// would fail after (issue #777). The error returns through the
+		// ready message, which reports it without opening anything.
+		if err := auth.EnsureCanStoreSecret(credStore); err != nil {
 			return accountReauthReadyMsg{accountID: configured.ID, name: configured.DisplayName, err: err}
 		}
 		cred, err := m.app.Accounts.LoadCredential(ctx, configured.ID, credStore)
@@ -283,13 +303,33 @@ func (m Model) finishOAuthCredentialStore(msg oauthCredentialStoredMsg) (Model, 
 	)
 }
 
+// rotationCredential maps rotation inputs onto the loaded credential. It
+// mirrors the CLI rotation contract: the source the user does not use is
+// cleared, so a stale password cannot conflict with a new password command
+// and back. Bearer auth keeps a token only.
+func rotationCredential(base auth.Credential, secret, secretCommand string, bearer bool) auth.Credential {
+	cred := base
+	if bearer {
+		cred.AccessToken = secret
+		return cred
+	}
+	if secretCommand != "" {
+		cred.Password = ""
+		cred.PasswordCommand = secretCommand
+		return cred
+	}
+	cred.Password = secret
+	cred.PasswordCommand = ""
+	return cred
+}
+
 // updateAccountCredentials rotates one account's secret in place. The stored
 // credential is loaded so its non-secret identity (username, client config) is
 // kept. Only the password (basic) or access token (bearer) is replaced.
 // StoreCredential re-checks the account fingerprint under the lifecycle lock.
 // A concurrent rename or removal then aborts the write instead of a corrupt
 // write.
-func (m Model) updateAccountCredentials(configured account.Account, secret string) tea.Cmd {
+func (m Model) updateAccountCredentials(configured account.Account, secret, secretCommand string) tea.Cmd {
 	storedMsg := func(err error) accountCredentialStoredMsg {
 		return accountCredentialStoredMsg{
 			accountID: configured.ID,
@@ -303,16 +343,20 @@ func (m Model) updateAccountCredentials(configured account.Account, secret strin
 		if err != nil {
 			return storedMsg(err)
 		}
+		// Refuse a secret-bearing rotation before the load and the write.
+		// A password-command-only rotation carries no secret, so it skips
+		// the check and stays available with no keyring (issue #777).
+		if secret != "" {
+			if err := auth.EnsureCanStoreSecret(credStore); err != nil {
+				return storedMsg(err)
+			}
+		}
 		fingerprint := configured.CredentialFingerprint()
 		cred, err := credentialForRotation(credStore.Get(configured.ID, fingerprint))
 		if err != nil {
 			return storedMsg(err)
 		}
-		if accountAuthIsBearer(configured.AuthType) {
-			cred.AccessToken = secret
-		} else {
-			cred.Password = secret
-		}
+		cred = rotationCredential(cred, secret, secretCommand, accountAuthIsBearer(configured.AuthType))
 		err = m.app.Accounts.StoreCredential(ctx, configured.ID, fingerprint, cred, credStore)
 		return storedMsg(err)
 	}

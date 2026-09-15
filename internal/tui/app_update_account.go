@@ -235,7 +235,7 @@ func (m Model) handleAccountCredentialsUpdateSubmitted(msg AccountCredentialsUpd
 	m.syncStatus = "Updating credentials…"
 	return m, tea.Batch(
 		m.syncSpinner.Tick,
-		m.updateAccountCredentials(configured, msg.Secret),
+		m.updateAccountCredentials(configured, msg.Secret, msg.SecretCommand),
 	)
 }
 
