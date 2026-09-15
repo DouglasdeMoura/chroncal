@@ -52,6 +52,7 @@ chroncal keeps your calendar data local and portable. The data follows the calen
 | Nix | Linux, macOS | `nix run` and profile installs |
 | Scoop | Windows | Managed Windows installs |
 | AUR | Arch Linux | `yay`/`paru` users (binary or source package) |
+| X-CMD | macOS, Linux | downloads the pre-built binary from GitHub Releases |
 | Build from source | Any platform with Go 1.25+ | Contributors and packagers |
 
 ### Install script (Linux / macOS / BSD)
@@ -234,6 +235,14 @@ yay -S chroncal      # builds from source with your local Go toolchain
 ```
 
 `chroncal-bin` is fastest for x86_64 and aarch64 users. Use `chroncal` when you want to build locally or use another Arch-supported CPU target. GoReleaser generates both packages (`aurs` and `aur_sources` in `.goreleaser.yml`). It pushes them to the AUR on each release.
+
+### X-CMD
+
+Alternatively, install it with [x-cmd](https://www.x-cmd.com/mod/eget), which downloads the pre-built binary from GitHub Releases:
+
+```bash
+x eget use DouglasdeMoura/chroncal
+```
 
 ### Build from source
 
