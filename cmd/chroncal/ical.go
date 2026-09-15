@@ -28,6 +28,7 @@ func icalCmd() *cobra.Command {
 Import accepts VEVENT, VTODO, and VJOURNAL components. Export can emit
 any combination of those resource types.`,
 		Example: `  chroncal ical import ./calendar.ics
+  chroncal ical import ~/.calendars/work
   chroncal ical export --calendar Work --file work.ics`,
 		Args: rejectUnknownSubcommand,
 		RunE: groupRunE,
@@ -41,15 +42,23 @@ func icalImportCmd() *cobra.Command {
 		calendarName string
 	)
 	cmd := &cobra.Command{
-		Use:   "import <file.ics>",
-		Short: "Import events, todos, and journal entries from an iCal (.ics) file",
+		Use:   "import <path>",
+		Short: "Import events, todos, and journal entries from an iCal (.ics) file or directory",
 		Long: `Read an .ics file and upsert its events, todos, and journal entries
 into a local calendar.
 
-Entries are matched by UID when possible, so importing the same file
+The path can also be a directory. chroncal then reads every .ics file in
+that directory and in its subdirectories, and imports them together. A
+tool such as vdirsyncer writes one .ics file for each event, so point the
+import at the collection directory. chroncal skips every name that starts
+with a dot. A file that fails to parse becomes a warning, and the rest of
+the directory still lands.
+
+Entries are matched by UID when possible, so importing the same path
 again updates existing items instead of blindly duplicating them.`,
 		Example: `  chroncal ical import ./calendar.ics
-  chroncal ical import ./team.ics --calendar Work
+  chroncal ical import ~/.calendars/work --calendar Work
+  chroncal ical import ~/.calendars --calendar Personal
   chroncal ical import ./dump.ics --output json`,
 		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -61,7 +70,7 @@ again updates existing items instead of blindly duplicating them.`,
 			ctx, cancel := context.WithTimeout(context.Background(), icalImportTimeout)
 			defer cancel()
 
-			preview, err := icaltransfer.ParseFile(args[0])
+			preview, err := icaltransfer.ParsePath(args[0])
 			if err != nil {
 				return err
 			}

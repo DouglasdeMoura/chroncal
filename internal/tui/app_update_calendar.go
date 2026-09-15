@@ -148,7 +148,7 @@ func (m Model) handleCalendarImportPreviewRequested(msg CalendarImportPreviewReq
 	m.syncStatus = "Reading iCal file…"
 	path := msg.Path
 	return m, func() tea.Msg {
-		preview, err := icaltransfer.ParseFile(path)
+		preview, err := icaltransfer.ParsePath(path)
 		return calendarImportPreviewReadyMsg{Generation: msg.Generation, Path: path, Preview: preview, Err: err}
 	}
 }
