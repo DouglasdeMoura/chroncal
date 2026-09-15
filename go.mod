@@ -17,7 +17,7 @@ require (
 	github.com/gen2brain/beeep v0.11.2
 	github.com/gofrs/flock v0.13.1
 	github.com/google/uuid v1.6.0
-	github.com/mattn/go-runewidth v0.0.29
+	github.com/mattn/go-runewidth v0.0.30
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/spf13/cobra v1.10.2
