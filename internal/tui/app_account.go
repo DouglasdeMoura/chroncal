@@ -311,6 +311,8 @@ func rotationCredential(base auth.Credential, secret, secretCommand string, bear
 	cred := base
 	if bearer {
 		cred.AccessToken = secret
+		cred.Password = ""
+		cred.PasswordCommand = ""
 		return cred
 	}
 	if secretCommand != "" {

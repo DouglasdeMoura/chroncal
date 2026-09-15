@@ -83,8 +83,9 @@ var (
 )
 
 // NewCredentialStore returns the best available credential store scoped to a
-// database namespace. It tries strategies in order: OS keyring, encrypted
-// file, plaintext. Plaintext is only used if allowPlaintext is true.
+// database namespace. It uses the OS keyring when available, or files otherwise.
+// File writes with secrets require allowPlaintext. File reads and password-command
+// writes do not require it.
 //
 // previousNamespaces are read-only migration sources recorded when the same
 // database was opened under an older file identity. They are copied, never
