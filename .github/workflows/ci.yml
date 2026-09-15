@@ -90,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/nix-installer-action@v23
 
       # Build via the flake, exactly as the release does. This catches a stale
       # vendorHash — e.g. a dependency bump that changed go.sum but not
