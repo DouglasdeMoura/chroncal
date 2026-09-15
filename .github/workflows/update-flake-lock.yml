@@ -28,7 +28,7 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@v22
 
-      - uses: DeterminateSystems/update-flake-lock@v28
+      - uses: DeterminateSystems/update-flake-lock@v29
         with:
           pr-title: "chore(nix): update flake.lock"
           commit-msg: "chore(nix): update flake.lock"
