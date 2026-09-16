@@ -185,7 +185,7 @@ func TestUpdateAccountCredentialsStoresAPasswordCommandOnSecretlessStore(t *test
 		ServerURL: "https://cloud.example.com/remote.php/dav/",
 		Username:  "scott",
 		AuthType:  "basic",
-	}, auth.Credential{Username: "scott", PasswordCommand: "printf hunter2"}, store)
+	}, auth.Credential{Username: "scott", PasswordCommand: "pass show caldav/seed"}, store)
 	if err != nil {
 		t.Fatalf("create the account with a password command: %v", err)
 	}
