@@ -84,8 +84,9 @@ var (
 
 // NewCredentialStore returns the best available credential store scoped to a
 // database namespace. It uses the OS keyring when available, or files otherwise.
-// File writes with secrets require allowPlaintext. File reads and password-command
-// writes do not require it.
+// A file write that puts a new secret on disk requires allowPlaintext. A read,
+// a password-command write, and a rewrite of a file that already holds a
+// secret do not require it.
 //
 // previousNamespaces are read-only migration sources recorded when the same
 // database was opened under an older file identity. They are copied, never
@@ -264,60 +265,10 @@ func (s *PlaintextFileStore) Get(accountID int64, accountFingerprint string) (Cr
 }
 
 func (s *PlaintextFileStore) Set(cred Credential) error {
-	if err := cred.ValidatePasswordSources(); err != nil {
+	path, err := s.write(cred)
+	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path(cred.AccountID)), 0o700); err != nil {
-		return fmt.Errorf("create credential dir: %w", err)
-	}
-	data, err := json.MarshalIndent(cred, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal credential: %w", err)
-	}
-	path := s.path(cred.AccountID)
-	// Write through a temp file in the same directory and rename. A crash
-	// or a full disk then leaves the old file intact instead of a truncated
-	// secret. The rename is atomic within one filesystem.
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".credential-*")
-	if err != nil {
-		return fmt.Errorf("create credential temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	// os.WriteFile keeps the mode of an existing file. Enforce 0600 on every
-	// write so a pre-existing loose file cannot survive forever.
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("restrict credential file: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write credential: %w", err)
-	}
-	// Sync the data before the rename. Without the sync, a power loss can
-	// persist the rename and lose the data blocks. The write then destroys
-	// the previous secret.
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("sync credential temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close credential file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("replace credential file: %w", err)
-	}
-	// Sync the directory so the rename survives a power loss. Some
-	// platforms do not support a sync on a directory handle. Ignore that
-	// failure.
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return fmt.Errorf("open credential dir: %w", err)
-	}
-	// Some platforms reject fsync on a directory. The data file is already
-	// synced; losing the directory entry on a crash is the remaining risk.
-	_ = dir.Sync()
-	dir.Close()
 	// Warn only for a credential that carries a secret. A credential that
 	// holds a username and a password command keeps no secret in the file,
 	// so the plaintext warning would misreport what landed on disk.
@@ -330,6 +281,67 @@ func (s *PlaintextFileStore) Set(cred Credential) error {
 		fmt.Fprintf(w, "Warning: OAuth client secret persisted to disk in cleartext. Backups, snapshots, and sync tools (Dropbox, iCloud, rsync) will see it. Install an OS keyring (libsecret on Linux) to avoid this.\n")
 	}
 	return nil
+}
+
+// write stores the credential and returns the file path it wrote. It emits no
+// warning, so a caller that already reported the plaintext trade-off can reuse
+// it without a second line. Set wraps it with the warning.
+func (s *PlaintextFileStore) write(cred Credential) (string, error) {
+	if err := cred.ValidatePasswordSources(); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path(cred.AccountID)), 0o700); err != nil {
+		return "", fmt.Errorf("create credential dir: %w", err)
+	}
+	data, err := json.MarshalIndent(cred, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal credential: %w", err)
+	}
+	path := s.path(cred.AccountID)
+	// Write through a temp file in the same directory and rename. A crash
+	// or a full disk then leaves the old file intact instead of a truncated
+	// secret. The rename is atomic within one filesystem.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".credential-*")
+	if err != nil {
+		return "", fmt.Errorf("create credential temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	// os.WriteFile keeps the mode of an existing file. Enforce 0600 on every
+	// write so a pre-existing loose file cannot survive forever.
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("restrict credential file: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("write credential: %w", err)
+	}
+	// Sync the data before the rename. Without the sync, a power loss can
+	// persist the rename and lose the data blocks. The write then destroys
+	// the previous secret.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("sync credential temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close credential file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return "", fmt.Errorf("replace credential file: %w", err)
+	}
+	// Sync the directory so the rename survives a power loss. Some
+	// platforms do not support a sync on a directory handle. Ignore that
+	// failure.
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return "", fmt.Errorf("open credential dir: %w", err)
+	}
+	// Some platforms reject fsync on a directory. The data file is already
+	// synced; losing the directory entry on a crash is the remaining risk.
+	_ = dir.Sync()
+	dir.Close()
+	return path, nil
 }
 
 func (s *PlaintextFileStore) Delete(accountID int64) error {

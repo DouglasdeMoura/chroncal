@@ -201,20 +201,30 @@ func TestSyncCommandsOpenWithoutAKeyring(t *testing.T) {
 	t.Setenv("CHRONCAL_SECURITY_ALLOW_PLAINTEXT", "false")
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
 
-	commands := [][]string{
-		{"sync", "run"},
-		{"sync", "status"},
-		{"sync", "conflicts"},
-		{"sync", "doctor"},
+	commands := []struct {
+		args []string
+		// exits0 marks a subcommand that has nothing else to fail on. The
+		// other two name a missing row, so they exit non-zero for a reason
+		// that has nothing to do with the credential store.
+		exits0 bool
+	}{
+		{args: []string{"sync", "run"}, exits0: true},
+		{args: []string{"sync", "status"}, exits0: true},
+		{args: []string{"sync", "conflicts"}, exits0: true},
+		{args: []string{"sync", "doctor"}, exits0: true},
+		{args: []string{"sync", "resolve", "999999", "--pick", "local"}},
+		{args: []string{"sync", "reset", "no-such-calendar"}},
 	}
-	for _, args := range commands {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			_, stderr, err := runChroncalCommand(t, args...)
-			if err != nil {
-				t.Fatalf("%v exited non-zero without a keyring: %v stderr=%q", args, err, stderr)
+	for _, tc := range commands {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			_, stderr, err := runChroncalCommand(t, tc.args...)
+			if tc.exits0 && err != nil {
+				t.Fatalf("%v exited non-zero without a keyring: %v stderr=%q", tc.args, err, stderr)
 			}
+			// Every subcommand must get past the store. This is the
+			// assertion that covers the reporter's bug.
 			if strings.Contains(stderr, "credential store") {
-				t.Fatalf("%v stderr = %q, want no credential store error", args, stderr)
+				t.Fatalf("%v stderr = %q, want no credential store error", tc.args, stderr)
 			}
 		})
 	}

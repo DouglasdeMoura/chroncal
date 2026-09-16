@@ -162,7 +162,7 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags, sto
 		}
 		return auth.Credential{Username: flags.Username, AccessToken: token}, nil
 	case "basic":
-		secret, err := readBasicSecretWithStore(flags.PasswordCommand, store)
+		secret, err := readBasicSecret(flags.PasswordCommand, store)
 		if err != nil {
 			return auth.Credential{}, err
 		}
@@ -220,15 +220,10 @@ type basicSecret struct {
 //
 // A command source plus CHRONCAL_PASSWORD is an error. Two sources hide which
 // secret the program sends.
-func readBasicSecret(passwordCommand string) (basicSecret, error) {
-	return readBasicSecretWithStore(passwordCommand, nil)
-}
-
-// readBasicSecretWithStore is readBasicSecret with the destination store. It
-// checks the store before it prompts for a password, so a host that cannot
-// keep a secret reports the remedy before the prompt. A nil store skips the
-// check.
-func readBasicSecretWithStore(passwordCommand string, store auth.CredentialStore) (basicSecret, error) {
+//
+// It checks store before it prompts for a password, so a host that cannot keep
+// a secret reports the remedy before the prompt. A nil store skips the check.
+func readBasicSecret(passwordCommand string, store auth.CredentialStore) (basicSecret, error) {
 	command := strings.TrimSpace(passwordCommand)
 	if command == "" {
 		command = strings.TrimSpace(os.Getenv("CHRONCAL_PASSWORD_CMD"))
