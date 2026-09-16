@@ -28,17 +28,18 @@ func (c Credential) HasStoredSecret() bool {
 
 // secretlessFileStore is the credential store for a host with no OS keyring
 // and no plaintext opt-in. It reads and writes the same 0600-mode files as
-// PlaintextFileStore, but it refuses to write a credential that carries a
-// secret.
+// PlaintextFileStore, but it refuses to put a new secret in a file that holds
+// none.
 //
 // A basic-auth account with a password command needs no keyring and no
 // --allow-plaintext flag: the file keeps the command, never the password
 // (issue #777). An account with a password or an OAuth token still needs an
 // explicit opt-in.
 //
-// A read is always permitted. A file that already exists holds a secret the
-// user chose to write earlier, so a later run without the flag can still use
-// the account.
+// A read is always permitted, and so is a rewrite of a file that already holds
+// a secret. Such a file exists only because the user opted in earlier, so a
+// later run without the flag can still use the account and refresh its OAuth
+// token.
 type secretlessFileStore struct {
 	inner *PlaintextFileStore
 	// reason records why the OS keyring is unavailable. The refusal message
@@ -51,12 +52,44 @@ func (s *secretlessFileStore) Get(accountID int64, accountFingerprint string) (C
 	return s.inner.Get(accountID, accountFingerprint)
 }
 
-// Set refuses secrets before it changes the credential file.
+// Set refuses a new secret before it changes the credential file. It permits a
+// credential with no secret, and it permits a rewrite of a file that already
+// holds one.
+//
+// The rewrite matters for OAuth. An access token expires after about an hour.
+// The refresh writes the new token back through this store, so a refusal would
+// break an account that the user set up with an earlier opt-in. The refusal
+// also cannot un-write the secret that is already on disk, so it protects
+// nothing. The same reasoning permits the read.
+//
+// This is the write-side safety net, not the place that reports the remedy to
+// a person. Every interactive path calls EnsureCanStoreSecret first, which
+// refuses on the store alone. A password prompt and an OAuth sign-in therefore
+// still stop up front, even for an account with a secret already on disk.
 func (s *secretlessFileStore) Set(cred Credential) error {
-	if cred.HasStoredSecret() {
+	if cred.HasStoredSecret() && !s.holdsSecret(cred.AccountID) {
 		return s.refusal()
 	}
+	if cred.HasStoredSecret() {
+		// Write without the plaintext warning. The first write printed it,
+		// and a repeat says nothing new. A token refresh also runs under a
+		// TUI sync, where a write to stderr prints over the alternate
+		// screen.
+		_, err := s.inner.write(cred)
+		return err
+	}
 	return s.inner.Set(cred)
+}
+
+// holdsSecret reports whether the credential file for accountID already keeps
+// secret material. The empty fingerprint skips the identity check on purpose:
+// the question is about the file, not about the account that owns it now.
+func (s *secretlessFileStore) holdsSecret(accountID int64) bool {
+	stored, err := s.inner.Get(accountID, "")
+	if err != nil {
+		return false
+	}
+	return stored.HasStoredSecret()
 }
 
 // Delete removes the credential file, even if it contains a secret.

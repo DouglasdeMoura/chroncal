@@ -304,7 +304,7 @@ backend failures leave the previous secret unchanged.`,
 				}
 				secret.Password, err = readBearerToken()
 			case "basic", "":
-				secret, err = readBasicSecretWithStore(passwordCommand, store)
+				secret, err = readBasicSecret(passwordCommand, store)
 			default:
 				return errInvalidInputf("unsupported auth type %q", configured.AuthType)
 			}

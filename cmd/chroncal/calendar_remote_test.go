@@ -58,7 +58,7 @@ func TestReadBasicSecretSourceOrder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("CHRONCAL_PASSWORD_CMD", tc.envCommand)
 			t.Setenv("CHRONCAL_PASSWORD", tc.envPassword)
-			got, err := readBasicSecret(tc.flag)
+			got, err := readBasicSecret(tc.flag, nil)
 			if err != nil {
 				t.Fatalf("readBasicSecret: %v", err)
 			}
@@ -73,12 +73,12 @@ func TestReadBasicSecretRejectsACommandWithAnEnvPassword(t *testing.T) {
 	t.Setenv("CHRONCAL_PASSWORD", "lab-secret")
 
 	t.Setenv("CHRONCAL_PASSWORD_CMD", "")
-	if _, err := readBasicSecret("flag-command"); err == nil {
+	if _, err := readBasicSecret("flag-command", nil); err == nil {
 		t.Fatal("the flag command plus CHRONCAL_PASSWORD should fail")
 	}
 
 	t.Setenv("CHRONCAL_PASSWORD_CMD", "env-command")
-	if _, err := readBasicSecret(""); err == nil {
+	if _, err := readBasicSecret("", nil); err == nil {
 		t.Fatal("CHRONCAL_PASSWORD_CMD plus CHRONCAL_PASSWORD should fail")
 	}
 }
