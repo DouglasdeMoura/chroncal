@@ -161,3 +161,64 @@ func TestRotationCredential(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateAccountCredentialsStoresAPasswordCommandOnSecretlessStore covers
+// the second comment on issue #777: the reporter could not use a password
+// command from the TUI. A command is not a secret, so the rotation must store
+// it with no keyring and no opt-in. The other tests in this file cover the
+// refusals only, so this one guards the path that must work.
+func TestUpdateAccountCredentialsStoresAPasswordCommandOnSecretlessStore(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the session bus probe only applies on Linux")
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
+	m, a := newDBBackedModel(t)
+
+	ctx := context.Background()
+	store, err := auth.NewCredentialStore(a.CredentialNamespace, nil, false, false)
+	if err != nil {
+		t.Fatalf("open the secretless store: %v", err)
+	}
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name:      "Nextcloud",
+		ServerURL: "https://cloud.example.com/remote.php/dav/",
+		Username:  "scott",
+		AuthType:  "basic",
+	}, auth.Credential{Username: "scott", PasswordCommand: "printf hunter2"}, store)
+	if err != nil {
+		t.Fatalf("create the account with a password command: %v", err)
+	}
+
+	const command = "pass show caldav/nextcloud"
+	msg := m.updateAccountCredentials(created, "", command)()
+	stored, ok := msg.(accountCredentialStoredMsg)
+	if !ok {
+		t.Fatalf("updateAccountCredentials cmd = %T, want accountCredentialStoredMsg", msg)
+	}
+	if stored.err != nil {
+		t.Fatalf("rotation with a password command: %v", stored.err)
+	}
+
+	cred, err := store.Get(created.ID, created.CredentialFingerprint())
+	if err != nil {
+		t.Fatalf("read the rotated credential: %v", err)
+	}
+	if cred.PasswordCommand != command {
+		t.Fatalf("PasswordCommand = %q, want %q", cred.PasswordCommand, command)
+	}
+	if cred.HasStoredSecret() {
+		t.Fatal("a secret reached the disk for a command-only rotation")
+	}
+
+	// The same account must still refuse a password. The relaxed write rule
+	// keys on the stored file, which holds a command and therefore no secret.
+	refused := m.updateAccountCredentials(created, "hunter2", "")()
+	storedSecret, ok := refused.(accountCredentialStoredMsg)
+	if !ok {
+		t.Fatalf("password rotation cmd = %T, want accountCredentialStoredMsg", refused)
+	}
+	if !errors.Is(storedSecret.err, auth.ErrPlaintextRequired) {
+		t.Fatalf("password rotation err = %v, want ErrPlaintextRequired", storedSecret.err)
+	}
+}
