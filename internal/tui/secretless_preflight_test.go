@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/douglasdemoura/chroncal/internal/account"
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
@@ -204,11 +206,67 @@ func TestEnsureDiscoveryCanStoreSecretPassesAPasswordCommand(t *testing.T) {
 		t.Fatalf("open the secretless store: %v", err)
 	}
 	cred := auth.Credential{Username: "scott", PasswordCommand: "pass show caldav/nextcloud"}
-	if err := ensureDiscoveryCanStoreSecret(store, cred, 0); err != nil {
+	if err := ensureDiscoveryCanStoreSecret(store, cred, 0, "fp"); err != nil {
 		t.Fatalf("password command refused: %v", err)
 	}
 	withSecret := auth.Credential{Username: "scott", Password: "hunter2"}
-	if err := ensureDiscoveryCanStoreSecret(store, withSecret, 0); !errors.Is(err, auth.ErrPlaintextRequired) {
+	if err := ensureDiscoveryCanStoreSecret(store, withSecret, 0, "fp"); !errors.Is(err, auth.ErrPlaintextRequired) {
 		t.Fatalf("password err = %v, want ErrPlaintextRequired", err)
+	}
+}
+
+// TestStartOAuthFlowAllowsAnAccountThatHoldsTokens keeps the OAuth preflight
+// level with the write. Add Account resolves an existing account by its
+// connection identity, so re-running it for an account whose file already
+// holds the tokens must open the browser. The store would accept the rewrite.
+func TestStartOAuthFlowAllowsAnAccountThatHoldsTokens(t *testing.T) {
+	secretlessEnv(t)
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+
+	// Seed the account the way an earlier --allow-plaintext run would.
+	opted, err := auth.NewCredentialStore(a.CredentialNamespace, nil, false, true)
+	if err != nil {
+		t.Fatalf("open the plaintext store: %v", err)
+	}
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name:      "Personal Google",
+		ServerURL: "https://apidata.googleusercontent.com/caldav/v2/",
+		Username:  "me@example.com",
+		AuthType:  "oauth2",
+	}, auth.Credential{
+		Username: "me@example.com", AccessToken: "ya29.stale", RefreshToken: "1//0xyz",
+		OAuthClientID: "cid.apps.googleusercontent.com", OAuthClientSecret: "GOCSPX-x",
+	}, opted)
+	if err != nil {
+		t.Fatalf("create the opted-in account: %v", err)
+	}
+
+	// Guard the flow in case the batch below ever runs: no listener binds and
+	// no browser opens in a test.
+	prev := oauthStartFn
+	oauthStartFn = func(ctx context.Context, clientID, clientSecret string) (*auth.PendingOAuthFlow, error) {
+		return nil, errors.New("the test does not run the OAuth flow")
+	}
+	t.Cleanup(func() { oauthStartFn = prev })
+
+	m.width, m.height = 120, 40
+	m.oauthPurpose = oauthFlowPurpose{
+		calendarDiscovery: true,
+		calendarDiscoveryMsg: CalendarDiscoveryRequestedMsg{
+			ServerURL: created.ServerURL,
+			Username:  created.Username,
+			AuthType:  "oauth2",
+		},
+	}
+	_, cmd := m.startOAuthFlow("cid.apps.googleusercontent.com", "GOCSPX-x")
+	msg := cmd()
+	if started, refused := msg.(oauthFlowStartedMsg); refused {
+		t.Fatalf("the preflight stopped an account whose file holds the tokens: %v", started.err)
+	}
+	// The preflight passed, so the command returns the batch that starts the
+	// flow. The test stops here: it does not run the flow.
+	if _, ok := msg.(tea.BatchMsg); !ok {
+		t.Fatalf("startOAuthFlow cmd = %T, want a tea.BatchMsg", msg)
 	}
 }

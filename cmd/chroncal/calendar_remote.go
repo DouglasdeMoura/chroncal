@@ -77,7 +77,22 @@ func connectCalendarRemote(ctx context.Context, a *app.App, cal calendarpkg.Cale
 		return fmt.Errorf("credential store: %w", err)
 	}
 
-	cred, err := buildCalendarCredential(ctx, flags, credStore, cal.AccountID)
+	// Ask which credential Connect writes before the prompt. Connect reuses
+	// the hidden account of the calendar only when that account links to this
+	// calendar alone. Every other link writes a brand-new account, which holds
+	// no credential, so the check must not read the current account (#777).
+	link := calendarpkg.RemoteLink{
+		RemoteURL:     flags.RemoteURL,
+		Username:      flags.Username,
+		AuthType:      flags.AuthType,
+		AllowInsecure: flags.AllowInsecure,
+	}
+	targetID, targetFingerprint, err := a.Calendars.ConnectTarget(ctx, cal, link)
+	if err != nil {
+		return err
+	}
+
+	cred, err := buildCalendarCredential(ctx, flags, credStore, targetID, targetFingerprint)
 	if err != nil {
 		return err
 	}
@@ -149,15 +164,16 @@ func deleteCalendarWithCleanup(ctx context.Context, a *app.App, id, newDefaultID
 // remedy first, instead of after the user does the work (issue #777). A
 // password command is not a secret, so it needs no check.
 //
-// accountID names the account that keeps the credential. A relink reuses the
-// hidden account of the calendar, so its file can already hold a secret. A new
-// link passes 0.
-func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags, store auth.CredentialStore, accountID int64) (auth.Credential, error) {
+// accountID and fingerprint name the credential that the caller stores. A
+// relink of a single-calendar hidden account keeps that account, so its file
+// can already hold a secret. Every other link writes a new account, which
+// passes the ID 0.
+func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags, store auth.CredentialStore, accountID int64, fingerprint string) (auth.Credential, error) {
 	switch normalizeAuthType(flags.AuthType) {
 	case "":
 		return auth.Credential{Username: flags.Username}, nil
 	case "bearer":
-		if err := auth.EnsureCanStoreSecret(store, accountID); err != nil {
+		if err := auth.EnsureCanStoreSecret(store, accountID, fingerprint); err != nil {
 			return auth.Credential{}, err
 		}
 		token, err := readBearerToken()
@@ -166,7 +182,7 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags, sto
 		}
 		return auth.Credential{Username: flags.Username, AccessToken: token}, nil
 	case "basic":
-		secret, err := readBasicSecret(flags.PasswordCommand, store, accountID)
+		secret, err := readBasicSecret(flags.PasswordCommand, store, accountID, fingerprint)
 		if err != nil {
 			return auth.Credential{}, err
 		}
@@ -176,7 +192,7 @@ func buildCalendarCredential(ctx context.Context, flags calendarRemoteFlags, sto
 			PasswordCommand: secret.Command,
 		}, nil
 	case "oauth2":
-		if err := auth.EnsureCanStoreSecret(store, accountID); err != nil {
+		if err := auth.EnsureCanStoreSecret(store, accountID, fingerprint); err != nil {
 			return auth.Credential{}, err
 		}
 		clientSecret, err := readGoogleClientSecret()
@@ -225,10 +241,10 @@ type basicSecret struct {
 // A command source plus CHRONCAL_PASSWORD is an error. Two sources hide which
 // secret the program sends.
 //
-// It checks store for accountID before it prompts for a password, so a host
-// that cannot keep a secret reports the remedy before the prompt. A nil store
-// skips the check.
-func readBasicSecret(passwordCommand string, store auth.CredentialStore, accountID int64) (basicSecret, error) {
+// It checks store for the named credential before it prompts for a password,
+// so a host that cannot keep a secret reports the remedy before the prompt. A
+// nil store skips the check.
+func readBasicSecret(passwordCommand string, store auth.CredentialStore, accountID int64, fingerprint string) (basicSecret, error) {
 	command := strings.TrimSpace(passwordCommand)
 	if command == "" {
 		command = strings.TrimSpace(os.Getenv("CHRONCAL_PASSWORD_CMD"))
@@ -241,7 +257,7 @@ func readBasicSecret(passwordCommand string, store auth.CredentialStore, account
 		return basicSecret{Command: command}, nil
 	}
 	if store != nil {
-		if err := auth.EnsureCanStoreSecret(store, accountID); err != nil {
+		if err := auth.EnsureCanStoreSecret(store, accountID, fingerprint); err != nil {
 			return basicSecret{}, err
 		}
 	}

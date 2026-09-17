@@ -72,7 +72,7 @@ exposes, import every usable collection, and complete their initial sync.`,
 			cred, err := buildCalendarCredential(ctx, calendarRemoteFlags{
 				Username: username, AuthType: authType,
 				PasswordCommand: passwordCommand, OAuthClientID: oauthClientID,
-			}, store, 0)
+			}, store, 0, "")
 			if err != nil {
 				return err
 			}
@@ -285,6 +285,7 @@ backend failures leave the previous secret unchanged.`,
 			}
 
 			authType := strings.ToLower(strings.TrimSpace(configured.AuthType))
+			fingerprint := configured.CredentialFingerprint()
 			var secret basicSecret
 			switch authType {
 			case "oauth2":
@@ -299,19 +300,18 @@ backend failures leave the previous secret unchanged.`,
 						configured.DisplayName,
 					)
 				}
-				if err = auth.EnsureCanStoreSecret(store, configured.ID); err != nil {
+				if err = auth.EnsureCanStoreSecret(store, configured.ID, fingerprint); err != nil {
 					return err
 				}
 				secret.Password, err = readBearerToken()
 			case "basic", "":
-				secret, err = readBasicSecret(passwordCommand, store, configured.ID)
+				secret, err = readBasicSecret(passwordCommand, store, configured.ID, fingerprint)
 			default:
 				return errInvalidInputf("unsupported auth type %q", configured.AuthType)
 			}
 			if err != nil {
 				return err
 			}
-			fingerprint := configured.CredentialFingerprint()
 			cred, err := credentialForRotation(store.Get(configured.ID, fingerprint))
 			if err != nil {
 				return err
@@ -391,7 +391,7 @@ kept.`,
 			// before the prompt and the browser flow (issue #777). The account
 			// ID keeps the check level with the write: an account whose file
 			// already holds the tokens can rewrite them.
-			if err := auth.EnsureCanStoreSecret(store, configured.ID); err != nil {
+			if err := auth.EnsureCanStoreSecret(store, configured.ID, configured.CredentialFingerprint()); err != nil {
 				return err
 			}
 			// Reauth needs the stored credential: it carries the username and

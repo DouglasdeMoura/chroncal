@@ -58,7 +58,7 @@ func TestReadBasicSecretSourceOrder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("CHRONCAL_PASSWORD_CMD", tc.envCommand)
 			t.Setenv("CHRONCAL_PASSWORD", tc.envPassword)
-			got, err := readBasicSecret(tc.flag, nil, 0)
+			got, err := readBasicSecret(tc.flag, nil, 0, "")
 			if err != nil {
 				t.Fatalf("readBasicSecret: %v", err)
 			}
@@ -73,12 +73,12 @@ func TestReadBasicSecretRejectsACommandWithAnEnvPassword(t *testing.T) {
 	t.Setenv("CHRONCAL_PASSWORD", "lab-secret")
 
 	t.Setenv("CHRONCAL_PASSWORD_CMD", "")
-	if _, err := readBasicSecret("flag-command", nil, 0); err == nil {
+	if _, err := readBasicSecret("flag-command", nil, 0, ""); err == nil {
 		t.Fatal("the flag command plus CHRONCAL_PASSWORD should fail")
 	}
 
 	t.Setenv("CHRONCAL_PASSWORD_CMD", "env-command")
-	if _, err := readBasicSecret("", nil, 0); err == nil {
+	if _, err := readBasicSecret("", nil, 0, ""); err == nil {
 		t.Fatal("CHRONCAL_PASSWORD_CMD plus CHRONCAL_PASSWORD should fail")
 	}
 }
@@ -88,7 +88,7 @@ func TestBuildCalendarCredentialCarriesThePasswordCommand(t *testing.T) {
 	t.Setenv("CHRONCAL_PASSWORD_CMD", "")
 	cred, err := buildCalendarCredential(t.Context(), calendarRemoteFlags{
 		Username: "alice", AuthType: "basic", PasswordCommand: "pass show caldav",
-	}, nil, 0)
+	}, nil, 0, "")
 	if err != nil {
 		t.Fatalf("buildCalendarCredential: %v", err)
 	}
