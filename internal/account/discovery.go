@@ -66,12 +66,18 @@ func (s *Service) DiscoverWithCredential(ctx context.Context, accountID int64, r
 	if err == nil {
 		return discovery, nil
 	}
+	// The discovery pass refreshes the access token of whichever OAuth identity
+	// it runs on, and it persists a rotated refresh token. The rollback reads
+	// the refresh token that this call wrote, so it keeps a rotation of the
+	// captured token and drops the tokens of a replacement that failed.
+	//
 	// "reconnect account" names the operation that the rollback undoes. The
 	// credential write succeeded, so a name for that step would report the one
 	// part that worked.
 	return Discovery{}, prior.RestoreReplacement(store, auth.Replacement{
-		AccountID:   accountID,
-		Fingerprint: fingerprint,
+		AccountID:    accountID,
+		Fingerprint:  fingerprint,
+		RefreshToken: replacement.RefreshToken,
 	}, "reconnect account", err)
 }
 

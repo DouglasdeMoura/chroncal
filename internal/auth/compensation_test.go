@@ -329,3 +329,72 @@ func TestCaptureReplacedCredentialRejectsAnotherConnection(t *testing.T) {
 			store.setCalls, store.deleteCalls)
 	}
 }
+
+// TestRestoreReplacementKeepsARefreshedToken covers an OAuth account whose
+// access token expires during the discovery pass. The pass persists a rotated
+// refresh token, and the provider invalidates the captured one. A rollback to
+// the captured token would end the ability of the account to refresh, so the
+// rollback keeps what the store holds.
+func TestRestoreReplacementKeepsARefreshedToken(t *testing.T) {
+	captured := Credential{
+		AccountID: 7, AccountFingerprint: "fp", Username: "me@example.com",
+		AccessToken: "ya29.old", RefreshToken: "1//old", TokenExpiry: "2026-01-01T00:00:00Z",
+	}
+	store := &fakeCredStore{creds: map[int64]Credential{7: captured}}
+	prior, err := CaptureReplacedCredential(store, 7, "fp")
+	if err != nil {
+		t.Fatalf("CaptureReplacedCredential: %v", err)
+	}
+
+	// The pass refreshed the token and persisted the new triple.
+	store.creds[7] = Credential{
+		AccountID: 7, AccountFingerprint: "fp", Username: "me@example.com",
+		AccessToken: "ya29.new", RefreshToken: "1//new", TokenExpiry: "2026-02-01T00:00:00Z",
+	}
+
+	cause := errors.New("discovery failed")
+	replaced := Replacement{AccountID: 7, Fingerprint: "fp", RefreshToken: "1//old"}
+	if err := prior.RestoreReplacement(store, replaced, "reconnect account", cause); !errors.Is(err, cause) {
+		t.Fatalf("RestoreReplacement err = %v, want it to wrap the cause", err)
+	}
+	restored := store.creds[7]
+	if restored.RefreshToken != "1//new" {
+		t.Fatalf("RefreshToken = %q, want the refreshed token", restored.RefreshToken)
+	}
+	if restored.AccessToken != "ya29.new" || restored.TokenExpiry != "2026-02-01T00:00:00Z" {
+		t.Fatalf("restored token triple = %+v, want the refreshed one", restored)
+	}
+	if restored.Username != "me@example.com" {
+		t.Fatalf("Username = %q, want the captured identity", restored.Username)
+	}
+}
+
+// TestRestoreReplacementRestoresTokensWithoutTheCarryForward is the other half
+// of the rule. A replacement that carried its own refresh token ran on its own
+// OAuth identity, so its tokens belong to the value that failed. The rollback
+// reads that from the tokens, so a caller cannot claim otherwise.
+func TestRestoreReplacementRestoresTokensWithoutTheCarryForward(t *testing.T) {
+	captured := Credential{
+		AccountID: 7, AccountFingerprint: "fp", Username: "me@example.com",
+		AccessToken: "ya29.old", RefreshToken: "1//old",
+	}
+	store := &fakeCredStore{creds: map[int64]Credential{7: captured}}
+	prior, err := CaptureReplacedCredential(store, 7, "fp")
+	if err != nil {
+		t.Fatalf("CaptureReplacedCredential: %v", err)
+	}
+	store.creds[7] = Credential{
+		AccountID: 7, AccountFingerprint: "fp", Username: "me@example.com",
+		AccessToken: "ya29.other", RefreshToken: "1//other",
+	}
+
+	// The replacement carried its own refresh token.
+	replaced := Replacement{AccountID: 7, Fingerprint: "fp", RefreshToken: "1//other"}
+	cause := errors.New("discovery failed")
+	if err := prior.RestoreReplacement(store, replaced, "reconnect account", cause); !errors.Is(err, cause) {
+		t.Fatalf("RestoreReplacement err = %v, want it to wrap the cause", err)
+	}
+	if got := store.creds[7].RefreshToken; got != "1//old" {
+		t.Fatalf("RefreshToken = %q, want the captured token", got)
+	}
+}
