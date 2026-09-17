@@ -316,14 +316,11 @@ backend failures leave the previous secret unchanged.`,
 			if err != nil {
 				return err
 			}
-			if authType == "bearer" {
-				cred.AccessToken = secret.Password
-			} else {
-				// Clear the source the user does not use. A stale value in
-				// the other field would conflict with the new one.
-				cred.Password = secret.Password
-				cred.PasswordCommand = secret.Command
-			}
+			// The shared helper clears the source the user does not use. A
+			// stale value in another field would conflict with the new one.
+			cred = auth.RotationCredential(
+				cred, secret.Password, secret.Command, authType == "bearer",
+			)
 			if err := a.Accounts.StoreCredential(ctx, configured.ID, fingerprint, cred, store); err != nil {
 				return err
 			}
