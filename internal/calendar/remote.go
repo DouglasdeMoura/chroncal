@@ -76,6 +76,64 @@ func (s *Service) lockRemoteLifecycle(ctx context.Context, calendarID int64) (Ca
 	}
 }
 
+// reusableConnectAccount returns the account that Connect relinks instead of a
+// new one. Connect reuses the hidden account of a calendar when that account
+// links to this calendar only. The second result is false when Connect creates
+// an account.
+func (s *Service) reusableConnectAccount(ctx context.Context, cal Calendar) (storage.Account, bool, error) {
+	if cal.AccountID == 0 {
+		return storage.Account{}, false, nil
+	}
+	existing, err := s.q.GetAccount(ctx, cal.AccountID)
+	// Only sql.ErrNoRows (the account row is genuinely gone) may fall through
+	// to the create-new path. A transient read failure must be propagated;
+	// treating it as not-found would repoint the calendar to a brand-new
+	// hidden account and orphan the old credential (issue #300).
+	if errors.Is(err, sql.ErrNoRows) {
+		return storage.Account{}, false, nil
+	}
+	if err != nil {
+		return storage.Account{}, false, fmt.Errorf("get account: %w", err)
+	}
+	if !strings.HasPrefix(existing.Name, hiddenAccountPrefix) {
+		return storage.Account{}, false, nil
+	}
+	linked, err := s.q.ListCalendarsByAccount(ctx, &existing.ID)
+	if err != nil {
+		return storage.Account{}, false, fmt.Errorf("list hidden account calendars: %w", err)
+	}
+	if len(linked) != 1 {
+		return storage.Account{}, false, nil
+	}
+	return existing, true, nil
+}
+
+// ConnectTarget names the credential that Connect writes for cal and link. It
+// returns the account ID and the credential fingerprint of that write.
+//
+// A caller checks the credential store with these values before it asks the
+// user for a secret. The check then reads the account that Connect writes to,
+// not the account the calendar points at now. Connect creates an account for
+// most calendars, and a new account holds no credential, so the ID is 0.
+//
+// Connect takes the remote lifecycle lock and reads the account again, so the
+// answer is a prediction. The store keeps the final say on the write.
+func (s *Service) ConnectTarget(ctx context.Context, cal Calendar, link RemoteLink) (int64, string, error) {
+	serverURL, err := DeriveServerURL(link.RemoteURL, link.AllowInsecure)
+	if err != nil {
+		return 0, "", err
+	}
+	fingerprint := auth.AccountFingerprint(serverURL, NormalizeAuthType(link.AuthType), link.Username)
+	existing, reuse, err := s.reusableConnectAccount(ctx, cal)
+	if err != nil {
+		return 0, "", err
+	}
+	if !reuse {
+		return 0, fingerprint, nil
+	}
+	return existing.ID, fingerprint, nil
+}
+
 // Connect links a calendar to a remote CalDAV URL and stores the credential.
 // When the calendar is already linked to a hidden account, Connect updates
 // that account in place; otherwise it creates a new hidden account.
@@ -95,81 +153,67 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	}
 	remoteChanged := cal.RemoteURL != "" && !sameRemoteCollection(cal.RemoteURL, link.RemoteURL)
 
-	if cal.AccountID != 0 {
-		existing, err := s.q.GetAccount(ctx, cal.AccountID)
-		// Only sql.ErrNoRows (the account row is genuinely gone) may fall
-		// through to the create-new path. A transient read failure must be
-		// propagated; treating it as not-found would repoint the calendar to a
-		// brand-new hidden account and orphan the old credential (issue #300).
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("get account: %w", err)
+	existing, reuse, err := s.reusableConnectAccount(ctx, cal)
+	if err != nil {
+		return err
+	}
+	if reuse {
+		cred.AccountID = existing.ID
+		oldFingerprint := auth.AccountFingerprint(existing.ServerUrl, existing.AuthType, existing.Username)
+		prior, prevErr := auth.CapturePriorCredential(credStore, existing.ID, oldFingerprint)
+		if prevErr != nil {
+			return fmt.Errorf("read credentials before relink: %w", prevErr)
 		}
-		if err == nil && strings.HasPrefix(existing.Name, hiddenAccountPrefix) {
-			linked, listErr := s.q.ListCalendarsByAccount(ctx, &existing.ID)
-			if listErr != nil {
-				return fmt.Errorf("list hidden account calendars: %w", listErr)
-			}
-			if len(linked) != 1 {
-				goto createAccount
-			}
-			cred.AccountID = existing.ID
-			oldFingerprint := auth.AccountFingerprint(existing.ServerUrl, existing.AuthType, existing.Username)
-			prior, prevErr := auth.CapturePriorCredential(credStore, existing.ID, oldFingerprint)
-			if prevErr != nil {
-				return fmt.Errorf("read credentials before relink: %w", prevErr)
-			}
-			cred.AccountFingerprint = auth.AccountFingerprint(serverURL, link.AuthType, link.Username)
+		cred.AccountFingerprint = auth.AccountFingerprint(serverURL, link.AuthType, link.Username)
 
-			tx, err := s.db.BeginTx(ctx, nil)
-			if err != nil {
-				return fmt.Errorf("begin tx: %w", err)
-			}
-			defer tx.Rollback()
-			qtx := s.q.WithTx(tx)
-			if err := qtx.UpdateAccount(ctx, storage.UpdateAccountParams{
-				ID:        existing.ID,
-				Name:      existing.Name,
-				ServerUrl: serverURL,
-				AuthType:  link.AuthType,
-				Username:  link.Username,
-			}); err != nil {
-				return fmt.Errorf("update hidden account: %w", err)
-			}
-			if remoteChanged {
-				if err := clearCalendarRemoteState(ctx, qtx, cal.ID, cal.ColorDirty); err != nil {
-					return err
-				}
-			}
-			if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
-				ID:        cal.ID,
-				AccountID: &existing.ID,
-				RemoteUrl: storage.StringToNullable(link.RemoteURL),
-			}); err != nil {
-				return fmt.Errorf("link calendar: %w", err)
-			}
-			if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
-				return err
-			}
-			// Intentionally skip seeding RemoteColor on re-link: the calendar
-			// is already linked, the user may have just edited Color in the
-			// same save (Update set color_dirty=1), and the next sync's
-			// syncCalendarMetadata reconciles colors with proper dirty-flag
-			// handling. Seeding here would clobber the local edit.
-			//
-			// Write the new credential only after the DB writes succeed. The
-			// fingerprint keeps a failed compensation from exposing it to the
-			// old account identity.
-			if err := credStore.Set(cred); err != nil {
-				return fmt.Errorf("store credentials: %w", err)
-			}
-			if err := auth.CommitWithCredentialCompensation(tx, credStore, existing.ID, prior, true, "commit remote calendar link"); err != nil {
-				return err
-			}
-			return nil
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
 		}
+		defer tx.Rollback()
+		qtx := s.q.WithTx(tx)
+		if err := qtx.UpdateAccount(ctx, storage.UpdateAccountParams{
+			ID:        existing.ID,
+			Name:      existing.Name,
+			ServerUrl: serverURL,
+			AuthType:  link.AuthType,
+			Username:  link.Username,
+		}); err != nil {
+			return fmt.Errorf("update hidden account: %w", err)
+		}
+		if remoteChanged {
+			if err := clearCalendarRemoteState(ctx, qtx, cal.ID, cal.ColorDirty); err != nil {
+				return err
+			}
+		}
+		if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+			ID:        cal.ID,
+			AccountID: &existing.ID,
+			RemoteUrl: storage.StringToNullable(link.RemoteURL),
+		}); err != nil {
+			return fmt.Errorf("link calendar: %w", err)
+		}
+		if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
+			return err
+		}
+		// Intentionally skip seeding RemoteColor on re-link: the calendar
+		// is already linked, the user may have just edited Color in the
+		// same save (Update set color_dirty=1), and the next sync's
+		// syncCalendarMetadata reconciles colors with proper dirty-flag
+		// handling. Seeding here would clobber the local edit.
+		//
+		// Write the new credential only after the DB writes succeed. The
+		// fingerprint keeps a failed compensation from exposing it to the
+		// old account identity.
+		if err := credStore.Set(cred); err != nil {
+			return fmt.Errorf("store credentials: %w", err)
+		}
+		if err := auth.CommitWithCredentialCompensation(tx, credStore, existing.ID, prior, true, "commit remote calendar link"); err != nil {
+			return err
+		}
+		return nil
 	}
 
-createAccount:
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
