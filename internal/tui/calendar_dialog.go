@@ -397,23 +397,6 @@ func newAuthField(authType string) *SelectField {
 	return f
 }
 
-func newPasswordField() *TextField {
-	f := NewTextField("your password")
-	f.SetCharLimit(256)
-	f.SetEchoPassword(true)
-	return f
-}
-
-// newPasswordCommandField builds the Password cmd input. The value is a
-// shell command, not a secret, so the field does not mask what the user
-// types. Chroncal stores the command and runs it at each connection.
-func newPasswordCommandField(value string) *TextField {
-	f := NewTextField("pass show caldav/work")
-	f.SetValue(value)
-	f.SetCharLimit(512)
-	return f
-}
-
 // calendarAuthIsOAuth reports whether an auth-type string selects the OAuth
 // flow (and therefore the ClientID/Secret tail layout in the dialog).
 func calendarAuthIsOAuth(authType string) bool {

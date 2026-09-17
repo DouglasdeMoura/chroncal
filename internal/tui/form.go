@@ -949,6 +949,29 @@ func (f Form) renderTopLabel(item FormItem) string {
 	return labelText
 }
 
+// ---------------------------------------------------------------------------
+// Shared field constructors
+// ---------------------------------------------------------------------------
+
+// newPasswordField builds the Password input. The value is a secret, so the
+// field masks what the user types.
+func newPasswordField() *TextField {
+	f := NewTextField("your password")
+	f.SetCharLimit(256)
+	f.SetEchoPassword(true)
+	return f
+}
+
+// newPasswordCommandField builds the Password cmd input. The value is a
+// shell command, not a secret, so the field does not mask what the user
+// types. Chroncal stores the command and runs it at each connection.
+func newPasswordCommandField(value string) *TextField {
+	f := NewTextField("pass show caldav/work")
+	f.SetValue(value)
+	f.SetCharLimit(512)
+	return f
+}
+
 // LayoutPtr returns a pointer to a LabelLayout value, for use in
 // FormItem.LabelLayout overrides.
 func LayoutPtr(l LabelLayout) *LabelLayout { return &l }
