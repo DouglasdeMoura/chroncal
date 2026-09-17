@@ -49,10 +49,9 @@ func (m Model) newSyncService() (*syncpkg.Service, error) {
 // runSyncAllPlan lists the connected calendars and emits a syncAllPlannedMsg
 // so the Update loop can step through them one at a time. The actual sync work
 // happens in runSyncOne so the footer can refresh between calendars.
-func (m Model) runSyncAllPlan() tea.Cmd {
+func (m Model) runSyncAllPlan(parent context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		cals, err := m.app.Queries.ListCalendars(ctx)
+		cals, err := m.app.Queries.ListCalendars(parent)
 		if err != nil {
 			return syncFinishedMsg{err: err}
 		}
@@ -70,26 +69,26 @@ func (m Model) runSyncAllPlan() tea.Cmd {
 // runSyncOne syncs a single calendar inside a SyncAll run. It emits
 // syncCalendarFinishedMsg so the Update loop can advance to the next target
 // (or finalize) and refresh the footer.
-func (m Model) runSyncOne(target syncTarget, index, total int) tea.Cmd {
+func (m Model) runSyncOne(parent context.Context, target syncTarget, index, total int) tea.Cmd {
 	return func() tea.Msg {
 		svc, err := m.newSyncService()
 		if err != nil {
 			return syncCalendarFinishedMsg{index: index, total: total, name: target.Name, err: err}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), syncCalendarBudget())
+		ctx, cancel := context.WithTimeout(parent, syncCalendarBudget())
 		defer cancel()
 		result, err := svc.SyncCalendar(ctx, target.ID, m.fullSyncStrategy)
 		return syncCalendarFinishedMsg{index: index, total: total, name: target.Name, result: result, err: err}
 	}
 }
 
-func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
+func (m Model) runSyncCalendar(parent context.Context, id int64, name string) tea.Cmd {
 	return func() tea.Msg {
 		svc, err := m.newSyncService()
 		if err != nil {
 			return syncFinishedMsg{err: err}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), syncCalendarBudget())
+		ctx, cancel := context.WithTimeout(parent, syncCalendarBudget())
 		defer cancel()
 		result, err := svc.SyncCalendar(ctx, id, m.fullSyncStrategy)
 		if err != nil {
@@ -116,15 +115,17 @@ func (m Model) runSyncCalendar(id int64, name string) tea.Cmd {
 	}
 }
 
-func (m Model) runSyncAccount(accountID int64, name string) tea.Cmd {
+func (m Model) runSyncAccount(parent context.Context, accountID int64, name string) tea.Cmd {
 	return func() tea.Msg {
 		svc, err := m.newSyncService()
 		if err != nil {
 			return syncFinishedMsg{err: err}
 		}
-		results, err := svc.SyncAccount(
-			context.Background(), accountID, m.fullSyncStrategy,
-		)
+		// No extra deadline here. The engine budgets each calendar of the
+		// account, and an account can hold many calendars. A parent
+		// deadline over the whole pass would cut a large account short.
+		// The parent context still carries the esc cancel.
+		results, err := svc.SyncAccount(parent, accountID, m.fullSyncStrategy)
 		if err != nil {
 			return syncFinishedMsg{err: err}
 		}
@@ -159,7 +160,13 @@ func (m Model) runSyncAccount(accountID int64, name string) tea.Cmd {
 func (m Model) finishSync(msg syncFinishedMsg) (Model, tea.Cmd) {
 	m.syncing = false
 	m.statusToken++
-	if msg.err != nil {
+	cancelled := m.opCancelled
+	m = m.endCancellableOp()
+	if cancelled {
+		// esc stopped the run. The error is the cancelled context, so it
+		// names nothing the user must act on.
+		m.syncStatus = "Sync cancelled"
+	} else if msg.err != nil {
 		if msg.summary != "" {
 			m.syncStatus = fmt.Sprintf("%s — %s", msg.summary, msg.err.Error())
 		} else {
@@ -178,9 +185,13 @@ func (m Model) finishSync(msg syncFinishedMsg) (Model, tea.Cmd) {
 	if m.pendingSyncCalendar.ID != 0 {
 		next := m.pendingSyncCalendar
 		m.pendingSyncCalendar = syncTarget{}
-		cmds = append(cmds, func() tea.Msg {
-			return SyncCalendarRequestedMsg(next)
-		})
+		// A cancel drops the queued calendar too. Starting it would put the
+		// spinner back on the screen the user just escaped from.
+		if !cancelled {
+			cmds = append(cmds, func() tea.Msg {
+				return SyncCalendarRequestedMsg(next)
+			})
+		}
 	}
 	return m, tea.Batch(cmds...)
 }

@@ -176,7 +176,7 @@ func TestConnectAndDiscoverCalendarRefusesSecretlessStore(t *testing.T) {
 		Secret:    "hunter2",
 	}
 	cred := auth.Credential{Username: req.Username, Password: req.Secret}
-	msg := m.connectAndDiscoverCalendar(req, cred)()
+	msg := m.connectAndDiscoverCalendar(context.Background(), req, cred)()
 	ready, ok := msg.(accountDiscoveryReadyMsg)
 	if !ok {
 		t.Fatalf("connectAndDiscoverCalendar cmd = %T, want accountDiscoveryReadyMsg", msg)

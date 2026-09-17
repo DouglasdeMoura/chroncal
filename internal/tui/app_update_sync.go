@@ -17,12 +17,14 @@ func (m Model) handleSyncAllRequested(msg SyncAllRequestedMsg) (tea.Model, tea.C
 	m.syncStatus = "Preparing sync…"
 	m.syncTargets = nil
 	m.syncTotals = syncTotals{}
-	return m, tea.Batch(m.runSyncAllPlan(), m.syncSpinner.Tick)
+	m, ctx := m.beginCancellableOp()
+	return m, tea.Batch(m.runSyncAllPlan(ctx), m.syncSpinner.Tick)
 }
 
 func (m Model) handleSyncAllPlanned(msg syncAllPlannedMsg) (tea.Model, tea.Cmd) {
 	if len(msg.targets) == 0 {
 		m.syncing = false
+		m = m.endCancellableOp()
 		m.statusToken++
 		m.syncStatus = "No connected calendars to sync"
 		return m, m.expireStatusAfter(6*time.Second, m.statusToken)
@@ -32,7 +34,8 @@ func (m Model) handleSyncAllPlanned(msg syncAllPlannedMsg) (tea.Model, tea.Cmd) 
 	first := msg.targets[0]
 	m.statusToken++
 	m.syncStatus = fmt.Sprintf("Syncing %s (1/%d)…", syncProgressLabel(first.Name), len(msg.targets))
-	return m, m.runSyncOne(first, 0, len(msg.targets))
+	m, ctx := m.beginCancellableOp()
+	return m, m.runSyncOne(ctx, first, 0, len(msg.targets))
 }
 
 func (m Model) handleSyncCalendarFinished(msg syncCalendarFinishedMsg) (tea.Model, tea.Cmd) {
@@ -55,8 +58,10 @@ func (m Model) handleSyncCalendarFinished(msg syncCalendarFinishedMsg) (tea.Mode
 			m.syncTotals.firstErr = msg.err
 		}
 	}
+	// esc stops the run between two calendars as well as inside one. The
+	// finished calendars keep their results.
 	next := msg.index + 1
-	if next >= msg.total {
+	if next >= msg.total || m.opCancelled {
 		label := fmt.Sprintf("%d calendar(s)", msg.total)
 		summary := syncSummary(label, m.syncTotals)
 		finishErr := m.syncTotals.firstErr
@@ -69,7 +74,8 @@ func (m Model) handleSyncCalendarFinished(msg syncCalendarFinishedMsg) (tea.Mode
 	target := m.syncTargets[next]
 	m.statusToken++
 	m.syncStatus = fmt.Sprintf("Syncing %s (%d/%d)…", syncProgressLabel(target.Name), next+1, msg.total)
-	return m, m.runSyncOne(target, next, msg.total)
+	m, ctx := m.beginCancellableOp()
+	return m, m.runSyncOne(ctx, target, next, msg.total)
 }
 
 func (m Model) handleSyncCalendarRequested(msg SyncCalendarRequestedMsg) (tea.Model, tea.Cmd) {
@@ -87,7 +93,8 @@ func (m Model) handleSyncCalendarRequested(msg SyncCalendarRequestedMsg) (tea.Mo
 		label = "calendar"
 	}
 	m.syncStatus = fmt.Sprintf("Syncing %s…", label)
-	return m, tea.Batch(m.runSyncCalendar(msg.ID, msg.Name), m.syncSpinner.Tick)
+	m, ctx := m.beginCancellableOp()
+	return m, tea.Batch(m.runSyncCalendar(ctx, msg.ID, msg.Name), m.syncSpinner.Tick)
 }
 
 func (m Model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
