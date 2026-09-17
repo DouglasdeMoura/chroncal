@@ -738,7 +738,7 @@ func (m RecurrenceEditorModel) EndsDatePickerBoxSize() (int, int) {
 // View renders the recurrence editor dialog.
 func (m RecurrenceEditorModel) View() string {
 	helpKeys := []key.Binding{
-		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+		key.NewBinding(key.WithKeys("tab", "up", "down"), key.WithHelp("tab/↑↓", "next field")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 	}
