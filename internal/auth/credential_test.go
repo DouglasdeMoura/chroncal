@@ -27,7 +27,7 @@ func overrideKeyringForTest(t *testing.T, available bool, values map[string]stri
 	keyringGetFn = func(service, user string) (string, error) {
 		value, ok := values[user]
 		if !ok {
-			return "", errCredentialNotFound
+			return "", ErrCredentialNotFound
 		}
 		return value, nil
 	}
@@ -170,8 +170,8 @@ func TestPlaintextFileStore_GetMissing(t *testing.T) {
 func TestPlaintextFileStore_GetMissingReturnsErrNotFound(t *testing.T) {
 	store := &PlaintextFileStore{dir: t.TempDir()}
 	_, err := store.Get(999, "")
-	if !errors.Is(err, errCredentialNotFound) {
-		t.Errorf("Get for non-existent account should satisfy errors.Is(err, errCredentialNotFound), got %v", err)
+	if !errors.Is(err, ErrCredentialNotFound) {
+		t.Errorf("Get for non-existent account should satisfy errors.Is(err, ErrCredentialNotFound), got %v", err)
 	}
 }
 
@@ -456,7 +456,7 @@ func TestCredentialStore_CopiesPriorScopeWithoutDeletingSource(t *testing.T) {
 	if err := source.Set(Credential{AccountID: 2, Username: "source-new", Password: "must-not-leak"}); err != nil {
 		t.Fatalf("seed divergent source account: %v", err)
 	}
-	if _, err := copyStore.Get(2, ""); !errors.Is(err, errCredentialNotFound) {
+	if _, err := copyStore.Get(2, ""); !errors.Is(err, ErrCredentialNotFound) {
 		t.Fatalf("copied database read post-copy source account: %v", err)
 	}
 }
@@ -544,7 +544,7 @@ func TestNewCredentialStore_MigratesLegacyPlaintextCredentials(t *testing.T) {
 		t.Fatalf("Get returned %+v", got)
 	}
 
-	if _, err := legacyStore.Get(99, ""); !errors.Is(err, errCredentialNotFound) {
+	if _, err := legacyStore.Get(99, ""); !errors.Is(err, ErrCredentialNotFound) {
 		t.Fatalf("legacy credential should be removed after migration, got %v", err)
 	}
 	if len(backing) == 0 {
@@ -724,7 +724,7 @@ func TestMigratingCredentialStore_PrimaryOperationalReadFailureDoesNotFallback(t
 
 func TestMigratingCredentialStore_LegacyOperationalReadFailureDoesNotTryOlderSource(t *testing.T) {
 	legacyErr := errors.New("prior keyring unavailable")
-	primary := &getStubCredentialStore{getErr: errCredentialNotFound}
+	primary := &getStubCredentialStore{getErr: ErrCredentialNotFound}
 	higherPriority := &getStubCredentialStore{getErr: legacyErr}
 	older := &getStubCredentialStore{cred: Credential{AccountID: 1, Password: "stale"}}
 	store := &migratingCredentialStore{
@@ -831,7 +831,7 @@ func TestKeyringProbeNeverWrites(t *testing.T) {
 	t.Run("not found means available", func(t *testing.T) {
 		keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
 		keyringGetFn = func(service, user string) (string, error) {
-			return "", errCredentialNotFound
+			return "", ErrCredentialNotFound
 		}
 		if err := keyringUnavailableReason(); err != nil {
 			t.Errorf("probe = %v, want nil on ErrNotFound", err)

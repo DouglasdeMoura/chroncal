@@ -76,7 +76,7 @@ func TestCapturePriorCredential(t *testing.T) {
 	})
 
 	t.Run("not found is tolerated", func(t *testing.T) {
-		store := &fakeCredStore{getErr: errCredentialNotFound}
+		store := &fakeCredStore{getErr: ErrCredentialNotFound}
 		prior, err := CapturePriorCredential(store, accountID, "fp")
 		if err != nil {
 			t.Fatalf("CapturePriorCredential error = %v, want nil for not-found", err)
@@ -281,4 +281,51 @@ func TestCommitWithCredentialCompensation(t *testing.T) {
 			t.Fatalf("Set calls = %d, want 0 when deleting a replacement", store.setCalls)
 		}
 	})
+}
+
+// TestRestoreReplacementRemovesAValueWithNoPrior covers a reconnect on an
+// account whose credential is gone, for example after a keyring reset. The
+// account held nothing before the operation, so the rollback removes what the
+// operation wrote instead of leaving the value that failed.
+func TestRestoreReplacementRemovesAValueWithNoPrior(t *testing.T) {
+	store := &fakeCredStore{creds: map[int64]Credential{}, getErr: ErrCredentialNotFound}
+	prior, err := CaptureReplacedCredential(store, 7, "fp")
+	if err != nil {
+		t.Fatalf("CaptureReplacedCredential: %v", err)
+	}
+	if prior.Credential() != (Credential{}) {
+		t.Fatalf("Credential() = %+v, want the zero credential", prior.Credential())
+	}
+
+	cause := errors.New("discovery failed")
+	err = prior.RestoreReplacement(store,
+		Replacement{AccountID: 7, Fingerprint: "fp"}, "reconnect account", cause)
+	if !errors.Is(err, cause) {
+		t.Fatalf("RestoreReplacement err = %v, want it to wrap the cause", err)
+	}
+	if store.deleteCalls != 1 || len(store.deleteIDs) != 1 || store.deleteIDs[0] != 7 {
+		t.Fatalf("delete calls = %d, ids = %v, want one delete of account 7",
+			store.deleteCalls, store.deleteIDs)
+	}
+	if store.setCalls != 0 {
+		t.Fatalf("Set calls = %d, want 0", store.setCalls)
+	}
+}
+
+// TestCaptureReplacedCredentialRejectsAnotherConnection keeps a replacement
+// away from the delete path when the store holds a credential it cannot hand
+// back. A store reports an identity mismatch in place of the value, so the
+// rollback could only delete the file. That file holds a secret the user
+// consented to, and on a host with no keyring the delete also takes away the
+// permission to write the next one.
+func TestCaptureReplacedCredentialRejectsAnotherConnection(t *testing.T) {
+	store := &fakeCredStore{creds: map[int64]Credential{}, getErr: ErrCredentialIdentityMismatch}
+
+	if _, err := CaptureReplacedCredential(store, 7, "fp"); !errors.Is(err, ErrCredentialIdentityMismatch) {
+		t.Fatalf("CaptureReplacedCredential err = %v, want ErrCredentialIdentityMismatch", err)
+	}
+	if store.deleteCalls != 0 || store.setCalls != 0 {
+		t.Fatalf("store writes = %d set, %d delete, want none",
+			store.setCalls, store.deleteCalls)
+	}
 }

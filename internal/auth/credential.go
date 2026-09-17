@@ -54,13 +54,17 @@ type PreviousCredentialScope struct {
 
 const keyringService = "chroncal"
 
-var errCredentialNotFound = keyring.ErrNotFound
+// ErrCredentialNotFound reports that a lookup found no credential. Every
+// CredentialStore returns it, or an error that wraps it, so an implementation
+// outside this package can report the same outcome. IsCredentialNotFound
+// recognizes both forms.
+var ErrCredentialNotFound = keyring.ErrNotFound
 
 // IsCredentialNotFound reports whether a credential lookup found no entry.
 // Lifecycle code uses it to distinguish an absent credential from a transient
 // backend failure that must abort destructive changes.
 func IsCredentialNotFound(err error) bool {
-	return errors.Is(err, errCredentialNotFound)
+	return errors.Is(err, ErrCredentialNotFound)
 }
 
 // AccountFingerprint binds a credential to the connection identity it was
@@ -197,8 +201,8 @@ type KeyringStore struct {
 func (s *KeyringStore) Get(accountID int64, accountFingerprint string) (Credential, error) {
 	secret, err := keyringGetFn(keyringService, keyringAccountName(s.namespace, accountID))
 	if err != nil {
-		if errors.Is(err, errCredentialNotFound) {
-			return Credential{}, errCredentialNotFound
+		if errors.Is(err, ErrCredentialNotFound) {
+			return Credential{}, ErrCredentialNotFound
 		}
 		return Credential{}, fmt.Errorf("read credential from keyring: %w", err)
 	}
@@ -228,7 +232,7 @@ func (s *KeyringStore) Set(cred Credential) error {
 
 func (s *KeyringStore) Delete(accountID int64) error {
 	err := keyringDeleteFn(keyringService, keyringAccountName(s.namespace, accountID))
-	if err != nil && !errors.Is(err, errCredentialNotFound) {
+	if err != nil && !errors.Is(err, ErrCredentialNotFound) {
 		return fmt.Errorf("delete credential from keyring: %w", err)
 	}
 	return nil
@@ -257,7 +261,7 @@ func (s *PlaintextFileStore) Get(accountID int64, accountFingerprint string) (Cr
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Credential{}, errCredentialNotFound
+			return Credential{}, ErrCredentialNotFound
 		}
 		return Credential{}, fmt.Errorf("read credential: %w", err)
 	}

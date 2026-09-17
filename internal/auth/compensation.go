@@ -32,6 +32,46 @@ func CapturePriorCredential(store CredentialStore, accountID int64, fingerprint 
 	return PriorCredential{cred: prev, hasPrevious: err == nil}, nil
 }
 
+// CaptureReplacedCredential reads the credential that a replacement
+// overwrites. It accepts a missing entry, which the replacement repairs, and
+// it returns every other read failure.
+//
+// An entry of another connection is not a missing entry, so this function
+// returns that error. The store holds a credential file in that case, and the
+// rollback cannot put its value back: a store reports the mismatch in place of
+// the value. The rollback would delete the file instead, which removes a
+// secret the user consented to. On a host with no keyring that delete also
+// takes away the permission to write the next secret, so the user could not
+// try again (issue #777).
+func CaptureReplacedCredential(store CredentialStore, accountID int64, fingerprint string) (PriorCredential, error) {
+	cred, err := store.Get(accountID, fingerprint)
+	if err == nil {
+		return PriorCredential{cred: cred, hasPrevious: true}, nil
+	}
+	if IsCredentialNotFound(err) {
+		return PriorCredential{}, nil
+	}
+	return PriorCredential{}, err
+}
+
+// Credential returns the captured credential, or the zero Credential when the
+// capture found no entry.
+//
+// A caller reads it to carry a field forward into the replacement, for example
+// an OAuth refresh token that the new value does not provide.
+//
+// The hasPrevious guard does not trust a store to leave its result empty on an
+// error. CapturePriorCredential keeps whatever Get returned beside a tolerated
+// error, and the CredentialStore contract does not say that value is empty. A
+// store that returns a mismatched credential for diagnostics would otherwise
+// hand another connection's secret to a caller that carries fields forward.
+func (p PriorCredential) Credential() Credential {
+	if !p.hasPrevious {
+		return Credential{}
+	}
+	return p.cred
+}
+
 // Restore rolls the credential store back to the captured prior state after a
 // failure. It returns an error that surfaces both the original cause and any
 // compensation failure rather than a hide of either.
@@ -47,15 +87,52 @@ func CapturePriorCredential(store CredentialStore, accountID int64, fingerprint 
 // commit-then-rollback-credential path funnels through it.
 func (p PriorCredential) Restore(store CredentialStore, accountID int64, wroteNew bool, operation string, cause error) error {
 	if p.hasPrevious {
-		if restoreErr := restoreCredential(store, p.cred); restoreErr != nil {
-			return fmt.Errorf("%s: %w (restore credentials: %w)", operation, cause, restoreErr)
-		}
-		return fmt.Errorf("%s: %w", operation, cause)
+		return restoreWritten(store, p.cred, operation, cause)
 	}
 	if wroteNew {
 		if deleteErr := store.Delete(accountID); deleteErr != nil {
 			return fmt.Errorf("%s: %w (delete credentials: %w)", operation, cause, deleteErr)
 		}
+	}
+	return fmt.Errorf("%s: %w", operation, cause)
+}
+
+// Replacement describes the credential write that a rollback undoes.
+type Replacement struct {
+	// AccountID is the account whose credential the operation replaced.
+	AccountID int64
+	// Fingerprint is the connection identity of that credential.
+	Fingerprint string
+}
+
+// RestoreReplacement rolls back an operation that replaced the credential of
+// one account. It puts the captured credential back, or it removes the
+// replacement when the capture found no entry. It returns an error that
+// carries the original cause.
+//
+// A capture with no entry is a normal state here. A credential goes missing
+// after a keyring reset, and after a copy of the database to another host. The
+// account then held no credential, which is the state before the operation, so
+// the rollback removes what the operation wrote. Pair this method with
+// CaptureReplacedCredential, which reports every other read failure instead of
+// capturing nothing.
+func (p PriorCredential) RestoreReplacement(
+	store CredentialStore, replaced Replacement, operation string, cause error,
+) error {
+	if !p.hasPrevious {
+		if deleteErr := store.Delete(replaced.AccountID); deleteErr != nil {
+			return fmt.Errorf("%s: %w (delete credentials: %w)", operation, cause, deleteErr)
+		}
+		return fmt.Errorf("%s: %w", operation, cause)
+	}
+	return restoreWritten(store, p.cred, operation, cause)
+}
+
+// restoreWritten writes cred back. Every rollback shares it, so every one of
+// them reports a restore failure the same way.
+func restoreWritten(store CredentialStore, cred Credential, operation string, cause error) error {
+	if restoreErr := restoreCredential(store, cred); restoreErr != nil {
+		return fmt.Errorf("%s: %w (restore credentials: %w)", operation, cause, restoreErr)
 	}
 	return fmt.Errorf("%s: %w", operation, cause)
 }
