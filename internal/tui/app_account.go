@@ -303,28 +303,6 @@ func (m Model) finishOAuthCredentialStore(msg oauthCredentialStoredMsg) (Model, 
 	)
 }
 
-// rotationCredential maps rotation inputs onto the loaded credential. It
-// mirrors the CLI rotation contract: the source the user does not use is
-// cleared, so a stale password cannot conflict with a new password command
-// and back. Bearer auth keeps a token only.
-func rotationCredential(base auth.Credential, secret, secretCommand string, bearer bool) auth.Credential {
-	cred := base
-	if bearer {
-		cred.AccessToken = secret
-		cred.Password = ""
-		cred.PasswordCommand = ""
-		return cred
-	}
-	if secretCommand != "" {
-		cred.Password = ""
-		cred.PasswordCommand = secretCommand
-		return cred
-	}
-	cred.Password = secret
-	cred.PasswordCommand = ""
-	return cred
-}
-
 // updateAccountCredentials rotates one account's secret in place. The stored
 // credential is loaded so its non-secret identity (username, client config) is
 // kept. Only the password (basic) or access token (bearer) is replaced.
@@ -358,7 +336,7 @@ func (m Model) updateAccountCredentials(configured account.Account, secret, secr
 		if err != nil {
 			return storedMsg(err)
 		}
-		cred = rotationCredential(cred, secret, secretCommand, accountAuthIsBearer(configured.AuthType))
+		cred = auth.RotationCredential(cred, secret, secretCommand, accountAuthIsBearer(configured.AuthType))
 		err = m.app.Accounts.StoreCredential(ctx, configured.ID, fingerprint, cred, credStore)
 		return storedMsg(err)
 	}
