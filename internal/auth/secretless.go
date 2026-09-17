@@ -74,6 +74,11 @@ func (s *secretlessFileStore) Set(cred Credential) error {
 	if cred.HasStoredSecret() && !s.holdsSecret(cred.AccountID) {
 		return s.refusal()
 	}
+	return s.write(cred)
+}
+
+// write puts cred in the file with no further check.
+func (s *secretlessFileStore) write(cred Credential) error {
 	if cred.HasStoredSecret() {
 		// Write without the plaintext warning. The first write printed it,
 		// and a repeat says nothing new. A token refresh also runs under a
@@ -83,6 +88,18 @@ func (s *secretlessFileStore) Set(cred Credential) error {
 		return err
 	}
 	return s.inner.Set(cred)
+}
+
+// restore puts back a credential that this store gave out earlier. It skips
+// the secret check on purpose.
+//
+// A compensation calls it after a failed change (see PriorCredential.Restore).
+// The store handed the credential out, so its secret was already on disk
+// before the change. A refusal protects nothing, and it would leave the file
+// in the state that the failed change put it in. That divergence between the
+// file and the database row is what the compensation exists to prevent.
+func (s *secretlessFileStore) restore(cred Credential) error {
+	return s.write(cred)
 }
 
 // holdsSecret reports whether a credential for accountID already keeps secret
