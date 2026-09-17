@@ -8,8 +8,14 @@ import "context"
 // it cancels the operation, and the operation reports the cancellation
 // through its own finished message.
 //
-// A create, an import, and a reconcile stay outside this contract. Those
-// operations write rows, and a cancel in the middle leaves a partial link.
+// An import and a reconcile stay outside this contract. Those operations
+// write rows, and a cancel in the middle leaves a partial link.
+//
+// An Add Account discovery is the one covered operation that writes a row.
+// It creates the account before it discovers, so it also removes the account
+// again when discovery fails. That removal runs on the cleanup context of
+// newDiscoveryCleanupContext, because the cancelled context of the operation
+// cannot take the account lock or open a transaction.
 
 // beginCancellableOp opens the parent context of an operation that esc can
 // stop. The operation derives its own budget from the returned context. The
