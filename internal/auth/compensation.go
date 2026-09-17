@@ -47,7 +47,7 @@ func CapturePriorCredential(store CredentialStore, accountID int64, fingerprint 
 // commit-then-rollback-credential path funnels through it.
 func (p PriorCredential) Restore(store CredentialStore, accountID int64, wroteNew bool, operation string, cause error) error {
 	if p.hasPrevious {
-		if restoreErr := store.Set(p.cred); restoreErr != nil {
+		if restoreErr := restoreCredential(store, p.cred); restoreErr != nil {
 			return fmt.Errorf("%s: %w (restore credentials: %w)", operation, cause, restoreErr)
 		}
 		return fmt.Errorf("%s: %w", operation, cause)
@@ -58,6 +58,34 @@ func (p PriorCredential) Restore(store CredentialStore, accountID int64, wroteNe
 		}
 	}
 	return fmt.Errorf("%s: %w", operation, cause)
+}
+
+// restoreCredential puts back a credential that store gave out earlier.
+//
+// It is Set for every store but the secretless one. That store refuses a new
+// secret, and a restore carries no new secret: the value comes from the store
+// itself, so it was already on disk before the failed change. A refusal would
+// leave the credential file in the state that the failed change put it in,
+// which is the divergence this compensation exists to prevent.
+func restoreCredential(store CredentialStore, cred Credential) error {
+	switch typed := store.(type) {
+	case *secretlessFileStore:
+		return typed.restore(cred)
+	case *migratingCredentialStore:
+		if err := restoreCredential(typed.primary, cred); err != nil {
+			return err
+		}
+		// Mirror migratingCredentialStore.Set: a successful primary write
+		// removes the credential from every cleanup source.
+		for _, legacy := range typed.legacy {
+			if legacy.cleanup {
+				_ = legacy.store.Delete(cred.AccountID)
+			}
+		}
+		return nil
+	default:
+		return store.Set(cred)
+	}
 }
 
 // CommitWithCredentialCompensation commits tx and, on failure, restores the

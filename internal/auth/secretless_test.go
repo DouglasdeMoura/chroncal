@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -252,5 +253,50 @@ func TestSecretlessStoreRefusesASecretOverAPasswordCommand(t *testing.T) {
 	err := secretless.Set(Credential{AccountID: 1, Username: "scott", Password: "hunter2"})
 	if !errors.Is(err, ErrPlaintextRequired) {
 		t.Fatalf("Set a password over a command: err = %v, want ErrPlaintextRequired", err)
+	}
+}
+
+// TestRestoreCredentialPutsBackARefusedSecret pins the compensation contract:
+// a store must accept back what it gave out. A relink that replaces a password
+// with a password command empties the secret from the file. If the commit then
+// fails, the restore of the old password must land, or the credential file and
+// the database row diverge.
+func TestRestoreCredentialPutsBackARefusedSecret(t *testing.T) {
+	dir := t.TempDir()
+	plaintext := &PlaintextFileStore{dir: dir, namespace: "test", warn: io.Discard}
+	store := &secretlessFileStore{inner: plaintext, reason: errors.New("keyring unavailable")}
+
+	opted := Credential{AccountID: 6, Username: "scott", Password: "hunter2"}
+	if err := plaintext.Set(opted); err != nil {
+		t.Fatalf("seed the opted-in credential: %v", err)
+	}
+	prior, err := CapturePriorCredential(store, 6, "")
+	if err != nil {
+		t.Fatalf("capture the prior credential: %v", err)
+	}
+
+	// The relink writes a command-only credential, which carries no secret.
+	if err := store.Set(Credential{AccountID: 6, Username: "scott", PasswordCommand: "pass show caldav"}); err != nil {
+		t.Fatalf("store the command-only credential: %v", err)
+	}
+	// A plain Set can no longer put the password back: the file holds none.
+	if err := store.Set(opted); !errors.Is(err, ErrPlaintextRequired) {
+		t.Fatalf("Set of the prior credential: err = %v, want ErrPlaintextRequired", err)
+	}
+
+	cause := errors.New("commit failed")
+	err = prior.Restore(store, 6, true, "commit remote calendar link", cause)
+	if !errors.Is(err, cause) {
+		t.Fatalf("Restore err = %v, want it to wrap the cause", err)
+	}
+	if errors.Is(err, ErrPlaintextRequired) {
+		t.Fatalf("Restore refused to put back a credential the store gave out: %v", err)
+	}
+	restored, err := plaintext.Get(6, "")
+	if err != nil {
+		t.Fatalf("read the restored credential: %v", err)
+	}
+	if restored.Password != "hunter2" || restored.PasswordCommand != "" {
+		t.Fatalf("restored credential = %+v, want the prior password", restored)
 	}
 }
