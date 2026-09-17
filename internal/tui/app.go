@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"time"
 
@@ -495,6 +496,12 @@ type Model struct {
 	statusToken int
 	syncing     bool
 	syncSpinner spinner.Model
+	// opCancel stops the running sync or account discovery. esc calls it
+	// while the spinner holds the screen. It is nil while no cancellable
+	// operation runs. opCancelled records that the user pressed esc, so the
+	// finish handler reports a cancellation instead of a failure.
+	opCancel    context.CancelFunc
+	opCancelled bool
 	// syncTargets and syncTotals drive a per-calendar SyncAll run. The
 	// footer can then show progress as each calendar finishes. It does
 	// not use one opaque "Syncing all calendars…" line.

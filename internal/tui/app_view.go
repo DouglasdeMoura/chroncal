@@ -181,6 +181,10 @@ func (m Model) View() tea.View {
 			m.syncSpinner.Style = lipgloss.NewStyle().Foreground(m.theme.TextDim)
 			statusText = m.syncSpinner.View() + " " + statusText
 		}
+		// Name the way out while a cancellable operation holds the screen.
+		if m.syncing && m.opCancel != nil {
+			statusText += lipgloss.NewStyle().Foreground(m.theme.TextDim).Render(" · esc to cancel")
+		}
 	}
 	innerWidth := m.width - padding*2
 	var footerLine string

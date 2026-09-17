@@ -167,11 +167,12 @@ func (m Model) finishCalendarMove(msg calendarMoveFinishedMsg) (Model, tea.Cmd) 
 	m.calendarManagerOpen = false
 	m.syncing = true
 	m.syncStatus = "Uploading moved calendar to " + textsafe.Display(msg.account.DisplayName) + "…"
+	m, ctx := m.beginCancellableOp()
 	return m, tea.Batch(
 		m.syncSpinner.Tick,
 		m.loadCalendars(),
 		m.loadEvents(),
-		m.runSyncAccount(msg.account.ID, msg.account.DisplayName),
+		m.runSyncAccount(ctx, msg.account.ID, msg.account.DisplayName),
 	)
 }
 

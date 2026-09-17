@@ -156,6 +156,17 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m = m.clearPending()
 		return m.openQuitConfirm(), nil, true
 	}
+	// esc stops a running sync or account discovery. The spinner gates the
+	// calendar list and the account manager, so without this key the user
+	// waits for the whole budget against a server that never answers. The
+	// key comes before the overlays: a second esc then closes the overlay.
+	// The quit confirm keeps its own esc. A quit prompt on the screen is the
+	// question the user answers first.
+	if msg.String() == "esc" && !inQuitConfirm {
+		if next, cancelled := m.cancelRunningOp(); cancelled {
+			return next, nil, true
+		}
+	}
 	textEntryActive := m.paletteOpen || m.formOpen || m.calendarManagerOpen ||
 		m.oauthFlowOpen || m.accountOAuthConfigOpen || m.accountCredentialsOpen
 	// q opens the quit confirm only from the bare grid. Any open overlay

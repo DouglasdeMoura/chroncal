@@ -123,9 +123,10 @@ func (m Model) handleAccountSettingsManageRequested(msg AccountSettingsManageReq
 	m.pendingAccountManagementID = msg.AccountID
 	m.syncing = true
 	m.syncStatus = "Discovering calendars…"
+	m, ctx := m.beginCancellableOp()
 	return m, tea.Batch(
 		m.syncSpinner.Tick,
-		m.discoverAccountCalendars(msg.AccountID, m.accountManagementGeneration),
+		m.discoverAccountCalendars(ctx, msg.AccountID, m.accountManagementGeneration),
 	)
 }
 
@@ -140,7 +141,8 @@ func (m Model) handleAccountSettingsSyncRequested(msg AccountSettingsSyncRequest
 	}
 	m.syncing = true
 	m.syncStatus = "Syncing " + textsafe.Display(params.DisplayName) + "…"
-	return m, tea.Batch(m.syncSpinner.Tick, m.runSyncAccount(msg.AccountID, params.DisplayName))
+	m, ctx := m.beginCancellableOp()
+	return m, tea.Batch(m.syncSpinner.Tick, m.runSyncAccount(ctx, msg.AccountID, params.DisplayName))
 }
 
 func (m Model) handleAccountSettingsRenameRequested(msg AccountSettingsRenameRequestedMsg) (tea.Model, tea.Cmd) {
@@ -311,11 +313,22 @@ func (m Model) handleCalendarDiscoveryRequested(msg CalendarDiscoveryRequestedMs
 	}
 	m.syncing = true
 	m.syncStatus = "Adding account…"
-	return m, tea.Batch(m.syncSpinner.Tick, m.connectAndDiscoverCalendar(msg, cred))
+	m, ctx := m.beginCancellableOp()
+	return m, tea.Batch(m.syncSpinner.Tick, m.connectAndDiscoverCalendar(ctx, msg, cred))
 }
 
 func (m Model) handleAccountDiscoveryReady(msg accountDiscoveryReadyMsg) (tea.Model, tea.Cmd) {
 	m.syncing = false
+	cancelled := m.opCancelled
+	m = m.endCancellableOp()
+	if cancelled {
+		// esc stopped the discovery. The account manager stays open so the
+		// user can try again or leave.
+		m.calendarManagerOpen = true
+		m.statusToken++
+		m.syncStatus = "Discovery cancelled"
+		return m, m.expireStatusAfter(6*time.Second, m.statusToken)
+	}
 	if msg.err != nil {
 		m.calendarManagerOpen = true
 		m.statusToken++
@@ -533,7 +546,8 @@ func (m Model) handleOauthFlowDone(msg oauthFlowDoneMsg) (tea.Model, tea.Cmd) {
 		if m.oauthPurpose.calendarDiscovery {
 			m.syncing = true
 			m.syncStatus = "Authorized; discovering calendars…"
-			return m, tea.Batch(m.syncSpinner.Tick, m.finishOAuthCalendarDiscovery(msg.result))
+			m, ctx := m.beginCancellableOp()
+			return m, tea.Batch(m.syncSpinner.Tick, m.finishOAuthCalendarDiscovery(ctx, msg.result))
 		}
 		m.oauthPending = true
 		return m, m.finishOAuthReauth(msg.result)

@@ -131,6 +131,17 @@ func (m Model) finishAccountManagementDiscovery(
 		stale = true
 	}
 	m.syncing = false
+	cancelled := m.opCancelled
+	m = m.endCancellableOp()
+	if cancelled && !stale {
+		// esc stopped the discovery. Reopen the account screen the user
+		// came from, with no error to read.
+		m.pendingAccountManagementID = 0
+		m = m.reopenAccountSettings(msg.accountID)
+		m.statusToken++
+		m.syncStatus = "Discovery cancelled"
+		return m, m.expireStatusAfter(6*time.Second, m.statusToken)
+	}
 	if stale {
 		m.pendingAccountManagementID = 0
 		m.syncStatus = ""
@@ -304,9 +315,10 @@ func (m Model) finishOAuthCredentialStore(msg oauthCredentialStoredMsg) (Model, 
 	m = m.reopenAccountSettings(msg.accountID)
 	m.syncing = true
 	m.syncStatus = fmt.Sprintf("Syncing %s…", syncProgressLabel(msg.name))
+	m, ctx := m.beginCancellableOp()
 	return m, tea.Batch(
 		m.syncSpinner.Tick,
-		m.runSyncAccount(msg.accountID, msg.name),
+		m.runSyncAccount(ctx, msg.accountID, msg.name),
 	)
 }
 
@@ -381,9 +393,10 @@ func (m Model) finishAccountCredentialStore(msg accountCredentialStoredMsg) (Mod
 	m = m.reopenAccountSettings(msg.accountID)
 	m.syncing = true
 	m.syncStatus = fmt.Sprintf("Syncing %s…", syncProgressLabel(msg.name))
+	m, ctx := m.beginCancellableOp()
 	return m, tea.Batch(
 		m.syncSpinner.Tick,
-		m.runSyncAccount(msg.accountID, msg.name),
+		m.runSyncAccount(ctx, msg.accountID, msg.name),
 	)
 }
 
@@ -431,9 +444,9 @@ func accountDiscoveryBudget() time.Duration {
 	return caldav.RequestBudget(2)
 }
 
-func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cred auth.Credential) tea.Cmd {
+func (m Model) connectAndDiscoverCalendar(parent context.Context, req CalendarDiscoveryRequestedMsg, cred auth.Credential) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryBudget())
+		ctx, cancel := context.WithTimeout(parent, accountDiscoveryBudget())
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {
@@ -520,7 +533,7 @@ func (m Model) oauthCredentialTarget(purpose oauthFlowPurpose) (int64, string, e
 	return 0, discoveryFingerprint(req), nil
 }
 
-func (m Model) finishOAuthCalendarDiscovery(result *auth.GoogleOAuthResult) tea.Cmd {
+func (m Model) finishOAuthCalendarDiscovery(parent context.Context, result *auth.GoogleOAuthResult) tea.Cmd {
 	req := m.oauthPurpose.calendarDiscoveryMsg
 	cred := auth.Credential{
 		Username:          req.Username,
@@ -530,7 +543,7 @@ func (m Model) finishOAuthCalendarDiscovery(result *auth.GoogleOAuthResult) tea.
 		OAuthClientID:     req.OAuthClientID,
 		OAuthClientSecret: req.OAuthClientSecret,
 	}
-	return m.connectAndDiscoverCalendar(req, cred)
+	return m.connectAndDiscoverCalendar(parent, req, cred)
 }
 
 func (m Model) importAndSyncAccountCalendars(paths []string) tea.Cmd {
@@ -748,14 +761,14 @@ func (m Model) removeAccount(accountID int64, name string) tea.Cmd {
 	}
 }
 
-func (m Model) discoverAccountCalendars(accountID int64, generation uint64) tea.Cmd {
+func (m Model) discoverAccountCalendars(parent context.Context, accountID int64, generation uint64) tea.Cmd {
 	result := func(discovery account.Discovery, err error) accountManagementDiscoveryReadyMsg {
 		return accountManagementDiscoveryReadyMsg{
 			discovery: discovery, accountID: accountID, generation: generation, err: err,
 		}
 	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), accountDiscoveryBudget())
+		ctx, cancel := context.WithTimeout(parent, accountDiscoveryBudget())
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err != nil {
