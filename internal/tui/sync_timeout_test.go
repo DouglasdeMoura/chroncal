@@ -38,8 +38,8 @@ func TestTUIBudgetsOutliveOneRequest(t *testing.T) {
 				caldavPushTimeout, syncCalendarBudget())
 		}
 		// The interactive probe stays short, and it never exceeds one request.
-		if got := calendarProbeBudget(); got > request {
-			t.Errorf("calendarProbeBudget() = %s at a request ceiling of %s, want no more", got, request)
+		if got := caldav.InteractiveProbeBudget(); got > request {
+			t.Errorf("caldav.InteractiveProbeBudget() = %s at a request ceiling of %s, want no more", got, request)
 		}
 	}
 }
