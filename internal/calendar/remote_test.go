@@ -823,3 +823,91 @@ func TestDeleteWithRemoteCleanup_PromotesDefault(t *testing.T) {
 		t.Fatalf("default = %+v, want id=%d IsDefault=true", def, work.ID)
 	}
 }
+
+// TestConnectTargetNamesTheAccountConnectWrites pins the pre-flight seam that
+// the CLI uses before it prompts for a secret. Connect keeps the hidden
+// account of a calendar only when that account links to this calendar alone.
+// Every other link writes a brand-new account, which holds no credential.
+func TestConnectTargetNamesTheAccountConnectWrites(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	link := RemoteLink{
+		RemoteURL: "https://example.com/dav/calendars/work/",
+		Username:  "user",
+		AuthType:  "basic",
+	}
+	serverURL, err := DeriveServerURL(link.RemoteURL, link.AllowInsecure)
+	if err != nil {
+		t.Fatalf("DeriveServerURL: %v", err)
+	}
+	wantFingerprint := auth.AccountFingerprint(serverURL, "basic", "user")
+
+	// A calendar with no account: Connect creates one.
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("get calendar: %v", err)
+	}
+	id, fingerprint, err := svc.ConnectTarget(ctx, cal, link)
+	if err != nil {
+		t.Fatalf("ConnectTarget on an unlinked calendar: %v", err)
+	}
+	if id != 0 {
+		t.Fatalf("account ID = %d, want 0", id)
+	}
+	if fingerprint != wantFingerprint {
+		t.Fatalf("fingerprint = %q, want %q", fingerprint, wantFingerprint)
+	}
+
+	// A single-calendar hidden account: Connect keeps it.
+	hidden, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "__calendar_1", ServerUrl: "https://old.example.com",
+		AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: 1, AccountID: &hidden.ID,
+		RemoteUrl: storage.StringToNullable("https://old.example.com/dav/calendars/work/"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	cal, err = svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("get the linked calendar: %v", err)
+	}
+	id, _, err = svc.ConnectTarget(ctx, cal, link)
+	if err != nil {
+		t.Fatalf("ConnectTarget on a hidden account: %v", err)
+	}
+	if id != hidden.ID {
+		t.Fatalf("account ID = %d, want %d", id, hidden.ID)
+	}
+
+	// A named account: Connect does not keep it, so the target is a new one.
+	named, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "Work", ServerUrl: "https://old.example.com",
+		AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: 1, AccountID: &named.ID,
+		RemoteUrl: storage.StringToNullable("https://old.example.com/dav/calendars/work/"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	cal, err = svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("get the relinked calendar: %v", err)
+	}
+	id, _, err = svc.ConnectTarget(ctx, cal, link)
+	if err != nil {
+		t.Fatalf("ConnectTarget on a named account: %v", err)
+	}
+	if id != 0 {
+		t.Fatalf("account ID = %d, want 0 for a named account", id)
+	}
+}
