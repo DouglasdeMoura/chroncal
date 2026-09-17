@@ -441,11 +441,22 @@ func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cre
 			return accountDiscoveryReadyMsg{err: fmt.Errorf("list accounts: %w", err)}
 		}
 		if existing, ok := existingCalendarDiscoveryAccount(configured, req); ok {
+			if err := ensureDiscoveryCanStoreSecret(store, cred, existing.ID); err != nil {
+				return accountDiscoveryReadyMsg{err: err}
+			}
 			discovery, err := m.app.Accounts.DiscoverWithCredential(ctx, existing.ID, cred, store)
 			if err != nil {
 				return accountDiscoveryReadyMsg{err: err}
 			}
 			return accountDiscoveryReadyMsg{discovery: discovery}
+		}
+		// A new account has no credential on disk, so the ID 0 stands for
+		// "nothing holds a secret yet". The refusal arrives before the
+		// discovery requests and before the account row, so a host that
+		// cannot keep the secret reports the remedy instead of a store
+		// error from deep inside Create (issue #777).
+		if err := ensureDiscoveryCanStoreSecret(store, cred, 0); err != nil {
+			return accountDiscoveryReadyMsg{err: err}
 		}
 		created, err := m.app.Accounts.Create(ctx, account.CreateParams{
 			Name:          calendarDiscoveryAccountName(configured, req.Username),
@@ -466,6 +477,16 @@ func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cre
 		}
 		return accountDiscoveryReadyMsg{discovery: discovery, createdAccount: true}
 	}
+}
+
+// ensureDiscoveryCanStoreSecret refuses an add-account credential that the
+// store cannot keep. A password command carries no secret, so it passes on a
+// host with no keyring and no opt-in. That is the path issue #777 asks for.
+func ensureDiscoveryCanStoreSecret(store auth.CredentialStore, cred auth.Credential, accountID int64) error {
+	if !cred.HasStoredSecret() {
+		return nil
+	}
+	return auth.EnsureCanStoreSecret(store, accountID)
 }
 
 func (m Model) finishOAuthCalendarDiscovery(result *auth.GoogleOAuthResult) tea.Cmd {
