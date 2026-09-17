@@ -38,13 +38,26 @@ func (s *Service) DiscoverWithCredential(ctx context.Context, accountID int64, r
 		return Discovery{}, fmt.Errorf("get account: %w", err)
 	}
 	fingerprint := configured.CredentialFingerprint()
-	previous, err := store.Get(accountID, fingerprint)
+	// Capture the credential through the compensation type. The rollback then
+	// puts it back instead of writing it again. A host with no keyring refuses
+	// a plain Set here: the failed attempt already replaced the file, so the
+	// check reads a file with no secret, and the rollback destroys the secret
+	// that it protects (issue #777).
+	//
+	// A missing entry does not stop the reconnect. A credential goes missing
+	// after a keyring reset, and after a copy of the database to another host,
+	// and the reconnect is how the user repairs it. The rollback then removes
+	// what this call wrote, because the account held nothing.
+	//
+	// An entry of another connection still stops it. The store holds a file
+	// with a secret in that case, and no rollback can put its value back.
+	prior, err := auth.CaptureReplacedCredential(store, accountID, fingerprint)
 	if err != nil {
 		return Discovery{}, fmt.Errorf("get previous account credentials: %w", err)
 	}
 	seedCredentialIdentity(&replacement, configured)
 	if replacement.RefreshToken == "" {
-		replacement.RefreshToken = previous.RefreshToken
+		replacement.RefreshToken = prior.Credential().RefreshToken
 	}
 	if err := store.Set(replacement); err != nil {
 		return Discovery{}, fmt.Errorf("store replacement account credentials: %w", err)
@@ -53,10 +66,13 @@ func (s *Service) DiscoverWithCredential(ctx context.Context, accountID int64, r
 	if err == nil {
 		return discovery, nil
 	}
-	if restoreErr := store.Set(previous); restoreErr != nil {
-		return Discovery{}, fmt.Errorf("%w (restore previous account credentials: %w)", err, restoreErr)
-	}
-	return Discovery{}, err
+	// "reconnect account" names the operation that the rollback undoes. The
+	// credential write succeeded, so a name for that step would report the one
+	// part that worked.
+	return Discovery{}, prior.RestoreReplacement(store, auth.Replacement{
+		AccountID:   accountID,
+		Fingerprint: fingerprint,
+	}, "reconnect account", err)
 }
 
 // discoverLocked performs discovery and reconciliation while the caller holds

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -35,7 +37,7 @@ func (s *memoryCredentialStore) Get(accountID int64, _ string) (auth.Credential,
 	}
 	cred, ok := s.credentials[accountID]
 	if !ok {
-		return auth.Credential{}, fmt.Errorf("credential %d not found", accountID)
+		return auth.Credential{}, fmt.Errorf("credential %d: %w", accountID, auth.ErrCredentialNotFound)
 	}
 	return cred, nil
 }
@@ -939,5 +941,185 @@ func TestSuggestedNameUsesProviderOrAccountDomain(t *testing.T) {
 		if got := SuggestedName(tc.username); got != tc.want {
 			t.Errorf("SuggestedName(%q) = %q, want %q", tc.username, got, tc.want)
 		}
+	}
+}
+
+// TestServiceDiscoverWithCredentialRestoresASecretOnASecretlessStore covers
+// issue #777. A reconnect that swaps a password for a password command empties
+// the secret from the credential file. A failed discovery must put the
+// password back. A plain Set is refused on a host with no keyring, because the
+// file the check reads no longer holds a secret, so the rollback would destroy
+// the credential that it exists to protect.
+func TestServiceDiscoverWithCredentialRestoresASecretOnASecretlessStore(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the session bus probe only applies on Linux")
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
+	auth.ResetKeyringProbe()
+	t.Cleanup(auth.ResetKeyringProbe)
+
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	svc := NewService(db, q)
+
+	// An earlier run with the opt-in wrote the password.
+	opted, err := auth.NewCredentialStoreWithWarnings("test", nil, false, true, io.Discard)
+	if err != nil {
+		t.Fatalf("open the plaintext store: %v", err)
+	}
+	configured, err := svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "old"}, opted)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// This run has no opt-in.
+	store, err := auth.NewCredentialStoreWithWarnings("test", nil, false, false, io.Discard)
+	if err != nil {
+		t.Fatalf("open the secretless store: %v", err)
+	}
+	discoveryErr := errors.New("authentication failed")
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return nil, discoveryErr
+	}
+
+	replacement := auth.Credential{Username: "alice", PasswordCommand: "pass show caldav/work"}
+	if _, err := svc.DiscoverWithCredential(ctx, configured.ID, replacement, store); !errors.Is(err, discoveryErr) {
+		t.Fatalf("DiscoverWithCredential error = %v, want %v", err, discoveryErr)
+	}
+	restored, err := store.Get(configured.ID, configured.CredentialFingerprint())
+	if err != nil {
+		t.Fatalf("read the restored credential: %v", err)
+	}
+	if restored.Password != "old" {
+		t.Fatalf("restored password = %q, want the previous credential", restored.Password)
+	}
+	if restored.PasswordCommand != "" {
+		t.Fatalf("restored PasswordCommand = %q, want it cleared", restored.PasswordCommand)
+	}
+}
+
+// TestServiceDiscoverWithCredentialRepairsAMissingEntry covers the reconnect
+// that repairs a lost credential. A keyring reset, or a copy of the database
+// to another host, leaves the account row with no credential. The TUI routes
+// the re-added connection to DiscoverWithCredential, so a hard requirement for
+// the previous entry would leave the user with no way back in.
+func TestServiceDiscoverWithCredentialRepairsAMissingEntry(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	configured, err := svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "old"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// The credential is gone, but the account row remains.
+	if err := store.Delete(configured.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return nil, nil
+	}
+	if _, err := svc.DiscoverWithCredential(
+		ctx, configured.ID, auth.Credential{Username: "alice", Password: "new"}, store,
+	); err != nil {
+		t.Fatalf("DiscoverWithCredential on a missing entry: %v", err)
+	}
+	if got := store.credentials[configured.ID].Password; got != "new" {
+		t.Fatalf("stored password = %q, want the repaired credential", got)
+	}
+}
+
+// TestServiceDiscoverWithCredentialRemovesAFailedRepair is the rollback half.
+// The account held no credential before the reconnect, so a failed discovery
+// must leave it holding none, not the value that failed.
+func TestServiceDiscoverWithCredentialRemovesAFailedRepair(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	configured, err := svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "old"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.Delete(configured.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	discoveryErr := errors.New("authentication failed")
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return nil, discoveryErr
+	}
+	if _, err := svc.DiscoverWithCredential(
+		ctx, configured.ID, auth.Credential{Username: "alice", Password: "wrong"}, store,
+	); !errors.Is(err, discoveryErr) {
+		t.Fatalf("DiscoverWithCredential error = %v, want %v", err, discoveryErr)
+	}
+	if _, present := store.credentials[configured.ID]; present {
+		t.Fatalf("credential = %+v, want none after the failed repair",
+			store.credentials[configured.ID])
+	}
+}
+
+// TestServiceDiscoverWithCredentialKeepsAnotherConnectionsCredential stops the
+// reconnect when the store holds a credential of another connection. The store
+// reports the mismatch in place of the value, so no rollback can put it back.
+// A rollback could only delete the file, which removes a secret the user
+// consented to. On a host with no keyring that delete also takes away the
+// permission to write the next secret, so the user could not try again.
+func TestServiceDiscoverWithCredentialKeepsAnotherConnectionsCredential(t *testing.T) {
+	db, q, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	configured, err := svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "old"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	setCallsBefore := len(store.credentials)
+	store.getErr = auth.ErrCredentialIdentityMismatch
+
+	if _, err := svc.DiscoverWithCredential(
+		ctx, configured.ID, auth.Credential{Username: "bob", Password: "new"}, store,
+	); !errors.Is(err, auth.ErrCredentialIdentityMismatch) {
+		t.Fatalf("DiscoverWithCredential error = %v, want an identity mismatch", err)
+	}
+	if store.deleteCalls != 0 {
+		t.Fatalf("delete calls = %d, want 0", store.deleteCalls)
+	}
+	if len(store.credentials) != setCallsBefore {
+		t.Fatalf("credential count = %d, want %d", len(store.credentials), setCallsBefore)
+	}
+	if got := store.credentials[configured.ID].Password; got != "old" {
+		t.Fatalf("stored password = %q, want it untouched", got)
 	}
 }
