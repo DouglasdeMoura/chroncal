@@ -22,6 +22,15 @@ func (m Model) handleSyncAllRequested(msg SyncAllRequestedMsg) (tea.Model, tea.C
 }
 
 func (m Model) handleSyncAllPlanned(msg syncAllPlannedMsg) (tea.Model, tea.Cmd) {
+	// The plan can finish before the cancel arrives. The cancelled context
+	// then stops nothing, and beginCancellableOp below would clear the
+	// cancelled flag and start the first calendar. esc must stop the chain
+	// at its first step too, the same way handleSyncCalendarFinished stops
+	// it between two calendars.
+	if m.opCancelled {
+		next, cmd := m.finishSync(syncFinishedMsg{})
+		return next, cmd
+	}
 	if len(msg.targets) == 0 {
 		m.syncing = false
 		m = m.endCancellableOp()
