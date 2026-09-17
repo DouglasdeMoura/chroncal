@@ -261,7 +261,7 @@ func (m CalendarTransferDialogModel) InspectorView(w, h int) string {
 // Display-only.
 func (m CalendarTransferDialogModel) HelpBindings() []key.Binding {
 	return []key.Binding{
-		key.NewBinding(key.WithKeys("tab", "up", "down"), key.WithHelp("tab/↑↓", "next field")),
+		key.NewBinding(key.WithKeys("tab", "up", "down"), key.WithHelp("tab/↑↓", "navigate fields")),
 		footerBinding("enter", "confirm"),
 		footerBinding("esc", "back"),
 	}
@@ -283,7 +283,7 @@ func (m CalendarTransferDialogModel) Update(msg tea.Msg) (CalendarTransferDialog
 
 func (m CalendarTransferDialogModel) View() string {
 	helpKeys := []key.Binding{
-		key.NewBinding(key.WithKeys("tab", "up", "down"), key.WithHelp("tab/↑↓", "next field")),
+		key.NewBinding(key.WithKeys("tab", "up", "down"), key.WithHelp("tab/↑↓", "navigate fields")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}
