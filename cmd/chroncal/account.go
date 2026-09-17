@@ -72,7 +72,7 @@ exposes, import every usable collection, and complete their initial sync.`,
 			cred, err := buildCalendarCredential(ctx, calendarRemoteFlags{
 				Username: username, AuthType: authType,
 				PasswordCommand: passwordCommand, OAuthClientID: oauthClientID,
-			}, store)
+			}, store, 0)
 			if err != nil {
 				return err
 			}
@@ -299,12 +299,12 @@ backend failures leave the previous secret unchanged.`,
 						configured.DisplayName,
 					)
 				}
-				if err = auth.EnsureCanStoreSecret(store); err != nil {
+				if err = auth.EnsureCanStoreSecret(store, configured.ID); err != nil {
 					return err
 				}
 				secret.Password, err = readBearerToken()
 			case "basic", "":
-				secret, err = readBasicSecret(passwordCommand, store)
+				secret, err = readBasicSecret(passwordCommand, store, configured.ID)
 			default:
 				return errInvalidInputf("unsupported auth type %q", configured.AuthType)
 			}
@@ -388,8 +388,10 @@ kept.`,
 				return fmt.Errorf("credential store: %w", err)
 			}
 			// Reauth always stores OAuth secrets, so refuse a secretless store
-			// before the prompt and the browser flow (issue #777).
-			if err := auth.EnsureCanStoreSecret(store); err != nil {
+			// before the prompt and the browser flow (issue #777). The account
+			// ID keeps the check level with the write: an account whose file
+			// already holds the tokens can rewrite them.
+			if err := auth.EnsureCanStoreSecret(store, configured.ID); err != nil {
 				return err
 			}
 			// Reauth needs the stored credential: it carries the username and
