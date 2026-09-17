@@ -103,6 +103,10 @@ type Replacement struct {
 	AccountID int64
 	// Fingerprint is the connection identity of that credential.
 	Fingerprint string
+	// RefreshToken is the refresh token that the replacement credential
+	// carried. The rollback compares it with the captured one to decide
+	// whether the failed operation ran on the captured OAuth identity.
+	RefreshToken string
 }
 
 // RestoreReplacement rolls back an operation that replaced the credential of
@@ -116,6 +120,13 @@ type Replacement struct {
 // the rollback removes what the operation wrote. Pair this method with
 // CaptureReplacedCredential, which reports every other read failure instead of
 // capturing nothing.
+//
+// The rollback keeps the OAuth token triple that the store holds now, when the
+// operation rotated the captured refresh token. An operation that refreshes an
+// expired access token persists a rotated refresh token, and the provider can
+// already have invalidated the captured one. A rollback to the captured triple
+// would end the ability of the account to refresh. The kept values come from
+// the store, so this is not a way to write a secret of the caller.
 func (p PriorCredential) RestoreReplacement(
 	store CredentialStore, replaced Replacement, operation string, cause error,
 ) error {
@@ -125,7 +136,36 @@ func (p PriorCredential) RestoreReplacement(
 		}
 		return fmt.Errorf("%s: %w", operation, cause)
 	}
-	return restoreWritten(store, p.cred, operation, cause)
+	return restoreWritten(store, withRefreshedTokens(store, p.cred, replaced), operation, cause)
+}
+
+// withRefreshedTokens returns cred with the OAuth token triple that store
+// holds now, when the operation rotated the refresh token of cred.
+//
+// The replacement must have carried the refresh token of cred. The operation
+// then ran on the OAuth identity of cred, so a store value that differs from
+// it is a rotation of it. A replacement that carried its own refresh token
+// belongs to another identity, and its tokens belong to the value that failed,
+// so this function keeps none of them.
+//
+// The caller passes the refresh token that it wrote. Replacement.RefreshToken
+// is a value, not a claim about one, so a caller that passes what it wrote
+// gets the right answer without stating an intent.
+//
+// A read failure returns cred unchanged: the rollback matters more than the
+// newer token.
+func withRefreshedTokens(store CredentialStore, cred Credential, replaced Replacement) Credential {
+	if replaced.RefreshToken == "" || replaced.RefreshToken != cred.RefreshToken {
+		return cred
+	}
+	current, err := store.Get(replaced.AccountID, replaced.Fingerprint)
+	if err != nil || current.RefreshToken == "" || current.RefreshToken == cred.RefreshToken {
+		return cred
+	}
+	cred.AccessToken = current.AccessToken
+	cred.RefreshToken = current.RefreshToken
+	cred.TokenExpiry = current.TokenExpiry
+	return cred
 }
 
 // restoreWritten writes cred back. Every rollback shares it, so every one of
