@@ -202,3 +202,92 @@ func TestDiscoveryCleanupRemovesTheAccountAfterACancel(t *testing.T) {
 		t.Fatal("the credential of the incomplete account stayed in the store")
 	}
 }
+
+// The plan of a Sync All run can finish before the cancel arrives. The
+// cancelled context then stops nothing, so the first calendar must not
+// start. Without the guard, beginCancellableOp clears the cancelled flag
+// and the run continues on the screen the user just escaped from.
+func TestCancelStopsTheSyncAllPlanBeforeTheFirstCalendar(t *testing.T) {
+	m := Model{syncing: true, syncSpinner: spinner.New()}
+	m, _ = m.beginCancellableOp()
+	m, _ = m.cancelRunningOp()
+
+	next, _ := m.handleSyncAllPlanned(syncAllPlannedMsg{
+		targets: []syncTarget{{ID: 1, Name: "One"}, {ID: 2, Name: "Two"}},
+	})
+	model, ok := next.(Model)
+	if !ok {
+		t.Fatalf("handleSyncAllPlanned returned %T, want Model", next)
+	}
+	if model.syncStatus != "Sync cancelled" {
+		t.Errorf("syncStatus = %q, want %q", model.syncStatus, "Sync cancelled")
+	}
+	if model.syncing {
+		t.Error("syncing = true after a cancelled plan, want false")
+	}
+	if model.opCancel != nil || model.opCancelled {
+		t.Error("the cancelled plan armed a new cancellable operation")
+	}
+}
+
+// A discovery can finish before the cancel arrives. The account row and the
+// credential are then on disk while the user reads a cancelled discovery, so
+// esc must take them away again.
+func TestCancelDiscardsAnAccountThatDiscoveryCreated(t *testing.T) {
+	secretlessEnv(t)
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+
+	store, err := m.openCredentialStore()
+	if err != nil {
+		t.Fatalf("open the credential store: %v", err)
+	}
+	// A password command carries no secret, so the account writes on a host
+	// with no keyring.
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name:      "Nextcloud",
+		ServerURL: "https://cloud.example.com/remote.php/dav/",
+		Username:  "scott",
+		AuthType:  "basic",
+	}, auth.Credential{Username: "scott", PasswordCommand: "pass show caldav/nextcloud"}, store)
+	if err != nil {
+		t.Fatalf("create the account: %v", err)
+	}
+
+	m.syncing = true
+	m, _ = m.beginCancellableOp()
+	m, _ = m.cancelRunningOp()
+
+	next, cmd := m.handleAccountDiscoveryReady(accountDiscoveryReadyMsg{
+		discovery:      account.Discovery{Account: account.Account{ID: created.ID}},
+		createdAccount: true,
+	})
+	model, ok := next.(Model)
+	if !ok {
+		t.Fatalf("handleAccountDiscoveryReady returned %T, want Model", next)
+	}
+	if model.pendingDiscoveryAccountID != 0 {
+		t.Errorf("pendingDiscoveryAccountID = %d, want 0", model.pendingDiscoveryAccountID)
+	}
+	if cmd == nil {
+		t.Fatal("the cancelled discovery returned no command")
+	}
+	discarded, ok := cmd().(calendarDiscoveryDiscardedMsg)
+	if !ok {
+		t.Fatal("the cancelled discovery kept the account that it created")
+	}
+	if discarded.err != nil {
+		t.Fatalf("discard the created account: %v", discarded.err)
+	}
+
+	accounts, err := a.Accounts.List(ctx)
+	if err != nil {
+		t.Fatalf("list accounts: %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("accounts after the cancel = %d, want 0", len(accounts))
+	}
+	if _, err := store.Get(created.ID, created.CredentialFingerprint()); err == nil {
+		t.Fatal("the credential of the discarded account stayed in the store")
+	}
+}

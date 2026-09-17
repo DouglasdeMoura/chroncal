@@ -327,6 +327,14 @@ func (m Model) handleAccountDiscoveryReady(msg accountDiscoveryReadyMsg) (tea.Mo
 		m.calendarManagerOpen = true
 		m.statusToken++
 		m.syncStatus = "Discovery cancelled"
+		// The discovery can finish before the cancel arrives. The account
+		// row and the credential are then on disk, and the user reads a
+		// cancelled discovery, so esc must take them away again.
+		// discardDiscoveryAccount removes both, and its handler owns the
+		// status line and reports a failed removal.
+		if msg.err == nil && msg.createdAccount && msg.discovery.Account.ID != 0 {
+			return m, m.discardDiscoveryAccount(msg.discovery.Account.ID)
+		}
 		return m, m.expireStatusAfter(6*time.Second, m.statusToken)
 	}
 	if msg.err != nil {
