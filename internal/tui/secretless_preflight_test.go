@@ -11,16 +11,27 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 )
 
-// secretlessTUIModel builds a Model whose credential store opens secretless:
-// the session bus is dead and plaintext is not allowed. Linux-only, like the
-// CLI secretless tests: the keyring probe only applies there.
-func secretlessTUIModel(t *testing.T) Model {
+// secretlessEnv points the credential store at a temporary config directory
+// and a dead session bus. The keyring probe answers once for the whole test
+// binary, so the reset runs before and after: an earlier test must not leak a
+// cached answer into this one, and this one must not leak into a later test.
+// Linux-only, like the CLI secretless tests: the probe only applies there.
+func secretlessEnv(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("the session bus probe only applies on Linux")
 	}
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
+	auth.ResetKeyringProbe()
+	t.Cleanup(auth.ResetKeyringProbe)
+}
+
+// secretlessTUIModel builds a Model whose credential store opens secretless:
+// the session bus is dead and plaintext is not allowed.
+func secretlessTUIModel(t *testing.T) Model {
+	t.Helper()
+	secretlessEnv(t)
 	return NewModel(&app.App{CredentialNamespace: "test"}, "")
 }
 
@@ -97,11 +108,7 @@ func TestUpdateAccountCredentialsRefusesSecretOnSecretlessStore(t *testing.T) {
 // it with no keyring and no opt-in. The other tests in this file cover the
 // refusals only, so this one guards the path that must work.
 func TestUpdateAccountCredentialsStoresAPasswordCommandOnSecretlessStore(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("the session bus probe only applies on Linux")
-	}
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
+	secretlessEnv(t)
 	m, a := newDBBackedModel(t)
 
 	ctx := context.Background()
