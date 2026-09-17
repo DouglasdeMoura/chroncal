@@ -6,6 +6,9 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/account"
+	"github.com/douglasdemoura/chroncal/internal/auth"
 )
 
 // esc stops a running sync. The spinner gates the calendar list and the
@@ -114,5 +117,88 @@ func TestCancelStopsTheSyncAllChain(t *testing.T) {
 	}
 	if model.syncTargets != nil {
 		t.Errorf("syncTargets = %+v, want nil", model.syncTargets)
+	}
+}
+
+// memoryCredentialStore keeps credentials in memory. The cleanup test needs
+// a store that Accounts.Delete can read and write, and it must not reach the
+// OS keyring: a real keyring call opens a session bus connection that the
+// secretless tests cannot take back, and it would write to the keyring of
+// the user who runs the tests.
+type memoryCredentialStore struct {
+	creds map[int64]auth.Credential
+}
+
+func newMemoryCredentialStore() *memoryCredentialStore {
+	return &memoryCredentialStore{creds: map[int64]auth.Credential{}}
+}
+
+func (s *memoryCredentialStore) Get(accountID int64, _ string) (auth.Credential, error) {
+	cred, ok := s.creds[accountID]
+	if !ok {
+		return auth.Credential{}, auth.ErrCredentialNotFound
+	}
+	return cred, nil
+}
+
+func (s *memoryCredentialStore) Set(cred auth.Credential) error {
+	s.creds[cred.AccountID] = cred
+	return nil
+}
+
+func (s *memoryCredentialStore) Delete(accountID int64) error {
+	delete(s.creds, accountID)
+	return nil
+}
+
+// TestDiscoveryCleanupRemovesTheAccountAfterACancel pins the reason
+// newDiscoveryCleanupContext exists. connectAndDiscoverCalendar writes the
+// account row before it discovers, so a failed discovery removes the row
+// again. esc cancels the discovery context, and Accounts.Delete uses the
+// context for the account lock, for the queries, and for the transaction.
+// The removal on the cancelled context therefore fails and leaves the
+// incomplete account behind. The cleanup context must remove it.
+func TestDiscoveryCleanupRemovesTheAccountAfterACancel(t *testing.T) {
+	_, a := newDBBackedModel(t)
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+
+	created, err := a.Accounts.Create(ctx, account.CreateParams{
+		Name:      "Nextcloud",
+		ServerURL: "https://cloud.example.com/remote.php/dav/",
+		Username:  "scott",
+		AuthType:  "basic",
+	}, auth.Credential{Username: "scott", Password: "hunter2"}, store)
+	if err != nil {
+		t.Fatalf("create the account: %v", err)
+	}
+
+	discoveryCtx, cancelDiscovery := context.WithCancel(ctx)
+	cancelDiscovery() // the user presses esc while discovery waits
+
+	// The cancelled discovery context cannot remove the row. This is the
+	// finding that the cleanup context answers.
+	if err := a.Accounts.Delete(discoveryCtx, created.ID, store); err == nil {
+		t.Fatal("Delete on the cancelled discovery context removed the account")
+	}
+
+	cleanupCtx, endCleanup := newDiscoveryCleanupContext(discoveryCtx)
+	defer endCleanup()
+	if err := cleanupCtx.Err(); err != nil {
+		t.Fatalf("cleanup context err = %v, want nil", err)
+	}
+	if err := a.Accounts.Delete(cleanupCtx, created.ID, store); err != nil {
+		t.Fatalf("remove the incomplete account: %v", err)
+	}
+
+	accounts, err := a.Accounts.List(ctx)
+	if err != nil {
+		t.Fatalf("list accounts: %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("accounts after the cleanup = %d, want 0", len(accounts))
+	}
+	if _, err := store.Get(created.ID, created.CredentialFingerprint()); err == nil {
+		t.Fatal("the credential of the incomplete account stayed in the store")
 	}
 }

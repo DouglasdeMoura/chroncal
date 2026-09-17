@@ -444,6 +444,24 @@ func accountDiscoveryBudget() time.Duration {
 	return caldav.RequestBudget(2)
 }
 
+// accountRemovalBudget bounds one Accounts.Delete call. The removal waits
+// for the account lifecycle lock, which another process can hold for a whole
+// sync pass, and it reads and writes the credential store. A keyring that
+// answers slowly adds to that time, so the bound is generous.
+const accountRemovalBudget = 2 * time.Minute
+
+// newDiscoveryCleanupContext returns the context that removes an account
+// which discovery left incomplete. esc cancels the discovery context, and
+// the discovery budget can also expire. Accounts.Delete uses the context for
+// the account lock, for the queries, and for the transaction, so either one
+// makes the removal fail and leaves the account row and the credential on
+// disk. The cleanup context drops the cancellation of the parent and takes
+// the same bound as an explicit account removal, so it runs to the end and
+// still cannot hold the screen.
+func newDiscoveryCleanupContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), accountRemovalBudget)
+}
+
 func (m Model) connectAndDiscoverCalendar(parent context.Context, req CalendarDiscoveryRequestedMsg, cred auth.Credential) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, accountDiscoveryBudget())
@@ -486,7 +504,9 @@ func (m Model) connectAndDiscoverCalendar(parent context.Context, req CalendarDi
 		}
 		discovery, err := m.app.Accounts.Discover(ctx, created.ID, store)
 		if err != nil {
-			if cleanupErr := m.app.Accounts.Delete(ctx, created.ID, store); cleanupErr != nil {
+			cleanupCtx, cancelCleanup := newDiscoveryCleanupContext(ctx)
+			defer cancelCleanup()
+			if cleanupErr := m.app.Accounts.Delete(cleanupCtx, created.ID, store); cleanupErr != nil {
 				err = fmt.Errorf("%w (remove incomplete connection: %w)", err, cleanupErr)
 			}
 			return accountDiscoveryReadyMsg{err: err}
@@ -739,7 +759,7 @@ func (m Model) showAccountCalendarRemovalConfirmation(selection *accountCalendar
 
 func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), accountRemovalBudget)
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err == nil {
@@ -751,7 +771,7 @@ func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 
 func (m Model) removeAccount(accountID int64, name string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), accountRemovalBudget)
 		defer cancel()
 		store, err := m.openCredentialStore()
 		if err == nil {
