@@ -607,7 +607,7 @@ func (m AlarmListEditorModel) View() string {
 func (m AlarmListEditorModel) helpKeys() []key.Binding {
 	if m.mode == alarmModeEdit {
 		return []key.Binding{
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+			key.NewBinding(key.WithKeys("tab", "up", "down"), key.WithHelp("tab/↑↓", "next field")),
 			key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		}

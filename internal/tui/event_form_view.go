@@ -224,7 +224,7 @@ func (m EventFormModel) View() string {
 		return ""
 	}
 	helpKeys := []key.Binding{
-		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+		key.NewBinding(key.WithKeys("tab", "up", "down"), key.WithHelp("tab/↑↓", "next field")),
 		m.keys.Save,
 		m.keys.Close,
 	}

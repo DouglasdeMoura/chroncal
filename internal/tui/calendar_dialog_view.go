@@ -130,7 +130,7 @@ func (m CalendarDialogModel) HelpBindings() []key.Binding {
 		return m.discoveryPicker.HelpBindings()
 	}
 	return []key.Binding{
-		footerBinding("tab", "next field"),
+		key.NewBinding(key.WithKeys("tab", "up", "down"), key.WithHelp("tab/↑↓", "next field")),
 		footerBinding("enter", "confirm"),
 		footerBinding("esc", "back"),
 	}
@@ -175,7 +175,7 @@ func (m CalendarDialogModel) View() string {
 		return m.discoveryPicker.View()
 	}
 	helpKeys := []key.Binding{
-		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+		key.NewBinding(key.WithKeys("tab", "up", "down"), key.WithHelp("tab/↑↓", "next field")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}

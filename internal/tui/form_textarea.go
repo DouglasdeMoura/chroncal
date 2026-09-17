@@ -37,6 +37,12 @@ func (f *TextAreaField) SetPlaceholder(p string) { f.input.Placeholder = p }
 func (f *TextAreaField) SetCharLimit(n int)      { f.input.CharLimit = n }
 func (f *TextAreaField) SetHeight(h int)         { f.input.SetHeight(h) }
 
+// UsesVerticalKeys keeps the up and down keys on the text area. The area
+// holds more than one line, so those keys move the cursor by line. The form
+// therefore does not move the focus while the area holds it. Tab and
+// Shift+Tab still leave the field.
+func (f *TextAreaField) UsesVerticalKeys() bool { return true }
+
 func (f *TextAreaField) Update(msg tea.Msg) tea.Cmd {
 	if kp, ok := msg.(tea.KeyPressMsg); ok {
 		k := kp.Key()

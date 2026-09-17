@@ -45,14 +45,18 @@ var formKeys = struct {
 	Tab      key.Binding
 	ShiftTab key.Binding
 	Enter    key.Binding
-	ArrowFwd key.Binding
-	ArrowBwd key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Left     key.Binding
+	Right    key.Binding
 }{
 	Tab:      key.NewBinding(key.WithKeys("tab")),
 	ShiftTab: key.NewBinding(key.WithKeys("shift+tab")),
 	Enter:    key.NewBinding(key.WithKeys("enter")),
-	ArrowFwd: key.NewBinding(key.WithKeys("right", "down")),
-	ArrowBwd: key.NewBinding(key.WithKeys("left", "up")),
+	Up:       key.NewBinding(key.WithKeys("up")),
+	Down:     key.NewBinding(key.WithKeys("down")),
+	Left:     key.NewBinding(key.WithKeys("left")),
+	Right:    key.NewBinding(key.WithKeys("right")),
 }
 
 // valuer is satisfied by fields that expose a text value (TextField,
@@ -74,6 +78,13 @@ type validator interface {
 type subFocuser interface {
 	SubFocusNext() (consumed bool, cmd tea.Cmd)
 	SubFocusPrev() (consumed bool, cmd tea.Cmd)
+}
+
+// verticalKeyUser is optionally implemented by a field that uses the up and
+// down keys itself, such as a text area with more than one line. Form checks
+// this before it moves the focus on up and down. The field keeps the key.
+type verticalKeyUser interface {
+	UsesVerticalKeys() bool
 }
 
 // LabelLayout controls where and how the label is rendered relative to
@@ -212,15 +223,26 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 				}
 			}
 			return f.focusNext()
-		case key.Matches(msg, formKeys.ArrowBwd):
-			// Arrow keys act as alternate Tab/Shift-Tab, but only when the
-			// focus is on a button slot. Fields (text inputs, selects,
-			// date pickers) still consume their own arrows for cursor or
-			// option movement.
+		case key.Matches(msg, formKeys.Up):
+			// Up and Down act as an alternate Shift+Tab and Tab. The rows of
+			// a dialog stack vertically, so a vertical key is the fast way
+			// between them (issue #627). A field that uses the vertical keys
+			// itself keeps them: a text area moves its cursor by line.
+			if !f.focusedUsesVerticalKeys() {
+				return f.focusPrev()
+			}
+		case key.Matches(msg, formKeys.Down):
+			if !f.focusedUsesVerticalKeys() {
+				return f.focusNext()
+			}
+		case key.Matches(msg, formKeys.Left):
+			// Left and Right move the focus only from a button slot. A field
+			// (a text input, a select, a date picker) keeps them for the
+			// cursor or for the option.
 			if f.focused >= len(f.items) {
 				return f.focusPrev()
 			}
-		case key.Matches(msg, formKeys.ArrowFwd):
+		case key.Matches(msg, formKeys.Right):
 			if f.focused >= len(f.items) {
 				return f.focusNext()
 			}
@@ -690,6 +712,16 @@ func (f Form) FocusCancel() Form {
 	f.blurCurrent()
 	f.focused = f.cancelIndex()
 	return f
+}
+
+// focusedUsesVerticalKeys reports whether the focused field claims the up and
+// down keys. A button slot never claims them, so the focus always moves.
+func (f Form) focusedUsesVerticalKeys() bool {
+	if f.focused < 0 || f.focused >= len(f.items) {
+		return false
+	}
+	user, ok := f.items[f.focused].Field.(verticalKeyUser)
+	return ok && user.UsesVerticalKeys()
 }
 
 func (f Form) focusNext() (Form, tea.Cmd) {
