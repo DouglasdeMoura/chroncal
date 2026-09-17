@@ -43,17 +43,17 @@ func TestEnsureCanStoreSecret(t *testing.T) {
 	plaintext := &PlaintextFileStore{dir: dir, namespace: "test"}
 	secretless := &secretlessFileStore{inner: plaintext, reason: errors.New("keyring unavailable")}
 
-	if err := EnsureCanStoreSecret(plaintext, 1); err != nil {
+	if err := EnsureCanStoreSecret(plaintext, 1, "fp"); err != nil {
 		t.Fatalf("plaintext store: %v", err)
 	}
-	if err := EnsureCanStoreSecret(&KeyringStore{namespace: "test"}, 1); err != nil {
+	if err := EnsureCanStoreSecret(&KeyringStore{namespace: "test"}, 1, "fp"); err != nil {
 		t.Fatalf("keyring store: %v", err)
 	}
-	if err := EnsureCanStoreSecret(secretless, 1); !errors.Is(err, ErrPlaintextRequired) {
+	if err := EnsureCanStoreSecret(secretless, 1, "fp"); !errors.Is(err, ErrPlaintextRequired) {
 		t.Fatalf("secretless store: err = %v, want ErrPlaintextRequired", err)
 	}
 	wrapped := &migratingCredentialStore{primary: secretless}
-	if err := EnsureCanStoreSecret(wrapped, 1); !errors.Is(err, ErrPlaintextRequired) {
+	if err := EnsureCanStoreSecret(wrapped, 1, "fp"); !errors.Is(err, ErrPlaintextRequired) {
 		t.Fatalf("wrapped secretless store: err = %v, want ErrPlaintextRequired", err)
 	}
 }
@@ -72,14 +72,14 @@ func TestEnsureCanStoreSecretMatchesTheWrite(t *testing.T) {
 		t.Fatalf("seed the opted-in credential: %v", err)
 	}
 
-	if err := EnsureCanStoreSecret(secretless, 4); err != nil {
+	if err := EnsureCanStoreSecret(secretless, 4, ""); err != nil {
 		t.Fatalf("account with a secret on disk: err = %v, want nil", err)
 	}
 	if err := secretless.Set(opted); err != nil {
 		t.Fatalf("Set for the same account: %v", err)
 	}
 	// Every other account still stops before the work.
-	if err := EnsureCanStoreSecret(secretless, 5); !errors.Is(err, ErrPlaintextRequired) {
+	if err := EnsureCanStoreSecret(secretless, 5, ""); !errors.Is(err, ErrPlaintextRequired) {
 		t.Fatalf("account without a secret: err = %v, want ErrPlaintextRequired", err)
 	}
 }
@@ -152,7 +152,7 @@ func TestSecretlessStoreRefusesABeyondRangeLegacySecret(t *testing.T) {
 		legacy: []legacyCredentialStore{{store: legacy, maxAccountID: 3, limited: true}},
 		reason: errors.New("keyring unavailable"),
 	}
-	if store.holdsSecret(9) {
+	if store.holdsSecret(9, "") {
 		t.Fatal("a limited legacy source answered beyond its maxAccountID")
 	}
 }
@@ -253,6 +253,45 @@ func TestSecretlessStoreRefusesASecretOverAPasswordCommand(t *testing.T) {
 	err := secretless.Set(Credential{AccountID: 1, Username: "scott", Password: "hunter2"})
 	if !errors.Is(err, ErrPlaintextRequired) {
 		t.Fatalf("Set a password over a command: err = %v, want ErrPlaintextRequired", err)
+	}
+}
+
+// TestSecretlessStoreIgnoresAnUnrelatedLegacySecret keeps the permission rule
+// level with the migration rule. A stale credential file from an older install
+// can carry the ID of an account that exists now for a different connection.
+// migratingCredentialStore.Get refuses to migrate it, so it must not grant a
+// plaintext write for that account either.
+func TestSecretlessStoreIgnoresAnUnrelatedLegacySecret(t *testing.T) {
+	dir := t.TempDir()
+	legacy := &PlaintextFileStore{dir: dir, warn: io.Discard}
+	stale := Credential{
+		AccountID: 1, AccountFingerprint: "old-connection",
+		Username: "someone@example.com", Password: "hunter2",
+	}
+	if err := legacy.Set(stale); err != nil {
+		t.Fatalf("seed the stale credential: %v", err)
+	}
+
+	sources := []legacyCredentialStore{{store: legacy, cleanup: true}}
+	store := &secretlessFileStore{
+		inner:  &PlaintextFileStore{dir: dir, namespace: "new", warn: io.Discard},
+		legacy: sources,
+		reason: errors.New("keyring unavailable"),
+	}
+
+	fresh := Credential{
+		AccountID: 1, AccountFingerprint: "new-connection",
+		Username: "me@example.com", Password: "s3cret",
+	}
+	if err := store.Set(fresh); !errors.Is(err, ErrPlaintextRequired) {
+		t.Fatalf("Set for an unrelated account: err = %v, want ErrPlaintextRequired", err)
+	}
+	if err := EnsureCanStoreSecret(store, 1, "new-connection"); !errors.Is(err, ErrPlaintextRequired) {
+		t.Fatalf("EnsureCanStoreSecret: err = %v, want ErrPlaintextRequired", err)
+	}
+	// The account the stale file really belongs to still migrates.
+	if err := EnsureCanStoreSecret(store, 1, "old-connection"); err != nil {
+		t.Fatalf("EnsureCanStoreSecret for the matching identity: %v", err)
 	}
 }
 

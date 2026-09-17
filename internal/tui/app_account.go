@@ -193,14 +193,17 @@ func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
 	// would succeed and StoreCredential would reject the fresh tokens
 	// after, wasting the sign-in (issue #777). The failure lands the
 	// modal in its Failed state with the remedy; nothing opens a browser.
-	// A discovery flow has no account yet, so its purpose carries the ID 0.
-	accountID := m.oauthPurpose.accountID
+	purpose := m.oauthPurpose
 	return m, func() tea.Msg {
 		credStore, err := m.openCredentialStore()
 		if err != nil {
 			return oauthFlowStartedMsg{err: err}
 		}
-		if err := auth.EnsureCanStoreSecret(credStore, accountID); err != nil {
+		accountID, fingerprint, err := m.oauthCredentialTarget(purpose)
+		if err != nil {
+			return oauthFlowStartedMsg{err: err}
+		}
+		if err := auth.EnsureCanStoreSecret(credStore, accountID, fingerprint); err != nil {
 			return oauthFlowStartedMsg{err: err}
 		}
 		return cmd()
@@ -223,7 +226,7 @@ func (m Model) prepareAccountReauth(
 		// ready message, which reports it without opening anything. The
 		// account ID keeps the check level with the write: an account whose
 		// file already holds the tokens can rewrite them.
-		if err := auth.EnsureCanStoreSecret(credStore, configured.ID); err != nil {
+		if err := auth.EnsureCanStoreSecret(credStore, configured.ID, configured.CredentialFingerprint()); err != nil {
 			return accountReauthReadyMsg{accountID: configured.ID, name: configured.DisplayName, err: err}
 		}
 		cred, err := m.app.Accounts.LoadCredential(ctx, configured.ID, credStore)
@@ -330,12 +333,12 @@ func (m Model) updateAccountCredentials(configured account.Account, secret, secr
 		// Refuse a secret-bearing rotation before the load and the write.
 		// A password-command-only rotation carries no secret, so it skips
 		// the check and stays available with no keyring (issue #777).
+		fingerprint := configured.CredentialFingerprint()
 		if secret != "" {
-			if err := auth.EnsureCanStoreSecret(credStore, configured.ID); err != nil {
+			if err := auth.EnsureCanStoreSecret(credStore, configured.ID, fingerprint); err != nil {
 				return storedMsg(err)
 			}
 		}
-		fingerprint := configured.CredentialFingerprint()
 		cred, err := credentialForRotation(credStore.Get(configured.ID, fingerprint))
 		if err != nil {
 			return storedMsg(err)
@@ -408,7 +411,7 @@ func calendarDiscoveryAccountName(accounts []account.Account, username string) s
 	}
 }
 func existingCalendarDiscoveryAccount(accounts []account.Account, req CalendarDiscoveryRequestedMsg) (account.Account, bool) {
-	fingerprint := auth.AccountFingerprint(req.ServerURL, req.AuthType, req.Username)
+	fingerprint := discoveryFingerprint(req)
 	for _, configured := range accounts {
 		if configured.CredentialFingerprint() == fingerprint {
 			return configured, true
@@ -441,7 +444,7 @@ func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cre
 			return accountDiscoveryReadyMsg{err: fmt.Errorf("list accounts: %w", err)}
 		}
 		if existing, ok := existingCalendarDiscoveryAccount(configured, req); ok {
-			if err := ensureDiscoveryCanStoreSecret(store, cred, existing.ID); err != nil {
+			if err := ensureDiscoveryCanStoreSecret(store, cred, existing.ID, existing.CredentialFingerprint()); err != nil {
 				return accountDiscoveryReadyMsg{err: err}
 			}
 			discovery, err := m.app.Accounts.DiscoverWithCredential(ctx, existing.ID, cred, store)
@@ -455,7 +458,7 @@ func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cre
 		// discovery requests and before the account row, so a host that
 		// cannot keep the secret reports the remedy instead of a store
 		// error from deep inside Create (issue #777).
-		if err := ensureDiscoveryCanStoreSecret(store, cred, 0); err != nil {
+		if err := ensureDiscoveryCanStoreSecret(store, cred, 0, discoveryFingerprint(req)); err != nil {
 			return accountDiscoveryReadyMsg{err: err}
 		}
 		created, err := m.app.Accounts.Create(ctx, account.CreateParams{
@@ -482,11 +485,39 @@ func (m Model) connectAndDiscoverCalendar(req CalendarDiscoveryRequestedMsg, cre
 // ensureDiscoveryCanStoreSecret refuses an add-account credential that the
 // store cannot keep. A password command carries no secret, so it passes on a
 // host with no keyring and no opt-in. That is the path issue #777 asks for.
-func ensureDiscoveryCanStoreSecret(store auth.CredentialStore, cred auth.Credential, accountID int64) error {
+func ensureDiscoveryCanStoreSecret(
+	store auth.CredentialStore, cred auth.Credential, accountID int64, fingerprint string,
+) error {
 	if !cred.HasStoredSecret() {
 		return nil
 	}
-	return auth.EnsureCanStoreSecret(store, accountID)
+	return auth.EnsureCanStoreSecret(store, accountID, fingerprint)
+}
+
+// discoveryFingerprint returns the credential identity of one Add Account
+// request. existingCalendarDiscoveryAccount matches an account on the same
+// value, so the two always agree about the credential that the request writes.
+func discoveryFingerprint(req CalendarDiscoveryRequestedMsg) string {
+	return auth.AccountFingerprint(req.ServerURL, req.AuthType, req.Username)
+}
+
+// oauthCredentialTarget names the credential that a finished OAuth flow
+// writes. A reauth writes the account that it opened from. An Add Account flow
+// writes the account whose connection identity matches the request, or a new
+// account when none matches. A new account holds no credential, so its ID is 0.
+func (m Model) oauthCredentialTarget(purpose oauthFlowPurpose) (int64, string, error) {
+	if !purpose.calendarDiscovery {
+		return purpose.accountID, purpose.cred.AccountFingerprint, nil
+	}
+	req := purpose.calendarDiscoveryMsg
+	configured, err := m.app.Accounts.List(context.Background())
+	if err != nil {
+		return 0, "", fmt.Errorf("list accounts: %w", err)
+	}
+	if existing, ok := existingCalendarDiscoveryAccount(configured, req); ok {
+		return existing.ID, existing.CredentialFingerprint(), nil
+	}
+	return 0, discoveryFingerprint(req), nil
 }
 
 func (m Model) finishOAuthCalendarDiscovery(result *auth.GoogleOAuthResult) tea.Cmd {
