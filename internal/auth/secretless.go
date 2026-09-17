@@ -42,6 +42,10 @@ func (c Credential) HasStoredSecret() bool {
 // token.
 type secretlessFileStore struct {
 	inner *PlaintextFileStore
+	// legacy lists the read-only migration sources that the enclosing
+	// migratingCredentialStore reads. A secret in one of them is already on
+	// disk, so the copy into the primary file must not be refused.
+	legacy []legacyCredentialStore
 	// reason records why the OS keyring is unavailable. The refusal message
 	// repeats it, so the user learns what to install.
 	reason error
@@ -64,8 +68,8 @@ func (s *secretlessFileStore) Get(accountID int64, accountFingerprint string) (C
 //
 // This is the write-side safety net, not the place that reports the remedy to
 // a person. Every interactive path calls EnsureCanStoreSecret first, which
-// refuses on the store alone. A password prompt and an OAuth sign-in therefore
-// still stop up front, even for an account with a secret already on disk.
+// applies the same rule for the same account. A password prompt and an OAuth
+// sign-in therefore stop up front on the account that the store refuses.
 func (s *secretlessFileStore) Set(cred Credential) error {
 	if cred.HasStoredSecret() && !s.holdsSecret(cred.AccountID) {
 		return s.refusal()
@@ -81,11 +85,35 @@ func (s *secretlessFileStore) Set(cred Credential) error {
 	return s.inner.Set(cred)
 }
 
-// holdsSecret reports whether the credential file for accountID already keeps
-// secret material. The empty fingerprint skips the identity check on purpose:
-// the question is about the file, not about the account that owns it now.
+// holdsSecret reports whether a credential for accountID already keeps secret
+// material. It reads the primary namespace file first, then each legacy
+// source.
+//
+// The legacy sources matter for a user who opted in before the namespace
+// change, or who copied the database. The credential then lives under an older
+// namespace, and the first read copies it into the primary file. A refusal of
+// that copy leaves the secret on disk and breaks every later OAuth token
+// refresh, so the copy must pass.
 func (s *secretlessFileStore) holdsSecret(accountID int64) bool {
-	stored, err := s.inner.Get(accountID, "")
+	if storedSecret(s.inner, accountID) {
+		return true
+	}
+	for _, source := range s.legacy {
+		if source.limited && accountID > source.maxAccountID {
+			continue
+		}
+		if storedSecret(source.store, accountID) {
+			return true
+		}
+	}
+	return false
+}
+
+// storedSecret reports whether store keeps secret material for accountID. The
+// empty fingerprint skips the identity check on purpose: the question is about
+// the file, not about the account that owns it now.
+func storedSecret(store CredentialStore, accountID int64) bool {
+	stored, err := store.Get(accountID, "")
 	if err != nil {
 		return false
 	}
@@ -109,19 +137,26 @@ func (s *secretlessFileStore) refusal() error {
 	return fmt.Errorf("%w: %w. %s", ErrPlaintextRequired, s.reason, plaintextRemedy)
 }
 
-// EnsureCanStoreSecret reports whether store accepts a credential that
-// carries a secret. Call it before an interactive password prompt or an
-// OAuth browser flow. The user then learns the remedy before the work, not
-// after it.
+// EnsureCanStoreSecret reports whether store accepts a secret for accountID.
+// Call it before an interactive password prompt or an OAuth browser flow. The
+// user then learns the remedy before the work, not after it.
 //
 // It returns nil for every store that keeps secrets: the OS keyring, and the
 // plaintext file store that an explicit opt-in enables.
-func EnsureCanStoreSecret(store CredentialStore) error {
+//
+// accountID keeps this check and the write in agreement. The secretless store
+// permits a rewrite of a credential that already holds a secret, so the same
+// account passes here. Pass 0 for an account that does not exist yet: no
+// credential holds a secret for it, and the store refuses.
+func EnsureCanStoreSecret(store CredentialStore, accountID int64) error {
 	switch typed := store.(type) {
 	case *secretlessFileStore:
+		if typed.holdsSecret(accountID) {
+			return nil
+		}
 		return typed.refusal()
 	case *migratingCredentialStore:
-		return EnsureCanStoreSecret(typed.primary)
+		return EnsureCanStoreSecret(typed.primary, accountID)
 	default:
 		return nil
 	}

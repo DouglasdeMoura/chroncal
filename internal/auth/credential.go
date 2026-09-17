@@ -139,10 +139,6 @@ func NewCredentialStoreWithWarnings(namespace string, previousNamespaces []Previ
 		// password command then works with no keyring and no flag
 		// (issue #777). A write that carries a secret fails with the
 		// remedy in its message.
-		primary = plaintext
-		if !allowPlaintext {
-			primary = &secretlessFileStore{inner: plaintext, reason: keyringUnavailableReason()}
-		}
 		for _, previous := range previousNamespaces {
 			if previous.Namespace != namespace && validCredentialNamespace(previous.Namespace) {
 				legacy = append(legacy, legacyCredentialStore{
@@ -156,6 +152,17 @@ func NewCredentialStoreWithWarnings(namespace string, previousNamespaces []Previ
 			legacy = append(legacy, legacyCredentialStore{
 				store: &PlaintextFileStore{dir: dir, warn: warn}, cleanup: true,
 			})
+		}
+		// The legacy sources come first: the secretless store reads them to
+		// answer whether a secret for one account is already on disk. A
+		// credential that only a legacy source holds must still migrate.
+		primary = plaintext
+		if !allowPlaintext {
+			primary = &secretlessFileStore{
+				inner:  plaintext,
+				legacy: legacy,
+				reason: keyringUnavailableReason(),
+			}
 		}
 	}
 	if len(legacy) == 0 {

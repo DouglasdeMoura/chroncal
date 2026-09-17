@@ -193,12 +193,14 @@ func (m Model) startOAuthFlow(clientID, clientSecret string) (Model, tea.Cmd) {
 	// would succeed and StoreCredential would reject the fresh tokens
 	// after, wasting the sign-in (issue #777). The failure lands the
 	// modal in its Failed state with the remedy; nothing opens a browser.
+	// A discovery flow has no account yet, so its purpose carries the ID 0.
+	accountID := m.oauthPurpose.accountID
 	return m, func() tea.Msg {
 		credStore, err := m.openCredentialStore()
 		if err != nil {
 			return oauthFlowStartedMsg{err: err}
 		}
-		if err := auth.EnsureCanStoreSecret(credStore); err != nil {
+		if err := auth.EnsureCanStoreSecret(credStore, accountID); err != nil {
 			return oauthFlowStartedMsg{err: err}
 		}
 		return cmd()
@@ -218,8 +220,10 @@ func (m Model) prepareAccountReauth(
 		// Refuse a secretless store before the browser opens. Reauth always
 		// stores OAuth secrets, so the flow would succeed and the write
 		// would fail after (issue #777). The error returns through the
-		// ready message, which reports it without opening anything.
-		if err := auth.EnsureCanStoreSecret(credStore); err != nil {
+		// ready message, which reports it without opening anything. The
+		// account ID keeps the check level with the write: an account whose
+		// file already holds the tokens can rewrite them.
+		if err := auth.EnsureCanStoreSecret(credStore, configured.ID); err != nil {
 			return accountReauthReadyMsg{accountID: configured.ID, name: configured.DisplayName, err: err}
 		}
 		cred, err := m.app.Accounts.LoadCredential(ctx, configured.ID, credStore)
@@ -327,7 +331,7 @@ func (m Model) updateAccountCredentials(configured account.Account, secret, secr
 		// A password-command-only rotation carries no secret, so it skips
 		// the check and stays available with no keyring (issue #777).
 		if secret != "" {
-			if err := auth.EnsureCanStoreSecret(credStore); err != nil {
+			if err := auth.EnsureCanStoreSecret(credStore, configured.ID); err != nil {
 				return storedMsg(err)
 			}
 		}
