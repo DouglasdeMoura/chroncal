@@ -98,6 +98,27 @@ func RequestBudget(n int) time.Duration {
 	return time.Duration(n) * HTTPTimeout()
 }
 
+// interactiveProbeCeiling caps an interactive probe. One minute is long
+// enough for a slow server and short enough that a person keeps waiting.
+const interactiveProbeCeiling = time.Minute
+
+// InteractiveProbeBudget returns the deadline for one CalDAV request that a
+// person waits for in front of a dialog or a shell prompt. The "Test
+// connection" probe and the metadata PROPFIND of a calendar link both use
+// it.
+//
+// Such a probe sends one request, so the budget stays far below a sync
+// budget. It still tracks the configured request timeout (sync.http_timeout).
+// A fixed short budget made the probe fail against a slow server while the
+// later sync succeeded, which is confusing at the moment of setup. The
+// budget is therefore the smaller of one request timeout and the ceiling.
+func InteractiveProbeBudget() time.Duration {
+	if d := HTTPTimeout(); d < interactiveProbeCeiling {
+		return d
+	}
+	return interactiveProbeCeiling
+}
+
 var errResponseTooLarge = errors.New("caldav response exceeds configured limits")
 
 // checkRedirect governs redirects for defaultHTTPClient. It rejects any

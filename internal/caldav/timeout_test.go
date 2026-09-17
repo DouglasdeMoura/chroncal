@@ -52,3 +52,28 @@ func TestSetHTTPTimeoutReachesABuiltClient(t *testing.T) {
 		t.Errorf("shared client timeout = %s, want 2m", got)
 	}
 }
+
+// An interactive probe sends one request, so its budget never exceeds one
+// request timeout. It also tracks a timeout that is shorter than the
+// ceiling, so a configured short timeout still bounds the probe.
+func TestInteractiveProbeBudget(t *testing.T) {
+	previous := HTTPTimeout()
+	t.Cleanup(func() { defaultHTTPClient.Timeout = previous })
+
+	for _, request := range []time.Duration{10 * time.Second, time.Minute, 5 * time.Minute} {
+		SetHTTPTimeout(request)
+		got := InteractiveProbeBudget()
+		if got > request {
+			t.Errorf("InteractiveProbeBudget() = %s at a request timeout of %s, want no more", got, request)
+		}
+		if got > interactiveProbeCeiling {
+			t.Errorf("InteractiveProbeBudget() = %s, want no more than %s", got, interactiveProbeCeiling)
+		}
+	}
+
+	// A short timeout binds before the ceiling does.
+	SetHTTPTimeout(10 * time.Second)
+	if got := InteractiveProbeBudget(); got != 10*time.Second {
+		t.Errorf("InteractiveProbeBudget() = %s, want 10s", got)
+	}
+}
