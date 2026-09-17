@@ -158,3 +158,57 @@ func TestUpdateAccountCredentialsStoresAPasswordCommandOnSecretlessStore(t *test
 		t.Fatalf("password rotation err = %v, want ErrPlaintextRequired", storedSecret.err)
 	}
 }
+
+// TestConnectAndDiscoverCalendarRefusesSecretlessStore covers the Add Account
+// path of issue #777. The reporter used it. A submitted password must stop
+// with the remedy before discovery and before the account row, not with a
+// store error from deep inside Create.
+func TestConnectAndDiscoverCalendarRefusesSecretlessStore(t *testing.T) {
+	secretlessEnv(t)
+	m, a := newDBBackedModel(t)
+
+	req := CalendarDiscoveryRequestedMsg{
+		ServerURL: "https://cloud.example.com/remote.php/dav/",
+		Username:  "scott",
+		AuthType:  "basic",
+		Secret:    "hunter2",
+	}
+	cred := auth.Credential{Username: req.Username, Password: req.Secret}
+	msg := m.connectAndDiscoverCalendar(req, cred)()
+	ready, ok := msg.(accountDiscoveryReadyMsg)
+	if !ok {
+		t.Fatalf("connectAndDiscoverCalendar cmd = %T, want accountDiscoveryReadyMsg", msg)
+	}
+	if !errors.Is(ready.err, auth.ErrPlaintextRequired) {
+		t.Fatalf("connectAndDiscoverCalendar err = %v, want ErrPlaintextRequired", ready.err)
+	}
+	if ready.createdAccount {
+		t.Fatal("the refused connection created an account")
+	}
+	accounts, err := a.Accounts.List(context.Background())
+	if err != nil {
+		t.Fatalf("list accounts: %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("accounts after the refusal = %d, want 0", len(accounts))
+	}
+}
+
+// TestEnsureDiscoveryCanStoreSecretPassesAPasswordCommand keeps the Add
+// Account path open for a password command. The file holds the command, not
+// the password, so no keyring and no opt-in are needed.
+func TestEnsureDiscoveryCanStoreSecretPassesAPasswordCommand(t *testing.T) {
+	secretlessEnv(t)
+	store, err := auth.NewCredentialStore("test", nil, false, false)
+	if err != nil {
+		t.Fatalf("open the secretless store: %v", err)
+	}
+	cred := auth.Credential{Username: "scott", PasswordCommand: "pass show caldav/nextcloud"}
+	if err := ensureDiscoveryCanStoreSecret(store, cred, 0); err != nil {
+		t.Fatalf("password command refused: %v", err)
+	}
+	withSecret := auth.Credential{Username: "scott", Password: "hunter2"}
+	if err := ensureDiscoveryCanStoreSecret(store, withSecret, 0); !errors.Is(err, auth.ErrPlaintextRequired) {
+		t.Fatalf("password err = %v, want ErrPlaintextRequired", err)
+	}
+}
