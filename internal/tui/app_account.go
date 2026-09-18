@@ -761,7 +761,10 @@ func (m Model) showAccountCalendarRemovalConfirmation(selection *accountCalendar
 	)
 }
 
-func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
+// discardDiscoveryAccount removes an account that a discovery flow left
+// behind. cancelled is the status line that the flow shows when the removal
+// works. handleCalendarDiscoveryDiscarded adds a failed removal to it.
+func (m Model) discardDiscoveryAccount(accountID int64, cancelled string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), accountRemovalBudget)
 		defer cancel()
@@ -769,7 +772,7 @@ func (m Model) discardDiscoveryAccount(accountID int64) tea.Cmd {
 		if err == nil {
 			err = m.app.Accounts.Delete(ctx, accountID, store)
 		}
-		return calendarDiscoveryDiscardedMsg{err: err}
+		return calendarDiscoveryDiscardedMsg{err: err, cancelled: cancelled}
 	}
 }
 
