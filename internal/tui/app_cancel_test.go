@@ -291,3 +291,34 @@ func TestCancelDiscardsAnAccountThatDiscoveryCreated(t *testing.T) {
 		t.Fatal("the credential of the discarded account stayed in the store")
 	}
 }
+
+// A cancel with no created account keeps its own status line. Only the
+// discard path hands the status to handleCalendarDiscoveryDiscarded, which
+// alone knows whether the removal worked.
+func TestCancelledDiscoveryWithNoAccountKeepsItsStatus(t *testing.T) {
+	m := Model{syncing: true, syncSpinner: spinner.New()}
+	m, _ = m.beginCancellableOp()
+	m, _ = m.cancelRunningOp()
+
+	next, cmd := m.handleAccountDiscoveryReady(accountDiscoveryReadyMsg{err: context.Canceled})
+	model, ok := next.(Model)
+	if !ok {
+		t.Fatalf("handleAccountDiscoveryReady returned %T, want Model", next)
+	}
+	if model.syncStatus != "Discovery cancelled" {
+		t.Errorf("syncStatus = %q, want %q", model.syncStatus, "Discovery cancelled")
+	}
+	if !model.calendarManagerOpen {
+		t.Error("the account manager closed on a cancelled discovery")
+	}
+	if cmd == nil {
+		t.Fatal("handleAccountDiscoveryReady returned no command")
+	}
+	// No account exists, so nothing asks for a removal.
+	if batchEmits(cmd, func(msg tea.Msg) bool {
+		_, ok := msg.(calendarDiscoveryDiscardedMsg)
+		return ok
+	}) {
+		t.Error("a cancel with no created account still asked for a removal")
+	}
+}
