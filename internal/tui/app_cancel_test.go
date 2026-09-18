@@ -230,65 +230,89 @@ func TestCancelStopsTheSyncAllPlanBeforeTheFirstCalendar(t *testing.T) {
 	}
 }
 
-// A discovery can finish before the cancel arrives. The account row and the
-// credential are then on disk while the user reads a cancelled discovery, so
-// esc must take them away again.
-func TestCancelDiscardsAnAccountThatDiscoveryCreated(t *testing.T) {
-	secretlessEnv(t)
-	m, a := newDBBackedModel(t)
-	ctx := context.Background()
+// A cancelled Add Account discovery must leave no account behind. Two
+// outcomes leave one on disk: the discovery finished before the cancel and
+// created the account, and the removal of a created account failed. A cancel
+// drops the error text of the operation, so a silent leftover is the one
+// outcome the handler must not produce.
+func TestCancelDiscardsAnAccountThatDiscoveryLeftBehind(t *testing.T) {
+	cases := []struct {
+		name string
+		// ready builds the message for the account that the test created.
+		ready func(accountID int64) accountDiscoveryReadyMsg
+	}{
+		{
+			"the discovery finished before the cancel",
+			func(id int64) accountDiscoveryReadyMsg {
+				return accountDiscoveryReadyMsg{
+					discovery:      account.Discovery{Account: account.Account{ID: id}},
+					createdAccount: true,
+				}
+			},
+		},
+		{
+			"the removal of the created account failed",
+			func(id int64) accountDiscoveryReadyMsg {
+				return accountDiscoveryReadyMsg{err: context.Canceled, orphanAccountID: id}
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			secretlessEnv(t)
+			m, a := newDBBackedModel(t)
+			ctx := context.Background()
 
-	store, err := m.openCredentialStore()
-	if err != nil {
-		t.Fatalf("open the credential store: %v", err)
-	}
-	// A password command carries no secret, so the account writes on a host
-	// with no keyring.
-	created, err := a.Accounts.Create(ctx, account.CreateParams{
-		Name:      "Nextcloud",
-		ServerURL: "https://cloud.example.com/remote.php/dav/",
-		Username:  "scott",
-		AuthType:  "basic",
-	}, auth.Credential{Username: "scott", PasswordCommand: "pass show caldav/nextcloud"}, store)
-	if err != nil {
-		t.Fatalf("create the account: %v", err)
-	}
+			store, err := m.openCredentialStore()
+			if err != nil {
+				t.Fatalf("open the credential store: %v", err)
+			}
+			// A password command carries no secret, so the account writes
+			// on a host with no keyring.
+			created, err := a.Accounts.Create(ctx, account.CreateParams{
+				Name:      "Nextcloud",
+				ServerURL: "https://cloud.example.com/remote.php/dav/",
+				Username:  "scott",
+				AuthType:  "basic",
+			}, auth.Credential{Username: "scott", PasswordCommand: "pass show caldav/nextcloud"}, store)
+			if err != nil {
+				t.Fatalf("create the account: %v", err)
+			}
 
-	m.syncing = true
-	m, _ = m.beginCancellableOp()
-	m, _ = m.cancelRunningOp()
+			m.syncing = true
+			m, _ = m.beginCancellableOp()
+			m, _ = m.cancelRunningOp()
 
-	next, cmd := m.handleAccountDiscoveryReady(accountDiscoveryReadyMsg{
-		discovery:      account.Discovery{Account: account.Account{ID: created.ID}},
-		createdAccount: true,
-	})
-	model, ok := next.(Model)
-	if !ok {
-		t.Fatalf("handleAccountDiscoveryReady returned %T, want Model", next)
-	}
-	if model.pendingDiscoveryAccountID != 0 {
-		t.Errorf("pendingDiscoveryAccountID = %d, want 0", model.pendingDiscoveryAccountID)
-	}
-	if cmd == nil {
-		t.Fatal("the cancelled discovery returned no command")
-	}
-	discarded, ok := cmd().(calendarDiscoveryDiscardedMsg)
-	if !ok {
-		t.Fatal("the cancelled discovery kept the account that it created")
-	}
-	if discarded.err != nil {
-		t.Fatalf("discard the created account: %v", discarded.err)
-	}
+			next, cmd := m.handleAccountDiscoveryReady(c.ready(created.ID))
+			model, ok := next.(Model)
+			if !ok {
+				t.Fatalf("handleAccountDiscoveryReady returned %T, want Model", next)
+			}
+			if model.pendingDiscoveryAccountID != 0 {
+				t.Errorf("pendingDiscoveryAccountID = %d, want 0", model.pendingDiscoveryAccountID)
+			}
+			if cmd == nil {
+				t.Fatal("the cancelled discovery returned no command")
+			}
+			discarded, ok := cmd().(calendarDiscoveryDiscardedMsg)
+			if !ok {
+				t.Fatal("the cancelled discovery kept the account it left behind")
+			}
+			if discarded.err != nil {
+				t.Fatalf("discard the account: %v", discarded.err)
+			}
 
-	accounts, err := a.Accounts.List(ctx)
-	if err != nil {
-		t.Fatalf("list accounts: %v", err)
-	}
-	if len(accounts) != 0 {
-		t.Fatalf("accounts after the cancel = %d, want 0", len(accounts))
-	}
-	if _, err := store.Get(created.ID, created.CredentialFingerprint()); err == nil {
-		t.Fatal("the credential of the discarded account stayed in the store")
+			accounts, err := a.Accounts.List(ctx)
+			if err != nil {
+				t.Fatalf("list accounts: %v", err)
+			}
+			if len(accounts) != 0 {
+				t.Fatalf("accounts after the cancel = %d, want 0", len(accounts))
+			}
+			if _, err := store.Get(created.ID, created.CredentialFingerprint()); err == nil {
+				t.Fatal("the credential of the discarded account stayed in the store")
+			}
+		})
 	}
 }
 
@@ -320,5 +344,34 @@ func TestCancelledDiscoveryWithNoAccountKeepsItsStatus(t *testing.T) {
 		return ok
 	}) {
 		t.Error("a cancel with no created account still asked for a removal")
+	}
+}
+
+// cancelledDiscoveryLeftover names the account that a cancelled discovery
+// left behind. Each field of the message means a different outcome, so the
+// one place that reads them is worth pinning.
+func TestCancelledDiscoveryLeftover(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  accountDiscoveryReadyMsg
+		want int64
+	}{
+		{"nothing created", accountDiscoveryReadyMsg{err: context.Canceled}, 0},
+		{"cleanup failed", accountDiscoveryReadyMsg{err: context.Canceled, orphanAccountID: 42}, 42},
+		{
+			"discovery finished first",
+			accountDiscoveryReadyMsg{createdAccount: true, discovery: account.Discovery{Account: account.Account{ID: 7}}},
+			7,
+		},
+		{
+			"an existing account keeps its row",
+			accountDiscoveryReadyMsg{discovery: account.Discovery{Account: account.Account{ID: 7}}},
+			0,
+		},
+	}
+	for _, c := range cases {
+		if got := cancelledDiscoveryLeftover(c.msg); got != c.want {
+			t.Errorf("%s: cancelledDiscoveryLeftover = %d, want %d", c.name, got, c.want)
+		}
 	}
 }

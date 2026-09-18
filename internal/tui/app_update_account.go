@@ -317,6 +317,21 @@ func (m Model) handleCalendarDiscoveryRequested(msg CalendarDiscoveryRequestedMs
 	return m, tea.Batch(m.syncSpinner.Tick, m.connectAndDiscoverCalendar(ctx, msg, cred))
 }
 
+// cancelledDiscoveryLeftover names the account that a cancelled Add Account
+// discovery left on disk. A discovery that finished before the cancel
+// created the account and reported it. A discovery that failed and could not
+// remove the account again reports the ID through orphanAccountID. It
+// returns 0 when the operation left nothing.
+func cancelledDiscoveryLeftover(msg accountDiscoveryReadyMsg) int64 {
+	if msg.orphanAccountID != 0 {
+		return msg.orphanAccountID
+	}
+	if msg.err == nil && msg.createdAccount {
+		return msg.discovery.Account.ID
+	}
+	return 0
+}
+
 func (m Model) handleAccountDiscoveryReady(msg accountDiscoveryReadyMsg) (tea.Model, tea.Cmd) {
 	m.syncing = false
 	cancelled := m.opCancelled
@@ -325,14 +340,18 @@ func (m Model) handleAccountDiscoveryReady(msg accountDiscoveryReadyMsg) (tea.Mo
 		// esc stopped the discovery. The account manager stays open so the
 		// user can try again or leave.
 		m.calendarManagerOpen = true
-		// The discovery can finish before the cancel arrives. The account
-		// row and the credential are then on disk, and the user reads a
-		// cancelled discovery, so esc must take them away again.
-		// handleCalendarDiscoveryDiscarded owns the status line of that
+		// The discovery can finish before the cancel arrives, and the
+		// removal of the account that it created can fail. The row and the
+		// credential are on disk in both cases, and the user reads a
+		// cancelled discovery, so esc must take them away again. A cancel
+		// drops the error text of the operation, so a silent leftover is
+		// the one outcome this branch must not produce.
+		//
+		// handleCalendarDiscoveryDiscarded owns the status line of the
 		// removal, because it alone knows whether the removal worked. The
 		// status stays "Cancelling…" until the removal answers.
-		if msg.err == nil && msg.createdAccount && msg.discovery.Account.ID != 0 {
-			return m, m.discardDiscoveryAccount(msg.discovery.Account.ID)
+		if leftover := cancelledDiscoveryLeftover(msg); leftover != 0 {
+			return m, m.discardDiscoveryAccount(leftover)
 		}
 		m.statusToken++
 		m.syncStatus = "Discovery cancelled"

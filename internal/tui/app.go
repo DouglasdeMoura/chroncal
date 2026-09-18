@@ -314,6 +314,11 @@ type accountDiscoveryReadyMsg struct {
 	discovery      account.Discovery
 	err            error
 	createdAccount bool
+	// orphanAccountID names the account that the operation created and
+	// could not remove again. The handler asks for another removal, so a
+	// failed cleanup does not leave the row and the credential behind in
+	// silence.
+	orphanAccountID int64
 }
 
 type accountManagementDiscoveryReadyMsg struct {
