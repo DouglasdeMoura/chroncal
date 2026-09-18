@@ -133,8 +133,10 @@ func TestCalendarDetailHelpDelegatesToEmbeddedPicker(t *testing.T) {
 	}
 }
 
-// The child-owned footer must keep the exact hint text the manager showed
-// before #547. A move of the dispatch to one place is then a no-op for users.
+// The child-owned footer must show the hint text of the child dialog. A move
+// of the dispatch to one place is then a no-op for users. The expected text
+// follows the child dialog. #627 put the arrow keys on the field hint, so the
+// hint now reads "navigate fields".
 func TestManagerFooterHintsPreserved(t *testing.T) {
 	wide := footerTestManager().SetSize(140, 40)
 	cases := []struct {
@@ -142,10 +144,10 @@ func TestManagerFooterHintsPreserved(t *testing.T) {
 		state CalendarManagerModel
 		hints []string
 	}{
-		{"calendar", wide.OpenCalendar(CalendarDialogParams{ID: 1, Name: "Personal", ManagerEmbedded: true}), []string{"next field", "confirm", "back"}},
+		{"calendar", wide.OpenCalendar(CalendarDialogParams{ID: 1, Name: "Personal", ManagerEmbedded: true}), []string{"navigate fields", "confirm", "back"}},
 		{"account", wide.OpenAccount(AccountSettingsParams{AccountID: 7, DisplayName: "iCloud"}), []string{"select", "open", "back"}},
 		{"picker", wide.OpenAccountCalendars(pickerDiscovery()), []string{"toggle", "switch", "confirm", "back"}},
-		{"transfer", wide.OpenImport(), []string{"next field", "confirm", "back"}},
+		{"transfer", wide.OpenImport(), []string{"navigate fields", "confirm", "back"}},
 		{"calendar+picker", wide.OpenCalendar(CalendarDialogParams{ID: 1, Name: "Personal", ManagerEmbedded: true}).ShowDiscovery(pickerDiscovery()), []string{"toggle", "switch", "confirm", "back"}},
 	}
 	for _, c := range cases {
@@ -224,7 +226,7 @@ func TestManagerScreenSwitchSmoke(t *testing.T) {
 	if m.Screen() != CalendarManagerScreenCalendar || m.activeChild() == nil {
 		t.Fatalf("OpenCalendar: screen=%v child=%v", m.Screen(), m.activeChild())
 	}
-	if got := stripANSI(m.renderHelp(120)); !strings.Contains(got, "next field") || !strings.Contains(got, "back") {
+	if got := stripANSI(m.renderHelp(120)); !strings.Contains(got, "navigate fields") || !strings.Contains(got, "back") {
 		t.Errorf("calendar footer %q lost field/back hints", got)
 	}
 
@@ -236,7 +238,7 @@ func TestManagerScreenSwitchSmoke(t *testing.T) {
 
 	// Drop the picker: footer returns to the form hints.
 	m = m.HideDiscovery()
-	if got := stripANSI(m.renderHelp(120)); !strings.Contains(got, "next field") {
+	if got := stripANSI(m.renderHelp(120)); !strings.Contains(got, "navigate fields") {
 		t.Errorf("post-picker footer %q lost field hint", got)
 	}
 
@@ -245,7 +247,7 @@ func TestManagerScreenSwitchSmoke(t *testing.T) {
 	if m.Screen() != CalendarManagerScreenTransfer || m.transfer == nil {
 		t.Fatalf("OpenExport: screen=%v transfer=%v", m.Screen(), m.transfer != nil)
 	}
-	if got := stripANSI(m.renderHelp(120)); !strings.Contains(got, "next field") {
+	if got := stripANSI(m.renderHelp(120)); !strings.Contains(got, "navigate fields") {
 		t.Errorf("transfer footer %q lost field hint", got)
 	}
 
