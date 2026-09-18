@@ -508,6 +508,10 @@ func (m Model) connectAndDiscoverCalendar(parent context.Context, req CalendarDi
 			defer cancelCleanup()
 			if cleanupErr := m.app.Accounts.Delete(cleanupCtx, created.ID, store); cleanupErr != nil {
 				err = fmt.Errorf("%w (remove incomplete connection: %w)", err, cleanupErr)
+				// The account row and the credential are still on disk.
+				// A cancel drops the error text, so the ID travels with
+				// the message and the handler asks for another removal.
+				return accountDiscoveryReadyMsg{err: err, orphanAccountID: created.ID}
 			}
 			return accountDiscoveryReadyMsg{err: err}
 		}
