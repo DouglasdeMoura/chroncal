@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/spinner"
@@ -291,15 +292,34 @@ func TestCancelDiscardsAnAccountThatDiscoveryLeftBehind(t *testing.T) {
 			if model.pendingDiscoveryAccountID != 0 {
 				t.Errorf("pendingDiscoveryAccountID = %d, want 0", model.pendingDiscoveryAccountID)
 			}
+			// The removal holds the sync gate. A new sync must not read
+			// the account that the removal takes away.
+			if !model.syncing {
+				t.Error("syncing = false while the removal ran, want true")
+			}
 			if cmd == nil {
 				t.Fatal("the cancelled discovery returned no command")
 			}
-			discarded, ok := cmd().(calendarDiscoveryDiscardedMsg)
+			discarded, ok := batchMsg[calendarDiscoveryDiscardedMsg](cmd)
 			if !ok {
 				t.Fatal("the cancelled discovery kept the account it left behind")
 			}
 			if discarded.err != nil {
 				t.Fatalf("discard the account: %v", discarded.err)
+			}
+
+			// The cancel reads the same whether or not it took an account
+			// away, and the gate opens again.
+			done, _ := model.handleCalendarDiscoveryDiscarded(discarded)
+			finished, ok := done.(Model)
+			if !ok {
+				t.Fatalf("handleCalendarDiscoveryDiscarded returned %T, want Model", done)
+			}
+			if finished.syncStatus != "Discovery cancelled" {
+				t.Errorf("syncStatus = %q, want %q", finished.syncStatus, "Discovery cancelled")
+			}
+			if finished.syncing {
+				t.Error("syncing = true after the removal, want false")
 			}
 
 			accounts, err := a.Accounts.List(ctx)
@@ -373,5 +393,50 @@ func TestCancelledDiscoveryLeftover(t *testing.T) {
 		if got := cancelledDiscoveryLeftover(c.msg); got != c.want {
 			t.Errorf("%s: cancelledDiscoveryLeftover = %d, want %d", c.name, got, c.want)
 		}
+	}
+}
+
+// batchMsg runs cmd and returns the first message of type T that it emits.
+// A batch holds several commands, and the discard of a leftover account
+// travels beside a spinner tick.
+func batchMsg[T tea.Msg](cmd tea.Cmd) (T, bool) {
+	var zero T
+	if cmd == nil {
+		return zero, false
+	}
+	var found T
+	ok := batchEmits(cmd, func(msg tea.Msg) bool {
+		typed, is := msg.(T)
+		if is {
+			found = typed
+		}
+		return is
+	})
+	return found, ok
+}
+
+// A picker cancel keeps its own wording. The Add Account cancel must not
+// rename the status line of the flows that shared the removal before it.
+func TestPickerDiscardKeepsItsCancelWording(t *testing.T) {
+	m := Model{syncing: true, syncSpinner: spinner.New()}
+	next, _ := m.handleCalendarDiscoveryDiscarded(calendarDiscoveryDiscardedMsg{
+		cancelled: "Calendar discovery cancelled",
+	})
+	model, ok := next.(Model)
+	if !ok {
+		t.Fatalf("handleCalendarDiscoveryDiscarded returned %T, want Model", next)
+	}
+	if model.syncStatus != "Calendar discovery cancelled" {
+		t.Errorf("syncStatus = %q, want %q", model.syncStatus, "Calendar discovery cancelled")
+	}
+
+	// A failed removal keeps the wording of the flow and names the failure.
+	next, _ = m.handleCalendarDiscoveryDiscarded(calendarDiscoveryDiscardedMsg{
+		cancelled: "Discovery cancelled",
+		err:       context.Canceled,
+	})
+	model, _ = next.(Model)
+	if !strings.HasPrefix(model.syncStatus, "Discovery cancelled; cleanup failed: ") {
+		t.Errorf("syncStatus = %q, want the Add Account wording and the failure", model.syncStatus)
 	}
 }

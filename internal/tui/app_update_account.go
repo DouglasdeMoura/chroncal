@@ -317,6 +317,11 @@ func (m Model) handleCalendarDiscoveryRequested(msg CalendarDiscoveryRequestedMs
 	return m, tea.Batch(m.syncSpinner.Tick, m.connectAndDiscoverCalendar(ctx, msg, cred))
 }
 
+// cancelledDiscoveryStatus is the status line of a cancelled Add Account
+// discovery. The removal of a leftover account reports the same line, so a
+// cancel reads the same whether or not it had to take an account away.
+const cancelledDiscoveryStatus = "Discovery cancelled"
+
 // cancelledDiscoveryLeftover names the account that a cancelled Add Account
 // discovery left on disk. A discovery that finished before the cancel
 // created the account and reported it. A discovery that failed and could not
@@ -347,14 +352,20 @@ func (m Model) handleAccountDiscoveryReady(msg accountDiscoveryReadyMsg) (tea.Mo
 		// drops the error text of the operation, so a silent leftover is
 		// the one outcome this branch must not produce.
 		//
-		// handleCalendarDiscoveryDiscarded owns the status line of the
-		// removal, because it alone knows whether the removal worked. The
-		// status stays "Cancelling…" until the removal answers.
+		// handleCalendarDiscoveryDiscarded answers the removal, because it
+		// alone knows whether the removal worked. It reports this status,
+		// and it adds a failed removal to it. The status stays
+		// "Cancelling…" until the removal answers.
+		//
+		// The removal holds the sync gate. A new sync or a new discovery
+		// must not read the account that the removal takes away, and
+		// handleCalendarDiscoveryDiscarded opens the gate again.
 		if leftover := cancelledDiscoveryLeftover(msg); leftover != 0 {
-			return m, m.discardDiscoveryAccount(leftover)
+			m.syncing = true
+			return m, tea.Batch(m.syncSpinner.Tick, m.discardDiscoveryAccount(leftover, cancelledDiscoveryStatus))
 		}
 		m.statusToken++
-		m.syncStatus = "Discovery cancelled"
+		m.syncStatus = cancelledDiscoveryStatus
 		return m, m.expireStatusAfter(6*time.Second, m.statusToken)
 	}
 	if msg.err != nil {
@@ -402,7 +413,7 @@ func (m Model) handleAccountCalendarPickerClosed(msg AccountCalendarPickerClosed
 		m.pendingDiscoveryCreated = false
 		m.syncing = true
 		m.syncStatus = "Cancelling calendar discovery…"
-		return m, tea.Batch(m.syncSpinner.Tick, m.discardDiscoveryAccount(accountID))
+		return m, tea.Batch(m.syncSpinner.Tick, m.discardDiscoveryAccount(accountID, "Calendar discovery cancelled"))
 	}
 	m.pendingDiscoveryAccountID = 0
 	m.pendingDiscoveryCreated = false
@@ -463,10 +474,16 @@ func (m Model) handleCalendarDiscoveryDiscarded(msg calendarDiscoveryDiscardedMs
 	m.syncing = false
 	m.calendarManager = m.calendarManager.HideDiscovery()
 	m.statusToken++
+	// Each flow names its own cancel. A message with no wording keeps the
+	// name that the picker flows used before the Add Account cancel joined.
+	cancelled := msg.cancelled
+	if cancelled == "" {
+		cancelled = "Calendar discovery cancelled"
+	}
 	if msg.err != nil {
-		m.syncStatus = "Calendar discovery cancelled; cleanup failed: " + msg.err.Error()
+		m.syncStatus = cancelled + "; cleanup failed: " + msg.err.Error()
 	} else {
-		m.syncStatus = "Calendar discovery cancelled"
+		m.syncStatus = cancelled
 	}
 	return m, tea.Batch(
 		m.loadCalendars(),
@@ -489,7 +506,7 @@ func (m Model) handleAccountImportFinished(msg accountImportFinishedMsg) (tea.Mo
 			m.pendingDiscoveryCreated = false
 			m.syncing = true
 			m.syncStatus = "Cancelling calendar discovery…"
-			return m, tea.Batch(m.syncSpinner.Tick, m.discardDiscoveryAccount(accountID))
+			return m, tea.Batch(m.syncSpinner.Tick, m.discardDiscoveryAccount(accountID, "Calendar discovery cancelled"))
 		}
 		m.pendingDiscoveryAccountID = 0
 		m.pendingDiscoveryCreated = false

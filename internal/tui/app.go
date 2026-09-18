@@ -374,7 +374,13 @@ type accountRemovalFinishedMsg struct {
 	name      string
 	err       error
 }
-type calendarDiscoveryDiscardedMsg struct{ err error }
+type calendarDiscoveryDiscardedMsg struct {
+	err error
+	// cancelled is the status line of the flow that asked for the removal.
+	// An Add Account cancel and a picker cancel name the same removal with
+	// different words, and the removal answers both.
+	cancelled string
+}
 
 // syncStatusExpiredMsg clears the footer status line after a delay. The token
 // is compared against the current statusToken so a newer status isn't wiped
