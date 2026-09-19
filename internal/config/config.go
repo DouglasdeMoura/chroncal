@@ -73,6 +73,11 @@ type UIConfig struct {
 	// WeekStart is the first day of the week in the TUI month view, week
 	// view, and mini-calendar. Valid values: "sunday" (default), "monday".
 	WeekStart string `mapstructure:"week_start"`
+	// ListFormat controls the default text format for list and search commands.
+	// Valid values are "detail" and "compact".
+	ListFormat string `mapstructure:"list_format"`
+	// EventListDays sets the default forward window for event list.
+	EventListDays int `mapstructure:"event_list_days"`
 }
 
 type Config struct {
@@ -89,6 +94,12 @@ type Config struct {
 // genuinely unset. An explicit purge_days=0 is preserved as 0 (disabled) per
 // the SoftDeleteConfig contract.
 const DefaultSoftDeletePurgeDays = 30
+
+// DefaultUIListFormat is used when ui.list_format is unset.
+const DefaultUIListFormat = "detail"
+
+// DefaultUIEventListDays is used when ui.event_list_days is unset.
+const DefaultUIEventListDays = 30
 
 // DefaultSMTPPort is applied when SMTP.Port is unset. It matches the
 // documented default (587, submission with STARTTLS).
@@ -128,6 +139,18 @@ func Load() (Config, error) {
 	// to the default. viper.IsSet distinguishes unset from an explicit 0.
 	if !v.IsSet("soft_delete.purge_days") {
 		cfg.SoftDelete.PurgeDays = DefaultSoftDeletePurgeDays
+	}
+	if cfg.UI.ListFormat == "" {
+		cfg.UI.ListFormat = DefaultUIListFormat
+	}
+	if cfg.UI.ListFormat != "detail" && cfg.UI.ListFormat != "compact" {
+		return Config{}, fmt.Errorf("invalid ui.list_format %q (must be detail or compact)", cfg.UI.ListFormat)
+	}
+	if !v.IsSet("ui.event_list_days") {
+		cfg.UI.EventListDays = DefaultUIEventListDays
+	}
+	if cfg.UI.EventListDays < 1 {
+		return Config{}, fmt.Errorf("invalid ui.event_list_days %d (must be greater than zero)", cfg.UI.EventListDays)
 	}
 	if err := cfg.SMTP.Validate(); err != nil {
 		return Config{}, err
@@ -198,6 +221,8 @@ func newViper() *viper.Viper {
 	v.BindEnv("soft_delete.purge_days")
 	v.BindEnv("ui.theme")
 	v.BindEnv("ui.week_start")
+	v.BindEnv("ui.list_format")
+	v.BindEnv("ui.event_list_days")
 
 	return v
 }

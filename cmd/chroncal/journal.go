@@ -46,6 +46,7 @@ func journalListCmd() *cobra.Command {
 		fromStr        string
 		toStr          string
 		compact        bool
+		detail         bool
 		noHeader       bool
 		includeDeleted bool
 	)
@@ -98,7 +99,7 @@ CANCELLED entries.`,
 			if outputFmt != "text" {
 				return printOutput(w, toJSONJournals(journals))
 			}
-			if compact {
+			if listCompact(cmd, compact, detail) {
 				if len(journals) == 0 {
 					fmt.Fprintln(w, "No journal entries found.")
 					return nil
@@ -116,8 +117,10 @@ CANCELLED entries.`,
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD); with no date flags, past entries are included")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days after --from)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per entry (ID  DATE  CATEGORIES  SUMMARY)")
+	cmd.Flags().BoolVar(&detail, "detail", false, "show the detailed text format")
 	cmd.Flags().BoolVar(&noHeader, "no-header", false, "omit the compact table header (for scripts)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted journals (see `journal restore`)")
+	mutuallyExclusive(cmd, "compact", "detail")
 	return cmd
 }
 

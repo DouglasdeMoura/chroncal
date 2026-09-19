@@ -186,7 +186,7 @@ hidden calendars as opted out of the sidebar.`
 }
 
 func calendarListCmd() *cobra.Command {
-	var compact bool
+	var compact, detail bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all calendars",
@@ -214,7 +214,7 @@ func calendarListCmd() *cobra.Command {
 				}
 				return printOutput(w, items)
 			}
-			if compact {
+			if listCompact(cmd, compact, detail) {
 				if len(cals) == 0 {
 					fmt.Fprintln(w, "No calendars found.")
 					return nil
@@ -229,6 +229,8 @@ func calendarListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&compact, "compact", false, "one line per calendar (NAME  COLOR)")
+	cmd.Flags().BoolVar(&detail, "detail", false, "show the detailed text format")
+	mutuallyExclusive(cmd, "compact", "detail")
 	return cmd
 }
 

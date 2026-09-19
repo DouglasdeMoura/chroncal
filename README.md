@@ -817,6 +817,8 @@ Configuration loads in this order of precedence:
 | `product_id` | iCal PRODID for export | `-//chroncal//chroncal//EN` |
 | `ui.theme` | Built-in TUI theme name under `internal/tui/themes/` (`system` or `default`; see [TUI themes](#tui-themes)) | `system` |
 | `ui.week_start` | First day of the week in the TUI month view, week view, and mini-calendar (`sunday` or `monday`) | `sunday` |
+| `ui.list_format` | Default text format for list and search commands (`detail` or `compact`) | `detail` |
+| `ui.event_list_days` | Number of days in the default forward window for `event list` | `30` |
 | `soft_delete.purge_days` | Days to keep soft-deleted rows before the background purge. `0` disables automatic purge. | `30` |
 | `sync.interval` | Minimum interval between background CalDAV syncs that `chroncal service run` performs. `service install` defaults to `15m` when this is unset. | (unset — no sync unless the installed service sets `CHRONCAL_SYNC_INTERVAL`) |
 | `sync.conflict_strategy` | Default conflict-resolution mode when you do not pass `sync run --conflict` | `prompt` |
@@ -825,7 +827,7 @@ Configuration loads in this order of precedence:
 | `security.allow_unsafe_alarm_audio_attach` | Allow AUDIO alarms to attach arbitrary URIs. Off by default. | `false` |
 | `security.allow_unsafe_alarm_email_attendees` | Allow EMAIL alarms to send to unverified attendee addresses. Off by default. | `false` |
 
-Every key is also available as an environment variable (`CHRONCAL_` prefix, dots become underscores). Examples: `CHRONCAL_UI_THEME`, `CHRONCAL_UI_WEEK_START`, `CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
+Every key is also available as an environment variable (`CHRONCAL_` prefix, dots become underscores). Examples: `CHRONCAL_UI_THEME`, `CHRONCAL_UI_WEEK_START`, `CHRONCAL_UI_LIST_FORMAT`, `CHRONCAL_UI_EVENT_LIST_DAYS`, `CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
 
 ### TUI themes
 
