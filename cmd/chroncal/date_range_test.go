@@ -39,6 +39,17 @@ func TestParseDateRangeDefaultToFollowsFrom(t *testing.T) {
 	}
 }
 
+func TestParseDateRangeUsesConfiguredDefaultDays(t *testing.T) {
+	from, to, err := parseDateRangeWithDefaultDays("2026-09-01", "", 14)
+	if err != nil {
+		t.Fatalf("parseDateRangeWithDefaultDays returned error: %v", err)
+	}
+	wantTo := from.AddDate(0, 0, 14)
+	if !to.Equal(wantTo) {
+		t.Fatalf("default to = %s, want %s (from+14)", to, wantTo)
+	}
+}
+
 // TestParseListDateRangeNoFlagsIsOpen guards issue #304. With neither --from
 // nor --to, the retrospective todo/journal lists must use an open (zero) range.
 // Overdue todos and past journal entries are then not filtered out.

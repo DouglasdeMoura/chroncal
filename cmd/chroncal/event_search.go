@@ -18,6 +18,7 @@ func eventSearchCmd() *cobra.Command {
 		toStr        string
 		status       string
 		compact      bool
+		detail       bool
 		noHeader     bool
 	)
 	cmd := &cobra.Command{
@@ -93,7 +94,7 @@ roughly when the event occurred.`,
 				fmt.Fprintln(w, "No events found.")
 				return nil
 			}
-			if compact {
+			if listCompact(cmd, compact, detail) {
 				writeCompactEventTable(w, events, nil, false, !noHeader, compactTableColorEnabled(w))
 				return nil
 			}
@@ -110,6 +111,8 @@ roughly when the event occurred.`,
 	cmd.Flags().StringVar(&toStr, "to", "", "end date filter (YYYY-MM-DD, inclusive)")
 	cmd.Flags().StringVar(&status, "status", "", "status filter (TENTATIVE, CONFIRMED, CANCELLED)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per event; same shape as event list --compact")
+	cmd.Flags().BoolVar(&detail, "detail", false, "show the detailed text format")
 	cmd.Flags().BoolVar(&noHeader, "no-header", false, "omit the compact table header (for scripts)")
+	mutuallyExclusive(cmd, "compact", "detail")
 	return cmd
 }
