@@ -20,6 +20,7 @@ func todoListCmd() *cobra.Command {
 		fromStr        string
 		toStr          string
 		compact        bool
+		detail         bool
 		noHeader       bool
 		includeDeleted bool
 	)
@@ -71,7 +72,7 @@ By default completed and cancelled todos are hidden unless you pass
 			if outputFmt != "text" {
 				return printOutput(w, toJSONTodos(todos))
 			}
-			if compact {
+			if listCompact(cmd, compact, detail) {
 				if len(todos) == 0 {
 					fmt.Fprintln(w, "No todos found.")
 					return nil
@@ -89,8 +90,10 @@ By default completed and cancelled todos are hidden unless you pass
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD); with no date flags, overdue todos are included")
 	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days after --from)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per todo (ID  STATE  DUE  CATEGORIES  SUMMARY)")
+	cmd.Flags().BoolVar(&detail, "detail", false, "show the detailed text format")
 	cmd.Flags().BoolVar(&noHeader, "no-header", false, "omit the compact table header (for scripts)")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted todos (see `todo restore`)")
+	mutuallyExclusive(cmd, "compact", "detail")
 	return cmd
 }
 

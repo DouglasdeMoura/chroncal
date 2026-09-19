@@ -207,6 +207,50 @@ func TestLoad_PurgeDaysDefaultsWhenUnset(t *testing.T) {
 	}
 }
 
+func TestLoad_UIListFormatDefaultsToDetail(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CHRONCAL_UI_LIST_FORMAT", "")
+	cfg := mustLoad(t)
+	if cfg.UI.ListFormat != DefaultUIListFormat {
+		t.Errorf("UI.ListFormat = %q, want %q", cfg.UI.ListFormat, DefaultUIListFormat)
+	}
+}
+
+func TestLoad_UIListFormatFromFile(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[ui]\nlist_format = \"compact\"\n"), 0o644)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_UI_LIST_FORMAT", "")
+	cfg := mustLoad(t)
+	if cfg.UI.ListFormat != "compact" {
+		t.Errorf("UI.ListFormat = %q, want compact", cfg.UI.ListFormat)
+	}
+}
+
+func TestLoad_UIEventListDaysDefaultsToThirty(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CHRONCAL_UI_EVENT_LIST_DAYS", "")
+	cfg := mustLoad(t)
+	if cfg.UI.EventListDays != DefaultUIEventListDays {
+		t.Errorf("UI.EventListDays = %d, want %d", cfg.UI.EventListDays, DefaultUIEventListDays)
+	}
+}
+
+func TestLoad_UIEventListDaysFromFile(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[ui]\nevent_list_days = 14\n"), 0o644)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_UI_EVENT_LIST_DAYS", "")
+	cfg := mustLoad(t)
+	if cfg.UI.EventListDays != 14 {
+		t.Errorf("UI.EventListDays = %d, want 14", cfg.UI.EventListDays)
+	}
+}
+
 func TestLoad_PurgeDaysZeroDisables(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "chroncal")

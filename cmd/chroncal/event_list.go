@@ -22,6 +22,7 @@ func eventListCmd() *cobra.Command {
 		showWeekday    bool
 		verbose        bool
 		compact        bool
+		detail         bool
 		noHeader       bool
 		showID         bool
 		showCalendar   bool
@@ -33,7 +34,8 @@ func eventListCmd() *cobra.Command {
 		Long: `List events in a date range, expanding recurring series into the
 instances that fall inside the requested window.
 
-Without flags, the window defaults to today through the next 30 days.`,
+Without flags, the window defaults to today through the next 30 days.
+Set ui.event_list_days in config.toml to change the default window.`,
 		Example: `  chroncal event list
   chroncal event list --calendar Work --from 2026-04-01 --to 2026-04-07
   chroncal event list --status CONFIRMED --output json
@@ -46,7 +48,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			from, to, err := parseDateRange(fromStr, toStr)
+			from, to, err := parseEventListDateRange(fromStr, toStr)
 			if err != nil {
 				return err
 			}
@@ -71,7 +73,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 			}
 
 			var calendarNames map[int64]string
-			if verbose || showCalendar || compact {
+			if verbose || showCalendar || listCompact(cmd, compact, detail) {
 				cals, err := a.Calendars.List(ctx)
 				if err != nil {
 					return fmt.Errorf("list calendars: %w", err)
@@ -94,7 +96,7 @@ Without flags, the window defaults to today through the next 30 days.`,
 				fmt.Fprintln(w, "No events found.")
 				return nil
 			}
-			if compact {
+			if !verbose && listCompact(cmd, compact, detail) {
 				writeCompactEventTable(w, events, calendarNames, showCalendar, !noHeader, compactTableColorEnabled(w))
 				return nil
 			}
@@ -117,17 +119,19 @@ Without flags, the window defaults to today through the next 30 days.`,
 		},
 	}
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now; configure with ui.event_list_days)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (TENTATIVE, CONFIRMED, CANCELLED)")
 	cmd.Flags().BoolVar(&showWeekday, "show-weekday", false, "show weekday abbreviation next to the date")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "render a detailed time-rail view for each event")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per event (ID  DATE  TIME  CATEGORIES  SUMMARY); skips empty-day stubs")
+	cmd.Flags().BoolVar(&detail, "detail", false, "show the detailed text format")
 	cmd.Flags().BoolVar(&showID, "show-id", false, "show each event's numeric ID in non-compact text output (compact always includes it)")
 	cmd.Flags().BoolVar(&noHeader, "no-header", false, "omit the compact table header (for scripts)")
 	cmd.Flags().BoolVar(&showCalendar, "show-calendar", false, "show the calendar name in text output")
 	cmd.Flags().BoolVar(&includeDeleted, "include-deleted", false, "include soft-deleted events (see `events restore`)")
 	mutuallyExclusive(cmd, "compact", "verbose")
+	mutuallyExclusive(cmd, "compact", "detail")
 	return cmd
 }
 
