@@ -80,14 +80,17 @@ homebrew_casks:
       email: github-actions[bot]@users.noreply.github.com
     binaries:
       - chroncal
-    # The binaries are not signed/notarized, so macOS quarantines them on
-    # download; strip the attribute or Gatekeeper blocks the first run.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/chroncal"]
-          end
+    # The binaries are not signed. macOS marks them with the quarantine attribute.
+    # The post-install step removes that attribute. Gatekeeper blocks the first run without it.
+    # Homebrew 7 warns on the postflight block. This custom_block writes postflight_steps.
+    # Move the block to hooks.post.install_steps when GoReleaser adds that option.
+    # See goreleaser/goreleaser#6873. The quoted form writes the Homebrew staged_path token.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/chroncal"]
+        end
+      end
 
 scoops:
   - name: chroncal
