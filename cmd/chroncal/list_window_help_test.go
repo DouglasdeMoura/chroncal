@@ -23,14 +23,14 @@ func defaultWindowDays(t *testing.T) int {
 	return int(math.Round(to.Sub(from).Hours() / 24))
 }
 
-// TestListToFlagHelpMatchesDefaultWindow guards against the --to flag help text
-// that drifts from the actual default window in parseDateRange. The todo and
-// journal list commands previously advertised "14 days" while the code
-// defaulted to 30 (issue #139). Those retrospective lists now use an open
-// default window (issue #304). Only `event list` keeps the forward
-// parseDateRange window this guard covers.
+// TestListToFlagHelpMatchesDefaultWindow guards the event list window help.
+// The end is ui.event_list_days after --from. It is not a fixed count from now.
+// The built-in count must match parseDateRange (issue #139).
+// Todo and journal lists use an open default window (issue #304).
 func TestListToFlagHelpMatchesDefaultWindow(t *testing.T) {
-	want := fmt.Sprintf("%d days from now", defaultWindowDays(t))
+	days := defaultWindowDays(t)
+	wantUsage := fmt.Sprintf("ui.event_list_days after --from; %d days by default", days)
+	wantLong := fmt.Sprintf("The default is %d days.", days)
 
 	cases := map[string]*cobra.Command{
 		"event": eventListCmd(),
@@ -42,8 +42,17 @@ func TestListToFlagHelpMatchesDefaultWindow(t *testing.T) {
 			if flag == nil {
 				t.Fatalf("%s list has no --to flag", name)
 			}
-			if !strings.Contains(flag.Usage, want) {
-				t.Errorf("%s list --to help = %q, want it to mention %q", name, flag.Usage, want)
+			if !strings.Contains(flag.Usage, wantUsage) {
+				t.Errorf("%s list --to help = %q, want it to mention %q", name, flag.Usage, wantUsage)
+			}
+			if strings.Contains(flag.Usage, "from now") {
+				t.Errorf("%s list --to help = %q, must not say the window is from now", name, flag.Usage)
+			}
+			if !strings.Contains(cmd.Long, wantLong) {
+				t.Errorf("%s list long help = %q, want it to mention %q", name, cmd.Long, wantLong)
+			}
+			if !strings.Contains(cmd.Long, "ui.event_list_days") {
+				t.Errorf("%s list long help = %q, want ui.event_list_days", name, cmd.Long)
 			}
 		})
 	}

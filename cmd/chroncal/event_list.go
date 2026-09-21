@@ -34,8 +34,9 @@ func eventListCmd() *cobra.Command {
 		Long: `List events in a date range, expanding recurring series into the
 instances that fall inside the requested window.
 
-Without flags, the window defaults to today through the next 30 days.
-Set ui.event_list_days in config.toml to change the default window.`,
+Without flags, the window starts today.
+It ends after ui.event_list_days days. The default is 30 days.
+Set ui.event_list_days in config.toml to change the window.`,
 		Example: `  chroncal event list
   chroncal event list --calendar Work --from 2026-04-01 --to 2026-04-07
   chroncal event list --status CONFIRMED --output json
@@ -119,7 +120,7 @@ Set ui.event_list_days in config.toml to change the default window.`,
 		},
 	}
 	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days from now; configure with ui.event_list_days)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: ui.event_list_days after --from; 30 days by default)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (TENTATIVE, CONFIRMED, CANCELLED)")
 	cmd.Flags().BoolVar(&showWeekday, "show-weekday", false, "show weekday abbreviation next to the date")
