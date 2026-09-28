@@ -153,7 +153,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 
 			date := now.In(loc)
 			if dateStr != "" {
-				date, err = parseCLIDate("date", dateStr, loc)
+				date, err = parseCLIDate("date", dateStr, now, loc)
 				if err != nil {
 					return err
 				}
@@ -178,7 +178,7 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 
 			var endDate time.Time
 			if endDateStr != "" {
-				endDate, err = parseCLIDate("end-date", endDateStr, loc)
+				endDate, err = parseCLIDate("end-date", endDateStr, now, loc)
 				if err != nil {
 					return err
 				}
@@ -360,9 +360,9 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dateStr, "date", "", "event date (YYYY-MM-DD, default: today)")
+	cmd.Flags().StringVar(&dateStr, "date", "", "event date (YYYY-MM-DD or relative, default: today)")
 	cmd.Flags().StringVar(&timeStr, "time", "", "start time (HH:MM); omit for an all-day event")
-	cmd.Flags().StringVar(&endDateStr, "end-date", "", "end date (YYYY-MM-DD); for all-day it is the last day inclusive, for timed events must be paired with --end-time")
+	cmd.Flags().StringVar(&endDateStr, "end-date", "", "end date (YYYY-MM-DD or relative); for all-day it is the last day inclusive, for timed events must be paired with --end-time")
 	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "end time (HH:MM, alternative to --duration; ignored for all-day)")
 	cmd.Flags().StringVar(&durationStr, "duration", "1h", "event duration (e.g. 30m, 1h30m; ignored for all-day)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar name (default: first available)")

@@ -47,7 +47,8 @@ func todoAddCmd() *cobra.Command {
 
 Due and start dates are date-only (YYYY-MM-DD) and stored without a time
 component, so they export correctly as VALUE=DATE in iCal regardless of
-your timezone.
+your timezone. Both flags also accept a relative date word, for example
+"today", "friday", or "+3d".
 
 Duration accepts Go format (1h30m) or RFC 5545 format (PT1H30M).
 Note: per RFC 5545, DUE and DURATION are mutually exclusive in a VTODO.
@@ -131,20 +132,17 @@ and percent-complete to 100.`,
 				return err
 			}
 
-			var dueDate string
-			if dueStr != "" {
-				if _, err := time.Parse("2006-01-02", dueStr); err != nil {
-					return errInvalidInputf("parse due date: expected YYYY-MM-DD, got %q", dueStr)
-				}
-				dueDate = dueStr
+			// Capture one now for both date flags, so --due and --start
+			// cannot resolve across a midnight rollover.
+			now := time.Now()
+			dueDate, err := parseCLIDateString("due", dueStr, now, time.Local)
+			if err != nil {
+				return err
 			}
 
-			var startDate string
-			if startStr != "" {
-				if _, err := time.Parse("2006-01-02", startStr); err != nil {
-					return errInvalidInputf("parse start date: expected YYYY-MM-DD, got %q", startStr)
-				}
-				startDate = startStr
+			startDate, err := parseCLIDateString("start", startStr, now, time.Local)
+			if err != nil {
+				return err
 			}
 
 			var durationVal string
@@ -294,8 +292,8 @@ and percent-complete to 100.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dueStr, "due", "", "due date (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&startStr, "start", "", "start date (YYYY-MM-DD; when the task becomes relevant)")
+	cmd.Flags().StringVar(&dueStr, "due", "", "due date (YYYY-MM-DD or relative)")
+	cmd.Flags().StringVar(&startStr, "start", "", "start date (YYYY-MM-DD or relative; when the task becomes relevant)")
 	cmd.Flags().StringVar(&durationStr, "duration", "", "estimated duration (e.g. 1h30m or PT1H30M)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar name (default: first available)")
 	cmd.Flags().StringVar(&location, "location", "", "location")

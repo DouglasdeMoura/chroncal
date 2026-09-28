@@ -128,22 +128,23 @@ a --progress value other than 100.`,
 			if cmd.Flags().Changed("location") {
 				p.Location = location
 			}
-			if cmd.Flags().Changed("due") {
-				if dueStr == "" {
-					p.DueDate = ""
-				} else if _, err := time.Parse("2006-01-02", dueStr); err != nil {
-					return errInvalidInputf("parse due date: expected YYYY-MM-DD or empty to clear, got %q", dueStr)
-				} else {
-					p.DueDate = dueStr
+			if cmd.Flags().Changed("due") || cmd.Flags().Changed("start") {
+				// Capture one now for both date flags, so --due and --start
+				// cannot resolve across a midnight rollover.
+				now := time.Now()
+				if cmd.Flags().Changed("due") {
+					due, err := parseCLIDateString("due", dueStr, now, time.Local)
+					if err != nil {
+						return err
+					}
+					p.DueDate = due
 				}
-			}
-			if cmd.Flags().Changed("start") {
-				if startStr == "" {
-					p.StartDate = ""
-				} else if _, err := time.Parse("2006-01-02", startStr); err != nil {
-					return errInvalidInputf("parse start date: expected YYYY-MM-DD or empty to clear, got %q", startStr)
-				} else {
-					p.StartDate = startStr
+				if cmd.Flags().Changed("start") {
+					start, err := parseCLIDateString("start", startStr, now, time.Local)
+					if err != nil {
+						return err
+					}
+					p.StartDate = start
 				}
 			}
 			if cmd.Flags().Changed("duration") {
@@ -346,8 +347,8 @@ a --progress value other than 100.`,
 		},
 	}
 	cmd.Flags().StringVar(&summary, "summary", "", "new summary")
-	cmd.Flags().StringVar(&dueStr, "due", "", "new due date (YYYY-MM-DD; empty to clear)")
-	cmd.Flags().StringVar(&startStr, "start", "", "new start date (YYYY-MM-DD; empty to clear)")
+	cmd.Flags().StringVar(&dueStr, "due", "", "new due date (YYYY-MM-DD or relative; empty to clear)")
+	cmd.Flags().StringVar(&startStr, "start", "", "new start date (YYYY-MM-DD or relative; empty to clear)")
 	cmd.Flags().StringVar(&durationStr, "duration", "", "new duration (e.g. 1h30m or PT1H30M; empty to clear)")
 	cmd.Flags().StringVar(&status, "status", "", "new status (NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED)")
 	cmd.Flags().Int64Var(&progress, "progress", 0, "percent complete (0-100)")

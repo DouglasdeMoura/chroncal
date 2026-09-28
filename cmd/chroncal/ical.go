@@ -396,8 +396,8 @@ them.`,
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "export only this calendar")
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: all)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: all)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD or relative, default: all)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD or relative, default: all)")
 	cmd.Flags().StringVarP(&outFile, "file", "f", "", "output file (default: stdout)")
 	cmd.Flags().StringVar(&category, "category", "", "filter by category")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status")

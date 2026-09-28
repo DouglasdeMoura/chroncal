@@ -35,6 +35,7 @@ func freebusyCmd() *cobra.Command {
 By default this computes free/busy from local data. With --remote, it
 queries the connected remote CalDAV calendar instead.`,
 		Example: `  chroncal freebusy --from 2026-04-01 --to 2026-04-07
+  chroncal freebusy --from today --to tomorrow
   chroncal freebusy --calendar Work --from 2026-04-01T09:00:00-03:00 --to 2026-04-01T18:00:00-03:00
   chroncal freebusy --calendar Work --remote --from 2026-04-01 --to 2026-04-07 --format ical`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -44,11 +45,14 @@ queries the connected remote CalDAV calendar instead.`,
 				return errInvalidInputf("invalid --format %q (must be text or ical)", format)
 			}
 
-			from, err := parseFreeBusyTime("from", fromStr, false)
+			// Capture one now for both bounds, so --from and --to cannot
+			// resolve across a midnight rollover.
+			now := time.Now()
+			from, err := parseFreeBusyTime("from", fromStr, now, false)
 			if err != nil {
 				return err
 			}
-			to, err := parseFreeBusyTime("to", toStr, true)
+			to, err := parseFreeBusyTime("to", toStr, now, true)
 			if err != nil {
 				return err
 			}
@@ -169,8 +173,8 @@ queries the connected remote CalDAV calendar instead.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&fromStr, "from", "", "range start (YYYY-MM-DD or RFC3339)")
-	cmd.Flags().StringVar(&toStr, "to", "", "range end (YYYY-MM-DD or RFC3339)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "range start (YYYY-MM-DD, RFC3339, or a relative date like today)")
+	cmd.Flags().StringVar(&toStr, "to", "", "range end (YYYY-MM-DD, RFC3339, or a relative date like tomorrow)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar to query")
 	cmd.Flags().BoolVar(&remote, "remote", false, "query the linked remote calendar via CalDAV REPORT")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or ical")
@@ -206,12 +210,19 @@ func freebusyOwnerEmails(ctx context.Context, a *app.App, calendarRef calendar.C
 }
 
 // parseFreeBusyTime parses a free/busy range bound that may be a date-only
-// (YYYY-MM-DD) value or a full RFC3339 timestamp. When inclusiveEnd is true and
-// the input is date-only, the result is advanced by one day. The named day is
-// then fully covered by the half-open [from, to) range. That matches the
-// inclusive end-of-day semantics of parseDateRange used by `list`/`export`
-// (issue #137).
-func parseFreeBusyTime(flag, input string, inclusiveEnd bool) (time.Time, error) {
+// (YYYY-MM-DD) value, a full RFC3339 timestamp, or a relative date word
+// resolved against now in the local timezone (issue #785). When inclusiveEnd
+// is true and the input is date-only, the result is advanced by one day. The
+// named day is then fully covered by the half-open [from, to) range. That
+// matches the inclusive end-of-day semantics of parseDateRange used by
+// `list`/`export` (issue #137).
+func parseFreeBusyTime(flag, input string, now time.Time, inclusiveEnd bool) (time.Time, error) {
+	if t, ok := resolveRelativeDate(input, now, time.Local); ok {
+		if inclusiveEnd {
+			t = t.AddDate(0, 0, 1)
+		}
+		return t, nil
+	}
 	if t, err := time.ParseInLocation("2006-01-02", input, time.Local); err == nil {
 		if inclusiveEnd {
 			t = t.AddDate(0, 0, 1)
@@ -221,7 +232,7 @@ func parseFreeBusyTime(flag, input string, inclusiveEnd bool) (time.Time, error)
 	if t, err := time.Parse(time.RFC3339, input); err == nil {
 		return t, nil
 	}
-	return time.Time{}, errInvalidInputf("--%s: invalid value %q (expected YYYY-MM-DD or RFC3339 timestamp)", flag, input)
+	return time.Time{}, errInvalidInputf("--%s: invalid value %q (expected YYYY-MM-DD, RFC3339, or a relative date like tomorrow)", flag, input)
 }
 
 func printFreeBusy(w io.Writer, label string, remote bool, result freebusy.Result) {

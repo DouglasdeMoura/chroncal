@@ -111,8 +111,8 @@ roughly when the event occurred.`,
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date filter (YYYY-MM-DD)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date filter (YYYY-MM-DD, inclusive)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date filter (YYYY-MM-DD or relative)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date filter (YYYY-MM-DD or relative, inclusive)")
 	cmd.Flags().StringVar(&status, "status", "", "status filter (TENTATIVE, CONFIRMED, CANCELLED)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per event; same shape as event list --compact")
 	cmd.Flags().BoolVar(&detail, "detail", false, "show the detailed text format")

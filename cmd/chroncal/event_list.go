@@ -128,8 +128,8 @@ Set ui.event_list_days in config.toml to change the window.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD, default: today)")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: ui.event_list_days after --from; 30 days by default)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD or relative, default: today)")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD or relative, default: ui.event_list_days after --from; 30 days by default)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (TENTATIVE, CONFIRMED, CANCELLED)")
 	cmd.Flags().BoolVar(&showWeekday, "show-weekday", false, "show weekday abbreviation next to the date")

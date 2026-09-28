@@ -174,7 +174,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				}
 			}
 
-			// Resolve timezone for date/time parsing.
+			// Resolve timezone for date/time parsing. Capture one now for
+			// the date flags, so --date and --end-date cannot resolve
+			// across a midnight rollover.
 			loc := time.Local
 			tz := timezone
 			if !cmd.Flags().Changed("timezone") {
@@ -186,11 +188,12 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 					return fmt.Errorf("load timezone: %w", err)
 				}
 			}
+			now := time.Now()
 
 			if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
 				date := p.StartTime.In(loc)
 				if cmd.Flags().Changed("date") {
-					d, err := parseCLIDate("date", dateStr, loc)
+					d, err := parseCLIDate("date", dateStr, now, loc)
 					if err != nil {
 						return err
 					}
@@ -216,7 +219,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 
 			var endDate time.Time
 			if cmd.Flags().Changed("end-date") {
-				endDate, err = parseCLIDate("end-date", endDateStr, loc)
+				endDate, err = parseCLIDate("end-date", endDateStr, now, loc)
 				if err != nil {
 					return err
 				}
@@ -408,9 +411,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 		},
 	}
 	cmd.Flags().StringVar(&title, "title", "", "new title")
-	cmd.Flags().StringVar(&dateStr, "date", "", "new date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&dateStr, "date", "", "new date (YYYY-MM-DD or relative)")
 	cmd.Flags().StringVar(&timeStr, "time", "", "new start time (HH:MM)")
-	cmd.Flags().StringVar(&endDateStr, "end-date", "", "new end date (YYYY-MM-DD); all-day: last day inclusive, timed: pair with --end-time")
+	cmd.Flags().StringVar(&endDateStr, "end-date", "", "new end date (YYYY-MM-DD or relative); all-day: last day inclusive, timed: pair with --end-time")
 	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "new end time (HH:MM)")
 	cmd.Flags().StringVar(&durationStr, "duration", "", "new duration (e.g. 30m, 1h30m)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "move to calendar (by name)")
