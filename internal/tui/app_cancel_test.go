@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -74,24 +75,28 @@ func TestFinishSyncReportsACancelledRun(t *testing.T) {
 // A cancel drops the queued calendar too. Starting it would put the spinner
 // back on the screen the user just escaped from.
 func TestCancelDropsTheQueuedCalendar(t *testing.T) {
-	m := Model{syncing: true, syncSpinner: spinner.New()}
-	m.pendingSyncCalendar = syncTarget{ID: 7, Name: "Work"}
-	m, _ = m.beginCancellableOp()
-	m, _ = m.cancelRunningOp()
+	// One bubble for finishSync and the batch: the status-expiry tea.Tick
+	// starts inside finishSync, so both must share the fake clock.
+	synctest.Test(t, func(t *testing.T) {
+		m := Model{syncing: true, syncSpinner: spinner.New()}
+		m.pendingSyncCalendar = syncTarget{ID: 7, Name: "Work"}
+		m, _ = m.beginCancellableOp()
+		m, _ = m.cancelRunningOp()
 
-	next, cmd := m.finishSync(syncFinishedMsg{err: context.Canceled})
-	if next.pendingSyncCalendar.ID != 0 {
-		t.Errorf("pendingSyncCalendar = %+v, want empty", next.pendingSyncCalendar)
-	}
-	if cmd == nil {
-		t.Fatal("finishSync returned no command")
-	}
-	if batchEmits(t, cmd, func(msg tea.Msg) bool {
-		_, ok := msg.(SyncCalendarRequestedMsg)
-		return ok
-	}) {
-		t.Error("the cancelled run still asked for the queued calendar")
-	}
+		next, cmd := m.finishSync(syncFinishedMsg{err: context.Canceled})
+		if next.pendingSyncCalendar.ID != 0 {
+			t.Errorf("pendingSyncCalendar = %+v, want empty", next.pendingSyncCalendar)
+		}
+		if cmd == nil {
+			t.Fatal("finishSync returned no command")
+		}
+		if emits(cmd, func(msg tea.Msg) bool {
+			_, ok := msg.(SyncCalendarRequestedMsg)
+			return ok
+		}) {
+			t.Error("the cancelled run still asked for the queued calendar")
+		}
+	})
 }
 
 // A sync of every calendar stops between two calendars as well as inside
@@ -340,31 +345,36 @@ func TestCancelDiscardsAnAccountThatDiscoveryLeftBehind(t *testing.T) {
 // discard path hands the status to handleCalendarDiscoveryDiscarded, which
 // alone knows whether the removal worked.
 func TestCancelledDiscoveryWithNoAccountKeepsItsStatus(t *testing.T) {
-	m := Model{syncing: true, syncSpinner: spinner.New()}
-	m, _ = m.beginCancellableOp()
-	m, _ = m.cancelRunningOp()
+	// One bubble for handleAccountDiscoveryReady and the batch: the
+	// status-expiry tea.Tick starts inside the handler, so both must share
+	// the fake clock.
+	synctest.Test(t, func(t *testing.T) {
+		m := Model{syncing: true, syncSpinner: spinner.New()}
+		m, _ = m.beginCancellableOp()
+		m, _ = m.cancelRunningOp()
 
-	next, cmd := m.handleAccountDiscoveryReady(accountDiscoveryReadyMsg{err: context.Canceled})
-	model, ok := next.(Model)
-	if !ok {
-		t.Fatalf("handleAccountDiscoveryReady returned %T, want Model", next)
-	}
-	if model.syncStatus != "Discovery cancelled" {
-		t.Errorf("syncStatus = %q, want %q", model.syncStatus, "Discovery cancelled")
-	}
-	if !model.calendarManagerOpen {
-		t.Error("the account manager closed on a cancelled discovery")
-	}
-	if cmd == nil {
-		t.Fatal("handleAccountDiscoveryReady returned no command")
-	}
-	// No account exists, so nothing asks for a removal.
-	if batchEmits(t, cmd, func(msg tea.Msg) bool {
-		_, ok := msg.(calendarDiscoveryDiscardedMsg)
-		return ok
-	}) {
-		t.Error("a cancel with no created account still asked for a removal")
-	}
+		next, cmd := m.handleAccountDiscoveryReady(accountDiscoveryReadyMsg{err: context.Canceled})
+		model, ok := next.(Model)
+		if !ok {
+			t.Fatalf("handleAccountDiscoveryReady returned %T, want Model", next)
+		}
+		if model.syncStatus != "Discovery cancelled" {
+			t.Errorf("syncStatus = %q, want %q", model.syncStatus, "Discovery cancelled")
+		}
+		if !model.calendarManagerOpen {
+			t.Error("the account manager closed on a cancelled discovery")
+		}
+		if cmd == nil {
+			t.Fatal("handleAccountDiscoveryReady returned no command")
+		}
+		// No account exists, so nothing asks for a removal.
+		if emits(cmd, func(msg tea.Msg) bool {
+			_, ok := msg.(calendarDiscoveryDiscardedMsg)
+			return ok
+		}) {
+			t.Error("a cancel with no created account still asked for a removal")
+		}
+	})
 }
 
 // cancelledDiscoveryLeftover names the account that a cancelled discovery

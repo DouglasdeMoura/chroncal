@@ -21,6 +21,12 @@ import (
 // expireStatusAfter) then fires on the fake clock at once. No timer
 // outlives the helper. A live timer calls time.Now when it fires, and that
 // read races with a later test that sets time.Local.
+//
+// A tea.Tick starts its timer when the command is built, not when it runs.
+// A model update that runs outside a bubble therefore hands batchEmits a
+// real timer, and the helper blocks for the full delay. Build the command
+// inside the same bubble: wrap the test body in synctest.Test and call
+// emits directly.
 func batchEmits(t *testing.T, cmd tea.Cmd, pred func(tea.Msg) bool) (found bool) {
 	t.Helper()
 	synctest.Test(t, func(*testing.T) {
@@ -253,47 +259,56 @@ func (e *stringError) Error() string { return e.s }
 // request that arrives mid-sync is queued. It is then drained when the live
 // sync finishes. The post-reauth sync (and the ⚠ clear) is then never lost.
 func TestPostReauthSyncQueuedWhileSyncing(t *testing.T) {
-	m := Model{syncing: true}
+	// The whole body shares one bubble: the tea.Tick that expires the
+	// status line starts when Update builds the batch, so Update itself
+	// must run on the fake clock (see the batchEmits note above).
+	synctest.Test(t, func(t *testing.T) {
+		m := Model{syncing: true}
 
-	// Re-auth completes while a sync runs: the request is queued, not dropped.
-	m = updateModel(t, m, SyncCalendarRequestedMsg{ID: 12, Name: "gmail"})
-	if m.pendingSyncCalendar.ID != 12 {
-		t.Fatalf("pendingSyncCalendar.ID = %d, want 12 (queued)", m.pendingSyncCalendar.ID)
-	}
+		// Re-auth completes while a sync runs: the request is queued, not dropped.
+		m = updateModel(t, m, SyncCalendarRequestedMsg{ID: 12, Name: "gmail"})
+		if m.pendingSyncCalendar.ID != 12 {
+			t.Fatalf("pendingSyncCalendar.ID = %d, want 12 (queued)", m.pendingSyncCalendar.ID)
+		}
 
-	// The running sync finishes: the queued sync is re-dispatched.
-	next, cmd := m.Update(syncFinishedMsg{summary: "done", reload: true})
-	m = next.(Model)
-	if m.pendingSyncCalendar.ID != 0 {
-		t.Errorf("queue should be drained, got ID %d", m.pendingSyncCalendar.ID)
-	}
-	if cmd == nil {
-		t.Fatal("syncFinishedMsg with a queued sync should emit commands")
-	}
-	// The batch must contain the re-dispatched SyncCalendarRequestedMsg.
-	if !batchEmits(t, cmd, func(msg tea.Msg) bool {
-		r, ok := msg.(SyncCalendarRequestedMsg)
-		return ok && r.ID == 12
-	}) {
-		t.Error("drained queue should re-dispatch SyncCalendarRequestedMsg{ID:12}")
-	}
+		// The running sync finishes: the queued sync is re-dispatched.
+		next, cmd := m.Update(syncFinishedMsg{summary: "done", reload: true})
+		m = next.(Model)
+		if m.pendingSyncCalendar.ID != 0 {
+			t.Errorf("queue should be drained, got ID %d", m.pendingSyncCalendar.ID)
+		}
+		if cmd == nil {
+			t.Fatal("syncFinishedMsg with a queued sync should emit commands")
+		}
+		// The batch must contain the re-dispatched SyncCalendarRequestedMsg.
+		if !emits(cmd, func(msg tea.Msg) bool {
+			r, ok := msg.(SyncCalendarRequestedMsg)
+			return ok && r.ID == 12
+		}) {
+			t.Error("drained queue should re-dispatch SyncCalendarRequestedMsg{ID:12}")
+		}
+	})
 }
 
 // TestNoPendingSyncNoRedispatch confirms the drain is a no-op when nothing is
 // queued (the common path).
 func TestNoPendingSyncNoRedispatch(t *testing.T) {
-	m := Model{syncing: true}
-	next, cmd := m.Update(syncFinishedMsg{summary: "done", reload: true})
-	m = next.(Model)
-	if m.pendingSyncCalendar.ID != 0 {
-		t.Error("nothing should be queued")
-	}
-	if cmd != nil && batchEmits(t, cmd, func(msg tea.Msg) bool {
-		_, ok := msg.(SyncCalendarRequestedMsg)
-		return ok
-	}) {
-		t.Error("no SyncCalendarRequestedMsg should be re-dispatched when queue is empty")
-	}
+	// One bubble for Update and the batch: the status-expiry tea.Tick
+	// starts inside Update, so both must share the fake clock.
+	synctest.Test(t, func(t *testing.T) {
+		m := Model{syncing: true}
+		next, cmd := m.Update(syncFinishedMsg{summary: "done", reload: true})
+		m = next.(Model)
+		if m.pendingSyncCalendar.ID != 0 {
+			t.Error("nothing should be queued")
+		}
+		if cmd != nil && emits(cmd, func(msg tea.Msg) bool {
+			_, ok := msg.(SyncCalendarRequestedMsg)
+			return ok
+		}) {
+			t.Error("no SyncCalendarRequestedMsg should be re-dispatched when queue is empty")
+		}
+	})
 }
 
 // TestOAuthModalBlocksWheelScroll verifies that a tea.MouseWheelMsg delivered
