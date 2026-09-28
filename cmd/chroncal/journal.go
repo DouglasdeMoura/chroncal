@@ -99,7 +99,7 @@ CANCELLED entries.`,
 			if outputFmt != "text" {
 				return printOutput(w, toJSONJournals(journals))
 			}
-			useCompact, err := listCompact(cmd, compact, detail)
+			useCompact, err := listCompact(cmd, compact)
 			if err != nil {
 				return err
 			}

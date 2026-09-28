@@ -57,7 +57,7 @@ Set ui.event_list_days in config.toml to change the window.`,
 			// default from config does not apply to it.
 			useCompact := false
 			if outputFmt == "text" && !verbose {
-				useCompact, err = listCompact(cmd, compact, detail)
+				useCompact, err = listCompact(cmd, compact)
 				if err != nil {
 					return err
 				}

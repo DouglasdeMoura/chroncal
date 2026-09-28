@@ -214,7 +214,7 @@ func calendarListCmd() *cobra.Command {
 				}
 				return printOutput(w, items)
 			}
-			useCompact, err := listCompact(cmd, compact, detail)
+			useCompact, err := listCompact(cmd, compact)
 			if err != nil {
 				return err
 			}
