@@ -94,7 +94,11 @@ roughly when the event occurred.`,
 				fmt.Fprintln(w, "No events found.")
 				return nil
 			}
-			if listCompact(cmd, compact, detail) {
+			useCompact, err := listCompact(cmd, compact, detail)
+			if err != nil {
+				return err
+			}
+			if useCompact {
 				writeCompactEventTable(w, events, nil, false, !noHeader, compactTableColorEnabled(w))
 				return nil
 			}

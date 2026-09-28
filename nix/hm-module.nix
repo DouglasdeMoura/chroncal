@@ -75,7 +75,8 @@ in
         - `[security]`: `allow_unsafe_alarm_audio_attach`,
           `allow_unsafe_alarm_email_attendees`, and `allow_plaintext`.
         - `[soft_delete]`: `purge_days` for the retention of a deleted row.
-        - `[ui]`: `theme` and `week_start` for the TUI.
+        - `[ui]`: `theme` and `week_start` for the TUI, and `list_format` and
+          `event_list_days` for the list commands.
 
         Do not put a secret in this attribute set. The Nix store is readable
         for every user of the machine. Use an environment variable, for

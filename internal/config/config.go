@@ -74,7 +74,7 @@ type UIConfig struct {
 	// view, and mini-calendar. Valid values: "sunday" (default), "monday".
 	WeekStart string `mapstructure:"week_start"`
 	// ListFormat controls the default text format for list and search commands.
-	// Valid values are "detail" and "compact".
+	// Valid values are "detail" and "compact", in any case.
 	ListFormat string `mapstructure:"list_format"`
 	// EventListDays sets the default forward window for event list.
 	EventListDays int `mapstructure:"event_list_days"`
@@ -96,7 +96,7 @@ type Config struct {
 const DefaultSoftDeletePurgeDays = 30
 
 // DefaultUIListFormat is used when ui.list_format is unset.
-const DefaultUIListFormat = "detail"
+const DefaultUIListFormat = ListFormatDetail
 
 // DefaultUIEventListDays is used when ui.event_list_days is unset.
 const DefaultUIEventListDays = 30
@@ -140,17 +140,15 @@ func Load() (Config, error) {
 	if !v.IsSet("soft_delete.purge_days") {
 		cfg.SoftDelete.PurgeDays = DefaultSoftDeletePurgeDays
 	}
-	if cfg.UI.ListFormat == "" {
+	// Load does not validate ui.list_format or ui.event_list_days. A bad
+	// display value must not stop the TUI, sync, or the alarm service. The
+	// list commands that read these keys validate them (ParseListFormat and
+	// ValidateEventListDays).
+	if strings.TrimSpace(cfg.UI.ListFormat) == "" {
 		cfg.UI.ListFormat = DefaultUIListFormat
-	}
-	if cfg.UI.ListFormat != "detail" && cfg.UI.ListFormat != "compact" {
-		return Config{}, fmt.Errorf("invalid ui.list_format %q (must be detail or compact)", cfg.UI.ListFormat)
 	}
 	if !v.IsSet("ui.event_list_days") {
 		cfg.UI.EventListDays = DefaultUIEventListDays
-	}
-	if cfg.UI.EventListDays < 1 {
-		return Config{}, fmt.Errorf("invalid ui.event_list_days %d (must be greater than zero)", cfg.UI.EventListDays)
 	}
 	if err := cfg.SMTP.Validate(); err != nil {
 		return Config{}, err
