@@ -280,6 +280,57 @@ func TestNewCredentialStore_NoKeyring_NoPlaintext_StoresAPasswordCommand(t *test
 	}
 }
 
+// TestKeyringDisabledByEnvBypassesTheBackend confirms the probe never opens
+// the OS keyring when CHRONCAL_SECURITY_DISABLE_KEYRING opts the process out.
+// The refusal then names the env var, so an operator sees which switch they
+// set. A host with a healthy keyring must also answer "unavailable".
+func TestKeyringDisabledByEnvBypassesTheBackend(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	prevUnavailableReason := keyringUnavailableReasonFn
+	prevGet := keyringGetFn
+
+	opened := false
+	keyringGetFn = func(service, user string) (string, error) {
+		opened = true
+		return "", errors.New("backend answered")
+	}
+	keyringUnavailableReasonFn = newKeyringAvailabilityProbe()
+
+	t.Cleanup(func() {
+		keyringUnavailableReasonFn = prevUnavailableReason
+		keyringGetFn = prevGet
+	})
+
+	t.Setenv("CHRONCAL_SECURITY_DISABLE_KEYRING", "1")
+
+	reason := keyringUnavailableReason()
+	if !errors.Is(reason, ErrKeyringDisabled) {
+		t.Fatalf("probe reason = %v, want ErrKeyringDisabled", reason)
+	}
+	if opened {
+		t.Error("the probe opened the keyring backend despite the env opt-out")
+	}
+}
+
+// TestKeyringDisabledByEnvRejectsTruthyWords confirms the switch accepts the
+// same truthy words as the other CHRONCAL env flags and rejects the rest.
+func TestKeyringDisabledByEnvRejectsTruthyWords(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"1", true}, {"true", true}, {"YES", true}, {" y ", true},
+		{"0", false}, {"false", false}, {"", false}, {"no", false},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("CHRONCAL_SECURITY_DISABLE_KEYRING", tc.value)
+			if got := keyringDisabledByEnv(); got != tc.want {
+				t.Errorf("keyringDisabledByEnv(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestNewCredentialStore_RefusalIncludesKeyringProbeError confirms the write
 // refusal repeats why the keyring is unavailable. A plain "not found" text
 // reports a broken backend, not an absent item, so the probe error must reach

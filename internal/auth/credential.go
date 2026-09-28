@@ -54,6 +54,27 @@ type PreviousCredentialScope struct {
 
 const keyringService = "chroncal"
 
+// envDisableKeyring turns the OS keyring off for this process. Set it to 1,
+// true, yes, or y. Tests and sandboxed hosts use it so the credential store
+// never opens the real keyring.
+const envDisableKeyring = "CHRONCAL_SECURITY_DISABLE_KEYRING"
+
+// ErrKeyringDisabled reports that envDisableKeyring turned the OS keyring off
+// for this process. NewCredentialStore then behaves as if no keyring exists:
+// it falls back to the file store under the same allowPlaintext rule.
+var ErrKeyringDisabled = errors.New("OS keyring disabled by " + envDisableKeyring)
+
+// keyringDisabledByEnv reports whether the operator opted this process out of
+// the OS keyring.
+func keyringDisabledByEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(envDisableKeyring))) {
+	case "1", "true", "yes", "y":
+		return true
+	default:
+		return false
+	}
+}
+
 // ErrCredentialNotFound reports that a lookup found no credential. Every
 // CredentialStore returns it, or an error that wraps it, so an implementation
 // outside this package can report the same outcome. IsCredentialNotFound
@@ -518,6 +539,11 @@ func keyringAccountName(namespace string, accountID int64) string {
 // keyring when the process dies between the set and the delete, so this
 // probe never writes. When the backend answers, the probe removes the probe
 // item that an older, write-based probe left behind.
+//
+// The probe honors envDisableKeyring before it opens the backend. A desktop
+// session can hold the keyring locked. Each D-Bus call then blocks until the
+// method timeout, which stalls every credential read and write. The env var
+// gives such a host, and the test suite, an immediate answer.
 func newKeyringAvailabilityProbe() func() error {
 	var (
 		once     sync.Once
@@ -525,6 +551,10 @@ func newKeyringAvailabilityProbe() func() error {
 	)
 	return func() error {
 		once.Do(func() {
+			if keyringDisabledByEnv() {
+				probeErr = ErrKeyringDisabled
+				return
+			}
 			_, err := keyringGetFn(keyringService, "__chroncal_probe__")
 			if err == nil || errors.Is(err, keyring.ErrNotFound) || secretServiceReportsAbsentItem(err) {
 				// Remove the residue of the older write-based probe.
