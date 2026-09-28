@@ -82,14 +82,19 @@ homebrew_casks:
       - chroncal
     # The binaries are not signed. macOS marks them with the quarantine attribute.
     # The post-install step removes that attribute. Gatekeeper blocks the first run without it.
-    # xattr exits non-zero when the attribute is absent. must_succeed: false lets the install continue.
+    # xattr -d exits non-zero when the attribute is absent. The shell step deletes the attribute only when it is present.
+    # Other xattr failures stop the install, because Gatekeeper blocks the first run when the attribute stays.
     # Homebrew 7 warns on the postflight block. This custom_block writes postflight_steps.
     # Move the block to hooks.post.install_steps when GoReleaser adds that option.
     # See goreleaser/goreleaser#6873. The quoted form writes the Homebrew staged_path token.
     custom_block: |
       postflight_steps do
         on_macos do
-          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/chroncal"], must_succeed: false
+          run "/bin/sh", args: ["-c", <<~'SH', "sh", "{{ "{{staged_path}}" }}/chroncal"]
+            names=$(/usr/bin/xattr "$1") || exit
+            printf '%s\n' "$names" | /usr/bin/grep -qxF com.apple.quarantine || exit 0
+            exec /usr/bin/xattr -d com.apple.quarantine "$1"
+          SH
         end
       end
 
