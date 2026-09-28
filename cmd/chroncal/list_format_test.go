@@ -14,7 +14,7 @@ func setListFormatConfig(t *testing.T, format string, days int) {
 	t.Cleanup(func() { cfg = oldCfg })
 }
 
-func newListFormatCmd(t *testing.T, args ...string) (*cobra.Command, *bool, *bool) {
+func newListFormatCmd(t *testing.T, args ...string) (*cobra.Command, *bool) {
 	t.Helper()
 	var compact, detail bool
 	cmd := &cobra.Command{Use: "list"}
@@ -23,7 +23,7 @@ func newListFormatCmd(t *testing.T, args ...string) (*cobra.Command, *bool, *boo
 	if err := cmd.ParseFlags(args); err != nil {
 		t.Fatalf("ParseFlags: %v", err)
 	}
-	return cmd, &compact, &detail
+	return cmd, &compact
 }
 
 func TestListCompactUsesConfigWithoutFlags(t *testing.T) {
@@ -37,8 +37,8 @@ func TestListCompactUsesConfigWithoutFlags(t *testing.T) {
 	for format, want := range cases {
 		t.Run(format, func(t *testing.T) {
 			setListFormatConfig(t, format, 30)
-			cmd, compact, detail := newListFormatCmd(t)
-			got, err := listCompact(cmd, *compact, *detail)
+			cmd, compact := newListFormatCmd(t)
+			got, err := listCompact(cmd, *compact)
 			if err != nil {
 				t.Fatalf("listCompact: %v", err)
 			}
@@ -53,8 +53,8 @@ func TestListCompactUsesConfigWithoutFlags(t *testing.T) {
 // A bad ui.list_format fails the list command, not config.Load.
 func TestListCompactRejectsInvalidConfig(t *testing.T) {
 	setListFormatConfig(t, "table", 30)
-	cmd, compact, detail := newListFormatCmd(t)
-	if _, err := listCompact(cmd, *compact, *detail); err == nil {
+	cmd, compact := newListFormatCmd(t)
+	if _, err := listCompact(cmd, *compact); err == nil {
 		t.Fatal("listCompact accepted ui.list_format = table")
 	}
 }
@@ -69,8 +69,8 @@ func TestListCompactFlagOverridesInvalidConfig(t *testing.T) {
 		{"--detail", false},
 	} {
 		t.Run(tc.flag, func(t *testing.T) {
-			cmd, compact, detail := newListFormatCmd(t, tc.flag)
-			got, err := listCompact(cmd, *compact, *detail)
+			cmd, compact := newListFormatCmd(t, tc.flag)
+			got, err := listCompact(cmd, *compact)
 			if err != nil {
 				t.Fatalf("listCompact with %s: %v", tc.flag, err)
 			}

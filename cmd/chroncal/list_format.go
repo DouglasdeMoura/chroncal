@@ -8,7 +8,7 @@ import (
 // listCompact applies explicit command flags before the configured default.
 // JSON output does not call this helper, so the setting affects text only.
 // An invalid ui.list_format is an error only when no flag overrides it.
-func listCompact(cmd *cobra.Command, compact, detail bool) (bool, error) {
+func listCompact(cmd *cobra.Command, compact bool) (bool, error) {
 	if cmd.Flags().Changed("compact") {
 		return compact, nil
 	}
