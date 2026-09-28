@@ -86,7 +86,7 @@ func TestCancelDropsTheQueuedCalendar(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("finishSync returned no command")
 	}
-	if batchEmits(cmd, func(msg tea.Msg) bool {
+	if batchEmits(t, cmd, func(msg tea.Msg) bool {
 		_, ok := msg.(SyncCalendarRequestedMsg)
 		return ok
 	}) {
@@ -106,7 +106,7 @@ func TestCancelStopsTheSyncAllChain(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("handleSyncCalendarFinished returned no command")
 	}
-	if !batchEmits(cmd, func(msg tea.Msg) bool {
+	if !batchEmits(t, cmd, func(msg tea.Msg) bool {
 		_, ok := msg.(syncFinishedMsg)
 		return ok
 	}) {
@@ -300,7 +300,7 @@ func TestCancelDiscardsAnAccountThatDiscoveryLeftBehind(t *testing.T) {
 			if cmd == nil {
 				t.Fatal("the cancelled discovery returned no command")
 			}
-			discarded, ok := batchMsg[calendarDiscoveryDiscardedMsg](cmd)
+			discarded, ok := batchMsg[calendarDiscoveryDiscardedMsg](t, cmd)
 			if !ok {
 				t.Fatal("the cancelled discovery kept the account it left behind")
 			}
@@ -359,7 +359,7 @@ func TestCancelledDiscoveryWithNoAccountKeepsItsStatus(t *testing.T) {
 		t.Fatal("handleAccountDiscoveryReady returned no command")
 	}
 	// No account exists, so nothing asks for a removal.
-	if batchEmits(cmd, func(msg tea.Msg) bool {
+	if batchEmits(t, cmd, func(msg tea.Msg) bool {
 		_, ok := msg.(calendarDiscoveryDiscardedMsg)
 		return ok
 	}) {
@@ -399,13 +399,14 @@ func TestCancelledDiscoveryLeftover(t *testing.T) {
 // batchMsg runs cmd and returns the first message of type T that it emits.
 // A batch holds several commands, and the discard of a leftover account
 // travels beside a spinner tick.
-func batchMsg[T tea.Msg](cmd tea.Cmd) (T, bool) {
+func batchMsg[T tea.Msg](t *testing.T, cmd tea.Cmd) (T, bool) {
+	t.Helper()
 	var zero T
 	if cmd == nil {
 		return zero, false
 	}
 	var found T
-	ok := batchEmits(cmd, func(msg tea.Msg) bool {
+	ok := batchEmits(t, cmd, func(msg tea.Msg) bool {
 		typed, is := msg.(T)
 		if is {
 			found = typed
