@@ -196,7 +196,9 @@ Run chroncal with no arguments to open the interactive TUI. Use subcommands
 when you want copy-pasteable, scriptable access from the shell or an LLM.
 
 Helpful conventions:
-  Dates use YYYY-MM-DD.
+  Dates use YYYY-MM-DD or a relative word: today, tomorrow, yesterday, a
+  weekday name (next occurrence, today counts), "next <weekday>", or an
+  offset like +3d, -2w, +1m.
   Times use HH:MM in your local timezone unless a command accepts --timezone.
   Text output renders timestamps in your local timezone; --output json
   emits RFC 3339 UTC (e.g. 2026-04-01T09:00:00Z) so scripts can compare
@@ -213,6 +215,7 @@ Helpful conventions:
 
   # See the next week of events
   chroncal event list --from 2026-04-01 --to 2026-04-07
+  chroncal event list --from today --to +7d
 
   # Create a calendar, then add an event to it
   chroncal calendar create "Work"
@@ -335,7 +338,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&allowPlaintext, "allow-plaintext", false, "permit storing credentials in plaintext when no OS keyring is available")
 	rootCmd.Flags().StringVar(&tuiEventRef, "event", "", "open the TUI on this event (ID or UID)")
 	rootCmd.Flags().StringVar(&tuiRecurrenceID, "recurrence-id", "", "open a recurrence override (use with a series UID)")
-	rootCmd.Flags().StringVar(&tuiAt, "at", "", "open a generated occurrence at this time (RFC 3339 or YYYY-MM-DD)")
+	rootCmd.Flags().StringVar(&tuiAt, "at", "", "open a generated occurrence at this time (RFC 3339, YYYY-MM-DD, or a relative date like tomorrow)")
 
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupPlanning, Title: "Planning and Scheduling"},
@@ -470,7 +473,7 @@ func parseDateRangeWithDefaultDays(fromStr, toStr string, defaultDays int) (time
 
 	if fromStr != "" {
 		var err error
-		from, err = parseCLIDate("from", fromStr, time.Local)
+		from, err = parseCLIDate("from", fromStr, now, time.Local)
 		if err != nil {
 			return time.Time{}, time.Time{}, err
 		}
@@ -480,7 +483,7 @@ func parseDateRangeWithDefaultDays(fromStr, toStr string, defaultDays int) (time
 	to := from.AddDate(0, 0, defaultDays)
 	if toStr != "" {
 		var err error
-		to, err = parseCLIDate("to", toStr, time.Local)
+		to, err = parseCLIDate("to", toStr, now, time.Local)
 		if err != nil {
 			return time.Time{}, time.Time{}, err
 		}
@@ -503,17 +506,18 @@ func parseDateRangeWithDefaultDays(fromStr, toStr string, defaultDays int) (time
 // is for the "today..+30d" list default. That path clipped the window when
 // exactly one flag was given.
 func parseExportDateBounds(fromStr, toStr string) (time.Time, time.Time, error) {
+	now := time.Now()
 	var from, to time.Time
 	if fromStr != "" {
 		var err error
-		from, err = parseCLIDate("from", fromStr, time.Local)
+		from, err = parseCLIDate("from", fromStr, now, time.Local)
 		if err != nil {
 			return time.Time{}, time.Time{}, err
 		}
 	}
 	if toStr != "" {
 		var err error
-		to, err = parseCLIDate("to", toStr, time.Local)
+		to, err = parseCLIDate("to", toStr, now, time.Local)
 		if err != nil {
 			return time.Time{}, time.Time{}, err
 		}
@@ -543,19 +547,8 @@ func parseListDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 	return parseDateRange(fromStr, toStr)
 }
 
-// parseCLIDate parses a YYYY-MM-DD flag value. It replaces time.Parse's
-// verbose "cannot parse / out of range" surface with a
-// clean "--<flag>: invalid date ..." message.
-func parseCLIDate(flag, value string, loc *time.Location) (time.Time, error) {
-	t, err := time.ParseInLocation("2006-01-02", value, loc)
-	if err != nil {
-		return time.Time{}, errInvalidInputf("--%s: invalid date %q (expected YYYY-MM-DD)", flag, value)
-	}
-	return t, nil
-}
-
 // parseCLITime parses an HH:MM flag value with the same clean-error
-// contract as parseCLIDate.
+// contract as parseCLIDate. parseCLIDate lives in clidate.go.
 func parseCLITime(flag, value string) (time.Time, error) {
 	t, err := time.Parse("15:04", value)
 	if err != nil {

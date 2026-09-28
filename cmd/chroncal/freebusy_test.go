@@ -7,6 +7,8 @@ import (
 )
 
 func TestParseFreeBusyTime(t *testing.T) {
+	// Thursday, 2026-04-09, so weekday words resolve deterministically.
+	now := time.Date(2026, 4, 9, 15, 4, 0, 0, time.Local)
 	tests := []struct {
 		name         string
 		flag         string
@@ -42,11 +44,37 @@ func TestParseFreeBusyTime(t *testing.T) {
 			input: "2026-04-10T09:30:00Z",
 			want:  time.Date(2026, 4, 10, 9, 30, 0, 0, time.UTC),
 		},
+		{
+			name:  "relative from today",
+			flag:  "from",
+			input: "today",
+			want:  time.Date(2026, 4, 9, 0, 0, 0, 0, time.Local),
+		},
+		{
+			name:         "relative to tomorrow advances one more day",
+			flag:         "to",
+			input:        "tomorrow",
+			inclusiveEnd: true,
+			want:         time.Date(2026, 4, 11, 0, 0, 0, 0, time.Local),
+		},
+		{
+			name:  "relative from next friday",
+			flag:  "from",
+			input: "next friday",
+			// Apr 9 is a Thursday, so next friday is 8 days ahead.
+			want: time.Date(2026, 4, 17, 0, 0, 0, 0, time.Local),
+		},
+		{
+			name:  "relative from offset",
+			flag:  "from",
+			input: "+3d",
+			want:  time.Date(2026, 4, 12, 0, 0, 0, 0, time.Local),
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseFreeBusyTime(tt.flag, tt.input, tt.inclusiveEnd)
+			got, err := parseFreeBusyTime(tt.flag, tt.input, now, tt.inclusiveEnd)
 			if err != nil {
 				t.Fatalf("parseFreeBusyTime: %v", err)
 			}

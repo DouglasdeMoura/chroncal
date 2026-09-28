@@ -118,8 +118,8 @@ CANCELLED entries.`,
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "filter by calendar name")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (DRAFT, FINAL, CANCELLED)")
 	cmd.Flags().BoolVar(&all, "all", false, "include cancelled entries (hidden by default)")
-	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD); with no date flags, past entries are included")
-	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD, default: 30 days after --from)")
+	cmd.Flags().StringVar(&fromStr, "from", "", "start date (YYYY-MM-DD or relative); with no date flags, past entries are included")
+	cmd.Flags().StringVar(&toStr, "to", "", "end date (YYYY-MM-DD or relative, default: 30 days after --from)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "table with one line per entry (ID  DATE  CATEGORIES  SUMMARY)")
 	cmd.Flags().BoolVar(&detail, "detail", false, "show the detailed text format")
 	cmd.Flags().BoolVar(&noHeader, "no-header", false, "omit the compact table header (for scripts)")
@@ -226,6 +226,8 @@ func journalAddCmd() *cobra.Command {
 
 Date is date-only (YYYY-MM-DD) and stored without a time component,
 so it exports correctly as VALUE=DATE in iCal regardless of your timezone.
+The --date flag also accepts a relative date word, for example "today",
+"friday", or "+3d".
 
 Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 		Example: `  # Simple journal entry
@@ -282,12 +284,9 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 				return err
 			}
 
-			var startDate string
-			if dateStr != "" {
-				if _, err := time.Parse("2006-01-02", dateStr); err != nil {
-					return errInvalidInputf("parse date: expected YYYY-MM-DD, got %q", dateStr)
-				}
-				startDate = dateStr
+			startDate, err := parseCLIDateString("date", dateStr, time.Now(), time.Local)
+			if err != nil {
+				return err
 			}
 
 			parsedExDates, err := parseExdateRdateFlags("exception-date-times", exdates, "", time.Time{})
@@ -380,7 +379,7 @@ Defaults: status=FINAL, class=PUBLIC, calendar=Personal.`,
 		},
 	}
 	cmd.Flags().StringVar(&description, "description", "", "description")
-	cmd.Flags().StringVar(&dateStr, "date", "", "date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&dateStr, "date", "", "date (YYYY-MM-DD or relative)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar name (default: first available)")
 	cmd.Flags().StringVar(&status, "status", "", "status (DRAFT, FINAL, CANCELLED; default: FINAL)")
 	cmd.Flags().StringVar(&class, "class", "", "classification (PUBLIC, PRIVATE, CONFIDENTIAL; default: PUBLIC)")
@@ -479,13 +478,11 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 				p.Description = description
 			}
 			if cmd.Flags().Changed("date") {
-				if dateStr == "" {
-					p.StartDate = ""
-				} else if _, err := time.Parse("2006-01-02", dateStr); err != nil {
-					return errInvalidInputf("parse date: expected YYYY-MM-DD or empty to clear, got %q", dateStr)
-				} else {
-					p.StartDate = dateStr
+				date, err := parseCLIDateString("date", dateStr, time.Now(), time.Local)
+				if err != nil {
+					return err
 				}
+				p.StartDate = date
 			}
 			if cmd.Flags().Changed("status") {
 				switch strings.ToUpper(status) {
@@ -612,7 +609,7 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 	}
 	cmd.Flags().StringVar(&summary, "summary", "", "new summary")
 	cmd.Flags().StringVar(&description, "description", "", "new description")
-	cmd.Flags().StringVar(&dateStr, "date", "", "new date (YYYY-MM-DD; empty to clear)")
+	cmd.Flags().StringVar(&dateStr, "date", "", "new date (YYYY-MM-DD or relative; empty to clear)")
 	cmd.Flags().StringVar(&status, "status", "", "new status (DRAFT, FINAL, CANCELLED)")
 	cmd.Flags().StringVar(&class, "class", "", "new classification (PUBLIC, PRIVATE, CONFIDENTIAL)")
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "move to calendar")
