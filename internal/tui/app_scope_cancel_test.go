@@ -66,7 +66,7 @@ func TestChoiceDialogCancel_NoSpuriousReopenOnNextUpdate(t *testing.T) {
 	_, cmd := m.Update(eventUpdatedMsg{calendarID: 1})
 
 	// The batch must not contain an EventViewRequestedMsg.
-	reopened := batchEmits(cmd, func(msg tea.Msg) bool {
+	reopened := batchEmits(t, cmd, func(msg tea.Msg) bool {
 		_, ok := msg.(EventViewRequestedMsg)
 		return ok
 	})

@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -16,39 +16,45 @@ import (
 // services (loadCalendars etc.) panic on a bare Model. Those are recovered
 // and treated as a non-match. The helper can then assert on the pure
 // message-constructor commands in the same batch.
-func batchEmits(cmd tea.Cmd, pred func(tea.Msg) bool) (found bool) {
+//
+// The commands run in a synctest bubble. A tea.Tick command (for example
+// expireStatusAfter) then fires on the fake clock at once. No timer
+// outlives the helper. A live timer calls time.Now when it fires, and that
+// read races with a later test that sets time.Local.
+func batchEmits(t *testing.T, cmd tea.Cmd, pred func(tea.Msg) bool) (found bool) {
+	t.Helper()
+	synctest.Test(t, func(*testing.T) {
+		found = emits(cmd, pred)
+	})
+	return found
+}
+
+func emits(cmd tea.Cmd, pred func(tea.Msg) bool) bool {
 	if cmd == nil {
 		return false
 	}
-	// Run with a short deadline: tea.Tick-based commands (expireStatusAfter)
-	// block for their full duration, which we don't care about here.
-	done := make(chan tea.Msg, 1)
-	go func() {
-		defer func() {
-			if recover() != nil {
-				done <- nil
-			}
-		}()
-		done <- cmd()
-	}()
-	var msg tea.Msg
-	select {
-	case msg = <-done:
-	case <-time.After(200 * time.Millisecond):
-		return false
-	}
+	msg := runRecovered(cmd)
 	if msg == nil {
 		return false
 	}
 	if batch, ok := msg.(tea.BatchMsg); ok {
 		for _, c := range batch {
-			if batchEmits(c, pred) {
+			if emits(c, pred) {
 				return true
 			}
 		}
 		return false
 	}
 	return pred(msg)
+}
+
+func runRecovered(cmd tea.Cmd) (msg tea.Msg) {
+	defer func() {
+		if recover() != nil {
+			msg = nil
+		}
+	}()
+	return cmd()
 }
 
 // updateModel runs one Update cycle and returns the concrete Model.
@@ -265,7 +271,7 @@ func TestPostReauthSyncQueuedWhileSyncing(t *testing.T) {
 		t.Fatal("syncFinishedMsg with a queued sync should emit commands")
 	}
 	// The batch must contain the re-dispatched SyncCalendarRequestedMsg.
-	if !batchEmits(cmd, func(msg tea.Msg) bool {
+	if !batchEmits(t, cmd, func(msg tea.Msg) bool {
 		r, ok := msg.(SyncCalendarRequestedMsg)
 		return ok && r.ID == 12
 	}) {
@@ -282,7 +288,7 @@ func TestNoPendingSyncNoRedispatch(t *testing.T) {
 	if m.pendingSyncCalendar.ID != 0 {
 		t.Error("nothing should be queued")
 	}
-	if cmd != nil && batchEmits(cmd, func(msg tea.Msg) bool {
+	if cmd != nil && batchEmits(t, cmd, func(msg tea.Msg) bool {
 		_, ok := msg.(SyncCalendarRequestedMsg)
 		return ok
 	}) {

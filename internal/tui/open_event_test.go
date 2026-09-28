@@ -107,7 +107,7 @@ func TestEventsLoaded_OpensPendingEventAndSelectsAgendaRow(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected EventViewRequestedMsg after loading the pending event")
 	}
-	if !batchEmits(cmd, func(msg tea.Msg) bool {
+	if !batchEmits(t, cmd, func(msg tea.Msg) bool {
 		req, ok := msg.(EventViewRequestedMsg)
 		return ok && req.Event.ID == ev.ID
 	}) {
