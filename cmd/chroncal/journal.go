@@ -99,7 +99,11 @@ CANCELLED entries.`,
 			if outputFmt != "text" {
 				return printOutput(w, toJSONJournals(journals))
 			}
-			if listCompact(cmd, compact, detail) {
+			useCompact, err := listCompact(cmd, compact, detail)
+			if err != nil {
+				return err
+			}
+			if useCompact {
 				if len(journals) == 0 {
 					fmt.Fprintln(w, "No journal entries found.")
 					return nil

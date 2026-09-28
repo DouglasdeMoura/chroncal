@@ -53,6 +53,15 @@ Set ui.event_list_days in config.toml to change the window.`,
 			if err != nil {
 				return err
 			}
+			// --verbose always shows the time-rail view, so a compact
+			// default from config does not apply to it.
+			useCompact := false
+			if outputFmt == "text" && !verbose {
+				useCompact, err = listCompact(cmd, compact, detail)
+				if err != nil {
+					return err
+				}
+			}
 
 			var calID int64
 			if calendarName != "" {
@@ -74,7 +83,7 @@ Set ui.event_list_days in config.toml to change the window.`,
 			}
 
 			var calendarNames map[int64]string
-			if verbose || showCalendar || listCompact(cmd, compact, detail) {
+			if verbose || showCalendar || useCompact {
 				cals, err := a.Calendars.List(ctx)
 				if err != nil {
 					return fmt.Errorf("list calendars: %w", err)
@@ -97,7 +106,7 @@ Set ui.event_list_days in config.toml to change the window.`,
 				fmt.Fprintln(w, "No events found.")
 				return nil
 			}
-			if !verbose && listCompact(cmd, compact, detail) {
+			if useCompact {
 				writeCompactEventTable(w, events, calendarNames, showCalendar, !noHeader, compactTableColorEnabled(w))
 				return nil
 			}

@@ -463,3 +463,48 @@ func TestSMTPResolvePasswordReportsACommandFailure(t *testing.T) {
 		t.Fatalf("ResolvePassword() error leaks the output: %q", err)
 	}
 }
+
+// TestLoad_InvalidListSettingsDoNotFail guards the review finding on PR 799.
+// A bad display value must not stop the TUI, sync, or the alarm service.
+// The list commands validate these keys.
+func TestLoad_InvalidListSettingsDoNotFail(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[ui]\nlist_format = \"table\"\nevent_list_days = 0\n"), 0o644)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_UI_LIST_FORMAT", "")
+	t.Setenv("CHRONCAL_UI_EVENT_LIST_DAYS", "")
+	cfg := mustLoad(t)
+	if cfg.UI.ListFormat != "table" {
+		t.Errorf("UI.ListFormat = %q, want table", cfg.UI.ListFormat)
+	}
+	if cfg.UI.EventListDays != 0 {
+		t.Errorf("UI.EventListDays = %d, want 0", cfg.UI.EventListDays)
+	}
+}
+
+func TestParseListFormat(t *testing.T) {
+	cases := []struct {
+		in      string
+		compact bool
+		wantErr bool
+	}{
+		{"", false, false},
+		{"detail", false, false},
+		{"compact", true, false},
+		{" Compact ", true, false},
+		{"DETAIL", false, false},
+		{"table", false, true},
+	}
+	for _, tc := range cases {
+		got, err := ParseListFormat(tc.in)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("ParseListFormat(%q) error = %v, wantErr %v", tc.in, err, tc.wantErr)
+			continue
+		}
+		if got != tc.compact {
+			t.Errorf("ParseListFormat(%q) = %v, want %v", tc.in, got, tc.compact)
+		}
+	}
+}

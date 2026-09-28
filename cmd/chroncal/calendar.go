@@ -214,7 +214,11 @@ func calendarListCmd() *cobra.Command {
 				}
 				return printOutput(w, items)
 			}
-			if listCompact(cmd, compact, detail) {
+			useCompact, err := listCompact(cmd, compact, detail)
+			if err != nil {
+				return err
+			}
+			if useCompact {
 				if len(cals) == 0 {
 					fmt.Fprintln(w, "No calendars found.")
 					return nil

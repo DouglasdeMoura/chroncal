@@ -72,7 +72,11 @@ By default completed and cancelled todos are hidden unless you pass
 			if outputFmt != "text" {
 				return printOutput(w, toJSONTodos(todos))
 			}
-			if listCompact(cmd, compact, detail) {
+			useCompact, err := listCompact(cmd, compact, detail)
+			if err != nil {
+				return err
+			}
+			if useCompact {
 				if len(todos) == 0 {
 					fmt.Fprintln(w, "No todos found.")
 					return nil

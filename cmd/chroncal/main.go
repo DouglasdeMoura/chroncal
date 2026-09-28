@@ -456,11 +456,12 @@ func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
 }
 
 func parseEventListDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
-	days := cfg.UI.EventListDays
-	if days < 1 {
-		days = config.DefaultUIEventListDays
+	if toStr == "" {
+		if err := config.ValidateEventListDays(cfg.UI.EventListDays); err != nil {
+			return time.Time{}, time.Time{}, err
+		}
 	}
-	return parseDateRangeWithDefaultDays(fromStr, toStr, days)
+	return parseDateRangeWithDefaultDays(fromStr, toStr, cfg.UI.EventListDays)
 }
 
 func parseDateRangeWithDefaultDays(fromStr, toStr string, defaultDays int) (time.Time, time.Time, error) {
