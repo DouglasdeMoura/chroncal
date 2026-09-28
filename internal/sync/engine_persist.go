@@ -534,12 +534,22 @@ func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, to
 	enc := ical.NewEncoder(&buf)
 	if encErr := enc.Encode(res.data); encErr != nil {
 		e.logger.Warn("encode fetched resource failed", "path", res.href, "error", encErr)
-		return "", false, nil, nil
+		warnings = append(warnings, ImportWarning{
+			Path:    res.href,
+			Message: fmt.Sprintf("encode fetched body failed (%v); resource not imported", encErr),
+		})
+		logImportWarnings(e.logger, warnings)
+		return "", false, warnings, nil
 	}
 	importResult, impErr := icalPkg.ImportFileRemote(strings.NewReader(buf.String()))
 	if impErr != nil {
 		e.logger.Warn("import fetched resource failed", "path", res.href, "error", impErr)
-		return "", false, nil, nil
+		warnings = append(warnings, ImportWarning{
+			Path:    res.href,
+			Message: fmt.Sprintf("import fetched body failed (%v); resource not imported", impErr),
+		})
+		logImportWarnings(e.logger, warnings)
+		return "", false, warnings, nil
 	}
 	warnings = append(warnings, e.noteImportWarnings(res.href, importResult)...)
 

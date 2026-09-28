@@ -143,8 +143,15 @@ func TestPendingHrefsNoteMissDropsAfterBudget(t *testing.T) {
 	}
 	const href = "/calendar/phantom-invite.ics"
 	for i := 0; i < pendingHrefMissLimit; i++ {
-		if err := pending.noteMiss(ctx, href); err != nil {
+		gaveUp, err := pending.noteMiss(ctx, href)
+		if err != nil {
 			t.Fatalf("noteMiss %d: %v", i, err)
+		}
+		if i < pendingHrefMissLimit-1 && gaveUp {
+			t.Fatalf("noteMiss %d: gaveUp = true, want false (budget not spent)", i)
+		}
+		if i == pendingHrefMissLimit-1 && !gaveUp {
+			t.Fatalf("noteMiss %d: gaveUp = false, want true (budget spent)", i)
 		}
 	}
 	if rows := listPendingHrefs(t, q, calendarID); len(rows) != 0 {
@@ -163,8 +170,10 @@ func TestPendingHrefsAppendUnseenAndForget(t *testing.T) {
 		t.Fatalf("loadPendingHrefs: %v", err)
 	}
 	const href = "/calendar/phantom-invite.ics"
-	if err := pending.noteMiss(ctx, href); err != nil {
+	if gaveUp, err := pending.noteMiss(ctx, href); err != nil {
 		t.Fatalf("noteMiss: %v", err)
+	} else if gaveUp {
+		t.Fatal("noteMiss: gaveUp = true on first miss, want false")
 	}
 	got := pending.appendUnseen(nil)
 	if len(got) != 1 || got[0] != href {

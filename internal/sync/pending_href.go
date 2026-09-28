@@ -128,26 +128,30 @@ func (p *pendingHrefs) appendUnseen(fetchPaths []string) []string {
 	return fetchPaths
 }
 
-func (p *pendingHrefs) noteMiss(ctx context.Context, href string) error {
+// noteMiss bumps the miss count for the href and drops the row after the
+// budget. gaveUp reports that this call exhausted the budget. The caller must
+// then tell the user: the retry obligation is gone, and nothing else will
+// surface the href again.
+func (p *pendingHrefs) noteMiss(ctx context.Context, href string) (gaveUp bool, err error) {
 	row, err := p.q.BumpSyncPendingHref(ctx, storage.BumpSyncPendingHrefParams{
 		CalendarID: p.calendarID,
 		Href:       href,
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	if row.MissCount >= pendingHrefMissLimit {
 		if err := p.q.DeleteSyncPendingHref(ctx, storage.DeleteSyncPendingHrefParams{
 			CalendarID: p.calendarID,
 			Href:       href,
 		}); err != nil {
-			return err
+			return false, err
 		}
 		delete(p.byHref, href)
-		return nil
+		return true, nil
 	}
 	p.byHref[href] = struct{}{}
-	return nil
+	return false, nil
 }
 
 type multigetMissKind string

@@ -104,6 +104,58 @@ END:VCALENDAR
 	}
 }
 
+func TestMultiGetTolerantReportsUnparseableBody(t *testing.T) {
+	t.Parallel()
+
+	const responseBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/garbage.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-garbage&quot;</d:getetag>
+        <cal:calendar-data>this is not an ical body at all</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/calendar/gone.ics</d:href>
+    <d:status>HTTP/1.1 404 Not Found</d:status>
+  </d:response>
+</d:multistatus>`
+
+	client := newMultiGetClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "REPORT" {
+			t.Fatalf("method = %s, want REPORT", r.Method)
+		}
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(responseBody)),
+			Request:    r,
+		}, nil
+	})
+
+	result, err := client.MultiGetTolerant(context.Background(), "/calendar/", []string{
+		"/calendar/garbage.ics",
+		"/calendar/gone.ics",
+	})
+	if err != nil {
+		t.Fatalf("MultiGetTolerant: %v", err)
+	}
+	if len(result.Resources) != 0 {
+		t.Fatalf("Resources = %d, want 0", len(result.Resources))
+	}
+	if len(result.Missing) != 1 || result.Missing[0] != "/calendar/gone.ics" {
+		t.Fatalf("Missing = %v, want [/calendar/gone.ics]", result.Missing)
+	}
+	if len(result.Unparseable) != 1 || result.Unparseable[0] != "/calendar/garbage.ics" {
+		t.Fatalf("Unparseable = %v, want [/calendar/garbage.ics]", result.Unparseable)
+	}
+}
+
 func TestMultiGetTolerantEmptyHrefList(t *testing.T) {
 	t.Parallel()
 
