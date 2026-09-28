@@ -3,7 +3,6 @@ package alarm
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,10 +37,7 @@ func newTestServicesWithTodos(t *testing.T) (*Service, *event.Service, *todo.Ser
 // foreign keys disabled, which an in-memory-per-connection DB cannot share.
 func newFileTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
 	t.Helper()
-	db, q, err := storage.Open(filepath.Join(t.TempDir(), "alarm_test.db"))
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	return db, q
 }

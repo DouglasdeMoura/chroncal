@@ -9,6 +9,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 // newMigrationFixture opens a fresh DB, creates a destination account, and
@@ -16,10 +17,7 @@ import (
 // add events/todos/journals to a local source and assert migration outcomes.
 func newMigrationFixture(t *testing.T) (*Service, *storage.Queries, *sql.DB, Account) {
 	t.Helper()
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	svc := NewService(db, q)
 	ctx := context.Background()

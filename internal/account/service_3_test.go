@@ -15,6 +15,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 // ReconcileSelection must re-link the same local rows after account remove.
@@ -253,10 +254,7 @@ func TestReconcileSelectionRefusesLastApplicationCalendar(t *testing.T) {
 }
 
 func TestServiceDeleteRestoresCredentialOnCommitFailure(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
