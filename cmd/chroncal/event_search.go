@@ -90,13 +90,13 @@ roughly when the event occurred.`,
 				}
 				return printOutput(w, items)
 			}
-			if len(events) == 0 {
-				fmt.Fprintln(w, "No events found.")
-				return nil
-			}
 			useCompact, err := listCompact(cmd, compact, detail)
 			if err != nil {
 				return err
+			}
+			if len(events) == 0 {
+				fmt.Fprintln(w, "No events found.")
+				return nil
 			}
 			if useCompact {
 				writeCompactEventTable(w, events, nil, false, !noHeader, compactTableColorEnabled(w))

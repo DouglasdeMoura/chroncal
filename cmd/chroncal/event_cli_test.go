@@ -361,6 +361,27 @@ func TestEventSearchInvalidDateBound(t *testing.T) {
 	}
 }
 
+// TestEventSearchInvalidListFormatWithoutResults guards the review finding
+// on PR 799. An invalid ui.list_format fails the search also when the search
+// finds no events.
+func TestEventSearchInvalidListFormatWithoutResults(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	t.Setenv("CHRONCAL_UI_LIST_FORMAT", "table")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t, "event", "search", "nothing")
+	if err == nil {
+		t.Fatalf("event search accepted ui.list_format = table; stdout = %q", stdout)
+	}
+	if !strings.Contains(err.Error(), "list_format") {
+		t.Fatalf("error = %q, want it to mention list_format", err.Error())
+	}
+}
+
 func TestEventUpdateAllDayToTimedDefaultsToOneHour(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
