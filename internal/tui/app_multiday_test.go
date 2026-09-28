@@ -94,3 +94,71 @@ func TestEventsToCalendar_SingleDayUnchanged(t *testing.T) {
 		t.Errorf("single-day event start/end should be unchanged")
 	}
 }
+
+// TestEventsOn_AllDayMultiDaySpan checks that a multi-day all-day event is
+// returned for every day of its span, not only the first day. The day popup
+// builds its list from eventsOn. A start-date match made the popup show
+// "No events on this day" for every day after the first one.
+//
+// See issue #807.
+func TestEventsOn_AllDayMultiDaySpan(t *testing.T) {
+	e := event.Event{
+		ID:         42,
+		CalendarID: 1,
+		Title:      "Trip",
+		AllDay:     true,
+		StartTime:  time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC),
+	}
+	events := []event.Event{e}
+
+	for day := 11; day <= 17; day++ {
+		sel := time.Date(2026, 10, day, 0, 0, 0, 0, time.Local)
+		got := eventsOn(events, sel)
+		if len(got) != 1 || got[0].ID != 42 {
+			t.Errorf("Oct %d: expected the all-day event, got %d events", day, len(got))
+		}
+	}
+
+	outside := []time.Time{
+		time.Date(2026, 10, 10, 0, 0, 0, 0, time.Local),
+		time.Date(2026, 10, 18, 0, 0, 0, 0, time.Local),
+	}
+	for _, sel := range outside {
+		if got := eventsOn(events, sel); len(got) != 0 {
+			t.Errorf("%s: expected no events outside the span, got %d",
+				sel.Format("2006-01-02"), len(got))
+		}
+	}
+}
+
+// TestEventsOn_TimedCrossMidnight checks that a timed event past midnight is
+// returned for every local day it covers, matching the grid cells.
+func TestEventsOn_TimedCrossMidnight(t *testing.T) {
+	loc := time.Local
+	e := event.Event{
+		ID:         7,
+		CalendarID: 1,
+		Title:      "Overnight hackathon",
+		StartTime:  time.Date(2026, 6, 13, 18, 0, 0, 0, loc),
+		EndTime:    time.Date(2026, 6, 14, 12, 0, 0, 0, loc),
+	}
+	events := []event.Event{e}
+
+	inside := []time.Time{
+		time.Date(2026, 6, 13, 0, 0, 0, 0, loc),
+		time.Date(2026, 6, 14, 0, 0, 0, 0, loc),
+	}
+	for _, sel := range inside {
+		if got := eventsOn(events, sel); len(got) != 1 || got[0].ID != 7 {
+			t.Errorf("%s: expected the overnight event, got %d events",
+				sel.Format("2006-01-02"), len(got))
+		}
+	}
+
+	sel := time.Date(2026, 6, 15, 0, 0, 0, 0, loc)
+	if got := eventsOn(events, sel); len(got) != 0 {
+		t.Errorf("%s: expected no events after the span, got %d",
+			sel.Format("2006-01-02"), len(got))
+	}
+}
