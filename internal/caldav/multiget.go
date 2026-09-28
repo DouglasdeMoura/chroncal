@@ -13,11 +13,14 @@ import (
 // MultiGetResult holds the outcome of a tolerant calendar-multiget REPORT.
 // Resources that returned 200 with calendar-data land in Resources. Paths the
 // server reported as 404 (deleted between sync-collection and multiget) land
-// in Missing. The caller can then treat them as deletions instead of an abort
-// of the whole pull.
+// in Missing. Paths that returned a 200 body the ical decoder rejects land in
+// Unparseable. The caller can then treat Missing entries as deletions and
+// Unparseable entries as import failures instead of an abort of the whole
+// batch.
 type MultiGetResult struct {
-	Resources []Resource
-	Missing   []string
+	Resources   []Resource
+	Missing     []string
+	Unparseable []string
 }
 
 // MultiGetTolerant fetches resources via the calendar-multiget REPORT. It
@@ -82,9 +85,9 @@ func (c *Client) MultiGetTolerant(ctx context.Context, calendarPath string, href
 		}
 		cal, parseErr := ical.NewDecoder(strings.NewReader(data)).Decode()
 		if parseErr != nil {
-			// Server returned a body we can't parse. Treat as missing rather
-			// than aborting — the next sync will revisit the href.
-			result.Missing = append(result.Missing, href)
+			// Server returned a body we can't parse. Treat as unparseable
+			// rather than abort — the next sync will revisit the href.
+			result.Unparseable = append(result.Unparseable, href)
 			continue
 		}
 		result.Resources = append(result.Resources, Resource{

@@ -101,10 +101,21 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		// classifyMultigetMiss splits a known miss (local row: incomplete)
 		// from an unknown miss (no local row: record and retry). An
 		// uncanonical href carries neither risk: skip it. See pullView.
-		for _, miss := range multi.Missing {
+		//
+		// handleMiss serves both lists. An unparseable body (the server
+		// returned a body the ical decoder rejects) additionally warns on
+		// every occurrence: the resource exists, chroncal cannot import it,
+		// and silence reads as "nothing to sync" (issue #805). A miss that
+		// exhausts the retry budget warns once more, because after that the
+		// href is forgotten.
+		noteWarning := func(w ImportWarning) {
+			result.warnings = append(result.warnings, w)
+			logImportWarnings(e.logger, []ImportWarning{w})
+		}
+		handleMiss := func(miss string, unparseable bool) {
 			canonical, hrefErr := client.CanonicalObjectRef(remoteURL, miss)
 			kind, local := classifyMultigetMiss(canonical, hrefErr, localByPath)
-			e.logger.Warn("multiget href missing", "kind", string(kind), "calendar_id", calendarID, "href", miss)
+			e.logger.Warn("multiget href missing", "kind", string(kind), "unparseable", unparseable, "calendar_id", calendarID, "href", miss)
 			switch kind {
 			case multigetMissKnown:
 				view.knownMisses++
@@ -114,6 +125,13 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				// transient multiget 404 would soft-delete the local event
 				// even though we have no actual evidence of deletion.
 				seenUIDs[local.Uid] = true
+				if unparseable {
+					noteWarning(ImportWarning{
+						Path:    miss,
+						UID:     local.Uid,
+						Message: "server body unparseable; local copy kept, update not imported",
+					})
+				}
 			case multigetMissUncanonical:
 				// CanonicalObjectRef rejected this href (query or fragment,
 				// another origin, a collection path). localByPath holds
@@ -124,11 +142,35 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				// a broken or hostile server cannot hold back the sync
 				// token forever. See issue #625.
 			case multigetMissUnknown:
-				if recErr := pending.noteMiss(ctx, canonical); recErr != nil {
+				if unparseable {
+					noteWarning(ImportWarning{
+						Path:    miss,
+						Message: "server body unparseable; resource not imported",
+					})
+				}
+				gaveUp, recErr := pending.noteMiss(ctx, canonical)
+				if recErr != nil {
 					e.logger.Warn("record unknown multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
 					view.pendingRecordFails++
+					return
+				}
+				if gaveUp {
+					msg := fmt.Sprintf("gave up refetching after %d attempts", pendingHrefMissLimit)
+					if unparseable {
+						msg += "; resource stays unimported"
+					}
+					noteWarning(ImportWarning{
+						Path:    miss,
+						Message: msg,
+					})
 				}
 			}
+		}
+		for _, miss := range multi.Missing {
+			handleMiss(miss, false)
+		}
+		for _, miss := range multi.Unparseable {
+			handleMiss(miss, true)
 		}
 		for _, res := range multi.Resources {
 			resPath, hrefErr := client.CanonicalObjectRef(remoteURL, res.Path)

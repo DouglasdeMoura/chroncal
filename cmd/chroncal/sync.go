@@ -531,6 +531,10 @@ func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, cal
 			for _, e := range r.Errors {
 				errMsgs = append(errMsgs, e.Error())
 			}
+			warnMsgs := make([]string, 0, len(r.Warnings))
+			for _, warn := range r.Warnings {
+				warnMsgs = append(warnMsgs, warn.String())
+			}
 			totalErrors += len(r.Errors)
 			items = append(items, map[string]any{
 				"calendar_id":       r.CalendarID,
@@ -542,6 +546,7 @@ func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, cal
 				"auto_resolved":     r.AutoResolved,
 				"skipped_conflicts": r.SkippedConflicts,
 				"errors":            errMsgs,
+				"warnings":          warnMsgs,
 			})
 		}
 		if err := printOutput(w, map[string]any{
