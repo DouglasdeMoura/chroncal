@@ -15,6 +15,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 func TestCalendarCreateCreatesLocalOnlyCalendar(t *testing.T) {
@@ -535,7 +536,11 @@ func setupCalendarCLITestEnv(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "chroncal.db")
+	// The database starts as a copy of the migrated template. Every child
+	// process that opens CHRONCAL_DB then skips the full migration chain,
+	// which costs a quarter second of CPU through the pure-Go SQLite
+	// driver.
+	dbPath := testutil.DBPath(t)
 	t.Setenv("CHRONCAL_DB", dbPath)
 	// XDG_CONFIG_HOME points the plaintext credential store at this temp dir.
 	// Connect flows pair this with --allow-plaintext so they store credentials
@@ -549,6 +554,13 @@ func setupCalendarCLITestEnv(t *testing.T) string {
 	// plaintext; set the env here so a missed --allow-plaintext flag does
 	// not fail the suite. Tests that assert the no-keyring error unset it.
 	t.Setenv("CHRONCAL_SECURITY_ALLOW_PLAINTEXT", "true")
+	// Never touch the developer's real OS keyring. On a desktop with a
+	// locked keyring, each D-Bus call blocks for the full method timeout,
+	// so one credential command can stall a test for tens of seconds. With
+	// the keyring off, the store falls back to plaintext under the opt-in
+	// above. runChroncalCommand spawns children through os.Environ, so
+	// every subprocess command inherits this.
+	t.Setenv("CHRONCAL_SECURITY_DISABLE_KEYRING", "1")
 	return dbPath
 }
 

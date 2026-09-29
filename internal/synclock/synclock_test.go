@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 func TestAccountSerializesIndependentHandlesAcrossCacheEnvironments(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "first-cache"))
-	dbPath := filepath.Join(t.TempDir(), "chroncal.db")
+	dbPath := testutil.DBPath(t)
 	db1, _, err := storage.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open first database handle: %v", err)
@@ -65,7 +66,7 @@ func TestAccountSerializesIndependentHandlesAcrossCacheEnvironments(t *testing.T
 func TestAccountSerializesHardLinkedDatabaseHandles(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	dir := t.TempDir()
-	originalPath := filepath.Join(dir, "chroncal.db")
+	originalPath := testutil.DBPath(t)
 	seed, _, err := storage.Open(originalPath)
 	if err != nil {
 		t.Fatalf("seed database: %v", err)

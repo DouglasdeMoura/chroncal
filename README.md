@@ -475,6 +475,10 @@ allow_plaintext = true
 
 > **Read the trade-off first.** The 0600 mode blocks a casual `cat`. It does not block backups, filesystem snapshots, or sync tools (Dropbox, iCloud, rsync) that ignore Unix permissions. A password command keeps the secret out of the file, so prefer option 1 when your password manager supports it.
 
+`CHRONCAL_SECURITY_DISABLE_KEYRING=1` turns the OS keyring off for the process that has it in its environment. Chroncal then behaves as if no keyring exists: it falls back to the file store under the same `allow_plaintext` rule. Set it on a host where the keyring is locked or absent but the session still runs, for example over SSH. The test suite sets it too, so tests never read or write the real keyring. It is an environment variable only. No config key has the same function.
+
+> **Use the switch for all runs or for no runs.** With the switch, chroncal does not read the credentials that the keyring holds. An account with a keyring credential then fails to sync. A new or refreshed credential goes to the file store, and a run without the switch does not read it. `account remove` with the switch leaves the keyring entry in place.
+
 What needs the opt-in, and what does not:
 
 | Credential | Keyring absent, no opt-in |

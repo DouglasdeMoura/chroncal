@@ -16,6 +16,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 func TestAccountReauthStoresFreshTokens(t *testing.T) {
@@ -341,10 +342,7 @@ func TestAccountRemovePreservesDownloadedCalendarsAsLocal(t *testing.T) {
 // case-insensitive names collide are never silently resolved to the first
 // match. The caller must disambiguate with a numeric ID.
 func TestResolveAccountRejectsAmbiguousName(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
