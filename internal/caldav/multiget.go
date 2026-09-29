@@ -12,11 +12,11 @@ import (
 
 // MultiGetResult holds the outcome of a tolerant calendar-multiget REPORT.
 // Resources that returned 200 with calendar-data land in Resources. Paths the
-// server reported as 404 (deleted between sync-collection and multiget) land
-// in Missing. Paths that returned a 200 body the ical decoder rejects land in
-// Unparseable. The caller can then treat Missing entries as deletions and
-// Unparseable entries as import failures instead of an abort of the whole
-// batch.
+// server reported as 404, or without calendar-data, land in Missing. Paths
+// that returned a 200 body the ical decoder rejects land in Unparseable. One
+// bad href then does not abort the whole batch. A Missing
+// entry is not evidence of a deletion: a server can report 404 for a
+// resource that still exists. An Unparseable entry is an import failure.
 type MultiGetResult struct {
 	Resources   []Resource
 	Missing     []string

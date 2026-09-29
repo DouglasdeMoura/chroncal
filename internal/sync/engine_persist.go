@@ -545,7 +545,6 @@ func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, to
 	}
 	importResult, impErr := icalPkg.ImportCalendarRemote(res.data)
 	if impErr != nil {
-		e.logger.Warn("import fetched resource failed", "path", res.href, "error", impErr)
 		warnings = append(warnings, ImportWarning{
 			Path:    res.href,
 			Message: fmt.Sprintf("import fetched body failed (%v); resource not imported", impErr),
