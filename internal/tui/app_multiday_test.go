@@ -162,3 +162,21 @@ func TestEventsOn_TimedCrossMidnight(t *testing.T) {
 			sel.Format("2006-01-02"), len(got))
 	}
 }
+
+// TestFormatEventLabel_ContinuedTimedEvent checks the popup label of a timed
+// event on a day after its start day. The label shows the start of that day.
+// The original start time is on an earlier day, so the label does not show it.
+func TestFormatEventLabel_ContinuedTimedEvent(t *testing.T) {
+	loc := time.Local
+	e := event.Event{
+		Title:     "Overnight hackathon",
+		StartTime: time.Date(2026, 6, 13, 18, 0, 0, 0, loc),
+		EndTime:   time.Date(2026, 6, 14, 12, 0, 0, 0, loc),
+	}
+	if got, want := formatEventLabel(e, time.Date(2026, 6, 13, 0, 0, 0, 0, loc)), "18:00  Overnight hackathon"; got != want {
+		t.Errorf("start day label = %q, want %q", got, want)
+	}
+	if got, want := formatEventLabel(e, time.Date(2026, 6, 14, 0, 0, 0, 0, loc)), "00:00  Overnight hackathon"; got != want {
+		t.Errorf("next day label = %q, want %q", got, want)
+	}
+}

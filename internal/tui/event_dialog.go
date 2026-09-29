@@ -111,7 +111,7 @@ type EventDialogModel struct {
 func (m EventDialogModel) buildEventLabels() EventDialogModel {
 	m.eventLabels = make([]string, len(m.events))
 	for i, ev := range m.events {
-		m.eventLabels[i] = formatEventLabel(ev)
+		m.eventLabels[i] = formatEventLabel(ev, m.day)
 	}
 	return m
 }
@@ -417,11 +417,19 @@ func labelColWidth(label string, lw int) int {
 	return max(lw, len(label)) + 2
 }
 
-func formatEventLabel(ev event.Event) string {
+// formatEventLabel returns the list label of ev in the popup for day. A timed
+// event that started on an earlier day shows the start of day. The week grid
+// clips the event to the same start (issue #807).
+func formatEventLabel(ev event.Event, day time.Time) string {
 	if ev.AllDay {
 		return "• " + ev.Title
 	}
-	return ev.StartTime.Local().Format("15:04") + "  " + ev.Title
+	start := ev.StartTime.Local()
+	d := day.Local()
+	if dayStart := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.Local); start.Before(dayStart) {
+		start = dayStart
+	}
+	return start.Format("15:04") + "  " + ev.Title
 }
 
 func formatWhen(ev event.Event) string {
