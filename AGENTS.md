@@ -127,9 +127,9 @@ Confirm dialogs focus Cancel by default (`form.FocusCancel()`). A quick Enter ca
 
 Three rules keep the suite fast. Follow them in every new test.
 
-1. Never touch the real OS keyring. The shared CLI setup sets `CHRONCAL_SECURITY_DISABLE_KEYRING=1`. A locked desktop keyring blocks each D-Bus call for the full method timeout. One credential command then stalls a test for tens of seconds.
+1. Never touch the real OS keyring. `TestMain` in `cmd/chroncal/main_test.go` sets `CHRONCAL_SECURITY_DISABLE_KEYRING=1` for the test binary and its child processes. A locked desktop keyring blocks each D-Bus call for the full method timeout. One credential command then stalls a test for tens of seconds.
 2. Take test databases from `internal/testutil`. Use `testutil.NewTestDB(t)` or `testutil.DBPath(t)`. Do not call `storage.Open` on a fresh path per test. A fresh open runs the full migration set and costs about a quarter second of CPU.
-3. Keep `tea.Tick` on the fake clock. A `tea.Tick` starts its timer when the command is built, not when it runs. Run the model update and the command check inside one `synctest.Test` bubble. See `batchEmits` in `internal/tui/oauth_wiring_test.go`.
+3. Keep `tea.Tick` on the fake clock. A `tea.Tick` starts its timer when the code builds the command, not when the command runs. Run the model update and the command check inside one `synctest.Test` bubble. See `batchEmits` in `internal/tui/oauth_wiring_test.go`.
 
 ## Common Tasks
 

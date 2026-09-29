@@ -33,6 +33,19 @@ func buildTemplateDB() (string, error) {
 		os.RemoveAll(dir)
 		return "", err
 	}
+	// Remove the credential namespace and the location that the template
+	// recorded for its own file. storage.Open on each copy then writes a
+	// new namespace UUID and the location of that copy, as it does for a
+	// fresh database. Two test databases then never share a credential
+	// scope, and no copy looks like a move from the template path.
+	if _, err := db.ExecContext(context.Background(), `
+		DELETE FROM credential_locations;
+		DELETE FROM credential_namespace;
+	`); err != nil {
+		db.Close()
+		os.RemoveAll(dir)
+		return "", err
+	}
 	// Fold the WAL into the main file so a plain file copy carries the
 	// whole schema.
 	_, _ = db.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`)
@@ -86,26 +99,12 @@ func copyTemplateDB(t *testing.T) string {
 	return dst
 }
 
-// dropInheritedCredentialLocation removes the credential location row that
-// the template database recorded for its own file identity. The copy
-// inherits that row and also records its own identity. Without this delete,
-// the copy looks like a database that was moved from the template's path.
-func dropInheritedCredentialLocation(t *testing.T, db *sql.DB) {
-	t.Helper()
-	if _, err := db.ExecContext(context.Background(), `
-		DELETE FROM credential_locations
-		WHERE location <> (SELECT current_location FROM credential_namespace WHERE id = 1)
-	`); err != nil {
-		t.Fatalf("delete stale credential locations: %v", err)
-	}
-}
-
 // NewTestDB creates a fresh file-backed SQLite database with all migrations
-// applied. The first call builds a template database once, and every call
-// afterwards copies that template instead of a second run of the migration set.
-// Each test still gets an isolated database at its own path. The pool is
-// pinned to a single connection, as storage.Open does for ":memory:".
-// The database is automatically closed when the test ends.
+// applied. The first call builds a template database once. Each call copies
+// that template, so the migration set does not run again. Each test gets an
+// isolated database at its own path. The pool has a single connection, as
+// storage.Open gives for ":memory:". A cleanup closes the database when the
+// test ends.
 func NewTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
 	t.Helper()
 	db, q, err := storage.Open(copyTemplateDB(t))
@@ -115,28 +114,18 @@ func NewTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
 	// Pin the pool to one connection. Leak guards rely on a leaked
 	// transaction that blocks the next query on the only connection.
 	db.SetMaxOpenConns(1)
-	dropInheritedCredentialLocation(t, db)
 	t.Cleanup(func() { db.Close() })
 	return db, q
 }
 
 // DBPath returns the path of a fresh database file with all migrations
-// applied. Use it when the test does not open the database itself: the CLI
-// tests point child processes at CHRONCAL_DB, and every child then opens
-// the same already-migrated file. The connection that scrubs the inherited
-// credential location row is closed before the path is returned.
+// applied. Use it when the test does not open the database itself. The CLI
+// tests point child processes at CHRONCAL_DB, and each child then opens the
+// same migrated file. The first storage.Open of the file writes its credential
+// namespace, as for a fresh database.
 func DBPath(t *testing.T) string {
 	t.Helper()
-	path := copyTemplateDB(t)
-	db, _, err := storage.Open(path)
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	dropInheritedCredentialLocation(t, db)
-	if err := db.Close(); err != nil {
-		t.Fatalf("close test db: %v", err)
-	}
-	return path
+	return copyTemplateDB(t)
 }
 
 // LinkCalendarToAccount creates an account and links calendar id 1 to it.

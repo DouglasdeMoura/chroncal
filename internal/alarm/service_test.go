@@ -31,15 +31,14 @@ func newTestServicesWithTodos(t *testing.T) (*Service, *event.Service, *todo.Ser
 	return alarmSvc, evtSvc, todoSvc
 }
 
-// newFileTestDB opens a file-backed test DB (not :memory:) so that a pinned
-// connection sees the same schema as the pool. The transient-error regression
-// tests need to insert a deliberately malformed row on a connection with
-// foreign keys disabled, which an in-memory-per-connection DB cannot share.
+// newFileTestDB opens a file-backed test DB (not :memory:). The
+// transient-error regression tests insert a malformed row on a connection
+// with foreign keys disabled. testutil.NewTestDB pins the pool to one
+// connection, so insertPoisonAlarmState turns foreign keys on again after
+// the insert.
 func newFileTestDB(t *testing.T) (*sql.DB, *storage.Queries) {
 	t.Helper()
-	db, q := testutil.NewTestDB(t)
-	t.Cleanup(func() { db.Close() })
-	return db, q
+	return testutil.NewTestDB(t)
 }
 
 // insertPoisonAlarmState inserts a malformed *_alarm_state row used to force a
@@ -56,6 +55,13 @@ func insertPoisonAlarmState(ctx context.Context, t *testing.T, db *sql.DB, query
 	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
 		t.Fatalf("disable foreign keys: %v", err)
 	}
+	// The pool has one connection, so the service reads through this one.
+	// Turn foreign keys on again before the connection goes back to the pool.
+	defer func() {
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=ON"); err != nil {
+			t.Fatalf("enable foreign keys: %v", err)
+		}
+	}()
 	if _, err := conn.ExecContext(ctx, query, args...); err != nil {
 		t.Fatalf("insert poison row: %v", err)
 	}
