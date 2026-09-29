@@ -90,17 +90,23 @@ func ImportFileRemote(r io.Reader) (ImportResult, error) {
 	return importFile(r, true)
 }
 
+// ImportCalendarRemote converts a calendar that a CalDAV server served and
+// that the caller already decoded. It applies the same rules as
+// ImportFileRemote. It does not encode the calendar again: the go-ical
+// encoder rejects bodies that the decoder and this importer accept, for
+// example a VJOURNAL without DTSTAMP or a VCALENDAR without PRODID (issue
+// #805). The function changes TZID parameters in cal in place.
+func ImportCalendarRemote(cal *ical.Calendar) (ImportResult, error) {
+	var result ImportResult
+	if cal == nil {
+		return result, nil
+	}
+	err := importCalendar(&result, cal, true)
+	return result, err
+}
+
 func importFile(r io.Reader, remote bool) (ImportResult, error) {
 	var result ImportResult
-	// skipComponent is the one place that defines what "the parser dropped a
-	// persistable component" means: the warning for the user plus the count
-	// that disables absence-based reconciliation downstream (see
-	// SkippedComponents). Every VEVENT/VTODO/VJOURNAL failure path must go
-	// through it.
-	skipComponent := func(kind string, err error) {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", kind, err))
-		result.SkippedComponents++
-	}
 	data, err := io.ReadAll(io.LimitReader(r, maxImportBytes+1))
 	if err != nil {
 		return result, fmt.Errorf("read ical: %w", err)
@@ -125,104 +131,122 @@ func importFile(r io.Reader, remote bool) (ImportResult, error) {
 		if err != nil {
 			return result, fmt.Errorf("decode ical: %w", err)
 		}
-
-		// Build timezone map from VTIMEZONE components.
-		tzMap := buildTZMap(cal)
-
-		// Extract and serialize VTIMEZONE components for storage.
-		for _, child := range cal.Children {
-			if child.Name != ical.CompTimezone {
-				continue
-			}
-			tzid := compPropText(child, ical.PropTimezoneID)
-			if tzid == "" {
-				continue
-			}
-			var buf bytes.Buffer
-			enc := ical.NewEncoder(&buf)
-			// Wrap in a minimal calendar for encoding. go-ical's encoder
-			// rejects a VCALENDAR that is missing the mandatory PRODID and
-			// VERSION properties, so set them; otherwise Encode fails and the
-			// VTIMEZONE block is silently dropped from result.Timezones.
-			tmpCal := ical.NewCalendar()
-			tmpCal.Props.SetText(ical.PropVersion, "2.0")
-			tmpCal.Props.SetText(ical.PropProductID, ProductID)
-			tmpCal.Children = append(tmpCal.Children, child)
-			if err := enc.Encode(tmpCal); err == nil {
-				// Extract just the VTIMEZONE block from the encoded output.
-				encoded := buf.String()
-				if start := strings.Index(encoded, "BEGIN:VTIMEZONE"); start >= 0 {
-					if end := strings.Index(encoded[start:], "END:VTIMEZONE"); end >= 0 {
-						vtData := encoded[start : start+end+len("END:VTIMEZONE\r\n")]
-						result.Timezones = append(result.Timezones, TimezoneData{
-							TZID: tzid,
-							Data: vtData,
-						})
-					}
-				}
-			}
-		}
-
-		skipped := make(map[string]int)
-		for _, child := range cal.Children {
-			switch child.Name {
-			case ical.CompEvent:
-				vevent := ical.Event{Component: child}
-				resolveComponentTZIDs(child, tzMap)
-				e, warns, err := eventFromVEvent(vevent, remote)
-				if err != nil {
-					if errors.Is(err, errImportLimitExceeded) {
-						return result, err
-					}
-					skipComponent("VEVENT", err)
-					continue
-				}
-				result.Warnings = append(result.Warnings, warns...)
-				result.Events = append(result.Events, e)
-			case ical.CompToDo:
-				resolveComponentTZIDs(child, tzMap)
-				t, warns, err := todoFromVTodo(child)
-				if err != nil {
-					if errors.Is(err, errImportLimitExceeded) {
-						return result, err
-					}
-					skipComponent("VTODO", err)
-					continue
-				}
-				result.Warnings = append(result.Warnings, warns...)
-				result.Todos = append(result.Todos, t)
-			case ical.CompJournal:
-				resolveComponentTZIDs(child, tzMap)
-				j, warns, err := journalFromVJournal(child)
-				if err != nil {
-					if errors.Is(err, errImportLimitExceeded) {
-						return result, err
-					}
-					skipComponent("VJOURNAL", err)
-					continue
-				}
-				result.Warnings = append(result.Warnings, warns...)
-				result.Journals = append(result.Journals, j)
-			case ical.CompFreeBusy:
-				resolveComponentTZIDs(child, tzMap)
-				fb, err := freebusy.ParseComponent(child)
-				if err != nil {
-					result.Warnings = append(result.Warnings, fmt.Sprintf("VFREEBUSY: %v", err))
-					continue
-				}
-				result.FreeBusy = append(result.FreeBusy, fb)
-			default:
-				if child.Name != "VTIMEZONE" {
-					skipped[child.Name]++
-				}
-			}
-		}
-		for name, count := range skipped {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("skipped: %s (%d)", name, count))
+		if err := importCalendar(&result, cal, remote); err != nil {
+			return result, err
 		}
 	}
 
 	return result, nil
+}
+
+// importCalendar adds the components of one decoded VCALENDAR to result.
+// A non-nil error is a limit error that must abort the whole import.
+func importCalendar(result *ImportResult, cal *ical.Calendar, remote bool) error {
+	// skipComponent is the one place that defines what "the parser dropped a
+	// persistable component" means: the warning for the user plus the count
+	// that disables absence-based reconciliation downstream (see
+	// SkippedComponents). Every VEVENT/VTODO/VJOURNAL failure path must go
+	// through it.
+	skipComponent := func(kind string, err error) {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", kind, err))
+		result.SkippedComponents++
+	}
+
+	// Build timezone map from VTIMEZONE components.
+	tzMap := buildTZMap(cal)
+
+	// Extract and serialize VTIMEZONE components for storage.
+	for _, child := range cal.Children {
+		if child.Name != ical.CompTimezone {
+			continue
+		}
+		tzid := compPropText(child, ical.PropTimezoneID)
+		if tzid == "" {
+			continue
+		}
+		var buf bytes.Buffer
+		enc := ical.NewEncoder(&buf)
+		// Wrap in a minimal calendar for encoding. go-ical's encoder
+		// rejects a VCALENDAR that is missing the mandatory PRODID and
+		// VERSION properties, so set them; otherwise Encode fails and the
+		// VTIMEZONE block is silently dropped from result.Timezones.
+		tmpCal := ical.NewCalendar()
+		tmpCal.Props.SetText(ical.PropVersion, "2.0")
+		tmpCal.Props.SetText(ical.PropProductID, ProductID)
+		tmpCal.Children = append(tmpCal.Children, child)
+		if err := enc.Encode(tmpCal); err == nil {
+			// Extract just the VTIMEZONE block from the encoded output.
+			encoded := buf.String()
+			if start := strings.Index(encoded, "BEGIN:VTIMEZONE"); start >= 0 {
+				if end := strings.Index(encoded[start:], "END:VTIMEZONE"); end >= 0 {
+					vtData := encoded[start : start+end+len("END:VTIMEZONE\r\n")]
+					result.Timezones = append(result.Timezones, TimezoneData{
+						TZID: tzid,
+						Data: vtData,
+					})
+				}
+			}
+		}
+	}
+
+	skipped := make(map[string]int)
+	for _, child := range cal.Children {
+		switch child.Name {
+		case ical.CompEvent:
+			vevent := ical.Event{Component: child}
+			resolveComponentTZIDs(child, tzMap)
+			e, warns, err := eventFromVEvent(vevent, remote)
+			if err != nil {
+				if errors.Is(err, errImportLimitExceeded) {
+					return err
+				}
+				skipComponent("VEVENT", err)
+				continue
+			}
+			result.Warnings = append(result.Warnings, warns...)
+			result.Events = append(result.Events, e)
+		case ical.CompToDo:
+			resolveComponentTZIDs(child, tzMap)
+			t, warns, err := todoFromVTodo(child)
+			if err != nil {
+				if errors.Is(err, errImportLimitExceeded) {
+					return err
+				}
+				skipComponent("VTODO", err)
+				continue
+			}
+			result.Warnings = append(result.Warnings, warns...)
+			result.Todos = append(result.Todos, t)
+		case ical.CompJournal:
+			resolveComponentTZIDs(child, tzMap)
+			j, warns, err := journalFromVJournal(child)
+			if err != nil {
+				if errors.Is(err, errImportLimitExceeded) {
+					return err
+				}
+				skipComponent("VJOURNAL", err)
+				continue
+			}
+			result.Warnings = append(result.Warnings, warns...)
+			result.Journals = append(result.Journals, j)
+		case ical.CompFreeBusy:
+			resolveComponentTZIDs(child, tzMap)
+			fb, err := freebusy.ParseComponent(child)
+			if err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("VFREEBUSY: %v", err))
+				continue
+			}
+			result.FreeBusy = append(result.FreeBusy, fb)
+		default:
+			if child.Name != "VTIMEZONE" {
+				skipped[child.Name]++
+			}
+		}
+	}
+	for name, count := range skipped {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("skipped: %s (%d)", name, count))
+	}
+	return nil
 }
 
 // parseDateProp formats a component's date/date-time property for storage.

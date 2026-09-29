@@ -14,10 +14,36 @@ import (
 // DTSTART survives a pull. RFC 5545 makes DTSTART optional in VJOURNAL, and
 // jtx Board treats an undated VJOURNAL as a note. Issue #805: such entries
 // vanished during sync with pulled=0 and no warning.
+//
+// The other cases are bodies that the decoder and the importer accept but
+// that the strict go-ical encoder rejects. The pull encoded each body again
+// before the import and dropped these bodies.
 func TestEnginePullImportsUndatedVJournal(t *testing.T) {
 	t.Parallel()
 
-	engine, db, q := newTestEngine(t)
+	const tail = "SUMMARY:Undated note\nDESCRIPTION:A note captured without DTSTART\nEND:VJOURNAL\nEND:VCALENDAR\n"
+	cases := map[string]string{
+		"complete": "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//chroncal//tests//EN\n" +
+			"BEGIN:VJOURNAL\nUID:note-uid\nDTSTAMP:20260403T120000Z\n" + tail,
+		"no DTSTAMP": "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//chroncal//tests//EN\n" +
+			"BEGIN:VJOURNAL\nUID:note-uid\n" + tail,
+		"no PRODID": "BEGIN:VCALENDAR\nVERSION:2.0\n" +
+			"BEGIN:VJOURNAL\nUID:note-uid\nDTSTAMP:20260403T120000Z\n" + tail,
+		"nested VALARM": "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//chroncal//tests//EN\n" +
+			"BEGIN:VJOURNAL\nUID:note-uid\nDTSTAMP:20260403T120000Z\n" +
+			"BEGIN:VALARM\nACTION:DISPLAY\nTRIGGER:-PT15M\nDESCRIPTION:x\nEND:VALARM\n" + tail,
+	}
+	for name, noteICS := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			testPullUndatedVJournal(t, noteICS)
+		})
+	}
+}
+
+func testPullUndatedVJournal(t *testing.T, noteICS string) {
+	t.Helper()
+	engine, _, q := newTestEngine(t)
 	ctx := context.Background()
 
 	cals, err := q.ListCalendars(ctx)
@@ -25,7 +51,6 @@ func TestEnginePullImportsUndatedVJournal(t *testing.T) {
 		t.Fatalf("ListCalendars: %v", err)
 	}
 	calendarID := cals[0].ID
-	_ = db
 
 	const syncBody = `<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
@@ -40,18 +65,6 @@ func TestEnginePullImportsUndatedVJournal(t *testing.T) {
   </d:response>
   <d:sync-token>https://example.com/sync/after-note</d:sync-token>
 </d:multistatus>`
-
-	const noteICS = `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//chroncal//tests//EN
-BEGIN:VJOURNAL
-UID:note-uid
-DTSTAMP:20260403T120000Z
-SUMMARY:Undated note
-DESCRIPTION:A note captured without DTSTART
-END:VJOURNAL
-END:VCALENDAR
-`
 
 	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
 		if r.Method != "REPORT" {
