@@ -88,8 +88,8 @@ func writeSyncConflictLine(w io.Writer, conflict syncPkg.Conflict) {
 }
 
 func writeSyncResult(outW, errW io.Writer, r *syncPkg.SyncResult) {
-	fmt.Fprintf(outW, "  Calendar %d: pushed=%d pulled=%d deleted=%d conflicts=%d auto-resolved=%d skipped-conflicts=%d errors=%d\n",
-		r.CalendarID, r.Pushed, r.Pulled, r.Deleted, r.Conflicts, r.AutoResolved, r.SkippedConflicts, len(r.Errors))
+	fmt.Fprintf(outW, "  Calendar %d: pushed=%d pulled=%d deleted=%d conflicts=%d auto-resolved=%d skipped-conflicts=%d errors=%d warnings=%d\n",
+		r.CalendarID, r.Pushed, r.Pulled, r.Deleted, r.Conflicts, r.AutoResolved, r.SkippedConflicts, len(r.Errors), len(r.Warnings))
 	for _, err := range r.Errors {
 		fmt.Fprintf(errW, "    error: %s\n", safeText(err.Error()))
 	}

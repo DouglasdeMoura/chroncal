@@ -11,8 +11,8 @@ import (
 // TestEnginePullWarnsOnUnparseableResource verifies that a resource the
 // server holds but chroncal cannot parse no longer vanishes in silence
 // (issue #805: an entry sits unimported while sync run reports
-// pulled=0 errors=0). The pull surfaces a warning on every attempt and a
-// final warning when it gives up refetching the href.
+// pulled=0 errors=0). The pull gives a warning on each attempt. The warning
+// of the last attempt also tells that the pull stops the retries.
 func TestEnginePullWarnsOnUnparseableResource(t *testing.T) {
 	t.Parallel()
 
@@ -103,9 +103,10 @@ func TestEnginePullWarnsOnUnparseableResource(t *testing.T) {
 		t.Fatalf("pull 1: warnings = %v, want an unparseable warning for /calendar/garbage.ics", result.warnings)
 	}
 
-	// Attempts 2 and 3: the pending-href retry refetches the body. Each
-	// attempt warns.
-	for attempt := 2; attempt <= 3; attempt++ {
+	// The pending-href retry fetches the body again on each later pull.
+	// Each attempt warns once. The last attempt exhausts the miss budget,
+	// so its one warning also tells the user that the retries stop.
+	for attempt := 2; attempt <= pendingHrefMissLimit; attempt++ {
 		result, err = engine.pull(ctx, client, calendarID, "/calendar/")
 		if err != nil {
 			t.Fatalf("pull %d: %v", attempt, err)
@@ -113,32 +114,33 @@ func TestEnginePullWarnsOnUnparseableResource(t *testing.T) {
 		if !hasWarningWith(result.warnings, "/calendar/garbage.ics", "unparseable") {
 			t.Fatalf("pull %d: warnings = %v, want an unparseable warning", attempt, result.warnings)
 		}
-	}
-
-	// Attempt 3 exhausts the miss budget, so the engine drops the retry
-	// obligation and says so. The third pull's warnings carry the give-up
-	// line alongside the unparseable line.
-	gaveUp := false
-	for _, w := range result.warnings {
-		if w.Path == "/calendar/garbage.ics" && strings.Contains(w.Message, "gave up") {
-			gaveUp = true
+		if n := countWarningsFor(result.warnings, "/calendar/garbage.ics"); n != 1 {
+			t.Fatalf("pull %d: %d warnings for the href, want 1: %v", attempt, n, result.warnings)
 		}
 	}
-	if !gaveUp {
-		t.Fatalf("pull 3: warnings = %v, want a gave-up warning for /calendar/garbage.ics", result.warnings)
+	if !hasWarningWith(result.warnings, "/calendar/garbage.ics", "gave up") {
+		t.Fatalf("pull %d: warnings = %v, want a gave-up warning for /calendar/garbage.ics", pendingHrefMissLimit, result.warnings)
 	}
 
-	// The pending href is gone, so a fourth pull fetches nothing and stops
-	// warning. The give-up line fired once; the story ends there.
+	// The pending href is gone. The next pull fetches nothing and does not
+	// warn about the href again.
 	result, err = engine.pull(ctx, client, calendarID, "/calendar/")
 	if err != nil {
-		t.Fatalf("pull 4: %v", err)
+		t.Fatalf("pull after give-up: %v", err)
 	}
-	for _, w := range result.warnings {
-		if strings.Contains(w.Message, "garbage") {
-			t.Fatalf("pull 4: unexpected warning %v after give-up", w)
+	if n := countWarningsFor(result.warnings, "/calendar/garbage.ics"); n != 0 {
+		t.Fatalf("pull after give-up: unexpected warnings %v", result.warnings)
+	}
+}
+
+func countWarningsFor(warnings []ImportWarning, path string) int {
+	n := 0
+	for _, w := range warnings {
+		if w.Path == path {
+			n++
 		}
 	}
+	return n
 }
 
 func hasWarningWith(warnings []ImportWarning, path, substr string) bool {

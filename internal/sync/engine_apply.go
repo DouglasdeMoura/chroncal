@@ -84,6 +84,76 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	pending.forgetSet(ctx, tombstonedPaths)
 	fetchPaths = pending.appendUnseen(fetchPaths)
 
+	// Per-resource 404s from the multiget are NOT deletions. Google can list
+	// an href that 404s on multiget for a reason other than a real delete.
+	// classifyMultigetMiss splits a known miss (local row: incomplete) from
+	// an unknown miss (no local row: record and retry). An uncanonical href
+	// carries neither risk: skip it. See pullView.
+	//
+	// handleMiss serves the Missing list and the Unparseable list. An
+	// unparseable body (the server returned a body the ical decoder rejects)
+	// warns on each occurrence. The resource exists and chroncal cannot
+	// import it, and silence reads as "nothing to sync" (issue #805). A plain
+	// 404 miss only logs: phantom hrefs that always 404 are normal on Google.
+	noteWarning := func(w ImportWarning) {
+		result.warnings = append(result.warnings, w)
+		logImportWarnings(e.logger, []ImportWarning{w})
+	}
+	handleMiss := func(miss string, unparseable bool) {
+		canonical, hrefErr := client.CanonicalObjectRef(remoteURL, miss)
+		kind, local := classifyMultigetMiss(canonical, hrefErr, localByPath)
+		if !unparseable || kind == multigetMissUncanonical {
+			// noteWarning logs the other cases.
+			e.logger.Warn("multiget href missing", "kind", string(kind), "unparseable", unparseable, "calendar_id", calendarID, "href", miss)
+		}
+		switch kind {
+		case multigetMissKnown:
+			view.knownMisses++
+			// Treat the missing path's UID as "still seen" so the initial
+			// snapshot deletion loop below does not conclude the resource
+			// is gone from the server. Otherwise an empty token + a
+			// transient multiget 404 would soft-delete the local event
+			// even though we have no actual evidence of deletion.
+			seenUIDs[local.Uid] = true
+			if unparseable {
+				noteWarning(ImportWarning{
+					Path:    miss,
+					UID:     local.Uid,
+					Message: "server body unparseable; local copy kept, update not imported",
+				})
+			}
+		case multigetMissUncanonical:
+			// CanonicalObjectRef rejected this href (query or fragment,
+			// another origin, a collection path). localByPath holds
+			// canonical paths only, so no local row maps to this miss
+			// and there is no data to lose. A retry obligation cannot
+			// converge either: the resource loop below discards any body
+			// served under an uncanonical path. Log and skip the miss so
+			// a broken or hostile server cannot hold back the sync
+			// token forever. See issue #625.
+		case multigetMissUnknown:
+			gaveUp, recErr := pending.noteMiss(ctx, canonical)
+			if recErr != nil {
+				e.logger.Warn("record unknown multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
+				view.pendingRecordFails++
+			}
+			switch {
+			case unparseable && gaveUp:
+				noteWarning(ImportWarning{
+					Path:    miss,
+					Message: fmt.Sprintf("server body unparseable; gave up after %d attempts, resource not imported", pendingHrefMissLimit),
+				})
+			case unparseable:
+				noteWarning(ImportWarning{
+					Path:    miss,
+					Message: "server body unparseable; resource not imported",
+				})
+			case gaveUp:
+				e.logger.Warn("multiget href dropped after retry budget", "calendar_id", calendarID, "href", miss, "attempts", pendingHrefMissLimit)
+			}
+		}
+	}
+
 	for start := 0; start < len(fetchPaths); start += multigetBatchSize {
 		end := start + multigetBatchSize
 		if end > len(fetchPaths) {
@@ -95,76 +165,6 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("multiget batch %d: %w", start, err)
-		}
-		// Per-resource 404s here are NOT deletions. Google can list an href
-		// that 404s on multiget for a reason other than a real delete.
-		// classifyMultigetMiss splits a known miss (local row: incomplete)
-		// from an unknown miss (no local row: record and retry). An
-		// uncanonical href carries neither risk: skip it. See pullView.
-		//
-		// handleMiss serves both lists. An unparseable body (the server
-		// returned a body the ical decoder rejects) additionally warns on
-		// every occurrence: the resource exists, chroncal cannot import it,
-		// and silence reads as "nothing to sync" (issue #805). A miss that
-		// exhausts the retry budget warns once more, because after that the
-		// href is forgotten.
-		noteWarning := func(w ImportWarning) {
-			result.warnings = append(result.warnings, w)
-			logImportWarnings(e.logger, []ImportWarning{w})
-		}
-		handleMiss := func(miss string, unparseable bool) {
-			canonical, hrefErr := client.CanonicalObjectRef(remoteURL, miss)
-			kind, local := classifyMultigetMiss(canonical, hrefErr, localByPath)
-			e.logger.Warn("multiget href missing", "kind", string(kind), "unparseable", unparseable, "calendar_id", calendarID, "href", miss)
-			switch kind {
-			case multigetMissKnown:
-				view.knownMisses++
-				// Treat the missing path's UID as "still seen" so the initial
-				// snapshot deletion loop below does not conclude the resource
-				// is gone from the server. Otherwise an empty token + a
-				// transient multiget 404 would soft-delete the local event
-				// even though we have no actual evidence of deletion.
-				seenUIDs[local.Uid] = true
-				if unparseable {
-					noteWarning(ImportWarning{
-						Path:    miss,
-						UID:     local.Uid,
-						Message: "server body unparseable; local copy kept, update not imported",
-					})
-				}
-			case multigetMissUncanonical:
-				// CanonicalObjectRef rejected this href (query or fragment,
-				// another origin, a collection path). localByPath holds
-				// canonical paths only, so no local row maps to this miss
-				// and there is no data to lose. A retry obligation cannot
-				// converge either: the resource loop below discards any body
-				// served under an uncanonical path. Log and skip the miss so
-				// a broken or hostile server cannot hold back the sync
-				// token forever. See issue #625.
-			case multigetMissUnknown:
-				if unparseable {
-					noteWarning(ImportWarning{
-						Path:    miss,
-						Message: "server body unparseable; resource not imported",
-					})
-				}
-				gaveUp, recErr := pending.noteMiss(ctx, canonical)
-				if recErr != nil {
-					e.logger.Warn("record unknown multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
-					view.pendingRecordFails++
-					return
-				}
-				if gaveUp {
-					msg := fmt.Sprintf("gave up refetching after %d attempts", pendingHrefMissLimit)
-					if unparseable {
-						msg += "; resource stays unimported"
-					}
-					noteWarning(ImportWarning{
-						Path:    miss,
-						Message: msg,
-					})
-				}
-			}
 		}
 		for _, miss := range multi.Missing {
 			handleMiss(miss, false)
@@ -180,6 +180,13 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			}
 			if res.Data == nil {
 				continue
+			}
+			// Mark the local UID of this path as seen before the import. A
+			// body that fails to import returns no UID, and the initial
+			// snapshot must not infer a deletion of the local row from that.
+			// pullFullSnapshot applies the same rule.
+			if local, ok := localByPath[resPath]; ok {
+				seenUIDs[local.Uid] = true
 			}
 			uid, imported, warnings, persistErr := e.importFetchedResource(ctx, calendarID, tombstonedUIDs, fetchedResource{
 				path: resPath,
