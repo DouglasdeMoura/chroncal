@@ -517,7 +517,7 @@ type fetchedResource struct {
 }
 
 // importFetchedResource imports one fetched remote body and persists it with
-// sync bookkeeping: encode → ImportFileRemote → note warnings → extract UID
+// sync bookkeeping: encode → ImportCalendarRemote → note warnings → extract UID
 // → tombstone check → conflict refresh → persist → UpsertSyncResource →
 // clear-dirty. applySyncCollection and pullFullSnapshot share it, so a
 // safety gate added for one pull path holds for the other too.
@@ -530,18 +530,20 @@ type fetchedResource struct {
 // persistImported and the persist failed; the caller must then treat the
 // pull as incomplete and withhold the sync-token.
 func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, tombstonedUIDs map[string]bool, res fetchedResource) (uid string, imported bool, warnings []ImportWarning, err error) {
+	// The conflict row needs the server body as text. Encode it before the
+	// import, because the import resolves TZID parameters in res.data in
+	// place. The go-ical encoder is strict: it rejects some bodies that the
+	// decoder and the importer accept (a VJOURNAL without DTSTAMP, a
+	// VCALENDAR without PRODID). An encode failure must therefore not stop
+	// the import (issue #805). It only removes the conflict refresh below.
+	var serverBody string
 	var buf bytes.Buffer
-	enc := ical.NewEncoder(&buf)
-	if encErr := enc.Encode(res.data); encErr != nil {
-		e.logger.Warn("encode fetched resource failed", "path", res.href, "error", encErr)
-		warnings = append(warnings, ImportWarning{
-			Path:    res.href,
-			Message: fmt.Sprintf("encode fetched body failed (%v); resource not imported", encErr),
-		})
-		logImportWarnings(e.logger, warnings)
-		return "", false, warnings, nil
+	if encErr := ical.NewEncoder(&buf).Encode(res.data); encErr != nil {
+		e.logger.Debug("encode fetched resource failed", "path", res.href, "error", encErr)
+	} else {
+		serverBody = buf.String()
 	}
-	importResult, impErr := icalPkg.ImportFileRemote(strings.NewReader(buf.String()))
+	importResult, impErr := icalPkg.ImportCalendarRemote(res.data)
 	if impErr != nil {
 		e.logger.Warn("import fetched resource failed", "path", res.href, "error", impErr)
 		warnings = append(warnings, ImportWarning{
@@ -568,7 +570,16 @@ func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, to
 		// The fetched body is newer than the recorded one. Record it so a
 		// later resolve picks current server data. The sync-token may then
 		// advance: the row, not the token, carries the obligation.
-		e.refreshConflictServerBody(ctx, calendarID, uid, buf.String(), res.etag)
+		if serverBody == "" {
+			w := ImportWarning{
+				Path:    res.href,
+				UID:     uid,
+				Message: "server body cannot be encoded; open conflict keeps the older server copy",
+			}
+			logImportWarnings(e.logger, []ImportWarning{w})
+			return uid, false, append(warnings, w), nil
+		}
+		e.refreshConflictServerBody(ctx, calendarID, uid, serverBody, res.etag)
 		return uid, false, warnings, nil
 	}
 
