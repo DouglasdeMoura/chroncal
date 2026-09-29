@@ -61,8 +61,8 @@ func TestParseFreeBusyTime(t *testing.T) {
 			name:  "relative from next friday",
 			flag:  "from",
 			input: "next friday",
-			// Apr 9 is a Thursday, so next friday is 8 days ahead.
-			want: time.Date(2026, 4, 17, 0, 0, 0, 0, time.Local),
+			// Apr 9 is a Thursday, so next friday is the day after.
+			want: time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local),
 		},
 		{
 			name:  "relative from offset",

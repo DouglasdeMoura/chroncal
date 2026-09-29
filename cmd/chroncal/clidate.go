@@ -46,8 +46,8 @@ const maxOffsetCount = 1_000_000
 //   - "today" and "now" resolve to the current calendar date.
 //   - "tomorrow" and "yesterday" offset the current date by one day.
 //   - A weekday name resolves to its next occurrence, today included.
-//   - "next <weekday>" skips the next occurrence and takes the one after.
-//     This form disambiguates "thursday" on a Thursday.
+//   - "next <weekday>" resolves to the first occurrence after today, as in
+//     GNU date. This form disambiguates "thursday" on a Thursday.
 //   - "+Nd", "+Nw", "+Nm" and their negative forms offset the current date.
 //     A month offset uses calendar months, so January 31 plus one month
 //     lands on March 3 after normalization.
@@ -55,12 +55,25 @@ const maxOffsetCount = 1_000_000
 // The result is midnight in loc. ok is false when value is not a relative
 // form. The caller then applies its strict format instead.
 func resolveRelativeDate(value string, now time.Time, loc *time.Location) (time.Time, bool) {
+	d, ok := relativeCivilDate(value, now, loc)
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc), true
+}
+
+// relativeCivilDate resolves value like resolveRelativeDate, but returns the
+// calendar date as midnight UTC. The arithmetic runs in UTC. In a zone that
+// skips midnight for a daylight saving change, midnight in that zone moves
+// to 23:00 of the day before. Arithmetic on that value then gives a date
+// one day too early.
+func relativeCivilDate(value string, now time.Time, loc *time.Location) (time.Time, bool) {
 	word := strings.ToLower(strings.TrimSpace(value))
 	if word == "" {
 		return time.Time{}, false
 	}
 	year, month, day := now.In(loc).Date()
-	today := time.Date(year, month, day, 0, 0, 0, 0, loc)
+	today := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 
 	switch word {
 	case "today", "now":
@@ -73,7 +86,11 @@ func resolveRelativeDate(value string, now time.Time, loc *time.Location) (time.
 
 	if name, found := strings.CutPrefix(word, "next "); found {
 		if weekday, known := weekdayNames[strings.TrimSpace(name)]; known {
-			return today.AddDate(0, 0, daysUntilWeekday(today, weekday)+7), true
+			days := daysUntilWeekday(today, weekday)
+			if days == 0 {
+				days = 7
+			}
+			return today.AddDate(0, 0, days), true
 		}
 		return time.Time{}, false
 	}
@@ -116,27 +133,48 @@ func daysUntilWeekday(today time.Time, weekday time.Weekday) int {
 // time.Parse's verbose "cannot parse / out of range" surface with a clean
 // "--<flag>: invalid date ..." message.
 func parseCLIDate(flag, value string, now time.Time, loc *time.Location) (time.Time, error) {
-	if t, ok := resolveRelativeDate(value, now, loc); ok {
-		return t, nil
+	return parseCLIDateAnchored(flag, value, now, loc, loc)
+}
+
+// parseCLIDateAnchored parses a date flag like parseCLIDate, but resolves a
+// relative date word against the calendar day of now in anchor. The result
+// is midnight in loc. Use it when the user did not choose loc, for example
+// when loc is the stored timezone of an event. "today" then means the day
+// of the user, not the day in the zone of the event.
+func parseCLIDateAnchored(flag, value string, now time.Time, anchor, loc *time.Location) (time.Time, error) {
+	if d, ok := relativeCivilDate(value, now, anchor); ok {
+		return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc), nil
 	}
 	t, err := time.ParseInLocation("2006-01-02", value, loc)
 	if err != nil {
-		return time.Time{}, errInvalidInputf("--%s: invalid date %q (expected YYYY-MM-DD or a relative date such as today, tomorrow, friday, +7d)", flag, value)
+		return time.Time{}, errInvalidDate(flag, value)
 	}
 	return t, nil
+}
+
+// errInvalidDate reports a date flag value that is neither YYYY-MM-DD nor
+// a relative date word.
+func errInvalidDate(flag, value string) error {
+	return errInvalidInputf("--%s: invalid date %q (expected YYYY-MM-DD or a relative date such as today, tomorrow, friday, +7d)", flag, value)
 }
 
 // parseCLIDateString parses a date flag that the command stores as a plain
 // YYYY-MM-DD string, for example a todo due date. Relative date words
 // resolve against now in loc. The result is the canonical YYYY-MM-DD form
-// of the resolved date. An empty value returns an empty string.
+// of the calendar date. An empty value returns an empty string.
+//
+// The function keeps the calendar date and does not convert it to a
+// midnight in loc. In a zone that skips midnight, that midnight falls on
+// the day before, and the stored date would move back one day.
 func parseCLIDateString(flag, value string, now time.Time, loc *time.Location) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	t, err := parseCLIDate(flag, value, now, loc)
-	if err != nil {
-		return "", err
+	if d, ok := relativeCivilDate(value, now, loc); ok {
+		return d.Format("2006-01-02"), nil
 	}
-	return t.Format("2006-01-02"), nil
+	if _, err := time.Parse("2006-01-02", value); err != nil {
+		return "", errInvalidDate(flag, value)
+	}
+	return value, nil
 }

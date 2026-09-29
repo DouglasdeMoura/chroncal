@@ -197,8 +197,8 @@ when you want copy-pasteable, scriptable access from the shell or an LLM.
 
 Helpful conventions:
   Dates use YYYY-MM-DD or a relative word: today, tomorrow, yesterday, a
-  weekday name (next occurrence, today counts), "next <weekday>", or an
-  offset like +3d, -2w, +1m.
+  weekday name (next occurrence, today counts), "next <weekday>" (first
+  occurrence after today), or an offset like +3d, -2w, +1m.
   Times use HH:MM in your local timezone unless a command accepts --timezone.
   Text output renders timestamps in your local timezone; --output json
   emits RFC 3339 UTC (e.g. 2026-04-01T09:00:00Z) so scripts can compare
