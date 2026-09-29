@@ -312,15 +312,16 @@ func TestKeyringDisabledByEnvBypassesTheBackend(t *testing.T) {
 	}
 }
 
-// TestKeyringDisabledByEnvRejectsTruthyWords confirms the switch accepts the
-// same truthy words as the other CHRONCAL env flags and rejects the rest.
-func TestKeyringDisabledByEnvRejectsTruthyWords(t *testing.T) {
+// TestKeyringDisabledByEnvAcceptsTruthyWords confirms the switch accepts each
+// true value of strconv.ParseBool, which the config env bindings use, plus
+// yes and y. It rejects all other values.
+func TestKeyringDisabledByEnvAcceptsTruthyWords(t *testing.T) {
 	for _, tc := range []struct {
 		value string
 		want  bool
 	}{
-		{"1", true}, {"true", true}, {"YES", true}, {" y ", true},
-		{"0", false}, {"false", false}, {"", false}, {"no", false},
+		{"1", true}, {"true", true}, {"T", true}, {"TRUE", true}, {"YES", true}, {" y ", true},
+		{"0", false}, {"false", false}, {"", false}, {"no", false}, {"on", false},
 	} {
 		t.Run(tc.value, func(t *testing.T) {
 			t.Setenv("CHRONCAL_SECURITY_DISABLE_KEYRING", tc.value)

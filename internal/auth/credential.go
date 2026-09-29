@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -54,9 +55,10 @@ type PreviousCredentialScope struct {
 
 const keyringService = "chroncal"
 
-// envDisableKeyring turns the OS keyring off for this process. Set it to 1,
-// true, yes, or y. Tests and sandboxed hosts use it so the credential store
-// never opens the real keyring.
+// envDisableKeyring turns the OS keyring off for this process. It accepts
+// each true value of strconv.ParseBool, plus yes and y. Tests and sandboxed
+// hosts use it so the credential store never opens the real keyring. It is
+// an environment variable only. No config key has the same function.
 const envDisableKeyring = "CHRONCAL_SECURITY_DISABLE_KEYRING"
 
 // ErrKeyringDisabled reports that envDisableKeyring turned the OS keyring off
@@ -67,12 +69,11 @@ var ErrKeyringDisabled = errors.New("OS keyring disabled by " + envDisableKeyrin
 // keyringDisabledByEnv reports whether the operator opted this process out of
 // the OS keyring.
 func keyringDisabledByEnv() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(envDisableKeyring))) {
-	case "1", "true", "yes", "y":
-		return true
-	default:
-		return false
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(envDisableKeyring)))
+	if on, err := strconv.ParseBool(value); err == nil {
+		return on
 	}
+	return value == "yes" || value == "y"
 }
 
 // ErrCredentialNotFound reports that a lookup found no credential. Every

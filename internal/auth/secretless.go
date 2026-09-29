@@ -158,9 +158,21 @@ const plaintextRemedy = "Install a keyring provider (libsecret with gnome-keyrin
 	"or pass --allow-plaintext. " +
 	"A password command needs none of these: chroncal stores the command, not the password"
 
+// keyringDisabledRemedy replaces plaintextRemedy when envDisableKeyring turned
+// the keyring off. The host can have a keyring provider, so the first remedy
+// is to remove the switch.
+const keyringDisabledRemedy = "Unset " + envDisableKeyring + ", " +
+	"or set security.allow_plaintext in the config file, " +
+	"or pass --allow-plaintext. " +
+	"A password command needs none of these: chroncal stores the command, not the password"
+
 // refusal returns the error that Set returns for a credential with a secret.
 func (s *secretlessFileStore) refusal() error {
-	return fmt.Errorf("%w: %w. %s", ErrPlaintextRequired, s.reason, plaintextRemedy)
+	remedy := plaintextRemedy
+	if errors.Is(s.reason, ErrKeyringDisabled) {
+		remedy = keyringDisabledRemedy
+	}
+	return fmt.Errorf("%w: %w. %s", ErrPlaintextRequired, s.reason, remedy)
 }
 
 // EnsureCanStoreSecret reports whether store accepts a secret for accountID.
