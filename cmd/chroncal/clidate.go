@@ -52,14 +52,15 @@ const maxOffsetCount = 1_000_000
 //     A month offset uses calendar months, so January 31 plus one month
 //     lands on March 3 after normalization.
 //
-// The result is midnight in loc. ok is false when value is not a relative
-// form. The caller then applies its strict format instead.
+// The result is the start of the resolved day in loc (see startOfDay). ok
+// is false when value is not a relative form, or when the resolved year is
+// outside 0000-9999. The caller then applies its strict format instead.
 func resolveRelativeDate(value string, now time.Time, loc *time.Location) (time.Time, bool) {
 	d, ok := relativeCivilDate(value, now, loc)
 	if !ok {
 		return time.Time{}, false
 	}
-	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc), true
+	return startOfDay(d, loc), true
 }
 
 // relativeCivilDate resolves value like resolveRelativeDate, but returns the
@@ -67,7 +68,21 @@ func resolveRelativeDate(value string, now time.Time, loc *time.Location) (time.
 // skips midnight for a daylight saving change, midnight in that zone moves
 // to 23:00 of the day before. Arithmetic on that value then gives a date
 // one day too early.
+//
+// ok is false when the resolved year is outside 0000-9999. The strict
+// YYYY-MM-DD format cannot hold such a year, so a stored value would not
+// parse again.
 func relativeCivilDate(value string, now time.Time, loc *time.Location) (time.Time, bool) {
+	d, ok := resolveCivilWord(value, now, loc)
+	if !ok || d.Year() < 0 || d.Year() > 9999 {
+		return time.Time{}, false
+	}
+	return d, true
+}
+
+// resolveCivilWord holds the vocabulary of relativeCivilDate. It does not
+// check the year range.
+func resolveCivilWord(value string, now time.Time, loc *time.Location) (time.Time, bool) {
 	word := strings.ToLower(strings.TrimSpace(value))
 	if word == "" {
 		return time.Time{}, false
@@ -121,6 +136,40 @@ func relativeCivilDate(value string, now time.Time, loc *time.Location) (time.Ti
 	return time.Time{}, false
 }
 
+// startOfDay returns the first instant of the calendar date of civil in
+// loc. Only the year, month, and day of civil apply. Usually the result is
+// midnight in loc. In a zone that skips midnight for a daylight saving
+// change, time.Date moves the missing midnight to the day before. The day
+// then starts at the zone transition, so the result is that transition.
+func startOfDay(civil time.Time, loc *time.Location) time.Time {
+	year, month, day := civil.Date()
+	t := time.Date(year, month, day, 0, 0, 0, 0, loc)
+	if y, m, d := t.Date(); y != year || m != month || d != day {
+		_, end := t.ZoneBounds()
+		if !end.IsZero() {
+			t = end
+		}
+	}
+	return t
+}
+
+// dayAfter returns the start of the calendar day after the calendar date
+// of t, in the location of t. Use it for an inclusive end date in a
+// half-open range. t.AddDate(0, 0, 1) keeps the clock time of t, so it is
+// not the start of the next day when t is a zone transition.
+func dayAfter(t time.Time) time.Time {
+	year, month, day := t.Date()
+	return startOfDay(time.Date(year, month, day+1, 0, 0, 0, 0, time.UTC), t.Location())
+}
+
+// parseCivilDate parses a strict YYYY-MM-DD value as a calendar date at
+// midnight UTC. No local zone applies, so a skipped local midnight cannot
+// change the date.
+func parseCivilDate(value string) (time.Time, bool) {
+	t, err := time.Parse("2006-01-02", value)
+	return t, err == nil
+}
+
 // daysUntilWeekday returns the day count from today to the next occurrence
 // of weekday. Zero means that today is the requested weekday.
 func daysUntilWeekday(today time.Time, weekday time.Weekday) int {
@@ -138,18 +187,18 @@ func parseCLIDate(flag, value string, now time.Time, loc *time.Location) (time.T
 
 // parseCLIDateAnchored parses a date flag like parseCLIDate, but resolves a
 // relative date word against the calendar day of now in anchor. The result
-// is midnight in loc. Use it when the user did not choose loc, for example
+// is the start of the day in loc (see startOfDay). Use it when the user did not choose loc, for example
 // when loc is the stored timezone of an event. "today" then means the day
 // of the user, not the day in the zone of the event.
 func parseCLIDateAnchored(flag, value string, now time.Time, anchor, loc *time.Location) (time.Time, error) {
 	if d, ok := relativeCivilDate(value, now, anchor); ok {
-		return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc), nil
+		return startOfDay(d, loc), nil
 	}
-	t, err := time.ParseInLocation("2006-01-02", value, loc)
-	if err != nil {
+	d, ok := parseCivilDate(value)
+	if !ok {
 		return time.Time{}, errInvalidDate(flag, value)
 	}
-	return t, nil
+	return startOfDay(d, loc), nil
 }
 
 // errInvalidDate reports a date flag value that is neither YYYY-MM-DD nor
@@ -173,7 +222,7 @@ func parseCLIDateString(flag, value string, now time.Time, loc *time.Location) (
 	if d, ok := relativeCivilDate(value, now, loc); ok {
 		return d.Format("2006-01-02"), nil
 	}
-	if _, err := time.Parse("2006-01-02", value); err != nil {
+	if _, ok := parseCivilDate(value); !ok {
 		return "", errInvalidDate(flag, value)
 	}
 	return value, nil

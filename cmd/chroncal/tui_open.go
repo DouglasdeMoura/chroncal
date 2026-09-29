@@ -36,8 +36,8 @@ func resolveTUIOpenEvent(ctx context.Context, a *app.App, ref, recurrenceID, at 
 
 // parseTUIAt parses the --at flag. It accepts an RFC 3339 timestamp, a
 // YYYY-MM-DD date, or a relative date word resolved against now in the
-// local timezone (issue #785). Date-only values resolve to midnight on
-// that day.
+// local timezone (issue #785). Date-only values resolve to the start of
+// that day (see startOfDay).
 func parseTUIAt(value string, now time.Time) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t, nil
@@ -48,9 +48,9 @@ func parseTUIAt(value string, now time.Time) (time.Time, error) {
 	if t, ok := resolveRelativeDate(value, now, time.Local); ok {
 		return t, nil
 	}
-	t, err := time.ParseInLocation("2006-01-02", value, time.Local)
-	if err != nil {
+	d, ok := parseCivilDate(value)
+	if !ok {
 		return time.Time{}, errInvalidInputf("--at: invalid time %q (expected RFC 3339, YYYY-MM-DD, or a relative date like tomorrow)", value)
 	}
-	return t, nil
+	return startOfDay(d, time.Local), nil
 }
