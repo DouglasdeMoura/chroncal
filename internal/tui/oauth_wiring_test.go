@@ -22,11 +22,11 @@ import (
 // outlives the helper. A live timer calls time.Now when it fires, and that
 // read races with a later test that sets time.Local.
 //
-// A tea.Tick starts its timer when the command is built, not when it runs.
-// A model update that runs outside a bubble therefore hands batchEmits a
-// real timer, and the helper blocks for the full delay. Build the command
-// inside the same bubble: wrap the test body in synctest.Test and call
-// emits directly.
+// A tea.Tick starts its timer when the code builds the command, not when the
+// command runs. expireStatusAfter builds its tick at run time, but other
+// tea.Tick callers do not. A model update outside a bubble can then give
+// batchEmits a real timer, and the helper blocks for the full delay. Wrap
+// the test body in synctest.Test and call emits directly.
 func batchEmits(t *testing.T, cmd tea.Cmd, pred func(tea.Msg) bool) (found bool) {
 	t.Helper()
 	synctest.Test(t, func(*testing.T) {
