@@ -219,13 +219,14 @@ func freebusyOwnerEmails(ctx context.Context, a *app.App, calendarRef calendar.C
 func parseFreeBusyTime(flag, input string, now time.Time, inclusiveEnd bool) (time.Time, error) {
 	if t, ok := resolveRelativeDate(input, now, time.Local); ok {
 		if inclusiveEnd {
-			t = t.AddDate(0, 0, 1)
+			t = dayAfter(t)
 		}
 		return t, nil
 	}
-	if t, err := time.ParseInLocation("2006-01-02", input, time.Local); err == nil {
+	if d, ok := parseCivilDate(input); ok {
+		t := startOfDay(d, time.Local)
 		if inclusiveEnd {
-			t = t.AddDate(0, 0, 1)
+			t = dayAfter(t)
 		}
 		return t, nil
 	}

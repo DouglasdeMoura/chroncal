@@ -203,7 +203,13 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 					if err != nil {
 						return err
 					}
-					date = time.Date(d.Year(), d.Month(), d.Day(), date.Hour(), date.Minute(), 0, 0, loc)
+					if p.AllDay {
+						// startOfDay keeps the calendar date when loc skips
+						// midnight.
+						date = startOfDay(d, loc)
+					} else {
+						date = time.Date(d.Year(), d.Month(), d.Day(), date.Hour(), date.Minute(), 0, 0, loc)
+					}
 				}
 				if cmd.Flags().Changed("time") {
 					t, err := parseCLITime("time", timeStr)
@@ -238,7 +244,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 						return errInvalidInputf("--end-date %s is before start date %s",
 							endDateStr, p.StartTime.Format("2006-01-02"))
 					}
-					p.EndTime = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
+					p.EndTime = dayAfter(startOfDay(endDate, loc))
 				} else if cmd.Flags().Changed("date") {
 					span := max(int(existing.EndTime.Sub(existing.StartTime)/(24*time.Hour)), 1)
 					p.EndTime = p.StartTime.AddDate(0, 0, span)

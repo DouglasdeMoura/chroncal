@@ -155,9 +155,10 @@ func TestRelativeDateSkippedMidnight(t *testing.T) {
 		}
 	}
 
-	// The skipped day starts at 01:00. Go gives 23:00 on the day before
-	// for the missing midnight. The strict YYYY-MM-DD path gives the same
-	// value, so a relative word matches the typed date.
+	// The skipped day starts at 01:00 -03 (04:00 UTC). time.Date gives
+	// 23:00 on September 5 for the missing midnight. The relative path and
+	// the strict YYYY-MM-DD path must both give the real start of the day.
+	dayStart := time.Date(2026, 9, 6, 4, 0, 0, 0, time.UTC)
 	rel, err := parseCLIDate("date", "+7d", time.Date(2026, 8, 30, 12, 0, 0, 0, loc), loc)
 	if err != nil {
 		t.Fatalf("parseCLIDate(+7d): %v", err)
@@ -166,8 +167,91 @@ func TestRelativeDateSkippedMidnight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCLIDate(2026-09-06): %v", err)
 	}
-	if !rel.Equal(abs) {
-		t.Fatalf("parseCLIDate(+7d) = %s, want %s (same as the typed date)", rel, abs)
+	for name, got := range map[string]time.Time{"+7d": rel, "2026-09-06": abs} {
+		if !got.Equal(dayStart) {
+			t.Fatalf("parseCLIDate(%s) = %s, want %s (start of September 6)", name, got, dayStart.In(loc))
+		}
+		if y, m, d := got.Date(); y != 2026 || m != time.September || d != 6 {
+			t.Fatalf("parseCLIDate(%s) is on %04d-%02d-%02d, want 2026-09-06", name, y, m, d)
+		}
+	}
+
+	// An inclusive end on the day before the change must stop at the
+	// start of September 6, not at 23:00 on September 5.
+	sep5, err := parseCLIDate("to", "2026-09-05", now, loc)
+	if err != nil {
+		t.Fatalf("parseCLIDate(2026-09-05): %v", err)
+	}
+	if got := dayAfter(sep5); !got.Equal(dayStart) {
+		t.Fatalf("dayAfter(2026-09-05) = %s, want %s", got, dayStart.In(loc))
+	}
+	// The day after the skipped day starts at a normal midnight.
+	if got, want := dayAfter(abs), time.Date(2026, 9, 7, 0, 0, 0, 0, loc); !got.Equal(want) {
+		t.Fatalf("dayAfter(2026-09-06) = %s, want %s", got, want)
+	}
+}
+
+// TestResolveRelativeDateRejectsOutOfRangeYear checks that a relative word
+// cannot resolve outside the years 0000-9999. The strict YYYY-MM-DD format
+// cannot hold such a year, so a stored todo or journal date would not
+// parse again.
+func TestResolveRelativeDateRejectsOutOfRangeYear(t *testing.T) {
+	for _, value := range []string{"+100000m", "+1000000w", "-30000m"} {
+		if _, ok := resolveRelativeDate(value, relNow, time.UTC); ok {
+			t.Fatalf("resolveRelativeDate(%q) accepted a year outside 0000-9999", value)
+		}
+		if _, err := parseCLIDateString("due", value, relNow, time.UTC); err == nil {
+			t.Fatalf("parseCLIDateString(%q) accepted a year outside 0000-9999", value)
+		}
+	}
+	// The last day of year 9999 is still in range.
+	now := time.Date(9999, 12, 30, 12, 0, 0, 0, time.UTC)
+	if got, err := parseCLIDateString("due", "+1d", now, time.UTC); err != nil || got != "9999-12-31" {
+		t.Fatalf("parseCLIDateString(+1d) = %q, %v; want 9999-12-31", got, err)
+	}
+	if _, err := parseCLIDateString("due", "+2d", now, time.UTC); err == nil {
+		t.Fatal("parseCLIDateString(+2d) accepted year 10000")
+	}
+}
+
+// TestEventAddAllDayOnSkippedMidnight runs the built binary in a zone that
+// skips midnight. An all-day event on that day must keep its date.
+func TestEventAddAllDayOnSkippedMidnight(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "America/Santiago")
+
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t,
+		"event", "add", "Holiday",
+		"--calendar", "Work",
+		"--date", "2026-09-06",
+		"--end-date", "2026-09-06",
+	); err != nil {
+		t.Fatalf("event add: %v", err)
+	}
+	stdout, _, err := runChroncalCommand(t,
+		"event", "list",
+		"--from", "2026-09-06",
+		"--to", "2026-09-06",
+		"--output", "json",
+	)
+	if err != nil {
+		t.Fatalf("event list: %v", err)
+	}
+	var events []struct {
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+	}
+	if jerr := json.Unmarshal([]byte(stdout), &events); jerr != nil {
+		t.Fatalf("decode %q: %v", stdout, jerr)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1\noutput:\n%s", len(events), stdout)
+	}
+	if events[0].StartTime != "2026-09-06T00:00:00Z" || events[0].EndTime != "2026-09-07T00:00:00Z" {
+		t.Fatalf("event = %s..%s, want 2026-09-06T00:00:00Z..2026-09-07T00:00:00Z", events[0].StartTime, events[0].EndTime)
 	}
 }
 

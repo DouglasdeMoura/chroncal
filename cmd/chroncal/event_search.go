@@ -50,8 +50,8 @@ roughly when the event occurred.`,
 				}
 			}
 
-			// Parse the YYYY-MM-DD --from/--to flags into RFC3339 UTC bounds
-			// before populating SearchParams. Search compares these strings
+			// Parse the --from/--to flags (YYYY-MM-DD or a relative date)
+			// into RFC3339 UTC bounds before populating SearchParams. Search compares these strings
 			// lexicographically against UTC-stored start times, so feeding the
 			// raw "2026-04-30" through would make "2026-04-30T09:00:00Z" sort
 			// after the bound (since 'T' > '0') and silently drop every event

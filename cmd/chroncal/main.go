@@ -198,7 +198,8 @@ when you want copy-pasteable, scriptable access from the shell or an LLM.
 Helpful conventions:
   Dates use YYYY-MM-DD or a relative word: today, tomorrow, yesterday, a
   weekday name (next occurrence, today counts), "next <weekday>" (first
-  occurrence after today), or an offset like +3d, -2w, +1m.
+  occurrence after today), or an offset like +3d, -2w, +1m. The
+  --exception-date-times and --recurrence-date-times lists stay strict.
   Times use HH:MM in your local timezone unless a command accepts --timezone.
   Text output renders timestamps in your local timezone; --output json
   emits RFC 3339 UTC (e.g. 2026-04-01T09:00:00Z) so scripts can compare
@@ -469,7 +470,7 @@ func parseEventListDateRange(fromStr, toStr string) (time.Time, time.Time, error
 
 func parseDateRangeWithDefaultDays(fromStr, toStr string, defaultDays int) (time.Time, time.Time, error) {
 	now := time.Now()
-	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	from := startOfDay(now.In(time.Local), time.Local)
 
 	if fromStr != "" {
 		var err error
@@ -480,14 +481,15 @@ func parseDateRangeWithDefaultDays(fromStr, toStr string, defaultDays int) (time
 	}
 	// Default the window end after `from` (not after today). Then a `--from`
 	// far in the future without `--to` still yields a forward range.
-	to := from.AddDate(0, 0, defaultDays)
+	year, month, day := from.Date()
+	to := startOfDay(time.Date(year, month, day+defaultDays, 0, 0, 0, 0, time.UTC), time.Local)
 	if toStr != "" {
 		var err error
 		to, err = parseCLIDate("to", toStr, now, time.Local)
 		if err != nil {
 			return time.Time{}, time.Time{}, err
 		}
-		to = to.AddDate(0, 0, 1) // half-open: include the entire end day
+		to = dayAfter(to) // half-open: include the entire end day
 	}
 	// An inverted window (--to before --from) silently matched nothing.
 	// Reject it so a typo gives an error instead of an empty result.
@@ -521,7 +523,7 @@ func parseExportDateBounds(fromStr, toStr string) (time.Time, time.Time, error) 
 		if err != nil {
 			return time.Time{}, time.Time{}, err
 		}
-		to = to.AddDate(0, 0, 1) // half-open: include the entire end day
+		to = dayAfter(to) // half-open: include the entire end day
 	}
 	// Both bounds set: an inverted window silently matched nothing.
 	// One bound alone stays open, so the check only runs when both exist.

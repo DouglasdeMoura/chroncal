@@ -187,12 +187,13 @@ Alarms default to ACTION=DISPLAY unless prefixed (e.g. EMAIL:-PT1H).`,
 			var endTime time.Time
 			switch {
 			case allDay:
-				startTime = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
+				// startOfDay keeps the calendar date when loc skips midnight.
+				startTime = startOfDay(date, loc)
 				if endDateStr != "" {
 					if endDate.Before(date) {
 						return errInvalidInputf("--end-date %s is before --date %s", endDateStr, date.Format("2006-01-02"))
 					}
-					endTime = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
+					endTime = dayAfter(startOfDay(endDate, loc))
 				} else {
 					endTime = startTime.AddDate(0, 0, 1)
 				}
