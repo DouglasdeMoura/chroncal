@@ -39,10 +39,11 @@ func TestResolveRelativeDateWords(t *testing.T) {
 		{"weekday four ahead", "monday", time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC)},
 		{"weekday two ahead", "saturday", time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)},
 
-		// "next <weekday>" skips the next occurrence.
+		// "next <weekday>" is the first occurrence after today, as in GNU
+		// date. It differs from the bare weekday only on that weekday.
 		{"next same weekday adds a week", "next thursday", time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC)},
-		{"next near weekday", "next friday", time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)},
-		{"next far weekday", "next wed", time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC)},
+		{"next near weekday", "next friday", time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)},
+		{"next far weekday", "next wed", time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)},
 
 		// Signed offsets.
 		{"plus days", "+1d", time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)},
@@ -128,6 +129,71 @@ func TestResolveRelativeDateAnchorsOnLocation(t *testing.T) {
 	}
 }
 
+// TestRelativeDateSkippedMidnight checks a zone that skips midnight for a
+// daylight saving change. In America/Santiago, 2026-09-06 00:00 does not
+// exist, and Go moves that midnight to 23:00 on September 5. The calendar
+// date must not move back one day.
+func TestRelativeDateSkippedMidnight(t *testing.T) {
+	loc, err := time.LoadLocation("America/Santiago")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, loc)
+
+	for _, tt := range []struct{ value, want string }{
+		{"today", "2026-09-06"},
+		{"+7d", "2026-09-13"},
+		{"yesterday", "2026-09-05"},
+		{"2026-09-06", "2026-09-06"},
+	} {
+		got, err := parseCLIDateString("due", tt.value, now, loc)
+		if err != nil {
+			t.Fatalf("parseCLIDateString(%q): %v", tt.value, err)
+		}
+		if got != tt.want {
+			t.Fatalf("parseCLIDateString(%q) = %q, want %q", tt.value, got, tt.want)
+		}
+	}
+
+	// The skipped day starts at 01:00. Go gives 23:00 on the day before
+	// for the missing midnight. The strict YYYY-MM-DD path gives the same
+	// value, so a relative word matches the typed date.
+	rel, err := parseCLIDate("date", "+7d", time.Date(2026, 8, 30, 12, 0, 0, 0, loc), loc)
+	if err != nil {
+		t.Fatalf("parseCLIDate(+7d): %v", err)
+	}
+	abs, err := parseCLIDate("date", "2026-09-06", now, loc)
+	if err != nil {
+		t.Fatalf("parseCLIDate(2026-09-06): %v", err)
+	}
+	if !rel.Equal(abs) {
+		t.Fatalf("parseCLIDate(+7d) = %s, want %s (same as the typed date)", rel, abs)
+	}
+}
+
+// TestParseCLIDateAnchored checks that a relative word resolves on the
+// calendar day of the anchor zone and builds midnight in the target zone.
+// At 20:00 on Monday in New York, it is already Tuesday in Tokyo.
+func TestParseCLIDateAnchored(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	now := time.Date(2026, 4, 13, 20, 0, 0, 0, ny)
+
+	got, err := parseCLIDateAnchored("date", "tomorrow", now, ny, tokyo)
+	if err != nil {
+		t.Fatalf("parseCLIDateAnchored: %v", err)
+	}
+	if want := time.Date(2026, 4, 14, 0, 0, 0, 0, tokyo); !got.Equal(want) {
+		t.Fatalf("parseCLIDateAnchored(tomorrow) = %s, want %s (New York tomorrow, Tokyo midnight)", got, want)
+	}
+}
+
 func TestParseCLIDate(t *testing.T) {
 	t.Run("absolute date still parses", func(t *testing.T) {
 		got, err := parseCLIDate("date", "2026-04-09", relNow, time.UTC)
@@ -207,13 +273,15 @@ func TestParseTUIAtRelative(t *testing.T) {
 // test. The subprocess and the test process can resolve relative words on
 // opposite sides of midnight. Recompute once after the run: when the two
 // computations disagree, the boundary was crossed and either answer holds.
+// The subprocess runs with TZ=UTC, but t.Setenv does not reload time.Local
+// in the test process. The computation therefore uses UTC explicitly.
 func cliRelativeDate(t *testing.T, before time.Time, days int, got string) string {
 	t.Helper()
-	want := before.AddDate(0, 0, days).Format("2006-01-02")
+	want := before.UTC().AddDate(0, 0, days).Format("2006-01-02")
 	if got == want {
 		return want
 	}
-	if after := time.Now().AddDate(0, 0, days).Format("2006-01-02"); got == after {
+	if after := time.Now().UTC().AddDate(0, 0, days).Format("2006-01-02"); got == after {
 		return after
 	}
 	return want
@@ -296,7 +364,10 @@ func TestTodoAddAcceptsRelativeDueDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("due_date %q is not a date: %v", todos[0].DueDate, err)
 	}
-	todayBefore := time.Date(before.Year(), before.Month(), before.Day(), 0, 0, 0, 0, time.UTC)
+	// The subprocess runs with TZ=UTC. Take the date components in UTC, not
+	// in the time.Local value of the test process.
+	year, month, day := before.UTC().Date()
+	todayBefore := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 	days := got.Sub(todayBefore).Hours() / 24
 	if days < 0 || days > 7 {
 		t.Fatalf("due_date %q is %.0f days ahead, want 0-7 (next Friday)", todos[0].DueDate, days)

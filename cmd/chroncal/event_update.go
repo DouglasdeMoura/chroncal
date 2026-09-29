@@ -176,8 +176,11 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 
 			// Resolve timezone for date/time parsing. Capture one now for
 			// the date flags, so --date and --end-date cannot resolve
-			// across a midnight rollover.
+			// across a midnight rollover. A relative date word names the
+			// day of the user. It uses the stored timezone of the event
+			// only when --timezone names that zone explicitly.
 			loc := time.Local
+			anchor := time.Local
 			tz := timezone
 			if !cmd.Flags().Changed("timezone") {
 				tz = existing.Timezone
@@ -188,12 +191,15 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 					return fmt.Errorf("load timezone: %w", err)
 				}
 			}
+			if cmd.Flags().Changed("timezone") {
+				anchor = loc
+			}
 			now := time.Now()
 
 			if cmd.Flags().Changed("date") || cmd.Flags().Changed("time") {
 				date := p.StartTime.In(loc)
 				if cmd.Flags().Changed("date") {
-					d, err := parseCLIDate("date", dateStr, now, loc)
+					d, err := parseCLIDateAnchored("date", dateStr, now, anchor, loc)
 					if err != nil {
 						return err
 					}
@@ -219,7 +225,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 
 			var endDate time.Time
 			if cmd.Flags().Changed("end-date") {
-				endDate, err = parseCLIDate("end-date", endDateStr, now, loc)
+				endDate, err = parseCLIDateAnchored("end-date", endDateStr, now, anchor, loc)
 				if err != nil {
 					return err
 				}
