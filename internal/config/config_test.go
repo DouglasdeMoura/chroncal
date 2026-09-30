@@ -484,6 +484,41 @@ func TestLoad_InvalidListSettingsDoNotFail(t *testing.T) {
 	}
 }
 
+// TestLoad_ConfirmQuitDefaultsToTrue pins the safe default. With no config
+// file and no env, unset must mean the "Quit chroncal?" prompt stays on
+// (issue #806).
+func TestLoad_ConfirmQuitDefaultsToTrue(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CHRONCAL_UI_CONFIRM_QUIT", "")
+
+	cfg := mustLoad(t)
+
+	if !cfg.UI.ConfirmQuit {
+		t.Fatalf("UI.ConfirmQuit = false, want true")
+	}
+}
+
+func TestLoad_ConfirmQuitFalseFromFile(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[ui]\nconfirm_quit = false\n"), 0o644)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_UI_CONFIRM_QUIT", "")
+	cfg := mustLoad(t)
+	if cfg.UI.ConfirmQuit {
+		t.Errorf("UI.ConfirmQuit = true, want false from file")
+	}
+}
+
+func TestLoad_ConfirmQuitFromEnv(t *testing.T) {
+	t.Setenv("CHRONCAL_UI_CONFIRM_QUIT", "false")
+	cfg := mustLoad(t)
+	if cfg.UI.ConfirmQuit {
+		t.Errorf("UI.ConfirmQuit = true, want false from env")
+	}
+}
+
 func TestParseListFormat(t *testing.T) {
 	cases := []struct {
 		in      string

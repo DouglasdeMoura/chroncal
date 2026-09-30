@@ -400,14 +400,18 @@ type Model struct {
 	// background full sync passes. The save-time opportunistic push never
 	// uses it: that path always records a conflict and keeps the edit.
 	fullSyncStrategy syncpkg.ConflictStrategy
-	width            int
-	height           int
-	viewMode         viewMode
-	calendar         CalendarModel
-	week             WeekModel
-	day              DayModel
-	agenda           AgendaModel
-	events           []event.Event
+	// skipQuitConfirm makes the q and ctrl+c keys quit at once. It is the
+	// inverse of the ui.confirm_quit config key. The zero value keeps the
+	// "Quit chroncal?" prompt.
+	skipQuitConfirm bool
+	width           int
+	height          int
+	viewMode        viewMode
+	calendar        CalendarModel
+	week            WeekModel
+	day             DayModel
+	agenda          AgendaModel
+	events          []event.Event
 	// loadedFrom/loadedTo track the [from, to) UTC range currently covered
 	// by m.events. Agenda expansion can then query only the new slice.
 	// It does not re-query the whole window each time. Zero values
@@ -651,6 +655,10 @@ type RunOptions struct {
 	Event                event.Event
 	WeekStart            time.Weekday
 	SyncConflictStrategy string
+	// SkipQuitConfirm makes the q and ctrl+c keys quit without the
+	// "Quit chroncal?" prompt. It maps the inverse of ui.confirm_quit.
+	// The zero value keeps the prompt.
+	SkipQuitConfirm bool
 }
 
 // resolveFullSyncStrategy maps the configured conflict-strategy name to the
@@ -687,6 +695,7 @@ func Run(a *app.App, themeName string, opts RunOptions) error {
 
 	model := newModel(a, themeName, opts.WeekStart)
 	model.fullSyncStrategy = resolveFullSyncStrategy(opts.SyncConflictStrategy)
+	model.skipQuitConfirm = opts.SkipQuitConfirm
 	if opts.Event.ID != 0 {
 		model = model.WithOpenEvent(opts.Event)
 	}
