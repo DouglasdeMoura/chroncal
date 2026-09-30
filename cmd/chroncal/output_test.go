@@ -290,11 +290,38 @@ func TestPrintCalendar_UsesASCIIDetailLayout(t *testing.T) {
 		"  Work\n" +
 		"    color:        #4f86f7\n" +
 		"    description:  Team calendar\n" +
-		"    id:           1\n"
+		"    id:           1\n" +
+		"    default alarms: (global default)\n"
 	if got != want {
 		t.Fatalf("printCalendar output mismatch\nwant:\n%s\ngot:\n%s", want, got)
 	}
 	assertASCII(t, got)
+
+	var inheritBuf bytes.Buffer
+	list := "-PT15M,AUDIO:-PT5M"
+	printCalendar(&inheritBuf, calendar.Calendar{
+		ID:            2,
+		Name:          "Imports",
+		DefaultAlarms: &list,
+	})
+	gotList := inheritBuf.String()
+	if !strings.Contains(gotList, "default alarms: -PT15M,AUDIO:-PT5M\n") {
+		t.Fatalf("printCalendar should show the per-calendar list, got %q", gotList)
+	}
+	assertASCII(t, gotList)
+
+	var offBuf bytes.Buffer
+	off := ""
+	printCalendar(&offBuf, calendar.Calendar{
+		ID:            3,
+		Name:          "Holidays",
+		DefaultAlarms: &off,
+	})
+	gotOff := offBuf.String()
+	if !strings.Contains(gotOff, "default alarms: off\n") {
+		t.Fatalf("printCalendar should show off, got %q", gotOff)
+	}
+	assertASCII(t, gotOff)
 }
 
 func TestPrintTodo_UsesCompletedCheckbox(t *testing.T) {

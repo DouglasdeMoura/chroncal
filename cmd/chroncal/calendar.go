@@ -18,6 +18,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/app"
 	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/config"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
@@ -383,26 +384,38 @@ behavior.`,
 
 func calendarUpdateCmd() *cobra.Command {
 	var (
-		name             string
-		color            string
-		description      string
-		email            string
-		remoteURL        string
-		username         string
-		authType         string
-		passwordCommand  string
-		oauthClientID    string
-		allowInsecure    bool
-		disconnectRemote bool
+		name               string
+		color              string
+		description        string
+		email              string
+		remoteURL          string
+		username           string
+		authType           string
+		passwordCommand    string
+		oauthClientID      string
+		allowInsecure      bool
+		disconnectRemote   bool
+		defaultAlarms      []string
+		clearDefaultAlarms bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id|name>",
 		Short: "Update an existing calendar",
 		Long: `Update a local calendar's name, color, or description.
 
-Only the flags you pass are changed.`,
+Only the flags you pass are changed.
+
+--default-alarm sets the per-calendar default alarms (issue #815). The
+flag is repeatable, and each value is a trigger duration ("-PT15M") or an
+action-prefixed trigger ("AUDIO:-PT5M"). The special value "none" turns
+default alarms off for this calendar (useful for a holidays calendar).
+--clear-default-alarms removes the per-calendar setting, so the calendar
+inherits the global [alarms] default from config.toml again.`,
 		Example: `  chroncal calendar update 1 --name "Deep Work"
   chroncal calendar update Work --color "#2563EB" --description "Focus blocks and deadlines"
+  chroncal calendar update Work --default-alarm -PT15M --default-alarm AUDIO:-PT5M
+  chroncal calendar update Holidays --default-alarm none
+  chroncal calendar update Work --clear-default-alarms
   chroncal calendar update Work --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer`,
 		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -466,6 +479,28 @@ Only the flags you pass are changed.`,
 				}
 			}
 
+			if cmd.Flags().Changed("default-alarm") || cmd.Flags().Changed("clear-default-alarms") {
+				var raw *string
+				switch {
+				case clearDefaultAlarms:
+					raw = nil // drop the setting: the calendar inherits the global default
+				default:
+					specs, err := parseDefaultAlarmFlags(defaultAlarms)
+					if err != nil {
+						return err
+					}
+					joined := model.FormatDefaultAlarmList(specs)
+					raw = &joined // empty list means default alarms are off
+				}
+				if err := a.Calendars.SetDefaultAlarms(ctx, c.ID, raw); err != nil {
+					return fmt.Errorf("set default alarms: %w", err)
+				}
+				c, err = a.Calendars.Get(ctx, existing.ID)
+				if err != nil {
+					return fmt.Errorf("get calendar: %w", err)
+				}
+			}
+
 			if disconnectRemote {
 				if err := disconnectCalendarRemote(ctx, a, c); err != nil {
 					return err
@@ -514,7 +549,43 @@ Only the flags you pass are changed.`,
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "OAuth 2.0 client ID")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "Allow HTTP (non-HTTPS) remote URLs")
 	cmd.Flags().BoolVar(&disconnectRemote, "disconnect-remote", false, "Remove the remote CalDAV link from this calendar")
+	cmd.Flags().StringSliceVar(&defaultAlarms, "default-alarm", nil, "default alarm for this calendar, repeatable (e.g. -PT15M, AUDIO:-PT5M); 'none' turns default alarms off")
+	cmd.Flags().BoolVar(&clearDefaultAlarms, "clear-default-alarms", false, "remove the per-calendar default alarms, so the calendar inherits the global [alarms] default")
+	mutuallyExclusive(cmd, "default-alarm", "clear-default-alarms")
 	return cmd
+}
+
+// parseDefaultAlarmFlags validates the --default-alarm values. Each value is
+// a spec ("-PT15M" or "AUDIO:-PT5M"); the single value "none" turns default
+// alarms off for the calendar. The result round-trips through
+// model.FormatDefaultAlarmList.
+func parseDefaultAlarmFlags(values []string) ([]model.DefaultAlarm, error) {
+	specs := make([]model.DefaultAlarm, 0, len(values))
+	off := false
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if strings.EqualFold(part, "none") {
+				off = true
+				continue
+			}
+			spec, err := model.ParseDefaultAlarmSpec(part)
+			if err != nil {
+				return nil, errInvalidInputf("--default-alarm: %v", err)
+			}
+			specs = append(specs, spec)
+		}
+	}
+	if off && len(specs) > 0 {
+		return nil, errInvalidInputf("--default-alarm: 'none' cannot be combined with alarm specs")
+	}
+	if off {
+		return nil, nil // an empty list writes "" and turns defaults off
+	}
+	return specs, nil
 }
 
 func calendarDeleteCmd() *cobra.Command {

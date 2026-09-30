@@ -197,3 +197,6 @@ UPDATE calendars SET
     name = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?;
+
+-- name: UpdateCalendarDefaultAlarms :exec
+UPDATE calendars SET default_alarms = ? WHERE id = ?;

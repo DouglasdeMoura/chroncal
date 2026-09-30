@@ -19,21 +19,39 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
-// parseStateID parses a state ID string that may be prefixed with "t" for todo alarms.
-// Returns the numeric ID and whether it's a todo alarm.
-func parseStateID(s string) (int64, bool, error) {
+// alarmStateKind tells which table a state ID refers to. The alarm list
+// shows the prefix form ("3", "t3", "d3"); dismiss and snooze take it back.
+type alarmStateKind int
+
+const (
+	stateEvent   alarmStateKind = iota // event_alarms-backed alarm_state row
+	stateTodo                          // todo_alarm_state row, "t" prefix
+	stateDefault                       // default_alarm_state row (issue #815), "d" prefix
+)
+
+// parseStateID parses a state ID string that may be prefixed with "t" for
+// todo alarms or "d" for default (virtual) alarms. It returns the numeric
+// ID and the state kind.
+func parseStateID(s string) (int64, alarmStateKind, error) {
 	if strings.HasPrefix(s, "t") || strings.HasPrefix(s, "T") {
 		id, err := strconv.ParseInt(s[1:], 10, 64)
 		if err != nil {
-			return 0, false, fmt.Errorf("invalid todo state ID %q", s)
+			return 0, stateTodo, fmt.Errorf("invalid todo state ID %q", s)
 		}
-		return id, true, nil
+		return id, stateTodo, nil
+	}
+	if strings.HasPrefix(s, "d") || strings.HasPrefix(s, "D") {
+		id, err := strconv.ParseInt(s[1:], 10, 64)
+		if err != nil {
+			return 0, stateDefault, fmt.Errorf("invalid default alarm state ID %q", s)
+		}
+		return id, stateDefault, nil
 	}
 	id, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return 0, false, fmt.Errorf("invalid state ID %q (use 't<N>' for todo alarms)", s)
+		return 0, stateEvent, fmt.Errorf("invalid state ID %q (use 't<N>' for todo alarms)", s)
 	}
-	return id, false, nil
+	return id, stateEvent, nil
 }
 
 // fireAlarmFn is the notification dispatcher used by the mark-and-fire
@@ -165,11 +183,16 @@ func claimAndFireAlarm(ctx context.Context, c dueClaim, policy alarmExecutionPol
 }
 
 // markAndFireEventAlarm claims and fires one event alarm through the shared
-// protocol.
+// protocol. A default alarm (DueAlarm.IsDefault) claims through
+// default_alarm_state instead of alarm_state.
 func markAndFireEventAlarm(ctx context.Context, a *app.App, da alarm.DueAlarm, policy alarmExecutionPolicy) fireResult {
+	markRefire := a.Alarms.MarkRefired
+	if da.IsDefault {
+		markRefire = a.Alarms.MarkDefaultRefired
+	}
 	return claimAndFireAlarm(ctx, dueClaim{
 		stateID:    da.StateID,
-		markRefire: a.Alarms.MarkRefired,
+		markRefire: markRefire,
 		markFired: func(ctx context.Context) (int64, error) {
 			return a.Alarms.MarkFired(ctx, da)
 		},
@@ -262,7 +285,12 @@ Environment variables override config file values.
 Each fired alarm is recorded in the database so it will not fire again on
 subsequent checks. Snoozed alarms whose snooze-until time has expired
 are also re-fired. If no alarms are due, the command produces no output
-and exits 0.`,
+and exits 0.
+
+Default alarms (issue #815) behave like stored alarms: events without any
+alarm get the triggers from the [alarms] default config key or from the
+calendar's own setting. The synthesis happens at check time, so a default
+alarm never changes the event and never syncs back to the server.`,
 		Example: `  # One-shot check (suitable for cron / systemd timer)
   chroncal alarm check
 
@@ -322,7 +350,7 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 			if res.FireErr != nil {
 				status = fmt.Sprintf("error: %v", res.FireErr)
 			}
-			results = append(results, map[string]any{
+			record := map[string]any{
 				"event_id":   da.Event.ID,
 				"event":      da.Event.Title,
 				"alarm_id":   da.Alarm.ID,
@@ -330,7 +358,15 @@ func runAlarmCheck(ctx context.Context, a *app.App, w io.Writer, now time.Time, 
 				"action":     da.Alarm.Action,
 				"trigger_at": da.TriggerAt.UTC().Format(time.RFC3339),
 				"status":     status,
-			})
+			}
+			if da.IsDefault {
+				// A default alarm has no event_alarms row, so it has no
+				// alarm ID. The trigger spec identifies it instead.
+				record["alarm_id"] = nil
+				record["default"] = true
+				record["trigger"] = da.Alarm.TriggerValue
+			}
+			results = append(results, record)
 		} else if res.FireErr == nil {
 			writeAlarmCheckLine(w, da.TriggerAt, da.Alarm.Action, da.Event.Title, false)
 		}
@@ -378,14 +414,19 @@ detects that an alarm's trigger time has passed and fires a notification.
 Once fired, an alarm stays in the pending list until you dismiss it.
 
 Both event and todo alarms are shown. Todo alarm IDs are prefixed with "t"
-(e.g. [t3]) to distinguish them from event alarm IDs (e.g. [3]). Use the
-prefixed form with "alarm dismiss" and "alarm snooze".
+(e.g. [t3]) to distinguish them from event alarm IDs (e.g. [3]). Default
+alarms (issue #815) are prefixed with "d" (e.g. [d3]): they are synthesized
+at check time from the [alarms] default config or a per-calendar setting,
+and their state lives in its own table. Use the prefixed form with
+"alarm dismiss" and "alarm snooze".
 
 Text output columns:
   [ID]  TRIGGER_TIME  ACTION  TITLE  (snoozed to HH:MM)
 
 JSON output fields (-o json):
   id, type, alarm_id, event_id/todo_id, title, action, trigger_at, fired_at, snoozed_to
+  Default alarm items add "default": true and "trigger", and carry a null
+  "alarm_id".
 
 Dismissed alarms are permanently removed from this list.`,
 		Example: `  # List pending alarms
@@ -416,10 +457,14 @@ Dismissed alarms are permanently removed from this list.`,
 			if err != nil {
 				return fmt.Errorf("list pending todo alarms: %w", err)
 			}
+			pendingDefaults, err := a.Alarms.ListPendingDefaultAlarms(ctx)
+			if err != nil {
+				return fmt.Errorf("list pending default alarms: %w", err)
+			}
 
 			w := cmd.OutOrStdout()
 
-			if len(pending) == 0 && len(pendingTodos) == 0 {
+			if len(pending) == 0 && len(pendingTodos) == 0 && len(pendingDefaults) == 0 {
 				if outputFmt != "text" {
 					return printOutput(w, []any{})
 				}
@@ -483,6 +528,27 @@ Dismissed alarms are permanently removed from this list.`,
 				enrichedTodos = append(enrichedTodos, info)
 			}
 
+			// Enrich each default (virtual) alarm state. The action and
+			// trigger live on the state row, because a config edit between
+			// fire and list must not change what the row displays.
+			type pendingDefaultInfo struct {
+				ID    string // display ID: "d3"
+				State storage.DefaultAlarmState
+				Title string
+			}
+			var enrichedDefaults []pendingDefaultInfo
+			for _, s := range pendingDefaults {
+				info := pendingDefaultInfo{
+					ID:    fmt.Sprintf("d%d", s.ID),
+					State: s,
+					Title: fmt.Sprintf("event#%d", s.EventID),
+				}
+				if evt, err := a.Events.Get(ctx, s.EventID); err == nil {
+					info.Title = evt.Title
+				}
+				enrichedDefaults = append(enrichedDefaults, info)
+			}
+
 			if outputFmt != "text" {
 				var items []map[string]any
 				for _, p := range enriched {
@@ -506,6 +572,21 @@ Dismissed alarms are permanently removed from this list.`,
 						"todo_id":    p.State.TodoID,
 						"title":      p.Title,
 						"action":     p.Action,
+						"trigger_at": p.State.TriggerAt,
+						"fired_at":   storage.NullableToString(p.State.FiredAt),
+						"snoozed_to": storage.NullableToString(p.State.SnoozedTo),
+					})
+				}
+				for _, p := range enrichedDefaults {
+					items = append(items, map[string]any{
+						"id":         p.ID,
+						"type":       "event",
+						"default":    true,
+						"alarm_id":   nil,
+						"trigger":    p.State.TriggerValue,
+						"event_id":   p.State.EventID,
+						"title":      p.Title,
+						"action":     p.State.Action,
 						"trigger_at": p.State.TriggerAt,
 						"fired_at":   storage.NullableToString(p.State.FiredAt),
 						"snoozed_to": storage.NullableToString(p.State.SnoozedTo),
@@ -544,6 +625,21 @@ Dismissed alarms are permanently removed from this list.`,
 				}
 				writePendingAlarmLine(w, p.ID, triggerLocal, p.Action, p.Title, true, snoozed)
 			}
+			for _, p := range enrichedDefaults {
+				triggerLocal := p.State.TriggerAt
+				if t, err := time.Parse(time.RFC3339, p.State.TriggerAt); err == nil {
+					triggerLocal = t.Local().Format("2006-01-02 15:04")
+				}
+				snoozed := ""
+				if p.State.SnoozedTo != nil {
+					snz := *p.State.SnoozedTo
+					if t, err := time.Parse(time.RFC3339, snz); err == nil {
+						snz = t.Local().Format("15:04")
+					}
+					snoozed = fmt.Sprintf(" (snoozed to %s)", snz)
+				}
+				writePendingAlarmLine(w, p.ID, triggerLocal, p.State.Action, p.Title, false, snoozed)
+			}
 			return nil
 		},
 	}
@@ -561,12 +657,16 @@ brackets). Dismissing an alarm marks it as acknowledged and is
 permanent; use "alarm snooze" instead if you want to be reminded again
 later.
 
-For todo alarms, use the "t" prefix shown in "alarm list" (e.g. t3).`,
+For todo alarms, use the "t" prefix shown in "alarm list" (e.g. t3).
+For default alarms, use the "d" prefix (e.g. d3).`,
 		Example: `  # Dismiss event alarm state #5
   chroncal alarm dismiss 5
 
   # Dismiss todo alarm state #3
-  chroncal alarm dismiss t3`,
+  chroncal alarm dismiss t3
+
+  # Dismiss default alarm state #3
+  chroncal alarm dismiss d3`,
 		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -575,17 +675,22 @@ For todo alarms, use the "t" prefix shown in "alarm list" (e.g. t3).`,
 			}
 			defer a.Close()
 
-			stateID, isTodo, err := parseStateID(args[0])
+			stateID, kind, err := parseStateID(args[0])
 			if err != nil {
 				return err
 			}
 
 			ctx := context.Background()
-			if isTodo {
+			switch kind {
+			case stateTodo:
 				if err := a.Alarms.DismissTodoAlarm(ctx, stateID); err != nil {
 					return fmt.Errorf("dismiss todo alarm: %w", err)
 				}
-			} else {
+			case stateDefault:
+				if err := a.Alarms.DismissDefault(ctx, stateID); err != nil {
+					return fmt.Errorf("dismiss alarm: %w", err)
+				}
+			default:
 				if err := a.Alarms.Dismiss(ctx, stateID); err != nil {
 					return fmt.Errorf("dismiss alarm: %w", err)
 				}
@@ -612,8 +717,9 @@ func alarmSnoozeCmd() *cobra.Command {
 		Long: `Postpone a fired alarm so it can fire again after a delay.
 
 The state ID is shown in the output of "alarm list" (the number in
-brackets, e.g. [5] or [t5]). Only fired, non-dismissed alarms can be
-snoozed. For todo alarms, use the "t" prefix (e.g. t5).
+brackets, e.g. [5], [t5], or [d5]). Only fired, non-dismissed alarms can
+be snoozed. For todo alarms, use the "t" prefix (e.g. t5). For default
+alarms, use the "d" prefix (e.g. d5).
 
 For event alarms, the snooze time is bounded by the event timeline: if
 the requested duration would place the reminder after the event ends,
@@ -652,7 +758,7 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 			}
 			defer a.Close()
 
-			stateID, isTodo, err := parseStateID(args[0])
+			stateID, kind, err := parseStateID(args[0])
 			if err != nil {
 				return err
 			}
@@ -663,7 +769,7 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 			displayID := args[0]
 
 			// Todo alarm snooze: simple duration-based, no event bounds.
-			if isTodo {
+			if kind == stateTodo {
 				if untilStart {
 					return errInvalidInputf("--until-start is not supported for todo alarms")
 				}
@@ -686,6 +792,44 @@ Exporting and re-importing a calendar will not preserve snooze times.`,
 					})
 				}
 				fmt.Fprintf(w, "Snoozed todo alarm state %s until %s.\n", displayID, until.Local().Format("15:04"))
+				return nil
+			}
+
+			// Default alarm snooze: the same event bounds as a stored
+			// event alarm, against default_alarm_state.
+			if kind == stateDefault {
+				var res alarm.SnoozeResult
+				if untilStart {
+					res, err = a.Alarms.SnoozeDefaultUntilStart(ctx, stateID, now)
+					if err != nil {
+						return fmt.Errorf("snooze until start: %w", err)
+					}
+				} else {
+					dur, err := parseCLIDuration("for", forDur)
+					if err != nil {
+						return err
+					}
+					if dur <= 0 {
+						return errInvalidInputf("--for: snooze duration must be positive (e.g. 5m, 1h)")
+					}
+					res, err = a.Alarms.ComputeDefaultSnooze(ctx, stateID, dur, now)
+					if err != nil {
+						return fmt.Errorf("compute snooze: %w", err)
+					}
+				}
+				if err := a.Alarms.SnoozeDefault(ctx, stateID, res.Until); err != nil {
+					return fmt.Errorf("snooze alarm: %w", err)
+				}
+				if outputFmt != "text" {
+					return printOutput(w, map[string]any{
+						"snoozed":    true,
+						"id":         displayID,
+						"until":      res.Until.UTC().Format(time.RFC3339),
+						"capped":     res.Capped,
+						"past_start": res.PastStart,
+					})
+				}
+				fmt.Fprintf(w, "Snoozed alarm state %s until %s.\n", displayID, res.Until.Local().Format("15:04"))
 				return nil
 			}
 

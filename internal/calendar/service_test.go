@@ -512,3 +512,56 @@ func TestFromStorageIncludesRemoteDiscoveryMetadata(t *testing.T) {
 		t.Fatalf("remote discovery metadata = %+v", got)
 	}
 }
+
+func TestCalendarService_SetDefaultAlarmsTriState(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	cal, err := svc.Create(ctx, "Work", "#111111", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := svc.Get(ctx, cal.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.DefaultAlarms != nil {
+		t.Fatalf("new calendar DefaultAlarms = %v, want nil (inherit)", *got.DefaultAlarms)
+	}
+
+	list := "-PT15M,AUDIO:-PT5M"
+	if err := svc.SetDefaultAlarms(ctx, cal.ID, &list); err != nil {
+		t.Fatalf("SetDefaultAlarms(list): %v", err)
+	}
+	got, err = svc.Get(ctx, cal.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.DefaultAlarms == nil || *got.DefaultAlarms != list {
+		t.Fatalf("DefaultAlarms = %v, want %q", got.DefaultAlarms, list)
+	}
+
+	off := ""
+	if err := svc.SetDefaultAlarms(ctx, cal.ID, &off); err != nil {
+		t.Fatalf("SetDefaultAlarms(off): %v", err)
+	}
+	got, err = svc.Get(ctx, cal.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.DefaultAlarms == nil || *got.DefaultAlarms != "" {
+		t.Fatalf("DefaultAlarms = %v, want empty string (off)", got.DefaultAlarms)
+	}
+
+	if err := svc.SetDefaultAlarms(ctx, cal.ID, nil); err != nil {
+		t.Fatalf("SetDefaultAlarms(nil): %v", err)
+	}
+	got, err = svc.Get(ctx, cal.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.DefaultAlarms != nil {
+		t.Fatalf("DefaultAlarms = %v, want nil (inherit)", *got.DefaultAlarms)
+	}
+}
