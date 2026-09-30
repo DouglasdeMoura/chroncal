@@ -339,3 +339,24 @@ func TestRestoreCredentialPutsBackARefusedSecret(t *testing.T) {
 		t.Fatalf("restored credential = %+v, want the prior password", restored)
 	}
 }
+
+// TestRefusalNamesTheKeyringSwitch confirms a refusal that envDisableKeyring
+// caused tells the user to unset the switch. The host can have a keyring
+// provider, so the install advice of plaintextRemedy is wrong there.
+func TestRefusalNamesTheKeyringSwitch(t *testing.T) {
+	plaintext := &PlaintextFileStore{dir: t.TempDir(), namespace: "test"}
+
+	disabled := &secretlessFileStore{inner: plaintext, reason: ErrKeyringDisabled}
+	msg := disabled.refusal().Error()
+	if !strings.Contains(msg, "Unset "+envDisableKeyring) {
+		t.Errorf("refusal = %q, want the unset remedy", msg)
+	}
+	if strings.Contains(msg, "Install a keyring provider") {
+		t.Errorf("refusal = %q, want no install advice", msg)
+	}
+
+	absent := &secretlessFileStore{inner: plaintext, reason: errors.New("no keyring")}
+	if msg := absent.refusal().Error(); !strings.Contains(msg, "Install a keyring provider") {
+		t.Errorf("refusal = %q, want the install advice", msg)
+	}
+}

@@ -200,6 +200,9 @@ func TestSyncCommandsOpenWithoutAKeyring(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("CHRONCAL_SECURITY_ALLOW_PLAINTEXT", "false")
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
+	// Run the real probe against the dead bus. The keyring switch answers
+	// before the probe opens the bus, so it would hide the path under test.
+	t.Setenv("CHRONCAL_SECURITY_DISABLE_KEYRING", "")
 
 	commands := []struct {
 		args []string
@@ -240,6 +243,9 @@ func TestCalendarConnectRefusesAPasswordWithoutAKeyring(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("CHRONCAL_SECURITY_ALLOW_PLAINTEXT", "false")
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/chroncal-test-bus")
+	// Run the real probe against the dead bus. The keyring switch answers
+	// before the probe opens the bus, so it would hide the path under test.
+	t.Setenv("CHRONCAL_SECURITY_DISABLE_KEYRING", "")
 	t.Setenv("CHRONCAL_PASSWORD", "hunter2")
 
 	_, stderr, err := runChroncalCommand(t, "account", "add", "Nextcloud",
@@ -251,5 +257,9 @@ func TestCalendarConnectRefusesAPasswordWithoutAKeyring(t *testing.T) {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr = %q, want it to name %q", stderr, want)
 		}
+	}
+	// The refusal must come from the dead bus, not from the keyring switch.
+	if strings.Contains(stderr, "CHRONCAL_SECURITY_DISABLE_KEYRING") {
+		t.Fatalf("stderr = %q, want the bus probe error, not the keyring switch", stderr)
 	}
 }

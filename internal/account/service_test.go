@@ -17,6 +17,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/synclock"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 type memoryCredentialStore struct {
@@ -74,10 +75,7 @@ type selectionFixture struct {
 
 func newSelectionFixture(t *testing.T) selectionFixture {
 	t.Helper()
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	t.Cleanup(func() { _ = db.Close() })
 
 	ctx := context.Background()
@@ -139,17 +137,14 @@ func installAccountDeleteCommitFailure(t *testing.T, db *sql.DB) {
 }
 
 func TestServiceCreateRollsBackWhenCredentialStorageFails(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	store := newMemoryCredentialStore()
 	store.setErr = errors.New("keyring unavailable")
 	svc := NewService(db, q)
 
-	_, err = svc.Create(context.Background(), CreateParams{
+	_, err := svc.Create(context.Background(), CreateParams{
 		Name:          "Work",
 		ServerURL:     "https://cal.example.test/dav/",
 		Username:      "alice",
@@ -170,10 +165,7 @@ func TestServiceCreateRollsBackWhenCredentialStorageFails(t *testing.T) {
 }
 
 func TestServiceDiscoversAndImportsSelectedCalendars(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -252,10 +244,7 @@ func TestServiceDiscoversAndImportsSelectedCalendars(t *testing.T) {
 }
 
 func TestServiceDiscoverWithCredentialReplacesOnlyAfterSuccessfulDiscovery(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -285,10 +274,7 @@ func TestServiceDiscoverWithCredentialReplacesOnlyAfterSuccessfulDiscovery(t *te
 }
 
 func TestServiceDiscoverWithCredentialRestoresPreviousCredentialOnFailure(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -314,10 +300,7 @@ func TestServiceDiscoverWithCredentialRestoresPreviousCredentialOnFailure(t *tes
 }
 
 func TestServiceRefreshMarksMissingOnlyAfterCompleteDiscovery(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -391,10 +374,7 @@ func TestServiceRefreshMarksMissingOnlyAfterCompleteDiscovery(t *testing.T) {
 }
 
 func TestServiceDeletePreservesCalendarsAsLocal(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -481,10 +461,7 @@ func TestServiceDeletePreservesCalendarsAsLocal(t *testing.T) {
 // and name onto the row. Account remove clears remote_color. Metadata sync
 // then has a current remote baseline.
 func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -634,10 +611,7 @@ func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 // Two unlinked rows with the same remote identity are ambiguous. Import must
 // create a new calendar. It must not pick one snapshot at random.
 func TestServiceImportSkipsAmbiguousUnlinkedRemoteIdentity(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -708,10 +682,7 @@ func TestServiceImportSkipsAmbiguousUnlinkedRemoteIdentity(t *testing.T) {
 }
 
 func TestServiceDeleteRollsBackWhenCredentialRemovalFails(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -786,10 +757,7 @@ func TestServiceDeleteRollsBackWhenCredentialRemovalFails(t *testing.T) {
 }
 
 func TestServiceDeleteAbortsOnCredentialReadFailure(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -819,10 +787,7 @@ func TestServiceDeleteAbortsOnCredentialReadFailure(t *testing.T) {
 }
 
 func TestServiceDeleteTreatsCredentialIdentityMismatchAsNoPreviousCredential(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -847,10 +812,7 @@ func TestServiceDeleteTreatsCredentialIdentityMismatchAsNoPreviousCredential(t *
 }
 
 func TestServiceLoadCredentialUsesAccountIdentity(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -878,10 +840,7 @@ func TestServiceLoadCredentialUsesAccountIdentity(t *testing.T) {
 }
 
 func TestServiceLoadCredentialWaitsForAccountLifecycle(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -959,10 +918,7 @@ func TestServiceDiscoverWithCredentialRestoresASecretOnASecretlessStore(t *testi
 	auth.ResetKeyringProbe()
 	t.Cleanup(auth.ResetKeyringProbe)
 
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -1012,10 +968,7 @@ func TestServiceDiscoverWithCredentialRestoresASecretOnASecretlessStore(t *testi
 // the re-added connection to DiscoverWithCredential, so a hard requirement for
 // the previous entry would leave the user with no way back in.
 func TestServiceDiscoverWithCredentialRepairsAMissingEntry(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -1049,10 +1002,7 @@ func TestServiceDiscoverWithCredentialRepairsAMissingEntry(t *testing.T) {
 // The account held no credential before the reconnect, so a failed discovery
 // must leave it holding none, not the value that failed.
 func TestServiceDiscoverWithCredentialRemovesAFailedRepair(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -1090,10 +1040,7 @@ func TestServiceDiscoverWithCredentialRemovesAFailedRepair(t *testing.T) {
 // consented to. On a host with no keyring that delete also takes away the
 // permission to write the next secret, so the user could not try again.
 func TestServiceDiscoverWithCredentialKeepsAnotherConnectionsCredential(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()

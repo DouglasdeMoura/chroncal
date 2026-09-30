@@ -123,6 +123,14 @@ For a custom button that does not use `Form`, render with `ButtonStyles.Normal` 
 
 Confirm dialogs focus Cancel by default (`form.FocusCancel()`). A quick Enter cancels. It does not confirm. Keep that behavior when you build a new destructive prompt.
 
+### Test speed
+
+Three rules keep the suite fast. Follow them in every new test.
+
+1. Never touch the real OS keyring. `TestMain` in `cmd/chroncal/main_test.go` sets `CHRONCAL_SECURITY_DISABLE_KEYRING=1` for the test binary and its child processes. A locked desktop keyring blocks each D-Bus call for the full method timeout. One credential command then stalls a test for tens of seconds.
+2. Take test databases from `internal/testutil`. Use `testutil.NewTestDB(t)` or `testutil.DBPath(t)`. Do not call `storage.Open` on a fresh path per test. A fresh open runs the full migration set and costs about a quarter second of CPU.
+3. Keep `tea.Tick` on the fake clock. A `tea.Tick` starts its timer when the code builds the command, not when the command runs. Run the model update and the command check inside one `synctest.Test` bubble. See `batchEmits` in `internal/tui/oauth_wiring_test.go`.
+
 ## Common Tasks
 
 ### Find an event by ID or UID

@@ -338,8 +338,15 @@ func appendImportWarnings(status string, warnings int) string {
 	return status + " · " + importWarningsSegment(warnings)
 }
 
+// expireStatusAfter returns a command that sends syncStatusExpiredMsg after d.
+// tea.Tick starts its timer when the code builds the command, not when the
+// runtime runs it. This command builds the tick when it runs, so the timer
+// starts at run time. A test that runs the command in a synctest bubble then
+// uses the fake clock, and no real timer starts for a command that never runs.
 func (m Model) expireStatusAfter(d time.Duration, token int) tea.Cmd {
-	return tea.Tick(d, func(time.Time) tea.Msg {
-		return syncStatusExpiredMsg{token: token}
-	})
+	return func() tea.Msg {
+		return tea.Tick(d, func(time.Time) tea.Msg {
+			return syncStatusExpiredMsg{token: token}
+		})()
+	}
 }
