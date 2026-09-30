@@ -117,6 +117,18 @@ func (p *Purger) purgeAlarmStates(ctx context.Context, cutoff time.Time) (int, e
 		return total, fmt.Errorf("purge stale unacked todo alarm states: %w", err)
 	}
 	total += int(staleTodos)
+
+	// Default-alarm state (issue #815) follows the same retention.
+	defaults, err := p.q.PurgeAcknowledgedDefaultAlarmStates(ctx, cutoffStr)
+	if err != nil {
+		return total, fmt.Errorf("purge default alarm states: %w", err)
+	}
+	total += int(defaults)
+	staleDefaults, err := p.q.PurgeStaleUnacknowledgedDefaultAlarmStates(ctx, staleCutoffStr)
+	if err != nil {
+		return total, fmt.Errorf("purge stale unacked default alarm states: %w", err)
+	}
+	total += int(staleDefaults)
 	return total, nil
 }
 

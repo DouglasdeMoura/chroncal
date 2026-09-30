@@ -1150,11 +1150,12 @@ type UpsertEventByUIDParams struct {
 	ConferenceUri  string
 }
 
-// NOTE: ON CONFLICT UPDATE clears deleted_at. This query resurrects
-// soft-deleted rows. Callers outside the pull path in the sync engine
-// must know this. The pull path is safe. The engine excludes
-// tombstoned UIDs before this query runs (engine.go loads tombstones
-// first and skips them during pull).
+// NOTE: ON CONFLICT matches (calendar_id, uid, recurrence_id). The same
+// UID on a second calendar inserts a new row (issue #756). ON CONFLICT
+// UPDATE clears deleted_at. This query resurrects soft-deleted rows.
+// Callers outside the pull path in the sync engine must know this. The
+// pull path is safe. The engine excludes tombstoned UIDs before this
+// query runs (engine.go loads tombstones first and skips them during pull).
 func (q *Queries) UpsertEventByUID(ctx context.Context, arg UpsertEventByUIDParams) (Event, error) {
 	row := q.db.QueryRowContext(ctx, upsertEventByUID,
 		arg.Uid,

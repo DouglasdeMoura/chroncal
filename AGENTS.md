@@ -91,6 +91,8 @@ The database stores a recurring event as one row with `recurrence_rule`. Each ov
 
 Triggers are RFC 5545 duration strings (`-PT15M` = 15 minutes before). Absolute triggers use RFC 3339. The `alarm_state` and `todo_alarm_state` tables store the state (`fired_at`, `acknowledged_at`, `snooze_until`). The service skips alarms older than 24 hours (`alarm.StaleThreshold`). The service fires extra alarms at `Duration` intervals, up to the `Repeat` count.
 
+Default alarms (issue #815) are virtual. The check loop synthesizes them at check time for events without any alarm row. The `calendars.default_alarms` column holds a per-calendar spec list (`NULL` inherits the global default, `''` turns defaults off), and the `default_alarm_state` table stores their state. A default alarm is never written to `event_alarms`, so sync and export never see it. Parse default-alarm specs with `model.ParseDefaultAlarmSpec` (`"AUDIO:-PT5M"` or a bare duration).
+
 ### iCal Round-Trip
 
 UID is required for round-trip fidelity. `recurrence_id` marks an overridden instance. Export fills transient fields (Alarms, Attendees, and others). The main event and todo tables do not store those fields. You can express duration as DTEND or as DURATION (RFC 5545). The `timezone` column and the `timezones` table preserve timezones.

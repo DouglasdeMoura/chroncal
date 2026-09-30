@@ -125,8 +125,13 @@ type jsonCalendar struct {
 	LastSyncAt    string `json:"last_sync_at,omitempty"`
 	LastSyncError string `json:"last_sync_error,omitempty"`
 	Hidden        bool   `json:"hidden,omitempty"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	// DefaultAlarms is the raw per-calendar default-alarm setting
+	// (issue #815). A nil value inherits the global [alarms] default. An
+	// empty string means default alarms are off for the calendar.
+	// Otherwise it is the comma-separated spec list.
+	DefaultAlarms *string `json:"default_alarms"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
 }
 
 func toJSONEvent(e event.Event) jsonEvent {
@@ -197,6 +202,7 @@ func toJSONCalendar(c calendar.Calendar) jsonCalendar {
 		RemoteAccess:  c.RemoteAccess,
 		LastSyncAt:    c.LastSyncAt,
 		LastSyncError: c.LastSyncError,
+		DefaultAlarms: c.DefaultAlarms,
 		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:     c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -389,6 +395,16 @@ func printCalendar(w io.Writer, c calendar.Calendar) {
 	printDetailField(w, labelWidth, "color", c.Color)
 	printDetailField(w, labelWidth, "description", c.Description)
 	printDetailInt(w, labelWidth, "id", c.ID)
+	// The tri-state default-alarm setting (issue #815): an explicit list,
+	// "off", or the inherited global default.
+	switch {
+	case c.DefaultAlarms == nil:
+		printDetailField(w, labelWidth, "default alarms", "(global default)")
+	case *c.DefaultAlarms == "":
+		printDetailField(w, labelWidth, "default alarms", "off")
+	default:
+		printDetailField(w, labelWidth, "default alarms", *c.DefaultAlarms)
+	}
 }
 
 func printCalendars(w io.Writer, cals []calendar.Calendar) {

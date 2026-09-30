@@ -504,7 +504,7 @@ A read is always permitted, so an account you added once with `--allow-plaintext
 chroncal calendar list
 chroncal calendar get     <id>
 chroncal calendar create  "<name>" [--color HEX] [--description TEXT] [--email ADDR] [remote flags]
-chroncal calendar update  <id|name> [--name NAME] [--color HEX] [--description TEXT] [--email ADDR] [remote flags] [--disconnect-remote]
+chroncal calendar update  <id|name> [--name NAME] [--color HEX] [--description TEXT] [--email ADDR] [--default-alarm SPEC]... [--clear-default-alarms] [remote flags] [--disconnect-remote]
 chroncal calendar delete  <id>
 chroncal calendar set-default <id|name>
 chroncal calendar hide     <id|name>
@@ -530,6 +530,9 @@ For script setup, the commands read credentials from environment variables, not 
 A basic account also accepts `--password-cmd` or `CHRONCAL_PASSWORD_CMD`. The value is a command, not a secret, so a flag is safe. See [Command-retrieved passwords](#command-retrieved-passwords).
 
 Pass `--disconnect-remote` on `update` to remove the remote link of a calendar.
+
+`calendar update --default-alarm` sets the per-calendar default alarms. See
+[Default alarms](#default-alarms).
 
 ### iCal import/export
 
@@ -685,6 +688,44 @@ chroncal event update 12 --clear-foreign-alarms              # remove them, keep
 chroncal event update 12 --alarm "-PT30M" --clear-foreign-alarms  # the new alarm is the only one
 ```
 
+#### Default alarms
+
+Default alarms remind you about events without alarms. They suit events that
+arrive outside chroncal: CalDAV sync, meeting invitations, and `.ics` imports.
+Set them with the `alarms.default` config key:
+
+```toml
+[alarms]
+default = ["-PT30M", "-PT15M", "AUDIO:-PT5M"]
+skip_all_day = true
+```
+
+Each entry is a trigger duration, or an action-prefixed trigger. The action
+prefix is `DISPLAY` (default) or `AUDIO`. `skip_all_day` excludes all-day
+events. All-day events start at midnight, so a `-PT15M` trigger fires the
+evening before.
+
+Set a per-calendar default with `chroncal calendar update`. This replaces the
+global list for one calendar. The special value `none` turns default alarms
+off for that calendar. `--clear-default-alarms` removes the per-calendar
+setting, so the calendar inherits the global list again:
+
+```bash
+chroncal calendar update Work --default-alarm -PT15M --default-alarm AUDIO:-PT5M
+chroncal calendar update Holidays --default-alarm none
+chroncal calendar update Work --clear-default-alarms
+```
+
+The alarm engine applies these rules:
+
+- An event with its own alarm keeps its alarms. Default alarms do not apply.
+- An event with a "no reminder" sentinel (Google's `ACTION:NONE`) gets no
+  default alarm.
+- A default alarm is local only. It is never written to the event, so it
+  never syncs back to the server.
+- A default alarm fires, snoozes, and dismisses like a stored alarm. It shows
+  in `chroncal alarm list` with a `d` prefix (for example `[d3]`).
+
 #### Receive notifications
 
 A stored alarm does not fire on its own. Something must run `chroncal alarm check` on a schedule. Two options:
@@ -837,6 +878,8 @@ Configuration loads in this order of precedence:
 | `ui.list_format` | Default text format for list and search commands (`detail` or `compact`, in any case). `--compact` and `--detail` override it. An unknown value stops only the list and search commands. | `detail` |
 | `ui.event_list_days` | Number of days in the default forward window for `event list`. A value less than `1` stops `event list` when you do not pass `--to`. | `30` |
 | `soft_delete.purge_days` | Days to keep soft-deleted rows before the background purge. `0` disables automatic purge. | `30` |
+| `alarms.default` | Default alarms for events without alarms, as a list of trigger specs (`"-PT30M"`, `"AUDIO:-PT5M"`). See [Default alarms](#default-alarms). Never syncs back to the server. | (empty — off) |
+| `alarms.skip_all_day` | Exclude all-day events from default alarms. | `false` |
 | `sync.interval` | Minimum interval between background CalDAV syncs that `chroncal service run` performs. `service install` defaults to `15m` when this is unset. | (unset — no sync unless the installed service sets `CHRONCAL_SYNC_INTERVAL`) |
 | `sync.conflict_strategy` | Default conflict-resolution mode when you do not pass `sync run --conflict` | `prompt` |
 | `sync.http_timeout` | Time limit for one CalDAV request, as a Go duration (for example `10m`). Raise it for a server that answers a large multiget slowly. Lower it to fail faster against a hung server. Each sync deadline derives from this value, so a larger value also gives each sync pass more time. An unusable value gives a warning, and chroncal keeps the default. | `5m` |

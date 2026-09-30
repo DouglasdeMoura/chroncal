@@ -31,4 +31,11 @@ type Calendar struct {
 	RemoteMissing       bool   // collection absent from the last complete discovery
 
 	IsDefault bool // True when this is the default calendar
+
+	// DefaultAlarms holds the per-calendar default-alarm setting
+	// (issue #815). It is a comma-separated spec list
+	// ("-PT15M,AUDIO:-PT5M"). A nil value inherits the global [alarms]
+	// default from config. An empty string turns default alarms off for
+	// this calendar.
+	DefaultAlarms *string
 }
