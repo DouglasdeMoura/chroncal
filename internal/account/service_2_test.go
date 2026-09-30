@@ -16,13 +16,11 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/synclock"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 func TestServiceStoreCredentialWaitsForAccountLifecycle(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -63,10 +61,7 @@ func TestServiceStoreCredentialWaitsForAccountLifecycle(t *testing.T) {
 }
 
 func TestServiceStoreCredentialRejectsStaleConnectionIdentity(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -104,10 +99,7 @@ func TestServiceStoreCredentialRejectsStaleConnectionIdentity(t *testing.T) {
 }
 
 func TestServiceDeleteWaitsForAccountLifecycle(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -155,10 +147,7 @@ func TestServiceDeleteWaitsForAccountLifecycle(t *testing.T) {
 }
 
 func TestServiceDeleteWaitsForDiscoveryCredentialRefresh(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 
 	ctx := context.Background()
@@ -268,10 +257,7 @@ func TestValidateServerURL(t *testing.T) {
 // Create validates connection params before a touch of the database. A bad
 // request then leaves no row behind.
 func TestCreateRejectsInvalidConnectionParams(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	store := newMemoryCredentialStore()
 	svc := NewService(db, q)
@@ -308,10 +294,7 @@ func TestCreateRejectsInvalidConnectionParams(t *testing.T) {
 // original remote metadata. The remote_* mirror columns still update. A
 // collection that reappears then clears its gone flag.
 func TestDiscoverReconciliationPreservesLocalColorAndNameEdits(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -368,10 +351,7 @@ func TestDiscoverReconciliationPreservesLocalColorAndNameEdits(t *testing.T) {
 }
 
 func TestDiscoverRemoteRenameCollisionPreservesLocalName(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -426,10 +406,7 @@ func TestDiscoverRemoteRenameCollisionPreservesLocalName(t *testing.T) {
 // was never discovered and a collection without a usable component type both
 // fail. They persist no row.
 func TestImportRejectsUnknownPathAndUnsupportedComponents(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -463,10 +440,7 @@ func TestImportRejectsUnknownPathAndUnsupportedComponents(t *testing.T) {
 }
 
 func TestRenameUpdatesOnlyAccountDescription(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -495,10 +469,7 @@ func TestRenameUpdatesOnlyAccountDescription(t *testing.T) {
 }
 
 func TestRenameRejectsEmptyAndDuplicateDescriptions(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -531,10 +502,7 @@ func TestRenameRejectsEmptyAndDuplicateDescriptions(t *testing.T) {
 }
 
 func TestSetOrderPersistsAccountSectionOrder(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -588,10 +556,7 @@ func TestUserFacingNameHidesCredentialIdentifiers(t *testing.T) {
 // rows preserve the pristine remote name. The owner email comes from the
 // account username.
 func TestImportGeneratesUniqueLocalNamesForCollisions(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -641,10 +606,7 @@ func TestImportGeneratesUniqueLocalNamesForCollisions(t *testing.T) {
 // user-customized local name survives the first refresh. The remote_name
 // mirror is seeded from discovery.
 func TestDiscoverReconcilesLegacyDirectLinkAndPreservesLocalName(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
@@ -707,16 +669,13 @@ func TestDiscoverReconcilesLegacyDirectLinkAndPreservesLocalName(t *testing.T) {
 // Google's CalDAV host. A non-Google server must be rejected before any account
 // or credential is written.
 func TestCreateRejectsNonGoogleOAuth2WithoutPersisting(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 	store := newMemoryCredentialStore()
 	svc := NewService(db, q)
 
-	_, err = svc.Create(ctx, CreateParams{
+	_, err := svc.Create(ctx, CreateParams{
 		Name: "Not Google", ServerURL: "https://cal.example.test/dav/",
 		Username: "alice", AuthType: "oauth2",
 	}, auth.Credential{Username: "alice", AccessToken: "tok"}, store)
@@ -735,10 +694,7 @@ func TestCreateRejectsNonGoogleOAuth2WithoutPersisting(t *testing.T) {
 // opt-in, query/fragment, and embedded userinfo are all rejected. That happens
 // before any account or credential is written.
 func TestCreateRejectsUnsafeServerURLWithoutPersisting(t *testing.T) {
-	db, q, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	db, q := testutil.NewTestDB(t)
 	defer db.Close()
 	ctx := context.Background()
 

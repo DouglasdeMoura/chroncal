@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -678,4 +679,78 @@ func TestEventForm_DuplicateStripsSyncOnlyAlarms(t *testing.T) {
 
 	require.Len(t, m.alarms, 1)
 	assert.Equal(t, "DISPLAY", m.alarms[0].Action)
+}
+
+// A pasted comma-separated list of hundreds of addresses must survive in
+// full. The People field capped its content at 500 characters, so a large
+// paste kept only the first few addresses and the save dropped the rest
+// (issue #818).
+func TestEventForm_PeopleFieldKeepsLargeAttendeePaste(t *testing.T) {
+	emails := make([]string, 0, 300)
+	for i := range 300 {
+		emails = append(emails, fmt.Sprintf("firstname.lastname%03d@company-domain.example", i))
+	}
+	paste := strings.Join(emails, ", ")
+
+	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), testEventFormCalendars(), Theme{})
+	m.titleField.SetValue("All hands")
+	m.peopleField.Focus()
+	m.peopleField.Update(tea.PasteMsg{Content: paste})
+
+	assert.Equal(t, paste, m.peopleField.Value(), "the field must keep the full pasted list")
+
+	cmd := m.save(&m.form)
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(EventFormSaveMsg)
+	require.True(t, ok)
+	require.Len(t, msg.Attendees, 300)
+	assert.Equal(t, emails[0], msg.Attendees[0].Email)
+	assert.Equal(t, emails[299], msg.Attendees[299].Email)
+}
+
+// The edit dialog prefills the People field from the stored attendees.
+// SetValue truncates at the same character limit, so an event with many
+// attendees lost every address past the cap on the next save. The prefill
+// must keep the whole list (issue #818).
+func TestEventForm_EditPrefillKeepsAllAttendees(t *testing.T) {
+	attendees := make([]model.Attendee, 0, 300)
+	for i := range 300 {
+		attendees = append(attendees, model.Attendee{
+			Email: fmt.Sprintf("firstname.lastname%03d@company-domain.example", i),
+			Role:  "REQ-PARTICIPANT",
+		})
+	}
+
+	m, _ := NewEventFormModelForEdit(event.Event{
+		ID:         9,
+		UID:        "all-hands-uid",
+		Title:      "All hands",
+		StartTime:  time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC),
+		CalendarID: 1,
+		Attendees:  attendees,
+	}, testEventFormCalendars(), Theme{})
+
+	require.Len(t, m.origAttendees, 300)
+	want := strings.Join(attendeeEmails(attendees), ", ")
+	assert.Equal(t, want, m.peopleField.Value(), "the prefill must keep every address")
+
+	cmd := m.save(&m.form)
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(EventFormSaveMsg)
+	require.True(t, ok)
+	require.Len(t, msg.Attendees, 300)
+	for i, att := range msg.Attendees {
+		if att.Email != attendees[i].Email {
+			t.Fatalf("attendee %d = %q, want %q", i, att.Email, attendees[i].Email)
+		}
+	}
+}
+
+func attendeeEmails(attendees []model.Attendee) []string {
+	emails := make([]string, 0, len(attendees))
+	for _, a := range attendees {
+		emails = append(emails, a.Email)
+	}
+	return emails
 }

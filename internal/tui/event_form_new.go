@@ -121,7 +121,9 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 	}
 
 	m.peopleField = NewTextField("Comma-separated emails")
-	m.peopleField.SetCharLimit(500)
+	// Unlimited. A pasted list can hold hundreds of addresses, and the save
+	// path parses each address into an attendee row (issue #818).
+	m.peopleField.SetCharLimit(0)
 
 	m.locationField = NewTextField("Add location")
 	m.locationField.SetCharLimit(200)
