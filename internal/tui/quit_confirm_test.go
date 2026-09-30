@@ -271,3 +271,61 @@ func TestQuitKeyStillQuitsFromMainGrid(t *testing.T) {
 		t.Fatalf("q should open the quit confirm from the main grid: kind=%v confirmOpen=%v", next.pending.kind, next.confirmOpen)
 	}
 }
+
+// assertQuitCmd runs the returned command and requires it to carry
+// tea.QuitMsg. A nil command or a different message is a failure.
+func assertQuitCmd(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatalf("quit key returned no command; expected tea.Quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("quit key returned a non-quit command; expected tea.QuitMsg")
+	}
+}
+
+// TestSkipQuitConfirmQQuitsImmediately guards ui.confirm_quit=false. From the
+// main grid, `q` must quit at once. The confirm must not open (issue #806).
+func TestSkipQuitConfirmQQuitsImmediately(t *testing.T) {
+	qKey := tea.KeyPressMsg{Code: 'q', Text: "q"}
+
+	m := Model{keys: defaultAppKeys(), skipQuitConfirm: true}
+	next, cmd, handled := m.interceptGlobalKeys(qKey)
+	if !handled {
+		t.Fatalf("q not handled from the main grid with skipQuitConfirm")
+	}
+	if pendingQuit(next) || next.confirmOpen {
+		t.Fatalf("q opened the quit confirm although the prompt is disabled: kind=%v confirmOpen=%v", next.pending.kind, next.confirmOpen)
+	}
+	assertQuitCmd(t, cmd)
+}
+
+// TestSkipQuitConfirmCtrlCQuitsImmediately guards the ctrl+c variant. With
+// skipQuitConfirm set, ctrl+c must quit at once even while a destructive
+// confirm owns the screen. The program exits, so the abandoned wait state
+// can never fire.
+func TestSkipQuitConfirmCtrlCQuitsImmediately(t *testing.T) {
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+
+	m := Model{
+		confirmOpen: true,
+		pending: pendingAction{
+			kind:   pendingActionEventDelete,
+			target: pendingTarget{ev: event.Event{ID: 7, Title: "Standup"}},
+		},
+		skipQuitConfirm: true,
+	}
+	next, cmd, handled := m.interceptGlobalKeys(ctrlC)
+	if !handled {
+		t.Fatalf("ctrl+c not handled with skipQuitConfirm")
+	}
+	// The immediate exit leaves the abandoned confirm state untouched. Only
+	// the quit command matters: no quit dialog may arm in its place.
+	if pendingQuit(next) {
+		t.Fatalf("ctrl+c opened the quit confirm although the prompt is disabled: kind=%v", next.pending.kind)
+	}
+	if next.pending.kind != pendingActionEventDelete {
+		t.Fatalf("ctrl+c replaced the pending action: kind=%v", next.pending.kind)
+	}
+	assertQuitCmd(t, cmd)
+}

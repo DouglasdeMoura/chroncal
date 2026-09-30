@@ -134,16 +134,17 @@ func (m Model) openQuitConfirm() Model {
 
 // interceptGlobalKeys routes the quit guard (q / ctrl+c) and help (?) ahead
 // of any open dialog so they work from anywhere. A second ctrl+c while the
-// quit confirm is on screen forces the exit. ctrl+c is truly global. It is
-// not a character anyone types into a field. ? is suppressed while a
-// text-entry surface owns input (palette search, event form, calendar form)
-// so users can type it normally. q is suppressed while any overlay is open
-// so the overlay's own close binding runs instead. The quit confirm also
-// blocks ?. The help dialog handles its own close keys.
+// quit confirm is on screen forces the exit. When skipQuitConfirm is set
+// (ui.confirm_quit=false), q and ctrl+c quit at once. ctrl+c is truly
+// global. It is not a character anyone types into a field. ? is suppressed
+// while a text-entry surface owns input (palette search, event form,
+// calendar form) so users can type it normally. q is suppressed while any
+// overlay is open so the overlay's own close binding runs instead. The quit
+// confirm also blocks ?. The help dialog handles its own close keys.
 func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	inQuitConfirm := m.confirmOpen && m.pending.kind == pendingActionQuit
 	if msg.String() == "ctrl+c" {
-		if inQuitConfirm {
+		if inQuitConfirm || m.skipQuitConfirm {
 			m.oauthFlow.Abort() // release any in-flight OAuth listener
 			return m, tea.Quit, true
 		}
@@ -175,6 +176,10 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// `q`-to-close key binding then runs, not the global quit guard
 	// (issue #406).
 	if key.Matches(msg, m.keys.Quit) && !m.anyOverlayOpen() {
+		if m.skipQuitConfirm {
+			m.oauthFlow.Abort() // release any in-flight OAuth listener
+			return m, tea.Quit, true
+		}
 		return m.openQuitConfirm(), nil, true
 	}
 	if key.Matches(msg, m.keys.Help) && !inQuitConfirm && !m.helpDialogOpen && !textEntryActive {

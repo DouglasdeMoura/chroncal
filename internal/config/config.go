@@ -78,6 +78,10 @@ type UIConfig struct {
 	ListFormat string `mapstructure:"list_format"`
 	// EventListDays sets the default forward window for event list.
 	EventListDays int `mapstructure:"event_list_days"`
+	// ConfirmQuit controls the "Quit chroncal?" prompt in the TUI. True
+	// (default) makes the q and ctrl+c keys open the prompt. False makes
+	// both keys quit at once.
+	ConfirmQuit bool `mapstructure:"confirm_quit"`
 }
 
 type Config struct {
@@ -221,6 +225,11 @@ func newViper() *viper.Viper {
 	v.BindEnv("ui.week_start")
 	v.BindEnv("ui.list_format")
 	v.BindEnv("ui.event_list_days")
+	// The quit prompt stays on unless the user turns it off. An explicit
+	// false must reach Unmarshal, so the key needs a default and an env
+	// binding like the other bool keys.
+	v.SetDefault("ui.confirm_quit", true)
+	v.BindEnv("ui.confirm_quit")
 
 	return v
 }
