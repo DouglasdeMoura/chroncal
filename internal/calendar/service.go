@@ -339,6 +339,7 @@ func fromStorage(r storage.Calendar) Calendar {
 		RemoteComponents:    r.RemoteComponents,
 		RemoteMissing:       r.RemoteMissing != 0,
 		IsDefault:           r.IsDefault != 0,
+		DefaultAlarms:       r.DefaultAlarms,
 	}
 }
 
@@ -350,4 +351,17 @@ func isUniqueViolation(err error, column string) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "UNIQUE constraint failed") && strings.Contains(msg, column)
+}
+
+// SetDefaultAlarms stores the per-calendar default-alarm setting
+// (issue #815). A nil raw value removes the setting, so the calendar
+// inherits the global [alarms] default. An empty string turns default
+// alarms off for the calendar. A non-empty value is the comma-separated
+// spec list; the calendar CLI validates each spec before it calls this
+// method.
+func (s *Service) SetDefaultAlarms(ctx context.Context, id int64, raw *string) error {
+	return s.q.UpdateCalendarDefaultAlarms(ctx, storage.UpdateCalendarDefaultAlarmsParams{
+		DefaultAlarms: raw,
+		ID:            id,
+	})
 }

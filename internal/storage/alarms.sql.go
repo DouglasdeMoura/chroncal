@@ -200,6 +200,48 @@ func (q *Queries) ListDistinctAlarmTriggers(ctx context.Context) ([]string, erro
 	return items, nil
 }
 
+const listEventIDsWithAlarms = `-- name: ListEventIDsWithAlarms :many
+SELECT DISTINCT event_id FROM event_alarms
+WHERE event_id IN (/*SLICE:event_ids*/?)
+`
+
+// The alarm check loop uses this to find events that carry at least one
+// alarm row of any action, fireable or not. A sync-only sentinel such as
+// ACTION:NONE means the organiser turned the reminder off, so default
+// alarms must not apply (issue #815).
+func (q *Queries) ListEventIDsWithAlarms(ctx context.Context, eventIds []int64) ([]int64, error) {
+	query := listEventIDsWithAlarms
+	var queryParams []interface{}
+	if len(eventIds) > 0 {
+		for _, v := range eventIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:event_ids*/?", strings.Repeat(",?", len(eventIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:event_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var event_id int64
+		if err := rows.Scan(&event_id); err != nil {
+			return nil, err
+		}
+		items = append(items, event_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFireableAlarmsByEventIDs = `-- name: ListFireableAlarmsByEventIDs :many
 SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM event_alarms
 WHERE event_id IN (/*SLICE:event_ids*/?)

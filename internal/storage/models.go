@@ -48,6 +48,7 @@ type Calendar struct {
 	RemoteAccess        string
 	RemoteComponents    string
 	RemoteMissing       int64
+	DefaultAlarms       *string
 }
 
 type CredentialLocation struct {
@@ -59,6 +60,17 @@ type CredentialNamespace struct {
 	ID              int64
 	Namespace       string
 	CurrentLocation string
+}
+
+type DefaultAlarmState struct {
+	ID           int64
+	EventID      int64
+	Action       string
+	TriggerValue string
+	TriggerAt    string
+	FiredAt      *string
+	AckedAt      *string
+	SnoozedTo    *string
 }
 
 type Event struct {

@@ -59,6 +59,10 @@ type DueAlarm struct {
 	Alarm     model.Alarm
 	TriggerAt time.Time
 	StateID   int64 // non-zero for re-fired snoozed alarms
+	// IsDefault marks a synthesized default alarm (issue #815). It has no
+	// event_alarms row: Alarm.ID is 0, and the firing state lives in
+	// default_alarm_state.
+	IsDefault bool
 }
 
 type Service struct {
@@ -66,6 +70,10 @@ type Service struct {
 	q      *storage.Queries
 	events *event.Service
 	todos  TodoAlarmLister
+	// defaults holds the default-alarm preferences. The CLI installs them
+	// through SetDefaultConfig after construction; app.New has no config
+	// access at construction time.
+	defaults DefaultAlarmConfig
 }
 
 func NewService(db *sql.DB, q *storage.Queries, events *event.Service, todos TodoAlarmLister) *Service {
@@ -295,11 +303,24 @@ func (s *Service) todoAlarmStateExists(ctx context.Context, alarmID int64, trigg
 func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAlarm, error) {
 	// Size the forward window so events whose alarm lead time exceeds the base
 	// window (e.g. -P1W on an event 7 days out) are still expanded and fire.
+	// The default-alarm triggers participate in the sizing: a stored trigger
+	// may be short while a config default or a per-calendar override is long.
 	triggers, err := s.q.ListDistinctAlarmTriggers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list alarm triggers: %w", err)
 	}
-	forward := baseForwardWindow + maxLeadTime(triggers)
+	calendarDefaults, err := s.loadCalendarDefaultOverrides(ctx)
+	if err != nil {
+		return nil, err
+	}
+	allTriggers := triggers
+	allTriggers = append(allTriggers, s.defaults.triggerStrings()...)
+	for _, specs := range calendarDefaults {
+		for _, spec := range specs {
+			allTriggers = append(allTriggers, spec.TriggerValue)
+		}
+	}
+	forward := baseForwardWindow + maxLeadTime(allTriggers)
 	windowStart := now.Add(-StaleThreshold - 24*time.Hour)
 	windowEnd := now.Add(forward)
 
@@ -386,6 +407,20 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 	}
 	due = append(due, snoozed...)
 
+	// 3. Default alarms synthesized at check time for events without
+	// alarms (issue #815), plus their expired snoozes.
+	defaultDue, err := s.checkDefaultEventAlarms(ctx, expandedEvents, alarmMap, now, calendarDefaults)
+	if err != nil {
+		return nil, err
+	}
+	due = append(due, defaultDue...)
+
+	snoozedDefaults, err := s.listExpiredSnoozedDefaults(ctx, now)
+	if err != nil {
+		return nil, fmt.Errorf("list expired snoozed default alarms: %w", err)
+	}
+	due = append(due, snoozedDefaults...)
+
 	return due, nil
 }
 
@@ -443,46 +478,69 @@ func (s *Service) resolveStateEvent(ctx context.Context, st storage.AlarmState) 
 		return master, nil
 	}
 
-	// Find the alarm definition that fired so we can replay its trigger math.
+	// Find the alarm definition that fired so we can replay its trigger
+	// math. Every lookup failure falls back to the master event: a missing
+	// definition or an unreadable trigger must not break the pending list.
+	matched, triggerAt, found := s.alarmDefinitionForState(ctx, master, st.AlarmID, st.TriggerAt)
+	if !found {
+		return master, nil
+	}
+	return s.resolveInstanceForTrigger(ctx, master, matched, triggerAt), nil
+}
+
+// alarmDefinitionForState finds the stored alarm definition an alarm_state
+// row fired for, and parses its stored trigger time. ok=false covers a
+// failed alarm read, a removed definition, and an unreadable trigger_at.
+func (s *Service) alarmDefinitionForState(ctx context.Context, master event.Event, alarmID int64, triggerAtStr string) (model.Alarm, time.Time, bool) {
 	alarms, err := s.events.ListAlarms(ctx, master.ID)
-	if err == nil {
-		var matched model.Alarm
-		for _, a := range alarms {
-			if a.ID == st.AlarmID {
-				matched = a
-				break
-			}
+	if err != nil {
+		return model.Alarm{}, time.Time{}, false
+	}
+	for _, a := range alarms {
+		if a.ID != alarmID {
+			continue
 		}
-		if matched.ID != 0 {
-			if triggerAt, parseErr := time.Parse(time.RFC3339, st.TriggerAt); parseErr == nil {
-				// Bound the expansion window to comfortably contain the instance: the
-				// trigger sits at most |offset| (+ the event span, for RELATED=END alarms)
-				// away from the occurrence it belongs to.
-				radius := triggerSearchRadius(matched, master.Span(), triggerAt)
-				recurSvc := recurrence.NewService(s.db, s.q)
-				if expanded, expandErr := recurSvc.ListExpandedEvents(ctx, triggerAt.Add(-radius), triggerAt.Add(radius), recurrence.SkipCategories()); expandErr == nil {
-					for _, expEvt := range expanded {
-						if expEvt.ID != master.ID {
-							continue
-						}
-						base, err := computeTriggerTimeForInstance(expEvt, matched)
-						if err != nil {
-							continue
-						}
-						for _, t := range buildRepeatTriggers(base, matched.Repeat, matched.Duration) {
-							if t.Equal(triggerAt) {
-								inst := expEvt.Event
-								inst.StartTime = expEvt.InstanceTime
-								inst.EndTime = expEvt.InstanceTime.Add(expEvt.Span())
-								return inst, nil
-							}
-						}
-					}
-				}
+		triggerAt, parseErr := time.Parse(time.RFC3339, triggerAtStr)
+		if parseErr != nil {
+			return model.Alarm{}, time.Time{}, false
+		}
+		return a, triggerAt, true
+	}
+	return model.Alarm{}, time.Time{}, false
+}
+
+// resolveInstanceForTrigger re-expands the series of master and returns the
+// occurrence whose computed trigger (repeats included) equals triggerAt. It
+// returns master when no instance matches. a carries the trigger definition
+// to replay.
+func (s *Service) resolveInstanceForTrigger(ctx context.Context, master event.Event, a model.Alarm, triggerAt time.Time) event.Event {
+	// Bound the expansion window to comfortably contain the instance: the
+	// trigger sits at most |offset| (+ the event span, for RELATED=END alarms)
+	// away from the occurrence it belongs to.
+	radius := triggerSearchRadius(a, master.Span(), triggerAt)
+	recurSvc := recurrence.NewService(s.db, s.q)
+	expanded, expandErr := recurSvc.ListExpandedEvents(ctx, triggerAt.Add(-radius), triggerAt.Add(radius), recurrence.SkipCategories())
+	if expandErr != nil {
+		return master
+	}
+	for _, expEvt := range expanded {
+		if expEvt.ID != master.ID {
+			continue
+		}
+		base, err := computeTriggerTimeForInstance(expEvt, a)
+		if err != nil {
+			continue
+		}
+		for _, t := range buildRepeatTriggers(base, a.Repeat, a.Duration) {
+			if t.Equal(triggerAt) {
+				inst := expEvt.Event
+				inst.StartTime = expEvt.InstanceTime
+				inst.EndTime = expEvt.InstanceTime.Add(expEvt.Span())
+				return inst
 			}
 		}
 	}
-	return master, nil
+	return master
 }
 
 // triggerSearchRadius returns a window half-width around a stored trigger_at
@@ -554,7 +612,24 @@ func (s *Service) ListExpiredSnoozed(ctx context.Context, now time.Time) ([]DueA
 // It returns ErrNotFireable when the stored action is sync-only. The insert
 // reads the action in the same statement, so a sync pull that disables the
 // alarm after the check loop reads it cannot leave a fired state behind.
+// A default alarm (DueAlarm.IsDefault) has no event_alarms row; its claim is
+// the INSERT into default_alarm_state, guarded by the
+// (event_id, trigger_value, trigger_at) UNIQUE index.
 func (s *Service) MarkFired(ctx context.Context, da DueAlarm) (int64, error) {
+	if da.IsDefault {
+		now := time.Now().UTC().Format(time.RFC3339)
+		st, err := s.q.CreateDefaultAlarmState(ctx, storage.CreateDefaultAlarmStateParams{
+			EventID:      da.Event.ID,
+			Action:       da.Alarm.Action,
+			TriggerValue: da.Alarm.TriggerValue,
+			TriggerAt:    da.TriggerAt.UTC().Format(time.RFC3339),
+			FiredAt:      &now,
+		})
+		if err != nil {
+			return 0, err
+		}
+		return st.ID, nil
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	st, err := s.q.CreateAlarmState(ctx, storage.CreateAlarmStateParams{
 		AlarmID:   da.Alarm.ID,
@@ -663,6 +738,18 @@ func (s *Service) ComputeSnooze(ctx context.Context, stateID int64, dur time.Dur
 	evt, err := s.resolveStateEvent(ctx, st)
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
+	}
+
+	return computeSnoozeResult(evt, dur, now)
+}
+
+// computeSnoozeResult bounds a snooze of dur from now by the event
+// timeline: the snooze never fires past the event end, and the result
+// reports when it fires after the event start. ComputeSnooze and
+// ComputeDefaultSnooze share it.
+func computeSnoozeResult(evt event.Event, dur time.Duration, now time.Time) (SnoozeResult, error) {
+	if dur <= 0 {
+		return SnoozeResult{}, fmt.Errorf("snooze duration must be positive")
 	}
 
 	// Reject if the event has already ended.

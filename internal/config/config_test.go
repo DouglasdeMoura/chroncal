@@ -543,3 +543,72 @@ func TestParseListFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_AlarmsDefaultFromFile(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`
+[alarms]
+default = ["-PT30M", "AUDIO:-PT5M"]
+skip_all_day = true
+`), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfg := mustLoad(t)
+	if len(cfg.Alarms.Default) != 2 {
+		t.Fatalf("Alarms.Default = %v, want 2 specs", cfg.Alarms.Default)
+	}
+	if cfg.Alarms.Default[0] != "-PT30M" || cfg.Alarms.Default[1] != "AUDIO:-PT5M" {
+		t.Fatalf("Alarms.Default = %v", cfg.Alarms.Default)
+	}
+	if !cfg.Alarms.SkipAllDay {
+		t.Fatal("Alarms.SkipAllDay = false, want true")
+	}
+}
+
+func TestLoad_AlarmsDefaultFromEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CHRONCAL_ALARMS_DEFAULT", "-PT30M,AUDIO:-PT5M")
+	t.Setenv("CHRONCAL_ALARMS_SKIP_ALL_DAY", "true")
+
+	cfg := mustLoad(t)
+	if len(cfg.Alarms.Default) != 2 || cfg.Alarms.Default[0] != "-PT30M" || cfg.Alarms.Default[1] != "AUDIO:-PT5M" {
+		t.Fatalf("Alarms.Default = %v, want two specs from the env list", cfg.Alarms.Default)
+	}
+	if !cfg.Alarms.SkipAllDay {
+		t.Fatal("Alarms.SkipAllDay = false, want true")
+	}
+}
+
+func TestLoad_AlarmsDefaultInvalidSpecFails(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(`
+[alarms]
+default = ["-PT30M", "BEEP:-PT5M"]
+`), 0o644)
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() accepted an invalid alarms.default spec")
+	}
+	if !strings.Contains(err.Error(), "alarms.default") {
+		t.Fatalf("error %q does not name the config key", err)
+	}
+}
+
+func TestLoad_AlarmsDefaultAbsent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfg := mustLoad(t)
+	if len(cfg.Alarms.Default) != 0 {
+		t.Fatalf("Alarms.Default = %v, want empty", cfg.Alarms.Default)
+	}
+	if cfg.Alarms.SkipAllDay {
+		t.Fatal("Alarms.SkipAllDay = true, want false")
+	}
+}
