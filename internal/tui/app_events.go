@@ -198,18 +198,22 @@ func (m Model) loadTrash() tea.Cmd {
 	}
 }
 
+// eventsOn returns the events that cover the given local calendar day.
+// A multi-day event (all-day or timed across midnight) appears on every day
+// of its span. eventCalendarDays defines that span, so the popup list matches
+// the month and week grid cells (issue #807).
 func eventsOn(events []event.Event, day time.Time) []event.Event {
 	dayKey := day.Local().Format("2006-01-02")
 	var out []event.Event
 	for _, e := range events {
-		// All-day events are stored as midnight UTC; compare in UTC
-		// so negative-offset timezones don't shift the date.
-		eKey := e.StartTime.Local().Format("2006-01-02")
-		if e.AllDay {
-			eKey = e.StartTime.UTC().Format("2006-01-02")
-		}
-		if eKey == dayKey {
-			out = append(out, e)
+		for _, d := range eventCalendarDays(e) {
+			// eventCalendarDays returns all-day days as UTC midnights and
+			// timed days as local midnights. Format uses the day's own
+			// location, so the key is the calendar date the grid shows.
+			if d.Format("2006-01-02") == dayKey {
+				out = append(out, e)
+				break
+			}
 		}
 	}
 	return out

@@ -57,3 +57,41 @@ func TestDialogDayChanged_HonorsHiddenCalendars(t *testing.T) {
 		t.Fatalf("expected 1 visible event in popup, got %d", len(got.dialog.events))
 	}
 }
+
+// TestCalendarDaySelected_AllDayMidSpan guards against a regression. The day
+// popup matched an event only when the event started on the selected day. A
+// multi-day all-day event then showed "No events on this day" for every day
+// of its span except the first one. The month grid showed the event on every
+// day, so the popup and the grid disagreed.
+//
+// See issue #807.
+func TestCalendarDaySelected_AllDayMidSpan(t *testing.T) {
+	trip := event.Event{
+		ID:         42,
+		CalendarID: 1,
+		Title:      "Trip",
+		AllDay:     true,
+		StartTime:  time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC),
+	}
+
+	m := Model{
+		theme:     LoadTheme("", true),
+		width:     100,
+		height:    40,
+		viewMode:  viewMonth,
+		calendar:  NewCalendarModel(time.Date(2026, 10, 13, 0, 0, 0, 0, time.Local)),
+		events:    []event.Event{trip},
+		calendars: map[int64]CalendarInfo{1: {Name: "Personal", Color: "#7C3AED"}},
+	}
+
+	updated, _ := m.Update(CalendarDaySelectedMsg{Day: time.Date(2026, 10, 13, 0, 0, 0, 0, time.Local)})
+	got := updated.(Model)
+
+	if !got.dialogOpen {
+		t.Fatal("expected the day popup to open")
+	}
+	if len(got.dialog.events) != 1 || got.dialog.events[0].ID != 42 {
+		t.Fatalf("expected the all-day event in the popup for Oct 13, got %d events", len(got.dialog.events))
+	}
+}
