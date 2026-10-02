@@ -415,7 +415,7 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 	}
 	due = append(due, defaultDue...)
 
-	snoozedDefaults, err := s.listExpiredSnoozedDefaults(ctx, now)
+	snoozedDefaults, err := s.listExpiredSnoozedDefaults(ctx, now, calendarDefaults)
 	if err != nil {
 		return nil, fmt.Errorf("list expired snoozed default alarms: %w", err)
 	}
@@ -619,12 +619,18 @@ func (s *Service) MarkFired(ctx context.Context, da DueAlarm) (int64, error) {
 	if da.IsDefault {
 		now := time.Now().UTC().Format(time.RFC3339)
 		st, err := s.q.CreateDefaultAlarmState(ctx, storage.CreateDefaultAlarmStateParams{
-			EventID:      da.Event.ID,
-			Action:       da.Alarm.Action,
-			TriggerValue: da.Alarm.TriggerValue,
-			TriggerAt:    da.TriggerAt.UTC().Format(time.RFC3339),
-			FiredAt:      &now,
+			AlarmEventID:      da.Event.ID,
+			AlarmAction:       da.Alarm.Action,
+			AlarmTriggerValue: da.Alarm.TriggerValue,
+			AlarmTriggerAt:    da.TriggerAt.UTC().Format(time.RFC3339),
+			AlarmFiredAt:      &now,
 		})
+		if errors.Is(err, sql.ErrNoRows) {
+			// The claim's guard read an alarm row for the event: a sync
+			// pull added one between the check and the claim (issue #579
+			// protocol). The event's own reminders cover it now.
+			return 0, ErrNotFireable
+		}
 		if err != nil {
 			return 0, err
 		}

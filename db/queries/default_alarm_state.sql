@@ -1,15 +1,35 @@
 -- Operational state for default (virtual) alarms, issue #815. A default
 -- alarm has no event_alarms row, so it cannot share alarm_state (its
 -- alarm_id column references event_alarms). The
--- (event_id, trigger_value, trigger_at) index makes CreateDefaultAlarmState
--- an atomic claim, like idx_alarm_state_unique does for alarm_state.
+-- (event_id, action, trigger_value, trigger_at) index makes
+-- CreateDefaultAlarmState an atomic claim, like
+-- idx_alarm_state_unique does for alarm_state. action belongs in the key:
+-- DISPLAY:-PT15M and AUDIO:-PT15M are two separate defaults with the same
+-- trigger time, and each one fires and snoozes on its own state.
 
 -- name: GetDefaultAlarmState :one
-SELECT * FROM default_alarm_state WHERE event_id = ? AND trigger_value = ? AND trigger_at = ?;
+SELECT * FROM default_alarm_state WHERE event_id = ? AND action = ? AND trigger_value = ? AND trigger_at = ?;
 
+-- Claim a default-alarm fire slot. The EXISTS arm reads the event and its
+-- alarm rows in the same statement as the insert, so a sync pull that adds
+-- an alarm (or the ACTION:NONE sentinel) between the check and the claim
+-- cannot leave a fired default state behind. Zero rows means the claim
+-- failed, and the caller reports sql.ErrNoRows. The
+-- (event_id, action, trigger_value, trigger_at) UNIQUE index makes the
+-- insert itself an atomic claim against overlapping checkers.
+-- The inner NOT EXISTS correlates on events.id: sqlc resolves a named
+-- parameter only one subquery deep.
 -- name: CreateDefaultAlarmState :one
 INSERT INTO default_alarm_state (event_id, action, trigger_value, trigger_at, fired_at)
-VALUES (sqlc.arg(event_id), sqlc.arg(action), sqlc.arg(trigger_value), sqlc.arg(trigger_at), sqlc.arg(fired_at))
+SELECT sqlc.arg(alarm_event_id), sqlc.arg(alarm_action), sqlc.arg(alarm_trigger_value), sqlc.arg(alarm_trigger_at), sqlc.arg(alarm_fired_at)
+WHERE EXISTS (
+    SELECT 1 FROM events
+    WHERE events.id = sqlc.arg(alarm_event_id)
+      AND NOT EXISTS (
+        SELECT 1 FROM event_alarms
+        WHERE event_alarms.event_id = events.id
+      )
+)
 RETURNING *;
 
 -- name: GetDefaultAlarmStateByID :one

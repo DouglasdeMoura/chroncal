@@ -2,6 +2,7 @@ package alarm
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -446,5 +447,205 @@ func TestDefaultAlarm_StateRowsAreLocalOnly(t *testing.T) {
 	}
 	if len(alarms) != 0 {
 		t.Fatalf("default alarm leaked into event_alarms: %+v", alarms)
+	}
+}
+
+func TestDefaultAlarm_SameTriggerDifferentActionsBothFire(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{
+			{Action: "DISPLAY", TriggerValue: "-PT15M"},
+			{Action: "AUDIO", TriggerValue: "-PT15M"},
+		},
+	})
+	now := time.Now().Truncate(time.Second)
+	createEventAt(t, evtSvc, 1, "Synced meeting", now.Add(-10*time.Minute), false)
+
+	ctx := context.Background()
+	due, _, err := svc.Check(ctx, now)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	assertTriggers(t, dueTriggers(due), "DISPLAY:-PT15M", "AUDIO:-PT15M")
+
+	// Both actions claim their own state row: the shared trigger time must
+	// not make the second claim look like a lost race.
+	first, err := svc.MarkFired(ctx, due[0])
+	if err != nil {
+		t.Fatalf("mark fired first: %v", err)
+	}
+	second, err := svc.MarkFired(ctx, due[1])
+	if err != nil {
+		t.Fatalf("mark fired second: %v", err)
+	}
+	if first == second {
+		t.Fatalf("both actions claimed state row %d", first)
+	}
+
+	due, _, err = svc.Check(ctx, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("second check: %v", err)
+	}
+	assertTriggers(t, dueTriggers(due))
+}
+
+func TestDefaultAlarm_ClaimRefusesEventThatGainedAnAlarm(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},
+	})
+	now := time.Now().Truncate(time.Second)
+	evt := createEventAt(t, evtSvc, 1, "Synced meeting", now.Add(-10*time.Minute), false)
+
+	ctx := context.Background()
+	due, _, err := svc.Check(ctx, now)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	assertTriggers(t, dueTriggers(due), "DISPLAY:-PT30M")
+
+	// A sync pull delivers the organiser's alarm between the check and the
+	// claim. The claim's guard must refuse the fire (issue #579 protocol).
+	if err := evtSvc.ReplaceAlarms(ctx, evt.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT5M"},
+	}); err != nil {
+		t.Fatalf("replace alarms: %v", err)
+	}
+	if _, err := svc.MarkFired(ctx, due[0]); !errors.Is(err, ErrNotFireable) {
+		t.Fatalf("mark fired = %v, want ErrNotFireable", err)
+	}
+}
+
+func TestDefaultAlarm_OptOutStopsSnoozedRefire(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	evtSvc := event.NewService(db, q)
+	svc := NewService(db, q, evtSvc, &mockAlarmLister{todoAlarms: map[int64][]model.Alarm{}})
+	cfg := DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},
+	}
+	svc.SetDefaultConfig(cfg)
+
+	now := time.Now().Truncate(time.Second)
+	other := createTestCalendar(t, q, "Work")
+	createEventAt(t, evtSvc, other, "Synced meeting", now.Add(-10*time.Minute), false)
+
+	ctx := context.Background()
+	due, _, err := svc.Check(ctx, now)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	assertTriggers(t, dueTriggers(due), "DISPLAY:-PT30M")
+	stateID, err := svc.MarkFired(ctx, due[0])
+	if err != nil {
+		t.Fatalf("mark fired: %v", err)
+	}
+	until := now.Add(30 * time.Minute)
+	if err := svc.SnoozeDefault(ctx, stateID, until); err != nil {
+		t.Fatalf("snooze: %v", err)
+	}
+
+	// The user turns default alarms off for the calendar while the alarm
+	// sleeps. The expired snooze must not notify, and the row must leave
+	// the pending list.
+	off := ""
+	if err := q.UpdateCalendarDefaultAlarms(ctx, storage.UpdateCalendarDefaultAlarmsParams{
+		DefaultAlarms: &off,
+		ID:            other,
+	}); err != nil {
+		t.Fatalf("turn off: %v", err)
+	}
+	due, _, err = svc.Check(ctx, until.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("check after opt-out: %v", err)
+	}
+	assertTriggers(t, dueTriggers(due))
+	pending, err := svc.ListPendingDefaultAlarms(ctx)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("pending after opt-out = %+v, want empty", pending)
+	}
+
+	// The same suppression applies when a pull adds an alarm to the event
+	// while the alarm sleeps.
+	svc.SetDefaultConfig(cfg) // defaults back on for the calendar path
+	list := "-PT30M"
+	if err := q.UpdateCalendarDefaultAlarms(ctx, storage.UpdateCalendarDefaultAlarmsParams{
+		DefaultAlarms: &list,
+		ID:            other,
+	}); err != nil {
+		t.Fatalf("turn on: %v", err)
+	}
+	// Eligibility passes again only until an alarm row shows up; add one.
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("list calendars: %v", err)
+	}
+	var workCalendarID int64
+	for _, c := range cals {
+		if c.Name == "Work" {
+			workCalendarID = c.ID
+		}
+	}
+	evts, err := evtSvc.ListByDateRange(ctx, now.Add(-24*time.Hour), now.Add(24*time.Hour))
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	for _, e := range evts {
+		if e.CalendarID == workCalendarID {
+			if err := evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+				{Action: "DISPLAY", TriggerValue: "-PT5M"},
+			}); err != nil {
+				t.Fatalf("replace alarms: %v", err)
+			}
+		}
+	}
+	due, _, err = svc.Check(ctx, until.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("check after alarm row: %v", err)
+	}
+	// The stored alarm the pull added fires, but the snoozed default
+	// must not re-fire.
+	for _, da := range due {
+		if da.IsDefault {
+			t.Fatalf("snoozed default re-fired after the event gained an alarm: %+v", da)
+		}
+	}
+}
+
+func TestDefaultAlarm_OptOutStopsRefireWhenSpecRemovedFromConfig(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},
+	})
+	now := time.Now().Truncate(time.Second)
+	createEventAt(t, evtSvc, 1, "Synced meeting", now.Add(-10*time.Minute), false)
+
+	ctx := context.Background()
+	due, _, err := svc.Check(ctx, now)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	stateID, err := svc.MarkFired(ctx, due[0])
+	if err != nil {
+		t.Fatalf("mark fired: %v", err)
+	}
+	until := now.Add(30 * time.Minute)
+	if err := svc.SnoozeDefault(ctx, stateID, until); err != nil {
+		t.Fatalf("snooze: %v", err)
+	}
+
+	// The user drops the spec from the global config while the alarm sleeps.
+	svc.SetDefaultConfig(DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{{Action: "AUDIO", TriggerValue: "-PT30M"}},
+	})
+	due, _, err = svc.Check(ctx, until.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("check after config change: %v", err)
+	}
+	// The new AUDIO spec may fire, but the snoozed DISPLAY state must not
+	// re-fire: its spec is no longer configured.
+	for _, da := range due {
+		if da.IsDefault && da.Alarm.Action == "DISPLAY" {
+			t.Fatalf("snoozed default re-fired after its spec left the config: %+v", da)
+		}
 	}
 }
