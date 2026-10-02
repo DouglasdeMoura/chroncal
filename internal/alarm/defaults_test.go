@@ -649,3 +649,42 @@ func TestDefaultAlarm_OptOutStopsRefireWhenSpecRemovedFromConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultAlarm_RefireClaimRefusesEventThatGainedAnAlarm(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},
+	})
+	now := time.Now().Truncate(time.Second)
+	evt := createEventAt(t, evtSvc, 1, "Synced meeting", now.Add(-10*time.Minute), false)
+
+	ctx := context.Background()
+	due, _, err := svc.Check(ctx, now)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	stateID, err := svc.MarkFired(ctx, due[0])
+	if err != nil {
+		t.Fatalf("mark fired: %v", err)
+	}
+	until := now.Add(30 * time.Minute)
+	if err := svc.SnoozeDefault(ctx, stateID, until); err != nil {
+		t.Fatalf("snooze: %v", err)
+	}
+
+	// The eligibility read inside Check passed, then a sync import commits
+	// an alarm row before the refire claim runs. The claim's own
+	// event_alarms recheck must make the UPDATE a no-op, so the refire
+	// reports a lost claim and nothing dispatches.
+	if err := evtSvc.ReplaceAlarms(ctx, evt.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT5M"},
+	}); err != nil {
+		t.Fatalf("replace alarms: %v", err)
+	}
+	claimed, err := svc.MarkDefaultRefired(ctx, stateID)
+	if err != nil {
+		t.Fatalf("mark default refired: %v", err)
+	}
+	if claimed {
+		t.Fatal("refire claim won after the event gained an alarm row")
+	}
+}

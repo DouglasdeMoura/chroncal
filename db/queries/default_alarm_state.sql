@@ -56,10 +56,18 @@ WHERE fired_at IS NOT NULL
   AND snoozed_to <= ?
 ORDER BY snoozed_to;
 
--- The same atomic refire claim as RefireAlarmState.
+-- The same atomic refire claim as RefireAlarmState. The NOT EXISTS arm
+-- rechecks the event's alarm rows inside the claim: the Go-side eligibility
+-- read and this UPDATE are separate statements, so a sync import can commit
+-- an alarm row between them (issue #579 protocol). Zero rows then means the
+-- alarm lost eligibility, and the caller dispatches nothing.
 -- name: RefireDefaultAlarmState :execrows
 UPDATE default_alarm_state SET fired_at = ?, snoozed_to = NULL
-WHERE id = ? AND snoozed_to IS NOT NULL;
+WHERE id = ? AND snoozed_to IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM event_alarms
+    WHERE event_alarms.event_id = default_alarm_state.event_id
+  );
 
 -- name: PurgeAcknowledgedDefaultAlarmStates :execrows
 DELETE FROM default_alarm_state WHERE acked_at IS NOT NULL AND trigger_at < ?;
