@@ -725,6 +725,9 @@ The alarm engine applies these rules:
   never syncs back to the server.
 - A default alarm fires, snoozes, and dismisses like a stored alarm. It shows
   in `chroncal alarm list` with a `d` prefix (for example `[d3]`).
+- A snoozed default alarm re-fires only while it stays eligible. The reminder
+  stops when the event gains an alarm, or when the setting for its calendar
+  turns off.
 
 #### Receive notifications
 

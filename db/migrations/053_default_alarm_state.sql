@@ -6,10 +6,12 @@
 -- event_alarms(id). This table mirrors alarm_state and keys the state by
 -- the event, the configured trigger, and the absolute trigger time.
 --
--- The (event_id, trigger_value, trigger_at) UNIQUE index gives
+-- The (event_id, action, trigger_value, trigger_at) UNIQUE index gives
 -- CreateDefaultAlarmState the same atomic-claim property that
 -- idx_alarm_state_unique gives alarm_state: when two checkers overlap,
--- only the first INSERT wins.
+-- only the first INSERT wins. action belongs in the key: DISPLAY:-PT15M
+-- and AUDIO:-PT15M are two separate defaults with the same trigger time,
+-- and each one fires and snoozes on its own state.
 CREATE TABLE default_alarm_state (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id      INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -21,7 +23,7 @@ CREATE TABLE default_alarm_state (
     snoozed_to    TEXT
 );
 
-CREATE UNIQUE INDEX idx_default_alarm_state_unique     ON default_alarm_state(event_id, trigger_value, trigger_at);
+CREATE UNIQUE INDEX idx_default_alarm_state_unique     ON default_alarm_state(event_id, action, trigger_value, trigger_at);
 CREATE INDEX        idx_default_alarm_state_event_id   ON default_alarm_state(event_id);
 CREATE INDEX        idx_default_alarm_state_trigger_at ON default_alarm_state(trigger_at);
 CREATE INDEX        idx_default_alarm_state_snoozed    ON default_alarm_state(snoozed_to) WHERE snoozed_to IS NOT NULL;

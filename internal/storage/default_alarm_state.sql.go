@@ -25,25 +25,42 @@ func (q *Queries) AcknowledgeDefaultAlarmState(ctx context.Context, arg Acknowle
 
 const createDefaultAlarmState = `-- name: CreateDefaultAlarmState :one
 INSERT INTO default_alarm_state (event_id, action, trigger_value, trigger_at, fired_at)
-VALUES (?1, ?2, ?3, ?4, ?5)
+SELECT ?1, ?2, ?3, ?4, ?5
+WHERE EXISTS (
+    SELECT 1 FROM events
+    WHERE events.id = ?1
+      AND NOT EXISTS (
+        SELECT 1 FROM event_alarms
+        WHERE event_alarms.event_id = events.id
+      )
+)
 RETURNING id, event_id, "action", trigger_value, trigger_at, fired_at, acked_at, snoozed_to
 `
 
 type CreateDefaultAlarmStateParams struct {
-	EventID      int64
-	Action       string
-	TriggerValue string
-	TriggerAt    string
-	FiredAt      *string
+	AlarmEventID      int64
+	AlarmAction       string
+	AlarmTriggerValue string
+	AlarmTriggerAt    string
+	AlarmFiredAt      *string
 }
 
+// Claim a default-alarm fire slot. The EXISTS arm reads the event and its
+// alarm rows in the same statement as the insert, so a sync pull that adds
+// an alarm (or the ACTION:NONE sentinel) between the check and the claim
+// cannot leave a fired default state behind. Zero rows means the claim
+// failed, and the caller reports sql.ErrNoRows. The
+// (event_id, action, trigger_value, trigger_at) UNIQUE index makes the
+// insert itself an atomic claim against overlapping checkers.
+// The inner NOT EXISTS correlates on events.id: sqlc resolves a named
+// parameter only one subquery deep.
 func (q *Queries) CreateDefaultAlarmState(ctx context.Context, arg CreateDefaultAlarmStateParams) (DefaultAlarmState, error) {
 	row := q.db.QueryRowContext(ctx, createDefaultAlarmState,
-		arg.EventID,
-		arg.Action,
-		arg.TriggerValue,
-		arg.TriggerAt,
-		arg.FiredAt,
+		arg.AlarmEventID,
+		arg.AlarmAction,
+		arg.AlarmTriggerValue,
+		arg.AlarmTriggerAt,
+		arg.AlarmFiredAt,
 	)
 	var i DefaultAlarmState
 	err := row.Scan(
@@ -61,11 +78,12 @@ func (q *Queries) CreateDefaultAlarmState(ctx context.Context, arg CreateDefault
 
 const getDefaultAlarmState = `-- name: GetDefaultAlarmState :one
 
-SELECT id, event_id, "action", trigger_value, trigger_at, fired_at, acked_at, snoozed_to FROM default_alarm_state WHERE event_id = ? AND trigger_value = ? AND trigger_at = ?
+SELECT id, event_id, "action", trigger_value, trigger_at, fired_at, acked_at, snoozed_to FROM default_alarm_state WHERE event_id = ? AND action = ? AND trigger_value = ? AND trigger_at = ?
 `
 
 type GetDefaultAlarmStateParams struct {
 	EventID      int64
+	Action       string
 	TriggerValue string
 	TriggerAt    string
 }
@@ -73,10 +91,18 @@ type GetDefaultAlarmStateParams struct {
 // Operational state for default (virtual) alarms, issue #815. A default
 // alarm has no event_alarms row, so it cannot share alarm_state (its
 // alarm_id column references event_alarms). The
-// (event_id, trigger_value, trigger_at) index makes CreateDefaultAlarmState
-// an atomic claim, like idx_alarm_state_unique does for alarm_state.
+// (event_id, action, trigger_value, trigger_at) index makes
+// CreateDefaultAlarmState an atomic claim, like
+// idx_alarm_state_unique does for alarm_state. action belongs in the key:
+// DISPLAY:-PT15M and AUDIO:-PT15M are two separate defaults with the same
+// trigger time, and each one fires and snoozes on its own state.
 func (q *Queries) GetDefaultAlarmState(ctx context.Context, arg GetDefaultAlarmStateParams) (DefaultAlarmState, error) {
-	row := q.db.QueryRowContext(ctx, getDefaultAlarmState, arg.EventID, arg.TriggerValue, arg.TriggerAt)
+	row := q.db.QueryRowContext(ctx, getDefaultAlarmState,
+		arg.EventID,
+		arg.Action,
+		arg.TriggerValue,
+		arg.TriggerAt,
+	)
 	var i DefaultAlarmState
 	err := row.Scan(
 		&i.ID,

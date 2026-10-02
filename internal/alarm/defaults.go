@@ -162,6 +162,7 @@ func (s *Service) checkDefaultEventAlarms(
 			triggerKey := triggerAt.UTC().Format(time.RFC3339)
 			_, err = s.q.GetDefaultAlarmState(ctx, storage.GetDefaultAlarmStateParams{
 				EventID:      expEvt.ID,
+				Action:       spec.Action,
 				TriggerValue: spec.TriggerValue,
 				TriggerAt:    triggerKey,
 			})
@@ -186,8 +187,10 @@ func (s *Service) checkDefaultEventAlarms(
 }
 
 // listExpiredSnoozedDefaults returns snoozed default alarms whose
-// snooze-until time is at or before now.
-func (s *Service) listExpiredSnoozedDefaults(ctx context.Context, now time.Time) ([]DueAlarm, error) {
+// snooze-until time is at or before now. A snoozed default re-fires only
+// while it is still eligible (defaultStateEligible): an opt-out between
+// fire and snooze expiry must not produce a notification.
+func (s *Service) listExpiredSnoozedDefaults(ctx context.Context, now time.Time, overrides map[int64][]model.DefaultAlarm) ([]DueAlarm, error) {
 	nowStr := now.UTC().Format(time.RFC3339)
 	states, err := s.q.ListExpiredSnoozedDefaultAlarmStates(ctx, &nowStr)
 	if err != nil {
@@ -199,6 +202,9 @@ func (s *Service) listExpiredSnoozedDefaults(ctx context.Context, now time.Time)
 		evt, err := s.resolveDefaultStateEvent(ctx, st)
 		if err != nil {
 			continue // event may have been deleted
+		}
+		if !s.defaultStateEligible(ctx, st, evt, overrides) {
+			continue
 		}
 		triggerAt, _ := time.Parse(time.RFC3339, storage.NullableToString(st.SnoozedTo))
 		due = append(due, DueAlarm{
@@ -214,6 +220,38 @@ func (s *Service) listExpiredSnoozedDefaults(ctx context.Context, now time.Time)
 		})
 	}
 	return due, nil
+}
+
+// defaultStateEligible reports whether an existing default-alarm state row
+// may still notify or stay in the pending list. It applies the same rules
+// as the synthesis path to the state row's event: the event carries no
+// alarm rows (a later pull may have added one), the all-day rule passes,
+// and the row's (action, trigger) spec is still configured for the event's
+// calendar. A DB error reads as ineligible so a failure never turns into a
+// wrongful notification.
+func (s *Service) defaultStateEligible(ctx context.Context, st storage.DefaultAlarmState, evt event.Event, overrides map[int64][]model.DefaultAlarm) bool {
+	if s.defaults.SkipAllDay && evt.AllDay {
+		return false
+	}
+	found := false
+	for _, spec := range s.defaultAlarmsFor(evt.CalendarID, overrides) {
+		if spec.Action == st.Action && spec.TriggerValue == st.TriggerValue {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	rows, err := s.q.ListEventIDsWithAlarms(ctx, []int64{st.EventID})
+	if err != nil || len(rows) > 0 {
+		if err != nil {
+			slog.Debug("default-alarm eligibility check failed",
+				"event_id", st.EventID, "error", err)
+		}
+		return false
+	}
+	return true
 }
 
 // resolveDefaultStateEvent returns the event whose start time corresponds to
@@ -240,9 +278,30 @@ func (s *Service) resolveDefaultStateEvent(ctx context.Context, st storage.Defau
 }
 
 // ListPendingDefaultAlarms returns all fired default alarms that are not
-// acknowledged.
+// acknowledged. Rows that are no longer eligible (defaultStateEligible)
+// stay out of the list, like a stored alarm whose event_alarms row a pull
+// removed.
 func (s *Service) ListPendingDefaultAlarms(ctx context.Context) ([]storage.DefaultAlarmState, error) {
-	return s.q.ListPendingDefaultAlarmStates(ctx)
+	states, err := s.q.ListPendingDefaultAlarmStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	overrides, err := s.loadCalendarDefaultOverrides(ctx)
+	if err != nil {
+		return nil, err
+	}
+	eligible := make([]storage.DefaultAlarmState, 0, len(states))
+	for _, st := range states {
+		evt, err := s.events.Get(ctx, st.EventID)
+		if err != nil {
+			continue // event may have been deleted
+		}
+		if !s.defaultStateEligible(ctx, st, evt, overrides) {
+			continue
+		}
+		eligible = append(eligible, st)
+	}
+	return eligible, nil
 }
 
 // DismissDefault acknowledges a fired default alarm so it will not show as
