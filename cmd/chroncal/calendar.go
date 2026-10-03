@@ -303,6 +303,7 @@ func calendarCreateCmd() *cobra.Command {
 		passwordCommand string
 		oauthClientID   string
 		allowInsecure   bool
+		defaultAlarms   []string
 	)
 	cmd := &cobra.Command{
 		Use:   `create "<name>"`,
@@ -310,9 +311,17 @@ func calendarCreateCmd() *cobra.Command {
 		Long: `Create a local calendar for events, todos, and journal entries.
 
 The default color is only a presentation hint; it does not affect sync
-behavior.`,
+behavior.
+
+--default-alarm sets the per-calendar default alarms (issue #815). The
+flag is repeatable, and each value is a trigger duration ("-PT15M") or an
+action-prefixed trigger ("AUDIO:-PT5M"). The special value "none" turns
+default alarms off for this calendar. Without the flag, the calendar
+inherits the global [alarms] default from config.toml.`,
 		Example: `  chroncal calendar create "Work"
   chroncal calendar create "Family" --color "#0F766E" --description "Shared family schedule"
+  chroncal calendar create "Holidays" --default-alarm none
+  chroncal calendar create "Work" --default-alarm -PT15M --default-alarm AUDIO:-PT5M
   chroncal calendar create "Work" --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer`,
 		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -322,6 +331,13 @@ behavior.`,
 			if err := validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID, allowInsecure, false); err != nil {
 				return err
 			}
+			// Validate the default-alarm specs before the calendar exists, so
+			// an invalid spec leaves no half-created calendar behind.
+			if cmd.Flags().Changed("default-alarm") {
+				if _, err := parseDefaultAlarmFlags(defaultAlarms); err != nil {
+					return err
+				}
+			}
 
 			a, err := initApp()
 			if err != nil {
@@ -329,14 +345,25 @@ behavior.`,
 			}
 			defer a.Close()
 
-			c, err := a.Calendars.Create(context.Background(), args[0], color, description)
+			ctx := context.Background()
+			c, err := a.Calendars.Create(ctx, args[0], color, description)
 			if err != nil {
 				return fmt.Errorf("create calendar: %w", err)
 			}
 
 			if email != "" {
-				if err := a.Calendars.SetOwnerEmail(context.Background(), c.ID, email); err != nil {
+				if err := a.Calendars.SetOwnerEmail(ctx, c.ID, email); err != nil {
 					return fmt.Errorf("set owner email: %w", err)
+				}
+			}
+
+			if cmd.Flags().Changed("default-alarm") {
+				if err := writeCalendarDefaultAlarms(ctx, a, c.ID, defaultAlarms, true, false); err != nil {
+					return err
+				}
+				c, err = a.Calendars.Get(ctx, c.ID)
+				if err != nil {
+					return fmt.Errorf("get calendar: %w", err)
 				}
 			}
 
@@ -352,7 +379,7 @@ behavior.`,
 					return err
 				}
 
-				c, err = a.Calendars.Get(context.Background(), c.ID)
+				c, err = a.Calendars.Get(ctx, c.ID)
 				if err != nil {
 					return fmt.Errorf("get calendar: %w", err)
 				}
@@ -360,7 +387,7 @@ behavior.`,
 
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				item, err := jsonCalendarDecorated(context.Background(), a, c)
+				item, err := jsonCalendarDecorated(ctx, a, c)
 				if err != nil {
 					return err
 				}
@@ -379,6 +406,7 @@ behavior.`,
 	cmd.Flags().StringVar(&passwordCommand, "password-cmd", "", "shell command that prints the basic-auth password on its first line")
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "OAuth 2.0 client ID")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "Allow HTTP (non-HTTPS) remote URLs")
+	cmd.Flags().StringSliceVar(&defaultAlarms, "default-alarm", nil, "default alarm for this calendar, repeatable (e.g. -PT15M, AUDIO:-PT5M); 'none' turns default alarms off")
 	return cmd
 }
 
@@ -480,20 +508,9 @@ inherits the global [alarms] default from config.toml again.`,
 			}
 
 			if cmd.Flags().Changed("default-alarm") || cmd.Flags().Changed("clear-default-alarms") {
-				var raw *string
-				switch {
-				case clearDefaultAlarms:
-					raw = nil // drop the setting: the calendar inherits the global default
-				default:
-					specs, err := parseDefaultAlarmFlags(defaultAlarms)
-					if err != nil {
-						return err
-					}
-					joined := model.FormatDefaultAlarmList(specs)
-					raw = &joined // empty list means default alarms are off
-				}
-				if err := a.Calendars.SetDefaultAlarms(ctx, c.ID, raw); err != nil {
-					return fmt.Errorf("set default alarms: %w", err)
+				if err := writeCalendarDefaultAlarms(ctx, a, c.ID, defaultAlarms,
+					cmd.Flags().Changed("default-alarm"), clearDefaultAlarms); err != nil {
+					return err
 				}
 				c, err = a.Calendars.Get(ctx, existing.ID)
 				if err != nil {
@@ -553,6 +570,38 @@ inherits the global [alarms] default from config.toml again.`,
 	cmd.Flags().BoolVar(&clearDefaultAlarms, "clear-default-alarms", false, "remove the per-calendar default alarms, so the calendar inherits the global [alarms] default")
 	mutuallyExclusive(cmd, "default-alarm", "clear-default-alarms")
 	return cmd
+}
+
+// writeCalendarDefaultAlarms stores the per-calendar default-alarm setting
+// (issue #815). It does nothing when the caller passed neither flag. The
+// inherit flag removes the setting, so the calendar uses the global
+// [alarms] default again. An empty spec list writes "", which turns default
+// alarms off.
+func writeCalendarDefaultAlarms(
+	ctx context.Context,
+	a *app.App,
+	calendarID int64,
+	values []string,
+	changed, inherit bool,
+) error {
+	if !changed && !inherit {
+		return nil
+	}
+	var raw *string
+	if inherit {
+		raw = nil
+	} else {
+		specs, err := parseDefaultAlarmFlags(values)
+		if err != nil {
+			return err
+		}
+		joined := model.FormatDefaultAlarmList(specs)
+		raw = &joined
+	}
+	if err := a.Calendars.SetDefaultAlarms(ctx, calendarID, raw); err != nil {
+		return fmt.Errorf("set default alarms: %w", err)
+	}
+	return nil
 }
 
 // parseDefaultAlarmFlags validates the --default-alarm values. Each value is

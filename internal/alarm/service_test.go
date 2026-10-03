@@ -229,7 +229,7 @@ func TestCheck_SkipsSyncOnlyAction(t *testing.T) {
 	// CheckMissed must not report a sync-only action: it never fires, so
 	// it is never missed. The exact counts also fail on an over-broad
 	// skip that drops the DISPLAY alarm.
-	missed, missedTodos, err := svc.CheckMissed(ctx, time.Now().Add(48*time.Hour), 72*time.Hour)
+	missed, missedTodos, _, err := svc.CheckMissed(ctx, time.Now().Add(48*time.Hour), 72*time.Hour)
 	if err != nil {
 		t.Fatalf("check missed: %v", err)
 	}
