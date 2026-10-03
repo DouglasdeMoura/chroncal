@@ -503,7 +503,7 @@ A read is always permitted, so an account you added once with `--allow-plaintext
 ```
 chroncal calendar list
 chroncal calendar get     <id>
-chroncal calendar create  "<name>" [--color HEX] [--description TEXT] [--email ADDR] [remote flags]
+chroncal calendar create  "<name>" [--color HEX] [--description TEXT] [--email ADDR] [--default-alarm SPEC]... [remote flags]
 chroncal calendar update  <id|name> [--name NAME] [--color HEX] [--description TEXT] [--email ADDR] [--default-alarm SPEC]... [--clear-default-alarms] [remote flags] [--disconnect-remote]
 chroncal calendar delete  <id>
 chroncal calendar set-default <id|name>
@@ -531,8 +531,8 @@ A basic account also accepts `--password-cmd` or `CHRONCAL_PASSWORD_CMD`. The va
 
 Pass `--disconnect-remote` on `update` to remove the remote link of a calendar.
 
-`calendar update --default-alarm` sets the per-calendar default alarms. See
-[Default alarms](#default-alarms).
+`calendar create --default-alarm` and `calendar update --default-alarm` set
+the per-calendar default alarms. See [Default alarms](#default-alarms).
 
 ### iCal import/export
 
@@ -663,6 +663,9 @@ chroncal alarm daemon   [--interval DURATION] # Run alarm checks in a loop (defa
 chroncal alarm missed   [--days N]            # Show missed alarms (default lookback: 7 days)
 ```
 
+`alarm list` and `alarm missed` cover default alarms as well. See
+[Default alarms](#default-alarms).
+
 Attach alarms with `--alarm` when you create or update events and todos (repeatable). The format is `[ACTION:]TRIGGER[:DESC:REPEAT:DURATION:RELATED:ATTENDEES]`. ACTION is `DISPLAY` (default), `EMAIL`, or `AUDIO`. TRIGGER is an RFC 5545 duration relative to the start (`-PT15M` = 15 minutes before) or an RFC 3339 absolute time. Only the trigger is required:
 
 ```bash
@@ -705,16 +708,21 @@ prefix is `DISPLAY` (default) or `AUDIO`. `skip_all_day` excludes all-day
 events. All-day events start at midnight, so a `-PT15M` trigger fires the
 evening before.
 
-Set a per-calendar default with `chroncal calendar update`. This replaces the
-global list for one calendar. The special value `none` turns default alarms
-off for that calendar. `--clear-default-alarms` removes the per-calendar
-setting, so the calendar inherits the global list again:
+Set a per-calendar default with `--default-alarm` on `calendar create` or
+`calendar update`. This replaces the global list for one calendar. The special
+value `none` turns default alarms off for that calendar.
+`--clear-default-alarms` removes the per-calendar setting, so the calendar
+inherits the global list again:
 
 ```bash
 chroncal calendar update Work --default-alarm -PT15M --default-alarm AUDIO:-PT5M
 chroncal calendar update Holidays --default-alarm none
 chroncal calendar update Work --clear-default-alarms
+chroncal calendar create Holidays --default-alarm none
 ```
+
+`skip_all_day` is a global setting. A per-calendar list cannot put all-day
+events back in.
 
 The alarm engine applies these rules:
 
@@ -728,6 +736,36 @@ The alarm engine applies these rules:
 - A snoozed default alarm re-fires only while it stays eligible. The reminder
   stops when the event gains an alarm, or when the setting for its calendar
   turns off.
+
+A fired default alarm stays in `chroncal alarm list` until you dismiss it,
+even after it stops firing. The text line then says "will not fire again",
+and the JSON field `eligible` is false.
+
+##### Check why a default alarm does not apply
+
+A default alarm that stays silent gives no clue why. `chroncal event get`
+reports the effective default alarms for one event, and the reason when the
+alarm engine does not apply them:
+
+```console
+$ chroncal event get 42
+Synced meeting
+    when:      Tue, Apr 4 2026 09:00 - 10:00
+    ...
+    reminders: 0
+    defaults:  -PT15M (not applied: event_has_alarms)
+```
+
+The reasons are:
+
+- `no_specs`: no default alarm is configured in the config file.
+- `calendar_opt_out`: the calendar set its own list to off.
+- `event_has_alarms`: the event carries at least one alarm row. A
+  "no reminder" sentinel counts.
+- `all_day_excluded`: the `alarms.skip_all_day` setting excludes the event.
+
+`-o json` gives the same information under the `default_alarms` key, with
+`specs`, `source` (`calendar` or `global`), `applied`, and `suppressed`.
 
 #### Receive notifications
 

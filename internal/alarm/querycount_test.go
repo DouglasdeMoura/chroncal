@@ -128,7 +128,7 @@ func TestCheckTodos_BatchesAlarmFetch(t *testing.T) {
 	}
 
 	atomic.StoreInt64(counter, 0)
-	if _, _, err := svc.CheckMissed(ctx, now, StaleThreshold); err != nil {
+	if _, _, _, err := svc.CheckMissed(ctx, now, StaleThreshold); err != nil {
 		t.Fatalf("CheckMissed: %v", err)
 	}
 	if got := atomic.LoadInt64(counter); got != 1 {

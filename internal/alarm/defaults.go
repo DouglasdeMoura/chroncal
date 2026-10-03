@@ -93,6 +93,174 @@ func (s *Service) checkDefaultEventAlarms(
 	now time.Time,
 	overrides map[int64][]model.DefaultAlarm,
 ) ([]DueAlarm, error) {
+	candidates, err := s.defaultAlarmCandidates(ctx, expandedEvents, alarmMap, overrides)
+	if err != nil {
+		return nil, err
+	}
+
+	var due []DueAlarm
+	for _, cand := range candidates {
+		instanceEvent := cand.InstanceEvent()
+		for _, spec := range cand.Specs {
+			// Default alarms anchor on the event start and do not repeat.
+			synthetic := model.Alarm{
+				Action:       spec.Action,
+				TriggerValue: spec.TriggerValue,
+				Related:      "START",
+			}
+			triggerAt, err := computeTriggerTimeForInstance(cand.Expanded, synthetic)
+			if err != nil {
+				continue
+			}
+			if triggerAt.After(now) {
+				continue
+			}
+			if now.Sub(triggerAt) > StaleThreshold {
+				continue // same stale rule as stored alarms
+			}
+
+			fired, err := s.defaultAlarmFired(ctx, cand.Expanded.ID, spec, triggerAt)
+			if err != nil {
+				// Transient DB error: abort rather than risk re-firing,
+				// like the stored-alarm path does.
+				return nil, fmt.Errorf("get default alarm state: %w", err)
+			}
+			if fired {
+				continue // already fired/acknowledged
+			}
+
+			due = append(due, DueAlarm{
+				Event:     instanceEvent,
+				Alarm:     synthetic,
+				TriggerAt: triggerAt,
+				IsDefault: true,
+			})
+		}
+	}
+	return due, nil
+}
+
+// defaultCandidate is one expanded event that receives default alarms,
+// together with the specs that apply to it.
+type defaultCandidate struct {
+	Expanded recurrence.ExpandedEvent
+	Specs    []model.DefaultAlarm
+}
+
+// InstanceEvent returns the expanded event with its start and end set to the
+// occurrence, which is what a notification and a state row expect.
+func (c defaultCandidate) InstanceEvent() event.Event {
+	inst := c.Expanded.Event
+	inst.StartTime = c.Expanded.InstanceTime
+	inst.EndTime = c.Expanded.InstanceTime.Add(c.Expanded.Span())
+	return inst
+}
+
+// The suppression reasons DescribeDefaultAlarms reports. An empty reason
+// means the check loop applies the specs.
+const (
+	// DefaultSuppressedNone means the specs apply to the event.
+	DefaultSuppressedNone = ""
+	// DefaultSuppressedNoSpecs means no default alarm is configured at all:
+	// the calendar inherits the global list and the global list is empty.
+	DefaultSuppressedNoSpecs = "no_specs"
+	// DefaultSuppressedCalendarOptOut means the calendar set its own list
+	// to the empty value.
+	DefaultSuppressedCalendarOptOut = "calendar_opt_out"
+	// DefaultSuppressedEventHasAlarms means the event carries at least one
+	// alarm row. A sync-only sentinel such as ACTION:NONE counts, because
+	// the organiser turned the reminder off.
+	DefaultSuppressedEventHasAlarms = "event_has_alarms"
+	// DefaultSuppressedAllDayExcluded means the alarms.skip_all_day setting
+	// excludes this all-day event.
+	DefaultSuppressedAllDayExcluded = "all_day_excluded"
+)
+
+// DefaultAlarmStatus reports the default alarms that apply to one event and
+// whether the check loop uses them.
+type DefaultAlarmStatus struct {
+	// Specs is the effective spec list: the calendar setting when the
+	// calendar has one, otherwise the global [alarms] default.
+	Specs []model.DefaultAlarm
+	// Source is "calendar" when the calendar sets its own list, and
+	// "global" when the calendar inherits the configuration.
+	Source string
+	// Applied is true when the check loop fires Specs for this event.
+	Applied bool
+	// Suppressed is the reason the check loop skips the event. It is empty
+	// when Applied is true.
+	Suppressed string
+}
+
+// DescribeDefaultAlarms explains the default alarms for one event. It answers
+// the question a user cannot answer otherwise: why did my default alarm not
+// fire for this event? (issue #815). The rules match
+// defaultAlarmCandidates, so Applied here means the check loop uses the
+// specs.
+func (s *Service) DescribeDefaultAlarms(ctx context.Context, evt event.Event) (DefaultAlarmStatus, error) {
+	status := DefaultAlarmStatus{Source: "global", Specs: s.defaults.Triggers}
+
+	raw, explicit, err := s.calendarDefaultSetting(ctx, evt.CalendarID)
+	if err != nil {
+		return DefaultAlarmStatus{}, err
+	}
+	if explicit {
+		status.Source = "calendar"
+		status.Specs, _ = model.ParseDefaultAlarmList(raw)
+	}
+
+	switch {
+	case len(status.Specs) == 0:
+		status.Suppressed = DefaultSuppressedNoSpecs
+		if status.Source == "calendar" {
+			status.Suppressed = DefaultSuppressedCalendarOptOut
+		}
+	case s.defaults.SkipAllDay && evt.AllDay:
+		status.Suppressed = DefaultSuppressedAllDayExcluded
+	default:
+		rows, err := s.q.ListEventIDsWithAlarms(ctx, []int64{evt.ID})
+		if err != nil {
+			return DefaultAlarmStatus{}, fmt.Errorf("list events with alarms: %w", err)
+		}
+		if len(rows) > 0 {
+			status.Suppressed = DefaultSuppressedEventHasAlarms
+		} else {
+			status.Applied = true
+		}
+	}
+	return status, nil
+}
+
+// calendarDefaultSetting returns the raw per-calendar spec list and whether
+// the calendar has an explicit setting. An explicit empty value means the
+// calendar turned default alarms off.
+func (s *Service) calendarDefaultSetting(ctx context.Context, calendarID int64) (string, bool, error) {
+	cals, err := s.q.ListCalendars(ctx)
+	if err != nil {
+		return "", false, fmt.Errorf("list calendars: %w", err)
+	}
+	for _, c := range cals {
+		if c.ID != calendarID {
+			continue
+		}
+		if c.DefaultAlarms == nil {
+			return "", false, nil
+		}
+		return *c.DefaultAlarms, true, nil
+	}
+	return "", false, nil // an unknown calendar inherits the global default
+}
+
+// defaultAlarmCandidates returns the expanded events that receive default
+// alarms, with the specs that apply to each. It skips an event that carries
+// any alarm row, fireable or not, and an event whose calendar has no specs.
+// The check loop and the missed scan share it, so both apply the same rules.
+func (s *Service) defaultAlarmCandidates(
+	ctx context.Context,
+	expandedEvents []recurrence.ExpandedEvent,
+	alarmMap map[int64][]model.Alarm,
+	overrides map[int64][]model.DefaultAlarm,
+) ([]defaultCandidate, error) {
 	if len(s.defaults.Triggers) == 0 && len(overrides) == 0 {
 		return nil, nil
 	}
@@ -121,7 +289,7 @@ func (s *Service) checkDefaultEventAlarms(
 		hasAnyAlarm[r] = struct{}{}
 	}
 
-	var due []DueAlarm
+	var out []defaultCandidate
 	for _, expEvt := range expandedEvents {
 		if len(alarmMap[expEvt.ID]) > 0 {
 			continue // the event's own reminders win
@@ -136,54 +304,87 @@ func (s *Service) checkDefaultEventAlarms(
 		if s.defaults.SkipAllDay && expEvt.AllDay {
 			continue
 		}
+		out = append(out, defaultCandidate{Expanded: expEvt, Specs: specs})
+	}
+	return out, nil
+}
 
-		instanceEvent := expEvt.Event
-		instanceEvent.StartTime = expEvt.InstanceTime
-		instanceEvent.EndTime = expEvt.InstanceTime.Add(expEvt.Span())
+// defaultAlarmFired reports whether a default_alarm_state row exists for the
+// event, the spec, and the trigger time. A real DB error is returned so the
+// caller does not treat the alarm as unfired.
+func (s *Service) defaultAlarmFired(ctx context.Context, eventID int64, spec model.DefaultAlarm, triggerAt time.Time) (bool, error) {
+	_, err := s.q.GetDefaultAlarmState(ctx, storage.GetDefaultAlarmStateParams{
+		EventID:      eventID,
+		Action:       spec.Action,
+		TriggerValue: spec.TriggerValue,
+		TriggerAt:    triggerAt.UTC().Format(time.RFC3339),
+	})
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, err
+}
 
-		for _, spec := range specs {
-			// Default alarms anchor on the event start and do not repeat.
-			synthetic := model.Alarm{
+// MissedDefaultAlarm is a default alarm that never fired because it became
+// stale. A default alarm has no event_alarms row, so the report carries the
+// configured trigger instead of an alarm ID.
+type MissedDefaultAlarm struct {
+	EventTitle   string
+	Action       string
+	TriggerValue string
+	TriggerAt    time.Time
+	Age          time.Duration
+}
+
+// checkMissedDefaultAlarms returns the default alarms that never fired
+// because their trigger time passed the stale threshold. It shares
+// defaultAlarmCandidates with the check loop, so a reported miss is one the
+// check loop would otherwise have fired. A default alarm does not repeat, so
+// there is one trigger per spec.
+func (s *Service) checkMissedDefaultAlarms(
+	ctx context.Context,
+	expandedEvents []recurrence.ExpandedEvent,
+	alarmMap map[int64][]model.Alarm,
+	now time.Time,
+	overrides map[int64][]model.DefaultAlarm,
+) ([]MissedDefaultAlarm, error) {
+	candidates, err := s.defaultAlarmCandidates(ctx, expandedEvents, alarmMap, overrides)
+	if err != nil {
+		return nil, err
+	}
+
+	var missed []MissedDefaultAlarm
+	for _, cand := range candidates {
+		title := cand.Expanded.Title
+		for _, spec := range cand.Specs {
+			triggerAt, err := computeTriggerTimeForInstance(cand.Expanded, model.Alarm{
 				Action:       spec.Action,
 				TriggerValue: spec.TriggerValue,
 				Related:      "START",
-			}
-			triggerAt, err := computeTriggerTimeForInstance(expEvt, synthetic)
+			})
 			if err != nil {
 				continue
 			}
-			if triggerAt.After(now) {
-				continue
+			if triggerAt.After(now) || now.Sub(triggerAt) <= StaleThreshold {
+				continue // not stale yet
 			}
-			if now.Sub(triggerAt) > StaleThreshold {
-				continue // same stale rule as stored alarms
+			fired, err := s.defaultAlarmFired(ctx, cand.Expanded.ID, spec, triggerAt)
+			if err != nil || fired {
+				continue // already fired, or a DB error: skip
 			}
-
-			triggerKey := triggerAt.UTC().Format(time.RFC3339)
-			_, err = s.q.GetDefaultAlarmState(ctx, storage.GetDefaultAlarmStateParams{
-				EventID:      expEvt.ID,
+			missed = append(missed, MissedDefaultAlarm{
+				EventTitle:   title,
 				Action:       spec.Action,
 				TriggerValue: spec.TriggerValue,
-				TriggerAt:    triggerKey,
-			})
-			if err == nil {
-				continue // already fired/acknowledged
-			}
-			if !errors.Is(err, sql.ErrNoRows) {
-				// Transient DB error: abort rather than risk re-firing,
-				// like the stored-alarm path does.
-				return nil, fmt.Errorf("get default alarm state: %w", err)
-			}
-
-			due = append(due, DueAlarm{
-				Event:     instanceEvent,
-				Alarm:     synthetic,
-				TriggerAt: triggerAt,
-				IsDefault: true,
+				TriggerAt:    triggerAt,
+				Age:          now.Sub(triggerAt),
 			})
 		}
 	}
-	return due, nil
+	return missed, nil
 }
 
 // listExpiredSnoozedDefaults returns snoozed default alarms whose
@@ -277,31 +478,55 @@ func (s *Service) resolveDefaultStateEvent(ctx context.Context, st storage.Defau
 	return master, nil // an unreadable trigger_at falls back to the master
 }
 
-// ListPendingDefaultAlarms returns all fired default alarms that are not
-// acknowledged. Rows that are no longer eligible (defaultStateEligible)
-// stay out of the list, like a stored alarm whose event_alarms row a pull
-// removed.
-func (s *Service) ListPendingDefaultAlarms(ctx context.Context) ([]storage.DefaultAlarmState, error) {
+// PendingDefaultAlarm is one fired default alarm that is not acknowledged.
+// Eligible reports whether the row can still notify. The pending list shows
+// every row, so Eligible is the only way the caller learns that a reminder
+// stopped: a stored alarm stays listed even after a sync pull removes its
+// event_alarms row, and the user must still be able to dismiss it.
+type PendingDefaultAlarm struct {
+	State storage.DefaultAlarmState
+	// Event is the event the row fired for. It is the zero value when the
+	// event is gone, for example after a soft delete.
+	Event event.Event
+	// Eligible is false when the event is gone, when the event gained an
+	// alarm row, or when the row's spec left the configuration. Such a row
+	// never notifies again.
+	Eligible bool
+}
+
+// ListPendingDefaultAlarms returns every fired default alarm that is not
+// acknowledged, oldest trigger first. It does not drop the rows that can no
+// longer notify (defaultStateEligible): the user still has to dismiss them,
+// and a hidden row gives no way to learn its ID. The notification path reads
+// Eligible through listExpiredSnoozedDefaults instead.
+func (s *Service) ListPendingDefaultAlarms(ctx context.Context) ([]PendingDefaultAlarm, error) {
 	states, err := s.q.ListPendingDefaultAlarmStates(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if len(states) == 0 {
+		return nil, nil
 	}
 	overrides, err := s.loadCalendarDefaultOverrides(ctx)
 	if err != nil {
 		return nil, err
 	}
-	eligible := make([]storage.DefaultAlarmState, 0, len(states))
+	pending := make([]PendingDefaultAlarm, 0, len(states))
 	for _, st := range states {
+		p := PendingDefaultAlarm{State: st, Eligible: true}
 		evt, err := s.events.Get(ctx, st.EventID)
 		if err != nil {
-			continue // event may have been deleted
-		}
-		if !s.defaultStateEligible(ctx, st, evt, overrides) {
+			// The event is gone, so the row cannot notify. It stays in the
+			// list until the user dismisses it or the purge removes it.
+			p.Eligible = false
+			pending = append(pending, p)
 			continue
 		}
-		eligible = append(eligible, st)
+		p.Event = evt
+		p.Eligible = s.defaultStateEligible(ctx, st, evt, overrides)
+		pending = append(pending, p)
 	}
-	return eligible, nil
+	return pending, nil
 }
 
 // DismissDefault acknowledges a fired default alarm so it will not show as

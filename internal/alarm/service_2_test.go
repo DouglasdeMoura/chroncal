@@ -308,7 +308,7 @@ func TestCheckMissed_FindsStaleAlarm(t *testing.T) {
 		{Action: "DISPLAY", TriggerValue: "-PT15M"},
 	})
 
-	missed, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	missed, _, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestCheckMissed_SkipsAcknowledged(t *testing.T) {
 		svc.MarkFired(ctx, d) //nolint:errcheck // fire-and-forget in bulk setup
 	}
 
-	missed, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	missed, _, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestCheckMissed_SkipsNotYetStale(t *testing.T) {
 		{Action: "DISPLAY", TriggerValue: "-PT15M"},
 	})
 
-	missed, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	missed, _, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +403,7 @@ func TestCheckMissed_FindsStaleTodoAlarm(t *testing.T) {
 		{Action: "DISPLAY", TriggerValue: "-PT15M"},
 	})
 
-	_, missedTodos, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	_, missedTodos, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +433,7 @@ func TestCheckMissed_SkipsCompletedTodo(t *testing.T) {
 		{Action: "DISPLAY", TriggerValue: "-PT15M"},
 	})
 
-	_, missedTodos, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	_, missedTodos, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ func TestCheckMissed_SkipsNotYetStaleTodo(t *testing.T) {
 		{Action: "DISPLAY", TriggerValue: "-PT15M"},
 	})
 
-	_, missedTodos, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
+	_, missedTodos, _, err := svc.CheckMissed(ctx, time.Now(), 7*24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
