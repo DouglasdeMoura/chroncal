@@ -420,13 +420,19 @@ at check time from the [alarms] default config or a per-calendar setting,
 and their state lives in its own table. Use the prefixed form with
 "alarm dismiss" and "alarm snooze".
 
+A default alarm stays in this list until you dismiss it, even when it can no
+longer fire. That happens when the event gains an alarm, when the calendar
+turns default alarms off, or when the spec leaves the configuration. The
+line then says "will not fire again", and the JSON field "eligible" is
+false.
+
 Text output columns:
   [ID]  TRIGGER_TIME  ACTION  TITLE  (snoozed to HH:MM)
 
 JSON output fields (-o json):
   id, type, alarm_id, event_id/todo_id, title, action, trigger_at, fired_at, snoozed_to
-  Default alarm items add "default": true and "trigger", and carry a null
-  "alarm_id".
+  Default alarm items add "default": true, "trigger", and "eligible", and
+  carry a null "alarm_id".
 
 Dismissed alarms are permanently removed from this list.`,
 		Example: `  # List pending alarms
@@ -532,21 +538,23 @@ Dismissed alarms are permanently removed from this list.`,
 			// trigger live on the state row, because a config edit between
 			// fire and list must not change what the row displays.
 			type pendingDefaultInfo struct {
-				ID    string // display ID: "d3"
-				State storage.DefaultAlarmState
-				Title string
+				ID       string // display ID: "d3"
+				State    storage.DefaultAlarmState
+				Title    string
+				Eligible bool
 			}
-			var enrichedDefaults []pendingDefaultInfo
-			for _, s := range pendingDefaults {
-				info := pendingDefaultInfo{
-					ID:    fmt.Sprintf("d%d", s.ID),
-					State: s,
-					Title: fmt.Sprintf("event#%d", s.EventID),
+			enrichedDefaults := make([]pendingDefaultInfo, 0, len(pendingDefaults))
+			for _, p := range pendingDefaults {
+				title := p.Event.Title
+				if title == "" {
+					title = fmt.Sprintf("event#%d", p.State.EventID)
 				}
-				if evt, err := a.Events.Get(ctx, s.EventID); err == nil {
-					info.Title = evt.Title
-				}
-				enrichedDefaults = append(enrichedDefaults, info)
+				enrichedDefaults = append(enrichedDefaults, pendingDefaultInfo{
+					ID:       fmt.Sprintf("d%d", p.State.ID),
+					State:    p.State,
+					Title:    title,
+					Eligible: p.Eligible,
+				})
 			}
 
 			if outputFmt != "text" {
@@ -590,6 +598,7 @@ Dismissed alarms are permanently removed from this list.`,
 						"trigger_at": p.State.TriggerAt,
 						"fired_at":   storage.NullableToString(p.State.FiredAt),
 						"snoozed_to": storage.NullableToString(p.State.SnoozedTo),
+						"eligible":   p.Eligible,
 					})
 				}
 				return printOutput(w, items)
@@ -630,15 +639,20 @@ Dismissed alarms are permanently removed from this list.`,
 				if t, err := time.Parse(time.RFC3339, p.State.TriggerAt); err == nil {
 					triggerLocal = t.Local().Format("2006-01-02 15:04")
 				}
-				snoozed := ""
+				// The row stays in the list after it stops notifying, so the
+				// user can dismiss it. Say so on the line.
+				suffix := " (default)"
 				if p.State.SnoozedTo != nil {
 					snz := *p.State.SnoozedTo
 					if t, err := time.Parse(time.RFC3339, snz); err == nil {
 						snz = t.Local().Format("15:04")
 					}
-					snoozed = fmt.Sprintf(" (snoozed to %s)", snz)
+					suffix += fmt.Sprintf(" (snoozed to %s)", snz)
 				}
-				writePendingAlarmLine(w, p.ID, triggerLocal, p.State.Action, p.Title, false, snoozed)
+				if !p.Eligible {
+					suffix += " (will not fire again)"
+				}
+				writePendingAlarmLine(w, p.ID, triggerLocal, p.State.Action, p.Title, false, suffix)
 			}
 			return nil
 		},
@@ -918,7 +932,11 @@ func alarmMissedCmd() *cobra.Command {
 		Short: "Show alarms that were missed (older than 24h, never fired)",
 		Long: `List alarms that would have fired in the lookback window but were
 never acknowledged. These are alarms that were skipped because the
-system was not running when they became due.`,
+system was not running when they became due.
+
+Default alarms (issue #815) are included. A default alarm has no
+event_alarms row, so the report gives the trigger spec instead of an alarm
+ID.`,
 		Example: `  chroncal alarm missed
   chroncal alarm missed --days 3
   chroncal alarm missed --days 14 --output json`,
@@ -949,7 +967,7 @@ system was not running when they became due.`,
 					days, retentionDays, retentionDays)
 			}
 
-			missedEvents, missedTodos, err := a.Alarms.CheckMissed(context.Background(), now, lookback)
+			missedEvents, missedTodos, missedDefaults, err := a.Alarms.CheckMissed(context.Background(), now, lookback)
 			if err != nil {
 				return fmt.Errorf("check missed: %w", err)
 			}
@@ -960,7 +978,7 @@ system was not running when they became due.`,
 				// shape of "alarm list"/"alarm check" so the
 				// `... -o json | jq '.[]'` idiom works across all alarm
 				// subcommands (issue #433).
-				items := make([]map[string]any, 0, len(missedEvents)+len(missedTodos))
+				items := make([]map[string]any, 0, len(missedEvents)+len(missedTodos)+len(missedDefaults))
 				for _, m := range missedEvents {
 					items = append(items, map[string]any{
 						"type":       "event",
@@ -979,20 +997,37 @@ system was not running when they became due.`,
 						"age":        m.Age,
 					})
 				}
+				for _, m := range missedDefaults {
+					// A default alarm has no event_alarms row, so it
+					// carries no alarm ID. The trigger spec identifies it.
+					items = append(items, map[string]any{
+						"type":       "event",
+						"default":    true,
+						"alarm_id":   nil,
+						"action":     m.Action,
+						"trigger":    m.TriggerValue,
+						"title":      m.EventTitle,
+						"trigger_at": m.TriggerAt.UTC().Format(time.RFC3339),
+						"age":        m.Age,
+					})
+				}
 				return printOutput(w, items)
 			}
 
-			if len(missedEvents) == 0 && len(missedTodos) == 0 {
+			if len(missedEvents) == 0 && len(missedTodos) == 0 && len(missedDefaults) == 0 {
 				fmt.Fprintln(w, "No missed alarms.")
 				return nil
 			}
 
 			fmt.Fprintf(w, "Missed alarms (last %d days):\n\n", days)
 			for _, m := range missedEvents {
-				writeMissedAlarmLine(w, m.TriggerAt, m.EventTitle, false, m.Age)
+				writeMissedAlarmLine(w, m.TriggerAt, m.EventTitle, "", m.Age)
 			}
 			for _, m := range missedTodos {
-				writeMissedAlarmLine(w, m.TriggerAt, m.TodoSummary, true, m.Age)
+				writeMissedAlarmLine(w, m.TriggerAt, m.TodoSummary, "[todo] ", m.Age)
+			}
+			for _, m := range missedDefaults {
+				writeMissedAlarmLine(w, m.TriggerAt, m.EventTitle+" (default "+m.TriggerValue+")", "[default] ", m.Age)
 			}
 			return nil
 		},

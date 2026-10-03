@@ -315,8 +315,8 @@ func TestDefaultAlarm_SnoozeRefireDismiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list pending: %v", err)
 	}
-	if len(pending) != 1 || pending[0].ID != stateID {
-		t.Fatalf("pending = %+v, want the refired state %d", pending, stateID)
+	if len(pending) != 1 || pending[0].State.ID != stateID || !pending[0].Eligible {
+		t.Fatalf("pending = %+v, want the eligible refired state %d", pending, stateID)
 	}
 
 	if err := svc.DismissDefault(ctx, stateID); err != nil {
@@ -421,6 +421,213 @@ func TestDefaultAlarm_LongLeadExpandsWindow(t *testing.T) {
 		t.Fatalf("check: %v", err)
 	}
 	assertTriggers(t, dueTriggers(due), "DISPLAY:-P3D")
+}
+
+// "alarm missed" reports a default alarm whose trigger went stale without a
+// default_alarm_state row. The long lead time must also pull the event into
+// the missed window, which the stored triggers alone cannot do.
+func TestDefaultAlarm_MissedReportsStaleDefault(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-P4D"}},
+	})
+	now := time.Now().Truncate(time.Second)
+	// The event starts 71 hours out. No stored alarm exists, so only the
+	// -P4D default puts it into the missed window. Its trigger passed 25
+	// hours ago, which is past the stale threshold.
+	createEventAt(t, evtSvc, 1, "Conference", now.Add(71*time.Hour), false)
+
+	ctx := context.Background()
+	missedEvents, missedTodos, missedDefaults, err := svc.CheckMissed(ctx, now, 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("check missed: %v", err)
+	}
+	if len(missedEvents) != 0 || len(missedTodos) != 0 {
+		t.Fatalf("stored missed = %+v / %+v, want none", missedEvents, missedTodos)
+	}
+	if len(missedDefaults) != 1 {
+		t.Fatalf("missed defaults = %+v, want 1", missedDefaults)
+	}
+	m := missedDefaults[0]
+	if m.EventTitle != "Conference" || m.TriggerValue != "-P4D" || m.Action != "DISPLAY" {
+		t.Fatalf("missed default = %+v", m)
+	}
+	if m.Age <= StaleThreshold {
+		t.Fatalf("missed default age = %v, want more than the stale threshold", m.Age)
+	}
+}
+
+// A default alarm with a default_alarm_state row already fired, so
+// "alarm missed" must not report it.
+func TestDefaultAlarm_MissedSkipsFiredDefault(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT15M"}},
+	})
+	now := time.Now().Truncate(time.Second)
+	evt := createEventAt(t, evtSvc, 1, "Synced meeting", now.Add(-30*time.Hour), false)
+
+	ctx := context.Background()
+	_, _, missedDefaults, err := svc.CheckMissed(ctx, now, 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("check missed: %v", err)
+	}
+	if len(missedDefaults) != 1 {
+		t.Fatalf("missed defaults = %+v, want 1", missedDefaults)
+	}
+
+	firedAt := now.UTC().Format(time.RFC3339)
+	if _, err := svc.q.CreateDefaultAlarmState(ctx, storage.CreateDefaultAlarmStateParams{
+		AlarmEventID:      evt.ID,
+		AlarmAction:       "DISPLAY",
+		AlarmTriggerValue: "-PT15M",
+		AlarmTriggerAt:    missedDefaults[0].TriggerAt.UTC().Format(time.RFC3339),
+		AlarmFiredAt:      &firedAt,
+	}); err != nil {
+		t.Fatalf("create default alarm state: %v", err)
+	}
+
+	_, _, missedDefaults, err = svc.CheckMissed(ctx, now, 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("check missed after firing: %v", err)
+	}
+	if len(missedDefaults) != 0 {
+		t.Fatalf("missed defaults after firing = %+v, want none", missedDefaults)
+	}
+}
+
+// A default alarm does not apply to an event that carries its own alarm, so
+// "alarm missed" must not report one for it.
+func TestDefaultAlarm_MissedSkipsEventWithAlarms(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT15M"}},
+	})
+	now := time.Now().Truncate(time.Second)
+	evt := createEventAt(t, evtSvc, 1, "Synced meeting", now.Add(-30*time.Hour), false)
+	if err := evtSvc.ReplaceAlarms(context.Background(), evt.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT10M", Related: "START"},
+	}); err != nil {
+		t.Fatalf("replace alarms: %v", err)
+	}
+
+	_, _, missedDefaults, err := svc.CheckMissed(context.Background(), now, 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("check missed: %v", err)
+	}
+	if len(missedDefaults) != 0 {
+		t.Fatalf("missed defaults = %+v, want none for an event with alarms", missedDefaults)
+	}
+}
+
+// DescribeDefaultAlarms must agree with the check loop, and it must name the
+// reason when it does not apply the specs. That reason is the only way a user
+// can tell why a configured default alarm stays silent.
+func TestDefaultAlarm_DescribeDefaultAlarms(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers:   []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},
+		SkipAllDay: true,
+	})
+	now := time.Now().Truncate(time.Second)
+	ctx := context.Background()
+
+	// An event without alarms gets the global specs.
+	plain := createEventAt(t, evtSvc, 1, "Synced meeting", now.Add(time.Hour), false)
+	status, err := svc.DescribeDefaultAlarms(ctx, plain)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if !status.Applied || status.Suppressed != DefaultSuppressedNone || status.Source != "global" {
+		t.Fatalf("status = %+v, want applied from the global list", status)
+	}
+	if len(status.Specs) != 1 || status.Specs[0].TriggerValue != "-PT30M" {
+		t.Fatalf("specs = %+v", status.Specs)
+	}
+
+	// An event with its own alarm does not, and the reason says so.
+	withAlarm := createEventAt(t, evtSvc, 1, "Invited meeting", now.Add(time.Hour), false)
+	if err := evtSvc.ReplaceAlarms(ctx, withAlarm.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT10M", Related: "START"},
+	}); err != nil {
+		t.Fatalf("replace alarms: %v", err)
+	}
+	status, err = svc.DescribeDefaultAlarms(ctx, withAlarm)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if status.Applied || status.Suppressed != DefaultSuppressedEventHasAlarms {
+		t.Fatalf("status = %+v, want event_has_alarms", status)
+	}
+
+	// The ACTION:NONE sentinel counts as an alarm row.
+	sentinel := createEventAt(t, evtSvc, 1, "No reminder", now.Add(time.Hour), false)
+	if err := evtSvc.ReplaceAlarms(ctx, sentinel.ID, []model.Alarm{
+		{Action: "NONE", TriggerValue: "-PT10M", Related: "START"},
+	}); err != nil {
+		t.Fatalf("replace alarms: %v", err)
+	}
+	status, err = svc.DescribeDefaultAlarms(ctx, sentinel)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if status.Applied || status.Suppressed != DefaultSuppressedEventHasAlarms {
+		t.Fatalf("status = %+v, want event_has_alarms for the sentinel", status)
+	}
+
+	// skip_all_day excludes an all-day event.
+	allDay := createEventAt(t, evtSvc, 1, "Holiday", now.Add(48*time.Hour), true)
+	status, err = svc.DescribeDefaultAlarms(ctx, allDay)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if status.Applied || status.Suppressed != DefaultSuppressedAllDayExcluded {
+		t.Fatalf("status = %+v, want all_day_excluded", status)
+	}
+
+	// A per-calendar list replaces the global one and reports its source.
+	work := createTestCalendar(t, svc.q, "Work")
+	workEvt := createEventAt(t, evtSvc, work, "Work meeting", now.Add(time.Hour), false)
+	list := "AUDIO:-PT5M"
+	if err := svc.q.UpdateCalendarDefaultAlarms(ctx, storage.UpdateCalendarDefaultAlarmsParams{
+		DefaultAlarms: &list, ID: work,
+	}); err != nil {
+		t.Fatalf("set calendar defaults: %v", err)
+	}
+	status, err = svc.DescribeDefaultAlarms(ctx, workEvt)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if !status.Applied || status.Source != "calendar" || len(status.Specs) != 1 ||
+		status.Specs[0].Action != "AUDIO" || status.Specs[0].TriggerValue != "-PT5M" {
+		t.Fatalf("status = %+v, want the calendar list", status)
+	}
+
+	// A calendar that opts out reports calendar_opt_out.
+	off := ""
+	if err := svc.q.UpdateCalendarDefaultAlarms(ctx, storage.UpdateCalendarDefaultAlarmsParams{
+		DefaultAlarms: &off, ID: work,
+	}); err != nil {
+		t.Fatalf("turn off calendar defaults: %v", err)
+	}
+	status, err = svc.DescribeDefaultAlarms(ctx, workEvt)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if status.Applied || status.Suppressed != DefaultSuppressedCalendarOptOut || status.Source != "calendar" {
+		t.Fatalf("status = %+v, want calendar_opt_out", status)
+	}
+}
+
+// With no configuration at all, the reason is that nothing is configured.
+func TestDefaultAlarm_DescribeReportsNoSpecs(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{})
+	now := time.Now().Truncate(time.Second)
+	evt := createEventAt(t, evtSvc, 1, "Synced meeting", now.Add(time.Hour), false)
+
+	status, err := svc.DescribeDefaultAlarms(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if status.Applied || status.Suppressed != DefaultSuppressedNoSpecs || status.Source != "global" {
+		t.Fatalf("status = %+v, want no_specs", status)
+	}
 }
 
 func TestDefaultAlarm_StateRowsAreLocalOnly(t *testing.T) {
@@ -543,8 +750,8 @@ func TestDefaultAlarm_OptOutStopsSnoozedRefire(t *testing.T) {
 	}
 
 	// The user turns default alarms off for the calendar while the alarm
-	// sleeps. The expired snooze must not notify, and the row must leave
-	// the pending list.
+	// sleeps. The expired snooze must not notify. The row stays in the
+	// pending list, marked ineligible, so the user can still dismiss it.
 	off := ""
 	if err := q.UpdateCalendarDefaultAlarms(ctx, storage.UpdateCalendarDefaultAlarmsParams{
 		DefaultAlarms: &off,
@@ -561,8 +768,8 @@ func TestDefaultAlarm_OptOutStopsSnoozedRefire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list pending: %v", err)
 	}
-	if len(pending) != 0 {
-		t.Fatalf("pending after opt-out = %+v, want empty", pending)
+	if len(pending) != 1 || pending[0].Eligible {
+		t.Fatalf("pending after opt-out = %+v, want one ineligible row", pending)
 	}
 
 	// The same suppression applies when a pull adds an alarm to the event
@@ -647,6 +854,60 @@ func TestDefaultAlarm_OptOutStopsRefireWhenSpecRemovedFromConfig(t *testing.T) {
 		if da.IsDefault && da.Alarm.Action == "DISPLAY" {
 			t.Fatalf("snoozed default re-fired after its spec left the config: %+v", da)
 		}
+	}
+}
+
+// The pending list keeps a default-alarm row after the row stops notifying,
+// so the user can still find its ID and dismiss it. A stored alarm behaves
+// the same way when a sync pull removes its event_alarms row.
+func TestDefaultAlarm_PendingKeepsRowThatStoppedNotifying(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},
+	})
+	now := time.Now().Truncate(time.Second)
+	createEventAt(t, evtSvc, 1, "Synced meeting", now.Add(-10*time.Minute), false)
+
+	ctx := context.Background()
+	due, _, err := svc.Check(ctx, now)
+	if err != nil || len(due) != 1 {
+		t.Fatalf("check: %v due=%d", err, len(due))
+	}
+	stateID, err := svc.MarkFired(ctx, due[0])
+	if err != nil {
+		t.Fatalf("mark fired: %v", err)
+	}
+
+	pending, err := svc.ListPendingDefaultAlarms(ctx)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 1 || !pending[0].Eligible {
+		t.Fatalf("pending = %+v, want one eligible row", pending)
+	}
+
+	// The user drops the spec from the configuration.
+	svc.SetDefaultConfig(DefaultAlarmConfig{})
+	pending, err = svc.ListPendingDefaultAlarms(ctx)
+	if err != nil {
+		t.Fatalf("list pending after config change: %v", err)
+	}
+	if len(pending) != 1 || pending[0].State.ID != stateID {
+		t.Fatalf("pending = %+v, want the state %d to stay listed", pending, stateID)
+	}
+	if pending[0].Eligible {
+		t.Fatal("a row whose spec left the configuration must not be eligible")
+	}
+
+	// The row is still dismissable, which is why the list must show it.
+	if err := svc.DismissDefault(ctx, stateID); err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+	pending, err = svc.ListPendingDefaultAlarms(ctx)
+	if err != nil {
+		t.Fatalf("list pending after dismiss: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("pending after dismiss = %+v, want empty", pending)
 	}
 }
 

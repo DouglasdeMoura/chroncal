@@ -16,7 +16,11 @@ func eventGetCmd() *cobra.Command {
 
 You can look up the event by numeric ID or by its UID. Use
 --recurrence-id to target a specific overridden instance from a
-recurring series.`,
+recurring series.
+
+The output also reports the default alarms for the event (issue #815):
+the effective spec list, where it comes from, and the reason the check
+loop does not apply it.`,
 		Example: `  chroncal event get 42
   chroncal event get 6d7d8c3b-uid
   chroncal event get team-standup-uid --recurrence-id 2026-04-06T12:00:00Z --output json`,
@@ -36,11 +40,19 @@ recurring series.`,
 
 			populateEventFields(ctx, a.Events, &e)
 
+			defaults, err := a.Alarms.DescribeDefaultAlarms(ctx, e)
+			if err != nil {
+				return fmt.Errorf("describe default alarms: %w", err)
+			}
+
 			w := cmd.OutOrStdout()
 			if outputFmt != "text" {
-				return printOutput(w, toJSONEvent(e))
+				je := toJSONEvent(e)
+				je.DefaultAlarms = toJSONDefaultAlarms(defaults)
+				return printOutput(w, je)
 			}
 			printEvent(w, e)
+			printEventDefaultAlarms(w, defaults)
 			return nil
 		},
 	}

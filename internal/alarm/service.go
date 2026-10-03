@@ -113,8 +113,9 @@ type MissedTodoAlarm struct {
 }
 
 // CheckMissed returns alarms from the last `lookback` that were never fired
-// (no alarm_state / todo_alarm_state entry) and are past the stale threshold.
-func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.Duration) ([]MissedAlarm, []MissedTodoAlarm, error) {
+// (no alarm_state / todo_alarm_state / default_alarm_state entry) and are
+// past the stale threshold.
+func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.Duration) ([]MissedAlarm, []MissedTodoAlarm, []MissedDefaultAlarm, error) {
 	windowStart := now.Add(-lookback)
 
 	// Extend windowEnd by the longest alarm lead time so a still-future event
@@ -122,19 +123,33 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 	// Future triggers are filtered out downstream by collectMissedTriggers.
 	eventTriggers, err := s.q.ListDistinctAlarmTriggers(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	todoTriggers, err := s.q.ListDistinctTodoAlarmTriggers(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	windowEnd := now.Add(maxLeadTime(append(eventTriggers, todoTriggers...)))
+	// The configured default triggers take part in the sizing (issue #815).
+	// Without them a -P3D default on an event three days out never enters the
+	// window, and "alarm missed" reports nothing.
+	defaultOverrides, err := s.loadCalendarDefaultOverrides(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	allTriggers := append(eventTriggers, todoTriggers...)
+	allTriggers = append(allTriggers, s.defaults.triggerStrings()...)
+	for _, specs := range defaultOverrides {
+		for _, spec := range specs {
+			allTriggers = append(allTriggers, spec.TriggerValue)
+		}
+	}
+	windowEnd := now.Add(maxLeadTime(allTriggers))
 
 	// --- Event alarms ---
 	recurSvc := recurrence.NewService(s.db, s.q)
 	expanded, err := recurSvc.ListExpandedEvents(ctx, windowStart, windowEnd, recurrence.SkipCategories())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Batch fetch alarms for all unique parent event IDs to avoid N+1 queries.
@@ -148,7 +163,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 	}
 	alarmMap, err := s.events.ListFireableAlarmsByEventIDs(ctx, uniqueIDs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	var missed []MissedAlarm
@@ -174,7 +189,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 	if s.todos != nil {
 		rows, err := s.q.ListAllTodos(ctx)
 		if err != nil {
-			return missed, nil, err
+			return missed, nil, nil, err
 		}
 
 		// Same override-suppression as CheckTodos: skip master instances for
@@ -193,7 +208,7 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 		}
 		todoAlarmMap, err := s.todos.ListFireableAlarmsByTodoIDs(ctx, openIDs)
 		if err != nil {
-			return missed, nil, err
+			return missed, nil, nil, err
 		}
 
 		for _, row := range rows {
@@ -238,7 +253,13 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 		}
 	}
 
-	return missed, missedTodos, nil
+	// --- Default alarms ---
+	missedDefaults, err := s.checkMissedDefaultAlarms(ctx, expanded, alarmMap, now, defaultOverrides)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return missed, missedTodos, missedDefaults, nil
 }
 
 // collectMissedTriggers walks every repeat trigger of an alarm whose initial
