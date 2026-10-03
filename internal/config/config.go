@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/secretcmd"
 	"github.com/spf13/viper"
 )
@@ -84,12 +85,30 @@ type UIConfig struct {
 	ConfirmQuit bool `mapstructure:"confirm_quit"`
 }
 
+// AlarmsConfig holds the default-alarm preferences (issue #815). The alarm
+// engine applies the default triggers at check time to events without
+// alarms. The triggers are never written to the event, so a default alarm
+// never syncs back to the server. A per-calendar setting
+// (calendars.default_alarms, via "chroncal calendar update --default-alarm")
+// overrides the global list for one calendar.
+type AlarmsConfig struct {
+	// Default holds the trigger specs. Each entry is a trigger duration
+	// ("-PT30M") or an action-prefixed trigger ("AUDIO:-PT5M"). An empty
+	// list disables default alarms globally. Load validates each entry.
+	Default []string `mapstructure:"default"`
+	// SkipAllDay excludes all-day events from default alarms. All-day
+	// events start at midnight, so a "-PT15M" trigger fires the evening
+	// before. The default is false.
+	SkipAllDay bool `mapstructure:"skip_all_day"`
+}
+
 type Config struct {
 	DB         string           `mapstructure:"db"`
 	ProductID  string           `mapstructure:"product_id"`
 	SMTP       SMTPConfig       `mapstructure:"smtp"`
 	Sync       SyncConfig       `mapstructure:"sync"`
 	Security   SecurityConfig   `mapstructure:"security"`
+	Alarms     AlarmsConfig     `mapstructure:"alarms"`
 	SoftDelete SoftDeleteConfig `mapstructure:"soft_delete"`
 	UI         UIConfig         `mapstructure:"ui"`
 }
@@ -153,6 +172,26 @@ func Load() (Config, error) {
 	}
 	if !v.IsSet("ui.event_list_days") {
 		cfg.UI.EventListDays = DefaultUIEventListDays
+	}
+	// Validate the default-alarm specs at load time. A bad trigger must
+	// fail the command with a clear error, not silently disable the user's
+	// reminders. Each entry may itself carry a comma-separated list, which
+	// is how the CHRONCAL_ALARMS_DEFAULT environment variable expresses
+	// several specs in one value.
+	expanded := make([]string, 0, len(cfg.Alarms.Default))
+	for _, entry := range cfg.Alarms.Default {
+		expanded = append(expanded, strings.Split(entry, ",")...)
+	}
+	cfg.Alarms.Default = nil
+	for _, spec := range expanded {
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			continue
+		}
+		if _, err := model.ParseDefaultAlarmSpec(spec); err != nil {
+			return Config{}, fmt.Errorf("alarms.default: %w", err)
+		}
+		cfg.Alarms.Default = append(cfg.Alarms.Default, spec)
 	}
 	if err := cfg.SMTP.Validate(); err != nil {
 		return Config{}, err
@@ -221,6 +260,8 @@ func newViper() *viper.Viper {
 	v.BindEnv("security.allow_unsafe_alarm_email_attendees")
 	v.BindEnv("security.allow_plaintext")
 	v.BindEnv("soft_delete.purge_days")
+	v.BindEnv("alarms.default")
+	v.BindEnv("alarms.skip_all_day")
 	v.BindEnv("ui.theme")
 	v.BindEnv("ui.week_start")
 	v.BindEnv("ui.list_format")

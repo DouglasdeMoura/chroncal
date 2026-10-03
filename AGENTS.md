@@ -91,6 +91,14 @@ The database stores a recurring event as one row with `recurrence_rule`. Each ov
 
 Triggers are RFC 5545 duration strings (`-PT15M` = 15 minutes before). Absolute triggers use RFC 3339. The `alarm_state` and `todo_alarm_state` tables store the state (`fired_at`, `acknowledged_at`, `snooze_until`). The service skips alarms older than 24 hours (`alarm.StaleThreshold`). The service fires extra alarms at `Duration` intervals, up to the `Repeat` count.
 
+Default alarms (issue #815) are virtual. The check loop synthesizes them at check time for events without any alarm row. The `calendars.default_alarms` column holds a per-calendar spec list (`NULL` inherits the global default, `''` turns defaults off), and the `default_alarm_state` table stores their state. Its claim key is `(event_id, action, trigger_value, trigger_at)`: two actions can share one trigger. A default alarm is never written to `event_alarms`, so sync and export never see it. Parse default-alarm specs with `model.ParseDefaultAlarmSpec` (`"AUDIO:-PT5M"` or a bare duration).
+
+Three paths share one rule set. `alarm.defaultAlarmCandidates` decides which expanded events receive defaults. `alarm.defaultStateEligible` decides whether an existing `default_alarm_state` row may still notify. `alarm.DescribeDefaultAlarms` reports the decision for one event, so `event get` can name the reason a default alarm does not apply. Keep the three in step. Fix the shared helper, not one caller.
+
+Eligibility filters the notification path only. `alarm.ListPendingDefaultAlarms` returns every unacknowledged row and carries an `Eligible` flag. The `alarm list` output shows an ineligible row as "will not fire again", because a hidden row gives the user no way to find its ID and dismiss it.
+
+`CheckMissed` returns three slices: stored event alarms, todo alarms, and default alarms. Its forward window includes the default triggers, or a long default lead time never enters the window and `alarm missed` reports nothing.
+
 ### iCal Round-Trip
 
 UID is required for round-trip fidelity. `recurrence_id` marks an overridden instance. Export fills transient fields (Alarms, Attendees, and others). The main event and todo tables do not store those fields. You can express duration as DTEND or as DURATION (RFC 5545). The `timezone` column and the `timezones` table preserve timezones.
@@ -174,8 +182,16 @@ err := evtSvc.ReplaceAlarms(ctx, eventID, []model.Alarm{alarm})
 
 ```go
 alarmSvc := alarm.NewService(db, q, eventSvc, todoSvc)
+alarmSvc.SetDefaultConfig(alarm.DefaultAlarmConfig{
+    Triggers:   []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT15M"}},
+    SkipAllDay: true,
+})
+
 dueEvents, dueTodos, err := alarmSvc.Check(ctx, time.Now())
-// Each DueAlarm has: Event, Alarm, TriggerAt, StateID
+// Each DueAlarm has: Event, Alarm, TriggerAt, StateID, IsDefault
+
+status, err := alarmSvc.DescribeDefaultAlarms(ctx, evt)
+// Each DefaultAlarmStatus has: Specs, Source, Applied, Suppressed
 ```
 
 ### Import and export iCal

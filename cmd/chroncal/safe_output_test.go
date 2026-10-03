@@ -83,7 +83,7 @@ func TestWriteMissedAlarmLine_SanitizesControlSequences(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	writeMissedAlarmLine(&buf, time.Date(2026, 4, 4, 9, 30, 0, 0, time.UTC), "Bad\x1b]52;c;clip\a\r\nTitle", false, 2*time.Hour)
+	writeMissedAlarmLine(&buf, time.Date(2026, 4, 4, 9, 30, 0, 0, time.UTC), "Bad\x1b]52;c;clip\a\r\nTitle", "", 2*time.Hour)
 
 	out := buf.String()
 	if strings.Contains(out, "\x1b") {

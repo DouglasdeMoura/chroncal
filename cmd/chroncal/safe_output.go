@@ -31,11 +31,10 @@ func writePendingAlarmLine(w io.Writer, id, triggerLocal, action, title string, 
 	fmt.Fprintf(w, "  [%s] %s\t%s\t%s%s\n", id, triggerLocal, action, safeText(title), suffix)
 }
 
-func writeMissedAlarmLine(w io.Writer, triggerAt time.Time, title string, isTodo bool, age time.Duration) {
-	prefix := ""
-	if isTodo {
-		prefix = "[todo] "
-	}
+// writeMissedAlarmLine prints one missed alarm. The prefix tags the alarm
+// kind: "" for a stored event alarm, "[todo] " for a todo, and "[default] "
+// for a default alarm.
+func writeMissedAlarmLine(w io.Writer, triggerAt time.Time, title, prefix string, age time.Duration) {
 	fmt.Fprintf(w, "  %s  %s%s (%s ago)\n",
 		triggerAt.Local().Format("2006-01-02 15:04"),
 		prefix,

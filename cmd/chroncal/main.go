@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/config"
@@ -22,6 +23,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/maintenance"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 	"github.com/douglasdemoura/chroncal/internal/tui"
 )
@@ -331,6 +333,22 @@ func initApp() (*app.App, error) {
 	// Permit the plaintext credential-store fallback only on explicit
 	// opt-in, via config or the --allow-plaintext flag. Either one suffices.
 	a.AllowPlaintext = cfg.Security.AllowPlaintext || allowPlaintext
+	// Install the default-alarm preferences (issue #815). config.Load
+	// validated each spec, so this parse cannot fail; the error path keeps
+	// the alarm service total for a direct App construction.
+	triggers := make([]model.DefaultAlarm, 0, len(cfg.Alarms.Default))
+	for _, spec := range cfg.Alarms.Default {
+		da, err := model.ParseDefaultAlarmSpec(spec)
+		if err != nil {
+			a.Close()
+			return nil, fmt.Errorf("alarms.default: %w", err)
+		}
+		triggers = append(triggers, da)
+	}
+	a.Alarms.SetDefaultConfig(alarm.DefaultAlarmConfig{
+		Triggers:   triggers,
+		SkipAllDay: cfg.Alarms.SkipAllDay,
+	})
 	return a, nil
 }
 

@@ -42,3 +42,11 @@ SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
     duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?,
     attach_binary = ?
 WHERE id = ? AND event_id = ?;
+
+-- name: ListEventIDsWithAlarms :many
+-- The alarm check loop uses this to find events that carry at least one
+-- alarm row of any action, fireable or not. A sync-only sentinel such as
+-- ACTION:NONE means the organiser turned the reminder off, so default
+-- alarms must not apply (issue #815).
+SELECT DISTINCT event_id FROM event_alarms
+WHERE event_id IN (sqlc.slice(event_ids));

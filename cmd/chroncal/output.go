@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
+	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
@@ -62,6 +63,22 @@ type jsonEvent struct {
 	Contacts       []string         `json:"contacts,omitempty"`
 	Resources      []string         `json:"resources,omitempty"`
 	Relations      []jsonRelation   `json:"relations,omitempty"`
+	// DefaultAlarms explains the default alarms for this event and whether
+	// the check loop applies them (issue #815). Only "event get" fills it,
+	// because it needs extra queries per event.
+	DefaultAlarms *jsonDefaultAlarms `json:"default_alarms,omitempty"`
+}
+
+// jsonDefaultAlarms is the default-alarm status of one event. Specs is the
+// effective spec list. Source is "calendar" when the calendar sets its own
+// list and "global" when it inherits the configuration. Applied tells whether
+// the check loop fires the specs. Suppressed names the reason when it does
+// not.
+type jsonDefaultAlarms struct {
+	Specs      []string `json:"specs"`
+	Source     string   `json:"source"`
+	Applied    bool     `json:"applied"`
+	Suppressed string   `json:"suppressed,omitempty"`
 }
 
 type jsonAlarm struct {
@@ -125,8 +142,13 @@ type jsonCalendar struct {
 	LastSyncAt    string `json:"last_sync_at,omitempty"`
 	LastSyncError string `json:"last_sync_error,omitempty"`
 	Hidden        bool   `json:"hidden,omitempty"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	// DefaultAlarms is the raw per-calendar default-alarm setting
+	// (issue #815). A nil value inherits the global [alarms] default. An
+	// empty string means default alarms are off for the calendar.
+	// Otherwise it is the comma-separated spec list.
+	DefaultAlarms *string `json:"default_alarms"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
 }
 
 func toJSONEvent(e event.Event) jsonEvent {
@@ -197,6 +219,7 @@ func toJSONCalendar(c calendar.Calendar) jsonCalendar {
 		RemoteAccess:  c.RemoteAccess,
 		LastSyncAt:    c.LastSyncAt,
 		LastSyncError: c.LastSyncError,
+		DefaultAlarms: c.DefaultAlarms,
 		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:     c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -389,6 +412,56 @@ func printCalendar(w io.Writer, c calendar.Calendar) {
 	printDetailField(w, labelWidth, "color", c.Color)
 	printDetailField(w, labelWidth, "description", c.Description)
 	printDetailInt(w, labelWidth, "id", c.ID)
+	// The tri-state default-alarm setting (issue #815): an explicit list,
+	// "off", or the inherited global default.
+	switch {
+	case c.DefaultAlarms == nil:
+		printDetailField(w, labelWidth, "default alarms", "(global default)")
+	case *c.DefaultAlarms == "":
+		printDetailField(w, labelWidth, "default alarms", "off")
+	default:
+		printDetailField(w, labelWidth, "default alarms", *c.DefaultAlarms)
+	}
+}
+
+// printEventDefaultAlarms prints the default-alarm status of one event, so a
+// user can see why a configured default alarm does or does not apply
+// (issue #815).
+func printEventDefaultAlarms(w io.Writer, status alarm.DefaultAlarmStatus) {
+	const labelWidth = 10
+	if len(status.Specs) == 0 && status.Source == "global" {
+		return // no default alarm is configured anywhere
+	}
+	if status.Applied {
+		printDetailField(w, labelWidth, "defaults", fmtModelDefaultAlarms(status.Specs))
+		return
+	}
+	printDetailField(w, labelWidth, "defaults",
+		fmt.Sprintf("%s (not applied: %s)", fmtModelDefaultAlarms(status.Specs), status.Suppressed))
+}
+
+// fmtModelDefaultAlarms renders specs in the same form the config file and
+// the calendar column use, for example "-PT30M,AUDIO:-PT5M".
+func fmtModelDefaultAlarms(specs []model.DefaultAlarm) string {
+	parts := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		parts = append(parts, model.FormatDefaultAlarmSpec(spec))
+	}
+	return strings.Join(parts, ",")
+}
+
+// toJSONDefaultAlarms renders the default-alarm status for JSON output.
+func toJSONDefaultAlarms(status alarm.DefaultAlarmStatus) *jsonDefaultAlarms {
+	specs := make([]string, 0, len(status.Specs))
+	for _, spec := range status.Specs {
+		specs = append(specs, model.FormatDefaultAlarmSpec(spec))
+	}
+	return &jsonDefaultAlarms{
+		Specs:      specs,
+		Source:     status.Source,
+		Applied:    status.Applied,
+		Suppressed: status.Suppressed,
+	}
 }
 
 func printCalendars(w io.Writer, cals []calendar.Calendar) {
