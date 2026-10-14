@@ -406,42 +406,46 @@ func TestBumpSyncKnownMissKeepsKnownETag(t *testing.T) {
 	}
 }
 
-// TestKnownMissInBudgetChangedETagGetsFreshBudget lists an href with a new
-// ETag while its known miss is still inside the retry budget. A new
-// version of the object must start a new budget, as it does after a
-// give-up. A row with no stored ETag, or the same ETag, keeps its count.
-func TestKnownMissInBudgetChangedETagGetsFreshBudget(t *testing.T) {
+// TestKnownMissETagChurnInsideBudgetSpendsIt lists a known-miss href with
+// a new ETag while its row is inside the retry budget. A server can give a
+// broken object a new ETag on each request. A reset on each new ETag would
+// never spend the budget, so the row must keep its count. After the
+// give-up the token advances, and the server lists the href again only for
+// a real change, so a given-up row with a new ETag gets a new budget.
+func TestKnownMissETagChurnInsideBudgetSpendsIt(t *testing.T) {
 	t.Parallel()
 	_, _, q := newTestEngine(t)
 	ctx := context.Background()
 	calendarID := firstCalendarID(t, q)
-	const noETagHref = "/calendar/no-etag.ics"
-	for href, etag := range map[string]string{knownMissHref: `"v1"`, noETagHref: ""} {
+	const gaveUpHref = "/calendar/gave-up.ics"
+	for _, href := range []string{knownMissHref, gaveUpHref} {
 		if _, err := q.BumpSyncKnownMiss(ctx, storage.BumpSyncKnownMissParams{
 			CalendarID: calendarID, Href: href, Uid: "stuck", Reason: knownMissReasonMissing,
-			Etag: etag, FirstMissAt: "2026-01-01T00:00:00Z",
+			Etag: `"v1"`, FirstMissAt: "2026-01-01T00:00:00Z",
 		}); err != nil {
 			t.Fatalf("BumpSyncKnownMiss %s: %v", href, err)
 		}
 	}
-	local := map[string]storage.SyncResource{knownMissHref: {}, noETagHref: {}}
+	gaveUpAt := "2026-01-02T00:00:00Z"
+	if err := q.MarkSyncKnownMissGaveUp(ctx, storage.MarkSyncKnownMissGaveUpParams{
+		GaveUpAt: &gaveUpAt, CalendarID: calendarID, Href: gaveUpHref,
+	}); err != nil {
+		t.Fatalf("MarkSyncKnownMissGaveUp: %v", err)
+	}
+	local := map[string]storage.SyncResource{knownMissHref: {}, gaveUpHref: {}}
 	k, err := loadKnownMisses(ctx, q, slog.New(slog.DiscardHandler), calendarID, local, time.Now())
 	if err != nil {
 		t.Fatalf("loadKnownMisses: %v", err)
 	}
 
-	k.resetIfChanged(ctx, knownMissHref, `"v1"`)
-	k.resetIfChanged(ctx, noETagHref, `"v9"`)
-	if rows, _ := q.ListSyncKnownMissesByCalendar(ctx, calendarID); len(rows) != 2 {
-		t.Fatalf("rows after the same ETag and an unknown old ETag = %+v, want both kept", rows)
-	}
 	k.resetIfChanged(ctx, knownMissHref, `"v2"`)
+	k.resetIfChanged(ctx, gaveUpHref, `"v2"`)
 	rows, err := q.ListSyncKnownMissesByCalendar(ctx, calendarID)
 	if err != nil {
 		t.Fatalf("ListSyncKnownMissesByCalendar: %v", err)
 	}
-	if len(rows) != 1 || rows[0].Href != noETagHref {
-		t.Fatalf("rows after a new ETag = %+v, want only %s", rows, noETagHref)
+	if len(rows) != 1 || rows[0].Href != knownMissHref {
+		t.Fatalf("rows after a new ETag = %+v, want only the in-budget row %s", rows, knownMissHref)
 	}
 }
 
