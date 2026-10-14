@@ -152,7 +152,7 @@ func (m Model) handleEventEditLoaded(msg eventEditLoadedMsg) (tea.Model, tea.Cmd
 		m.err = msg.err
 		return m, nil
 	}
-	form, cmd := NewEventFormModelForEditInstance(msg.event, msg.instanceTime, eventFormCalendars(m.calendars), m.theme)
+	form, cmd := NewEventFormModelForEditInstance(msg.event, msg.instanceTime, eventFormCalendars(m.calendars), m.theme, m.formDefaultCalendarID())
 	m.dialogOpen = false
 	if m.viewDialogOpen {
 		m.viewReturnEvent = msg.event
@@ -197,7 +197,7 @@ func (m Model) handleEventViewLoaded(msg eventViewLoadedMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) handleEventDuplicate(msg EventDuplicateMsg) (tea.Model, tea.Cmd) {
-	form, cmd := NewEventFormModelForDuplicate(msg.Event, m.createFormCalendars(), m.theme)
+	form, cmd := NewEventFormModelForDuplicate(msg.Event, eventFormCalendars(m.calendars), m.theme, m.formDefaultCalendarID())
 	if m.viewDialogOpen {
 		m.viewReturnEvent = msg.Event
 	}

@@ -192,19 +192,19 @@ func eventFormCalendars(calendars map[int64]CalendarInfo) map[int64]CalendarInfo
 	return filtered
 }
 
-// createFormCalendars returns the eventFormCalendars set for a create
-// form. It clears IsDefault on a hidden calendar. The form then does not
-// preselect a calendar that the user hid, because the new event would not
-// show in the view (issue #829).
-func (m Model) createFormCalendars() map[int64]CalendarInfo {
-	filtered := eventFormCalendars(m.calendars)
-	for id, info := range filtered {
-		if info.IsDefault && m.hiddenCalendars[id] {
-			info.IsDefault = false
-			filtered[id] = info
+// formDefaultCalendarID returns the calendar that a new event form selects
+// first: the default calendar, as `event add` without --calendar uses
+// (issue #829). It returns 0 when the default calendar is hidden, because
+// the new event would not show in the view. It also returns 0 when the
+// default calendar cannot take a new event. The form then selects the
+// first calendar by name.
+func (m Model) formDefaultCalendarID() int64 {
+	for id, info := range eventFormCalendars(m.calendars) {
+		if info.IsDefault && !m.hiddenCalendars[id] {
+			return id
 		}
 	}
-	return filtered
+	return 0
 }
 
 // syncHealthFor derives the sidebar health marker state from a calendar's

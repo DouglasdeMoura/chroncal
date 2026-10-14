@@ -43,7 +43,7 @@ func (m Model) dispatchAppMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleCalendarDaySelected(msg)
 
 	case EventCreateMsg:
-		form, cmd := NewEventFormModel(msg.Day, m.createFormCalendars(), m.theme)
+		form, cmd := NewEventFormModel(msg.Day, eventFormCalendars(m.calendars), m.theme, m.formDefaultCalendarID())
 		return m.openEventForm(form, cmd)
 
 	case EventEditMsg:

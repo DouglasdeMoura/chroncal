@@ -29,17 +29,13 @@ func savedCalendarID(t *testing.T, m EventFormModel) int64 {
 	return msg.CalendarID
 }
 
-func TestEventForm_NewPreselectsDefaultCalendar(t *testing.T) {
-	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), defaultCalendarFixture(), Theme{})
+func TestEventForm_NewPreselectsGivenCalendar(t *testing.T) {
+	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), defaultCalendarFixture(), Theme{}, 1)
 	assert.Equal(t, int64(1), savedCalendarID(t, m))
 }
 
-func TestEventForm_NewWithoutDefaultSelectsFirstByName(t *testing.T) {
-	cals := defaultCalendarFixture()
-	info := cals[1]
-	info.IsDefault = false
-	cals[1] = info
-	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), cals, Theme{})
+func TestEventForm_NewWithoutPreselectSelectsFirstByName(t *testing.T) {
+	m, _ := NewEventFormModel(time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), defaultCalendarFixture(), Theme{})
 	assert.Equal(t, int64(2), savedCalendarID(t, m))
 }
 
@@ -50,7 +46,7 @@ func TestEventForm_DuplicateKeepsSourceCalendar(t *testing.T) {
 		StartTime:  time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC),
 		EndTime:    time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC),
 	}
-	m, _ := NewEventFormModelForDuplicate(ev, defaultCalendarFixture(), Theme{})
+	m, _ := NewEventFormModelForDuplicate(ev, defaultCalendarFixture(), Theme{}, 1)
 	assert.Equal(t, int64(3), savedCalendarID(t, m))
 }
 
@@ -62,7 +58,7 @@ func TestEventForm_DuplicateFromUnlistedCalendarUsesDefault(t *testing.T) {
 		StartTime:  time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC),
 		EndTime:    time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC),
 	}
-	m, _ := NewEventFormModelForDuplicate(ev, defaultCalendarFixture(), Theme{})
+	m, _ := NewEventFormModelForDuplicate(ev, defaultCalendarFixture(), Theme{}, 1)
 	assert.Equal(t, int64(1), savedCalendarID(t, m))
 }
 
