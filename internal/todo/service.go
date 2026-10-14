@@ -59,14 +59,21 @@ func (s *Service) WithTx(tx *sql.Tx) *Service {
 // (see WithTx), the work joins that transaction. Commit is a no-op. Rollback
 // is left to the outer owner. Otherwise it opens and owns a fresh transaction.
 func (s *Service) txscope(ctx context.Context) (qtx *storage.Queries, commit func() error, rollback func(), err error) {
+	qtx, _, commit, rollback, err = s.txscopeExec(ctx)
+	return qtx, commit, rollback, err
+}
+
+// txscopeExec is txscope that also returns the transaction as a DBTX, for
+// the raw SQL helpers of the storage package.
+func (s *Service) txscopeExec(ctx context.Context) (qtx *storage.Queries, exec storage.DBTX, commit func() error, rollback func(), err error) {
 	if s.tx != nil {
-		return s.q, func() error { return nil }, func() {}, nil
+		return s.q, s.tx, func() error { return nil }, func() {}, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("begin tx: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("begin tx: %w", err)
 	}
-	return s.q.WithTx(tx), tx.Commit, func() { _ = tx.Rollback() }, nil
+	return s.q.WithTx(tx), tx, tx.Commit, func() { _ = tx.Rollback() }, nil
 }
 
 // dirtyExec returns the DBTX the dirty-mark side effect must use. That is the
@@ -504,7 +511,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	// One transaction wraps the todo row and its categories. A category write
 	// that fails then rolls the row update back. The path does not commit a
 	// half-updated row whose MarkResourceDirty never ran (issue #222).
-	qtx, commit, rollback, err := s.txscope(ctx)
+	qtx, exec, commit, rollback, err := s.txscopeExec(ctx)
 	if err != nil {
 		return Todo{}, err
 	}
@@ -538,6 +545,11 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	t := fromStorage(r)
 	if err := replaceCategoriesTx(ctx, qtx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
+	}
+	// A move to another calendar takes the other rows of the UID along and
+	// queues the delete of the source server object (issue #828).
+	if err := storage.RecordResourceMove(ctx, exec, "todo", existing.CalendarID, r.CalendarID, r.Uid); err != nil {
+		return Todo{}, fmt.Errorf("record calendar move: %w", err)
 	}
 	if err := commit(); err != nil {
 		return Todo{}, fmt.Errorf("commit update todo: %w", err)

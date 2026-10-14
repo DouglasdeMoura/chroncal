@@ -79,23 +79,30 @@ func CreateTombstoneIfSynced(ctx context.Context, db DBTX, calendarID int64, uid
 	return true, nil
 }
 
-// moveTables maps a sync owner type to the table that holds its rows. The
-// table name goes into SQL text, so only these fixed names are allowed.
-var moveTables = map[string]string{
-	"event":   "events",
-	"todo":    "todos",
-	"journal": "journals",
+// moveTables maps a sync owner type to the tables whose rows carry the
+// calendar of one UID: the item table first, then the delete logs that
+// restore reads. Table names go into SQL text, so only these fixed names
+// are allowed.
+var moveTables = map[string][]string{
+	"event":   {"events", "event_exdate_deletes", "event_truncate_deletes"},
+	"todo":    {"todos", "todo_exdate_deletes"},
+	"journal": {"journals", "journal_exdate_deletes"},
 }
 
-// RecordResourceMove updates the sync rows after a local move of a resource
-// from one calendar to another (issue #828). Call it in the transaction of
-// the move, after the row update.
+// RecordResourceMove completes a local move of a resource from one calendar
+// to another (issue #828). Call it in the transaction of the move, after
+// the update of the moved row.
+//
+// A CalDAV object holds the master and all overrides of one UID, so the
+// series moves as one unit. The function moves every other row of the UID
+// in the source calendar to the target calendar. This includes the
+// soft-deleted rows and the delete-log rows, so a later restore finds them
+// in the target calendar.
 //
 // On the target calendar it clears a pending tombstone for the UID. A move
 // back to a calendar then cannot delete the server object of that calendar.
 //
-// On the source calendar it acts only when no live row with the UID stays
-// there:
+// On the source calendar it then updates the sync row:
 //   - A sync row with a server object gets a tombstone, so the sync engine
 //     deletes that object. The row also loses its dirty flag, so the source
 //     push does not upload the moved body again.
@@ -106,26 +113,23 @@ func RecordResourceMove(ctx context.Context, db DBTX, ownerType string, fromCale
 	if fromCalendarID == toCalendarID || uid == "" {
 		return nil
 	}
-	table, ok := moveTables[ownerType]
+	tables, ok := moveTables[ownerType]
 	if !ok {
 		return fmt.Errorf("record resource move: unknown owner type %q", ownerType)
+	}
+	for _, table := range tables {
+		if _, err := db.ExecContext(ctx,
+			`UPDATE `+table+` SET calendar_id = ? WHERE calendar_id = ? AND uid = ?`,
+			toCalendarID, fromCalendarID, uid,
+		); err != nil {
+			return fmt.Errorf("move %s rows: %w", table, err)
+		}
 	}
 	if _, err := db.ExecContext(ctx,
 		`DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?`,
 		toCalendarID, uid,
 	); err != nil {
 		return fmt.Errorf("clear target tombstone: %w", err)
-	}
-
-	var remaining int64
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM `+table+` WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL`,
-		fromCalendarID, uid,
-	).Scan(&remaining); err != nil {
-		return fmt.Errorf("count source rows: %w", err)
-	}
-	if remaining > 0 {
-		return nil
 	}
 
 	var remoteURL string

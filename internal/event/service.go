@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -25,6 +26,10 @@ type Service struct {
 	// their own. A multi-step sequence then commits or rolls back atomically.
 	tx *sql.Tx
 }
+
+// ErrInstanceCalendarMove reports an edit of one occurrence that asks for
+// another calendar. Move the whole series instead.
+var ErrInstanceCalendarMove = errors.New("event: one occurrence cannot move to another calendar; move the whole series")
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
 	return &Service{db: db, q: q}
@@ -481,10 +486,10 @@ func updateEventTx(ctx context.Context, tx storage.DBTX, qtx *storage.Queries, i
 			return Event{}, err
 		}
 	}
-	// A move to another calendar queues the delete of the source server
-	// object. Without it the source object stays on the server, and a
-	// server that keeps UIDs unique per account refuses the target create
-	// (issue #828).
+	// A move to another calendar takes the other rows of the UID along and
+	// queues the delete of the source server object. Without it the source
+	// object stays on the server, and a server that keeps UIDs unique per
+	// account refuses the target create (issue #828).
 	if err := storage.RecordResourceMove(ctx, tx, "event", old.CalendarID, r.CalendarID, r.Uid); err != nil {
 		return Event{}, fmt.Errorf("record calendar move: %w", err)
 	}
@@ -690,10 +695,10 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
 		return Event{}, 0, err
 	}
+	// One CalDAV object holds the whole series. An override in another
+	// calendar splits the series, so refuse the move (issue #828).
 	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
-		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
-			return Event{}, 0, err
-		}
+		return Event{}, 0, ErrInstanceCalendarMove
 	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
 
