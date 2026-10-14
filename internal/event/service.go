@@ -612,7 +612,7 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 		Uid:          master.Uid,
 		RecurrenceID: recID,
 	})
-	if err == nil || !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return row, err
 	}
 	rows, err := qtx.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
