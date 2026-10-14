@@ -956,7 +956,7 @@ The `[keys]` table in `config.toml` changes the keys of the main TUI actions. Ea
 
 ```toml
 [keys]
-quit = ["x"]
+quit = ["ctrl+q"]
 week_view = ["v"]
 palette = [":", "ctrl+k"]
 ```
@@ -974,7 +974,7 @@ Write a key with its Bubble Tea name, for example `"x"`, `"ctrl+k"`, `"tab"`, `"
 | `week_numbers` | Show or hide the week numbers | `#` |
 | `week_start` | Change the first day of the week | `W` |
 | `create` | Create an event | `c` |
-| `switch_focus` | Move the focus from the main view into the sidebar | `tab`, `shift+tab` |
+| `switch_focus` | Move the focus from the main view into the sidebar. Only `shift+tab` enters at the last stop. Every other key enters at the first stop | `tab`, `shift+tab` |
 | `help` | Open the help dialog | `?` |
 | `palette` | Open the command palette | `/`, `ctrl+k` |
 | `calendars` | Open the calendar manager | `C` |
@@ -988,7 +988,7 @@ Chroncal checks the table when it loads the config file. Each of these condition
 - An action has an empty list or an empty key.
 - Two actions use the same key. Chroncal compares the keys after the table replaces the defaults. To swap two keys, set the two actions together.
 
-An action key has priority over the keys of the views. Do not bind an action to a key that a view uses, for example `t`, `enter`, `h`, `j`, `k`, or `l`. Otherwise, the view loses that key.
+An action key has priority over the keys of the views. Do not bind an action to a key that a view uses, for example `t`, `enter`, `h`, `j`, `k`, `l`, `e`, `x`, or `o`. Otherwise, the view loses that key.
 
 The table does not change these keys:
 

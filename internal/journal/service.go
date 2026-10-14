@@ -386,13 +386,16 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 	if err := storage.RecordResourceMove(ctx, exec, "journal", existing.CalendarID, r.CalendarID, r.Uid); err != nil {
 		return Journal{}, fmt.Errorf("record calendar move: %w", err)
 	}
+	// Mark the target dirty in the same transaction. A move commits the
+	// source tombstone, so a dirty mark after the commit that fails would
+	// delete the server object and never create the target object.
+	if err := storage.MarkResourceDirty(ctx, exec, j.CalendarID, j.UID, "journal"); err != nil {
+		return Journal{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := commit(); err != nil {
 		return Journal{}, fmt.Errorf("commit update journal: %w", err)
 	}
 	j.Categories = p.Categories
-	if err := storage.MarkResourceDirty(ctx, s.dirtyExec(), j.CalendarID, j.UID, "journal"); err != nil {
-		return Journal{}, fmt.Errorf("mark resource dirty: %w", err)
-	}
 	return j, nil
 }
 

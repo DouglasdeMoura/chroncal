@@ -551,11 +551,16 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	if err := storage.RecordResourceMove(ctx, exec, "todo", existing.CalendarID, r.CalendarID, r.Uid); err != nil {
 		return Todo{}, fmt.Errorf("record calendar move: %w", err)
 	}
+	// Mark the target dirty in the same transaction. A move commits the
+	// source tombstone, so a dirty mark after the commit that fails would
+	// delete the server object and never create the target object.
+	if err := storage.MarkResourceDirty(ctx, exec, t.CalendarID, t.UID, "todo"); err != nil {
+		return Todo{}, fmt.Errorf("mark resource dirty: %w", err)
+	}
 	if err := commit(); err != nil {
 		return Todo{}, fmt.Errorf("commit update todo: %w", err)
 	}
 	t.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), t.CalendarID, t.UID, "todo")
 	return t, nil
 }
 

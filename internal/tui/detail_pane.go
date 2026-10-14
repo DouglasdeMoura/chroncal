@@ -7,10 +7,11 @@ import (
 )
 
 // paneTitle renders the detail pane heading: the bold title on the first
-// lines and a faint horizontal rule on the last line. Shared so both
-// dialogs anchor the detail pane with the same visual weight. The caller
-// wraps the title with wrapTitleLines. Each line is padded to w cells. The result can then be spliced into a row-zipped
-// column with no extra measurement pass at the end.
+// lines and a faint horizontal rule on the last line. Both dialogs use it,
+// so the detail pane has the same visual weight in each. The caller wraps
+// the title with wrapTitleLines. The function pads each line to w cells.
+// The caller can then put the result into a row-zipped column with no
+// other measurement.
 func paneTitle(lines []string, w int) string {
 	bold := lipgloss.NewStyle().Bold(true)
 	out := make([]string, 0, len(lines)+1)

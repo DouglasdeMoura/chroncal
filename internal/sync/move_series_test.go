@@ -214,3 +214,33 @@ func TestMoveJournalBetweenCalendarsOfOneICloudAccount(t *testing.T) {
 	syncPairClean(t, engine, calA, calB)
 	wantOnlyServerObject(t, srv, "/cal/b/"+j.UID+".ics")
 }
+
+// TestEditLegacyOverrideInOtherCalendarKeepsCalendar proves that an edit
+// of an override that an older version moved to another calendar still
+// saves. The edit form preselects the calendar of the override, so the
+// check must not refuse that calendar.
+func TestEditLegacyOverrideInOtherCalendarKeepsCalendar(t *testing.T) {
+	t.Parallel()
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+	srv := newICloudFakeServer(t)
+	calA, calB := seedICloudPair(t, engine, q, srv)
+
+	master := createSeries(t, engine, calA)
+	inst := master.StartTime.Add(24 * time.Hour)
+	override, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
+		CalendarID: calA, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("UpdateInstance: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, calB, override.ID); err != nil {
+		t.Fatalf("move override row: %v", err)
+	}
+
+	if _, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
+		CalendarID: calB, Title: "Later", StartTime: inst, EndTime: inst.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpdateInstance on the legacy override = %v, want nil", err)
+	}
+}

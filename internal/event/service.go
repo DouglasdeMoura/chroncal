@@ -695,12 +695,23 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
 		return Event{}, 0, err
 	}
-	// One CalDAV object holds the whole series. An override in another
-	// calendar splits the series, so refuse the move (issue #828).
-	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
-		return Event{}, 0, ErrInstanceCalendarMove
-	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
+	// One CalDAV object holds the whole series. An override in another
+	// calendar splits the series, so refuse the move (issue #828). An older
+	// version permitted that move, so an override can already live in
+	// another calendar. An edit that keeps that calendar stays permitted.
+	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
+		legacy, gErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+			Uid:          uid,
+			RecurrenceID: recID,
+		})
+		if gErr != nil || legacy.CalendarID != p.CalendarID {
+			return Event{}, 0, ErrInstanceCalendarMove
+		}
+		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
+			return Event{}, 0, err
+		}
+	}
 
 	// Caller is the source of truth for categories. An empty p.Categories
 	// means the user explicitly cleared the tags on this override.
