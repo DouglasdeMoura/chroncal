@@ -444,3 +444,46 @@ func TestKnownMissInBudgetChangedETagGetsFreshBudget(t *testing.T) {
 		t.Fatalf("rows after a new ETag = %+v, want only %s", rows, noETagHref)
 	}
 }
+
+// TestEngineKnownMissForgottenWhenListedETagMatchesLocal lists a known-miss
+// href with the ETag that the local copy already holds, for example after
+// a push wrote that version. The miss row holds the same ETag, so the
+// reset rule keeps it. The pull skips the fetch, because the local copy is
+// the current version. The miss is then over, so its row must go, as on
+// the full-snapshot path.
+func TestEngineKnownMissForgottenWhenListedETagMatchesLocal(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := seedKnownMissCalendar(t, db, q)
+	client := newScriptedClient(t,
+		func(string) string { return syncCollectionXML("https://example.com/sync/t1", knownMissHref) },
+		func(int, string) string {
+			t.Error("the pull fetched an href whose ETag matches the local copy")
+			return multigetXML(nil, nil)
+		},
+	)
+	// Learn the ETag that the change list gives, and store it on the local
+	// copy.
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "stuck"})
+	if err != nil {
+		t.Fatalf("GetSyncResource: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE sync_resources SET etag = 'etag' WHERE id = ?`, sr.ID); err != nil {
+		t.Fatalf("set local etag: %v", err)
+	}
+	if _, err := q.BumpSyncKnownMiss(ctx, storage.BumpSyncKnownMissParams{
+		CalendarID: calendarID, Href: knownMissHref, Uid: "stuck", Reason: knownMissReasonMissing,
+		Etag: "etag", FirstMissAt: "2026-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("BumpSyncKnownMiss: %v", err)
+	}
+
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if rows := listKnownMisses(t, q, calendarID); len(rows) != 0 {
+		t.Fatalf("known misses = %+v, want none", rows)
+	}
+}

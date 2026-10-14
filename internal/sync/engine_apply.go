@@ -55,6 +55,9 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	// records it, so a later change of the object is visible.
 	listedETags := make(map[string]string, len(syncResult.Changes))
 	seenUIDs := make(map[string]bool, len(syncResult.Changes))
+	// currentPaths holds each listed href whose local copy holds the listed
+	// ETag. The pull fetches no body for it, and its known miss is over.
+	currentPaths := make(map[string]bool)
 	for _, ch := range syncResult.Changes {
 		canonical, hrefErr := client.CanonicalObjectRef(remoteURL, ch.Path)
 		if hrefErr != nil {
@@ -71,6 +74,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		listedETags[canonical] = ch.ETag
 		if local, exists := localByPath[canonical]; exists && local.Etag == ch.ETag {
 			seenUIDs[local.Uid] = true
+			currentPaths[canonical] = true
 			continue
 		}
 		fetchPaths = append(fetchPaths, canonical)
@@ -94,6 +98,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	}
 	known.forgetSet(ctx, deletedSet)
 	known.forgetSet(ctx, tombstonedPaths)
+	known.forgetSet(ctx, currentPaths)
 	for href, etag := range listedETags {
 		known.resetIfChanged(ctx, href, etag)
 	}
