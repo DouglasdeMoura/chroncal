@@ -485,21 +485,6 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, error) {
-	existing, err := s.q.GetTodo(ctx, id)
-	if err != nil {
-		return Todo{}, err
-	}
-	// Reject writes the linked remote collection cannot accept before any
-	// side effect. Guard the source calendar (where the todo lives). On a
-	// move, guard the destination calendar too.
-	if err := calendaraccess.EnsureWritable(ctx, s.q, existing.CalendarID, todoComponent); err != nil {
-		return Todo{}, err
-	}
-	if p.CalendarID != existing.CalendarID {
-		if err := calendaraccess.EnsureWritable(ctx, s.q, p.CalendarID, todoComponent); err != nil {
-			return Todo{}, err
-		}
-	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
 	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
@@ -509,12 +494,30 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 
 	// One transaction wraps the todo row and its categories. A category write
 	// that fails then rolls the row update back. The path does not commit a
-	// half-updated row whose MarkResourceDirty never ran (issue #222).
+	// half-updated row whose MarkResourceDirty never ran (issue #222). The
+	// read of the stored row runs in the transaction too, because the move
+	// rules below use its calendar.
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return Todo{}, err
 	}
 	defer rollback()
+
+	existing, err := qtx.GetTodo(ctx, id)
+	if err != nil {
+		return Todo{}, err
+	}
+	// Reject writes the linked remote collection cannot accept before any
+	// side effect. Guard the source calendar (where the todo lives). On a
+	// move, guard the destination calendar too.
+	if err := calendaraccess.EnsureWritable(ctx, qtx, existing.CalendarID, todoComponent); err != nil {
+		return Todo{}, err
+	}
+	if p.CalendarID != existing.CalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, todoComponent); err != nil {
+			return Todo{}, err
+		}
+	}
 
 	// The move rules run inside the transaction, so no other write can
 	// change the rows of the UID between the check and the move.
@@ -560,7 +563,11 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	// Mark the target dirty in the same transaction. A move commits the
 	// source tombstone, so a dirty mark after the commit that fails would
 	// delete the server object and never create the target object.
-	if err := qtx.MarkResourceDirty(ctx, t.CalendarID, t.UID, "todo"); err != nil {
+	dirtyCalendarID, err := move.DirtyCalendar(ctx, r.RecurrenceID, r.CalendarID)
+	if err != nil {
+		return Todo{}, err
+	}
+	if err := qtx.MarkResourceDirty(ctx, dirtyCalendarID, t.UID, "todo"); err != nil {
 		return Todo{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := commit(); err != nil {
@@ -789,6 +796,13 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 		HasMaster: func(ctx context.Context, calendarID int64) (bool, error) {
 			_, err := qtx.GetTodoByCalendarUID(ctx, storage.GetTodoByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 			return uidmove.Found(err)
+		},
+		MasterCalendars: func(ctx context.Context) ([]int64, error) {
+			m, err := qtx.GetTodoByUID(ctx, uid)
+			if found, err := uidmove.Found(err); !found {
+				return nil, err
+			}
+			return []int64{m.CalendarID}, nil
 		},
 		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
 			return moveUIDRowsTx(ctx, qtx, storage.MoveTodoUIDToCalendarParams{

@@ -386,14 +386,14 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateEventTx(ctx, qtx, id, p)
+	e, dirtyCalendarID, err := updateEventTx(ctx, qtx, id, p)
 	if err != nil {
 		return Event{}, err
 	}
 	// Mark dirty inside the transaction so a failed sync-tracking write rolls
 	// the edit back rather than committing a change that is never pushed
 	// (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+	if err := storage.MarkResourceDirty(ctx, tx, dirtyCalendarID, e.UID, "event"); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -430,7 +430,7 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateEventTx(ctx, qtx, id, p)
+	e, dirtyCalendarID, err := updateEventTx(ctx, qtx, id, p)
 	if err != nil {
 		return Event{}, err
 	}
@@ -440,7 +440,7 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	// Mark dirty inside the transaction so a failed sync-tracking write rolls
 	// the edit back rather than committing a change that is never pushed
 	// (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+	if err := storage.MarkResourceDirty(ctx, tx, dirtyCalendarID, e.UID, "event"); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -452,20 +452,21 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 // updateEventTx writes the event row and its categories using a tx-bound
 // Queries. It opens no transaction and does not commit or mark the resource
 // dirty, so callers can compose it with attendee/alarm writes inside one
-// transaction.
-func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p UpdateParams) (Event, error) {
+// transaction. It returns the event and the calendar to mark dirty (see
+// uidmove.Rows.DirtyCalendar).
+func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p UpdateParams) (Event, int64, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
-		return Event{}, err
+		return Event{}, 0, err
 	}
 	old, err := qtx.GetEvent(ctx, id)
 	if err != nil {
-		return Event{}, err
+		return Event{}, 0, err
 	}
 	move := uidMoveRows(qtx, old.Uid)
 	if err := move.Check(ctx, old.RecurrenceID, old.CalendarID, p.CalendarID); err != nil {
-		return Event{}, err
+		return Event{}, 0, err
 	}
 	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
@@ -491,15 +492,15 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 		ConferenceUri:  p.ConferenceURI,
 	})
 	if err != nil {
-		return Event{}, err
+		return Event{}, 0, err
 	}
 	e := FromStorage(r)
 	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
-		return Event{}, fmt.Errorf("replace categories: %w", err)
+		return Event{}, 0, fmt.Errorf("replace categories: %w", err)
 	}
 	if localSpanEdit(old, p) {
 		if err := clearPreservedDTENDTx(ctx, qtx, e.ID); err != nil {
-			return Event{}, err
+			return Event{}, 0, err
 		}
 	}
 	// A move to another calendar takes the other rows of the UID along and
@@ -507,10 +508,14 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	// object stays on the server, and a server that keeps UIDs unique per
 	// account refuses the target create (issue #828).
 	if err := move.Record(ctx, old.CalendarID, r.CalendarID); err != nil {
-		return Event{}, fmt.Errorf("record calendar move: %w", err)
+		return Event{}, 0, fmt.Errorf("record calendar move: %w", err)
+	}
+	dirtyCalendarID, err := move.DirtyCalendar(ctx, r.RecurrenceID, r.CalendarID)
+	if err != nil {
+		return Event{}, 0, err
 	}
 	e.Categories = p.Categories
-	return e, nil
+	return e, dirtyCalendarID, nil
 }
 
 // uidMoveRows binds the event queries of the transaction to the shared
@@ -525,6 +530,17 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 		HasMaster: func(ctx context.Context, calendarID int64) (bool, error) {
 			_, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 			return uidmove.Found(err)
+		},
+		MasterCalendars: func(ctx context.Context) ([]int64, error) {
+			masters, err := qtx.ListEventMastersByUID(ctx, uid)
+			if err != nil {
+				return nil, err
+			}
+			cals := make([]int64, len(masters))
+			for i, m := range masters {
+				cals[i] = m.CalendarID
+			}
+			return cals, nil
 		},
 		CountCollisions: func(ctx context.Context, fromCalendarID, toCalendarID int64) (int64, error) {
 			return qtx.CountEventUIDMoveCollisions(ctx, storage.CountEventUIDMoveCollisionsParams{
@@ -819,9 +835,9 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 
 // updateInstanceTx creates or updates a per-occurrence override row and its
 // categories using a tx-bound Queries. It returns the event and the calendar
-// ID of the master (for the dirty mark inside the caller's transaction). It
-// opens no transaction, so callers can compose it with attendee/alarm
-// writes.
+// to mark dirty inside the caller's transaction (see
+// uidmove.Rows.DirtyCalendar). It opens no transaction, so callers can
+// compose it with attendee/alarm writes.
 func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
@@ -922,12 +938,14 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 
 	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
-	// Return the calendar of the master. The export of a UID holds the
-	// master and every override, also a legacy override in another
-	// calendar. A push of the calendar of that override uploads the whole
-	// series there a second time. Issue #842 tracks an export scoped to one
-	// calendar.
-	return e, master.CalendarID, nil
+	// A legacy override marks the calendar of its master (see
+	// uidmove.Rows.DirtyCalendar). Issue #842 tracks an export scoped to
+	// one calendar.
+	dirtyCalendarID, err := move.DirtyCalendar(ctx, recID, r.CalendarID)
+	if err != nil {
+		return Event{}, 0, err
+	}
+	return e, dirtyCalendarID, nil
 }
 
 // updateOverrideTx updates a stored override row. A span change clears the

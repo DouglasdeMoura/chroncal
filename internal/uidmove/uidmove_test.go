@@ -28,6 +28,15 @@ func fakeRows(masters map[int64]bool, collisions int64) Rows {
 		CountCollisions: func(context.Context, int64, int64) (int64, error) {
 			return collisions, nil
 		},
+		MasterCalendars: func(context.Context) ([]int64, error) {
+			var out []int64
+			for id, ok := range masters {
+				if ok {
+					out = append(out, id)
+				}
+			}
+			return out, nil
+		},
 	}
 }
 
@@ -88,5 +97,31 @@ func TestCheckTarget(t *testing.T) {
 	r.CountCollisions = nil
 	if err := r.CheckTarget(ctx, 99, cal.ID); err != nil {
 		t.Fatalf("CheckTarget with no count = %v, want nil", err)
+	}
+}
+
+func TestDirtyCalendar(t *testing.T) {
+	t.Parallel()
+	const a, b, c = int64(1), int64(2), int64(3)
+	for _, tc := range []struct {
+		name    string
+		masters map[int64]bool
+		recID   string
+		cal     int64
+		want    int64
+	}{
+		{"master row", map[int64]bool{a: true}, "", a, a},
+		{"override beside its master", map[int64]bool{a: true}, "r", a, a},
+		{"legacy override with one master", map[int64]bool{a: true}, "r", b, a},
+		{"legacy override with two masters", map[int64]bool{a: true, c: true}, "r", b, b},
+		{"legacy override with no master", map[int64]bool{}, "r", b, b},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := fakeRows(tc.masters, 0).DirtyCalendar(context.Background(), tc.recID, tc.cal)
+			if err != nil || got != tc.want {
+				t.Fatalf("DirtyCalendar = %d, %v; want %d", got, err, tc.want)
+			}
+		})
 	}
 }

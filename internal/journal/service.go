@@ -339,25 +339,28 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal, error) {
-	existing, err := s.q.GetJournal(ctx, id)
-	if err != nil {
-		return Journal{}, err
-	}
-	if err := s.ensureWritable(ctx, existing.CalendarID); err != nil {
-		return Journal{}, err
-	}
-	if p.CalendarID != existing.CalendarID {
-		if err := s.ensureWritable(ctx, p.CalendarID); err != nil {
-			return Journal{}, err
-		}
-	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 
+	// The read of the stored row runs in the transaction, because the move
+	// rules below use its calendar.
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return Journal{}, err
 	}
 	defer rollback()
+
+	existing, err := qtx.GetJournal(ctx, id)
+	if err != nil {
+		return Journal{}, err
+	}
+	if err := calendaraccess.EnsureWritable(ctx, qtx, existing.CalendarID, "VJOURNAL"); err != nil {
+		return Journal{}, err
+	}
+	if p.CalendarID != existing.CalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VJOURNAL"); err != nil {
+			return Journal{}, err
+		}
+	}
 
 	// The move rules run inside the transaction, so no other write can
 	// change the rows of the UID between the check and the move.
@@ -396,7 +399,11 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 	// Mark the target dirty in the same transaction. A move commits the
 	// source tombstone, so a dirty mark after the commit that fails would
 	// delete the server object and never create the target object.
-	if err := qtx.MarkResourceDirty(ctx, j.CalendarID, j.UID, "journal"); err != nil {
+	dirtyCalendarID, err := move.DirtyCalendar(ctx, r.RecurrenceID, r.CalendarID)
+	if err != nil {
+		return Journal{}, err
+	}
+	if err := qtx.MarkResourceDirty(ctx, dirtyCalendarID, j.UID, "journal"); err != nil {
 		return Journal{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := commit(); err != nil {
@@ -750,6 +757,13 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 		HasMaster: func(ctx context.Context, calendarID int64) (bool, error) {
 			_, err := qtx.GetJournalByCalendarUID(ctx, storage.GetJournalByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 			return uidmove.Found(err)
+		},
+		MasterCalendars: func(ctx context.Context) ([]int64, error) {
+			m, err := qtx.GetJournalByUID(ctx, uid)
+			if found, err := uidmove.Found(err); !found {
+				return nil, err
+			}
+			return []int64{m.CalendarID}, nil
 		},
 		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
 			return moveUIDRowsTx(ctx, qtx, storage.MoveJournalUIDToCalendarParams{

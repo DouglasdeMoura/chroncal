@@ -648,3 +648,119 @@ func TestUpdateFromInstanceToOtherCalendarMarksMasterDirty(t *testing.T) {
 		t.Fatalf("sync resource of the new tail in B = %+v, %v; want dirty", srTail, err)
 	}
 }
+
+// TestUpdateLegacyOverrideRowMarksMasterCalendarDirty edits a legacy
+// override by its row ID and keeps its calendar B. The master is in A. The
+// export of a UID holds the whole series, so the dirty mark must go to A.
+// A dirty mark on B uploads the whole series into B a second time.
+func TestUpdateLegacyOverrideRowMarksMasterCalendarDirty(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		table string
+		// seed creates a master and an override row on calA. It returns the
+		// UID and the override ID.
+		seed func(t *testing.T, engine *Engine, calA int64) (string, int64)
+		// edit renames the row with id and keeps calendar calID.
+		edit func(engine *Engine, id, calID int64) error
+	}{
+		{
+			name: "event", table: "events",
+			seed: func(t *testing.T, engine *Engine, calA int64) (string, int64) {
+				master, override, _ := createSeriesWithOverride(t, engine, calA)
+				return master.UID, override.ID
+			},
+			edit: func(engine *Engine, id, calID int64) error {
+				ev, err := engine.events.Get(context.Background(), id)
+				if err != nil {
+					return err
+				}
+				_, err = engine.events.Update(context.Background(), id, event.UpdateParams{
+					Title: "Renamed", StartTime: ev.StartTime, EndTime: ev.EndTime, CalendarID: calID,
+					Status: ev.Status, Transp: ev.Transp, Class: ev.Class,
+				})
+				return err
+			},
+		},
+		{
+			name: "todo", table: "todos",
+			seed: func(t *testing.T, engine *Engine, calA int64) (string, int64) {
+				ctx := context.Background()
+				master, err := engine.todos.Create(ctx, todo.CreateParams{CalendarID: calA, Summary: "Water", DueDate: "2026-05-18T09:00:00Z", RecurrenceRule: "FREQ=DAILY;COUNT=5"})
+				if err != nil {
+					t.Fatalf("Create todo: %v", err)
+				}
+				other, err := engine.todos.Create(ctx, todo.CreateParams{CalendarID: calA, Summary: "Water late"})
+				if err != nil {
+					t.Fatalf("Create todo override: %v", err)
+				}
+				if _, err := engine.db.ExecContext(ctx, `UPDATE todos SET uid = ?, recurrence_id = '2026-05-19T09:00:00Z' WHERE id = ?`, master.UID, other.ID); err != nil {
+					t.Fatalf("seed override: %v", err)
+				}
+				return master.UID, other.ID
+			},
+			edit: func(engine *Engine, id, calID int64) error {
+				td, err := engine.todos.Get(context.Background(), id)
+				if err != nil {
+					return err
+				}
+				_, err = engine.todos.Update(context.Background(), id, todo.UpdateParams{
+					CalendarID: calID, Summary: "Renamed", Status: td.Status, Class: td.Class,
+				})
+				return err
+			},
+		},
+		{
+			name: "journal", table: "journals",
+			seed: func(t *testing.T, engine *Engine, calA int64) (string, int64) {
+				ctx := context.Background()
+				master, err := engine.journals.Create(ctx, journal.CreateParams{CalendarID: calA, Summary: "Log", StartDate: "2026-05-18", RecurrenceRule: "FREQ=DAILY;COUNT=5"})
+				if err != nil {
+					t.Fatalf("Create journal: %v", err)
+				}
+				other, err := engine.journals.Create(ctx, journal.CreateParams{CalendarID: calA, Summary: "Log late", StartDate: "2026-05-19"})
+				if err != nil {
+					t.Fatalf("Create journal override: %v", err)
+				}
+				if _, err := engine.db.ExecContext(ctx, `UPDATE journals SET uid = ?, recurrence_id = '2026-05-19' WHERE id = ?`, master.UID, other.ID); err != nil {
+					t.Fatalf("seed override: %v", err)
+				}
+				return master.UID, other.ID
+			},
+			edit: func(engine *Engine, id, calID int64) error {
+				j, err := engine.journals.Get(context.Background(), id)
+				if err != nil {
+					return err
+				}
+				_, err = engine.journals.Update(context.Background(), id, journal.UpdateParams{
+					CalendarID: calID, Summary: "Renamed", StartDate: j.StartDate, Status: j.Status, Class: j.Class,
+				})
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			engine, q, _, calA, calB := newICloudPairEngine(t)
+			ctx := context.Background()
+
+			uid, overrideID := tc.seed(t, engine, calA)
+			if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
+				t.Fatalf("initial push = %+v, %v", res, err)
+			}
+			if _, err := engine.db.ExecContext(ctx, `UPDATE `+tc.table+` SET calendar_id = ? WHERE id = ?`, calB, overrideID); err != nil {
+				t.Fatalf("seed legacy override: %v", err)
+			}
+			if err := tc.edit(engine, overrideID, calB); err != nil {
+				t.Fatalf("edit of the legacy override = %v, want nil", err)
+			}
+			sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: uid})
+			if err != nil || sr.Dirty != 1 {
+				t.Fatalf("sync resource of A = %+v, %v; want dirty", sr, err)
+			}
+			if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: uid}); err == nil {
+				t.Fatalf("sync resource of B = %+v, want none", sr)
+			}
+		})
+	}
+}
