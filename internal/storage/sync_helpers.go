@@ -11,13 +11,20 @@ import (
 // linked to an account (synced), this upserts a sync_resources row with
 // dirty=1. For local-only calendars this is a no-op.
 // Called by service-layer mutations (Create, Update, ReplaceAlarms, etc.).
+//
+// The mark of a legacy override goes to the calendar of its master. See
+// DirtyCalendar for the rule.
 func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
 	if calendarID == 0 || uid == "" {
 		return nil
 	}
+	calendarID, err := DirtyCalendar(ctx, db, calendarID, uid, ownerType)
+	if err != nil {
+		return err
+	}
 	// Only act if the calendar is linked to an account.
 	var accountID *int64
-	err := db.QueryRowContext(ctx,
+	err = db.QueryRowContext(ctx,
 		`SELECT account_id FROM calendars WHERE id = ?`, calendarID,
 	).Scan(&accountID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -84,6 +91,69 @@ func CreateTombstoneIfSynced(ctx context.Context, db DBTX, calendarID int64, uid
 // transaction.
 func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, ownerType string) error {
 	return MarkResourceDirty(ctx, q.db, calendarID, uid, ownerType)
+}
+
+// ownerTables maps the owner type of a sync resource to the table of its
+// rows.
+var ownerTables = map[string]string{"event": "events", "todo": "todos", "journal": "journals"}
+
+// DirtyCalendar returns the calendar whose sync row a write of a row of uid
+// in calendarID must mark dirty.
+//
+// The export of a UID holds the master and every override, in all
+// calendars (issue #842). A legacy override is an override row that an
+// older version saved in a calendar with no master row of the UID. A dirty
+// mark on that calendar uploads the whole series into it a second time. So
+// when calendarID holds no master row (live or soft-deleted) but holds an
+// override row of uid, and exactly one other calendar holds a live master,
+// the mark goes to that calendar. Each other case marks calendarID.
+//
+// The common case (calendarID holds the master) costs one lookup on the
+// UNIQUE(calendar_id, uid, recurrence_id) key.
+func DirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) (int64, error) {
+	table, ok := ownerTables[ownerType]
+	if !ok {
+		return calendarID, nil
+	}
+	var rows int
+	// The own master and the own overrides, live or soft-deleted.
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM `+table+` WHERE calendar_id = ? AND uid = ? AND recurrence_id = ''`, calendarID, uid,
+	).Scan(&rows); err != nil {
+		return 0, fmt.Errorf("find own master: %w", err)
+	}
+	if rows > 0 {
+		return calendarID, nil
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM `+table+` WHERE calendar_id = ? AND uid = ? AND recurrence_id != ''`, calendarID, uid,
+	).Scan(&rows); err != nil {
+		return 0, fmt.Errorf("find own override: %w", err)
+	}
+	if rows == 0 {
+		return calendarID, nil
+	}
+	dbRows, err := db.QueryContext(ctx,
+		`SELECT DISTINCT calendar_id FROM `+table+` WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL`, uid)
+	if err != nil {
+		return 0, fmt.Errorf("find masters: %w", err)
+	}
+	defer dbRows.Close()
+	var masters []int64
+	for dbRows.Next() {
+		var id int64
+		if err := dbRows.Scan(&id); err != nil {
+			return 0, fmt.Errorf("find masters: %w", err)
+		}
+		masters = append(masters, id)
+	}
+	if err := dbRows.Err(); err != nil {
+		return 0, fmt.Errorf("find masters: %w", err)
+	}
+	if len(masters) == 1 {
+		return masters[0], nil
+	}
+	return calendarID, nil
 }
 
 // ErrMoveOpenConflict reports a move of a UID that has an open sync conflict

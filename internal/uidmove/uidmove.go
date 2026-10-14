@@ -37,7 +37,7 @@ type Rows struct {
 	// UID.
 	HasMaster func(ctx context.Context, calendarID int64) (bool, error)
 	// Masters returns the live master rows of the UID in all calendars.
-	// CheckOverrideMove and DirtyCalendar read it.
+	// CheckOverrideMove reads it.
 	Masters func(ctx context.Context) ([]Master, error)
 	// CountCollisions counts the rows (live or soft-deleted) in
 	// toCalendarID that share the UID and a recurrence ID with a row in
@@ -166,52 +166,6 @@ func (r Rows) CheckTarget(ctx context.Context, fromCalendarID, toCalendarID int6
 	}
 	return fmt.Errorf("%w: calendar %q already holds a row of UID %s; the row can be in the trash, so purge or restore it first",
 		r.ErrTargetHasUID, name, r.UID)
-}
-
-// DirtyCalendar returns the calendar whose sync row a write of one row of
-// the UID must mark dirty. recurrenceID and calendarID are the fields of
-// the row after the write.
-//
-// The export of a UID holds the master and every override, in all
-// calendars (issue #842). A legacy override is an override row in a
-// calendar with no master of the UID. A dirty mark on its calendar uploads
-// the whole series into that calendar a second time. For a legacy override
-// with one master, the mark goes to the calendar of the master. Each other
-// row (a master, an override beside its master, or a legacy override with
-// no single master) marks its own calendar.
-func (r Rows) DirtyCalendar(ctx context.Context, recurrenceID string, calendarID int64) (int64, error) {
-	if recurrenceID == "" {
-		return calendarID, nil
-	}
-	own, err := r.HasMaster(ctx, calendarID)
-	if err != nil {
-		return 0, fmt.Errorf("find master: %w", err)
-	}
-	if own {
-		return calendarID, nil
-	}
-	masters, err := r.Masters(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("find masters: %w", err)
-	}
-	return DirtyCalendarOf(recurrenceID, calendarID, masters), nil
-}
-
-// DirtyCalendarOf is the rule of Rows.DirtyCalendar for a caller that
-// already holds the masters of the UID.
-func DirtyCalendarOf(recurrenceID string, calendarID int64, masters []Master) int64 {
-	if recurrenceID == "" {
-		return calendarID
-	}
-	for _, m := range masters {
-		if m.CalendarID == calendarID {
-			return calendarID
-		}
-	}
-	if len(masters) == 1 {
-		return masters[0].CalendarID
-	}
-	return calendarID
 }
 
 // Record records the move of the rows of the UID from one calendar to

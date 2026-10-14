@@ -9,6 +9,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -762,5 +763,60 @@ func TestUpdateLegacyOverrideRowMarksMasterCalendarDirty(t *testing.T) {
 				t.Fatalf("sync resource of B = %+v, want none", sr)
 			}
 		})
+	}
+}
+
+// TestRelationWriteOnLegacyOverrideMarksMasterCalendarDirty writes an
+// alarm on a legacy override of an event and completes a legacy override
+// of a todo. The override row is in B, and the master is in A. Each write
+// that marks a resource dirty must mark A, as an update does. A mark on B
+// uploads the whole series into B a second time.
+func TestRelationWriteOnLegacyOverrideMarksMasterCalendarDirty(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	master, override, _ := createSeriesWithOverride(t, engine, calA)
+	tdMaster, err := engine.todos.Create(ctx, todo.CreateParams{CalendarID: calA, Summary: "Water", DueDate: "2026-05-18T09:00:00Z", RecurrenceRule: "FREQ=DAILY;COUNT=5"})
+	if err != nil {
+		t.Fatalf("Create todo: %v", err)
+	}
+	tdOverride, err := engine.todos.Create(ctx, todo.CreateParams{CalendarID: calA, Summary: "Water late"})
+	if err != nil {
+		t.Fatalf("Create todo override: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE todos SET uid = ?, recurrence_id = '2026-05-19T09:00:00Z' WHERE id = ?`, tdMaster.UID, tdOverride.ID); err != nil {
+		t.Fatalf("seed todo override: %v", err)
+	}
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("initial push = %+v, %v", res, err)
+	}
+	for _, seed := range []string{
+		`UPDATE events SET calendar_id = ? WHERE id = ?`,
+		`UPDATE todos SET calendar_id = ? WHERE id = ?`,
+	} {
+		id := override.ID
+		if strings.Contains(seed, "todos") {
+			id = tdOverride.ID
+		}
+		if _, err := engine.db.ExecContext(ctx, seed, calB, id); err != nil {
+			t.Fatalf("seed legacy override: %v", err)
+		}
+	}
+
+	if err := engine.events.ReplaceAlarms(ctx, override.ID, []model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT5M", Description: "soon"}}); err != nil {
+		t.Fatalf("ReplaceAlarms: %v", err)
+	}
+	if _, err := engine.todos.Complete(ctx, tdOverride.ID); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	for _, uid := range []string{master.UID, tdMaster.UID} {
+		sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: uid})
+		if err != nil || sr.Dirty != 1 {
+			t.Fatalf("sync resource of %s in A = %+v, %v; want dirty", uid, sr, err)
+		}
+		if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: uid}); err == nil {
+			t.Fatalf("sync resource of %s in B = %+v, want none", uid, sr)
+		}
 	}
 }

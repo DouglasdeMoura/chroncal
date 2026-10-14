@@ -563,11 +563,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	// Mark the target dirty in the same transaction. A move commits the
 	// source tombstone, so a dirty mark after the commit that fails would
 	// delete the server object and never create the target object.
-	dirtyCalendarID, err := move.DirtyCalendar(ctx, r.RecurrenceID, r.CalendarID)
-	if err != nil {
-		return Todo{}, err
-	}
-	if err := qtx.MarkResourceDirty(ctx, dirtyCalendarID, t.UID, "todo"); err != nil {
+	if err := qtx.MarkResourceDirty(ctx, t.CalendarID, t.UID, "todo"); err != nil {
 		return Todo{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := commit(); err != nil {

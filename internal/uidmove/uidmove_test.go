@@ -102,32 +102,6 @@ func TestCheckTarget(t *testing.T) {
 	}
 }
 
-func TestDirtyCalendar(t *testing.T) {
-	t.Parallel()
-	const a, b, c = int64(1), int64(2), int64(3)
-	for _, tc := range []struct {
-		name    string
-		masters map[int64]bool
-		recID   string
-		cal     int64
-		want    int64
-	}{
-		{"master row", map[int64]bool{a: true}, "", a, a},
-		{"override beside its master", map[int64]bool{a: true}, "r", a, a},
-		{"legacy override with one master", map[int64]bool{a: true}, "r", b, a},
-		{"legacy override with two masters", map[int64]bool{a: true, c: true}, "r", b, b},
-		{"legacy override with no master", map[int64]bool{}, "r", b, b},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := fakeRows(tc.masters, 0).DirtyCalendar(context.Background(), tc.recID, tc.cal)
-			if err != nil || got != tc.want {
-				t.Fatalf("DirtyCalendar = %d, %v; want %d", got, err, tc.want)
-			}
-		})
-	}
-}
-
 // TestCheckOverrideMoveNamesTheMasters checks the masters that the refusal
 // carries: the master in the calendar of the row, or else every master.
 func TestCheckOverrideMoveNamesTheMasters(t *testing.T) {
