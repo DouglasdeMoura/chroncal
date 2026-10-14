@@ -122,7 +122,7 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 	}
 	switch act.kind {
 	case pendingActionPlaintextOptIn:
-		return m.confirmPlaintextOptIn(act.target.plaintext)
+		return m.confirmPlaintextOptIn(act.target.retry)
 	case pendingActionAccountRemove:
 		m.calendarManagerOpen = false
 		m.syncing = true

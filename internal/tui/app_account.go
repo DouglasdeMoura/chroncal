@@ -399,10 +399,7 @@ func (m Model) finishAccountCredentialStore(msg accountCredentialStoredMsg) (Mod
 			m.accountCredentials.accountID == msg.accountID {
 			m.accountCredentials = m.accountCredentials.SetSecretError(plaintextRefusalFieldError)
 			m.accountCredentialsOpen = true
-			m = m.offerPlaintextOptIn(plaintextRetry{
-				credentials: msg.plaintextRetry,
-				bearer:      accountAuthIsBearer(m.accountCredentials.authType),
-			})
+			m = m.offerPlaintextOptIn(*msg.plaintextRetry, accountAuthIsBearer(m.accountCredentials.authType))
 			return m, m.expireStatusAfter(10*time.Second, m.statusToken)
 		}
 		m = m.reopenAccountSettings(msg.accountID)

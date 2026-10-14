@@ -130,6 +130,10 @@ func TestPlaintextOptInConfirmWritesConfigAndRetriesAddAccount(t *testing.T) {
 
 	updated, cmd := m.Update(ConfirmDialogResultMsg{Confirmed: true})
 	m = updated.(Model)
+	if m.syncing || !m.plaintextSaving {
+		t.Fatalf("syncing = %v, plaintextSaving = %v; want the dedicated flag and no sync spinner",
+			m.syncing, m.plaintextSaving)
+	}
 	saved := findMsg[plaintextOptInSavedMsg](t, cmd)
 	if saved.err != nil {
 		t.Fatalf("config write: %v", saved.err)
@@ -235,29 +239,20 @@ func TestPlaintextOptInConfirmSavesTheRotatedPassword(t *testing.T) {
 	}
 }
 
-// findMsg runs cmd and returns the first message of type T. It descends into
-// a tea.BatchMsg and skips the other commands of the batch, such as the
-// spinner tick.
+// findMsg runs cmd and returns the first message of type T. It uses
+// batchEmits, so it descends into a tea.BatchMsg, and a tea.Tick in the
+// batch (the spinner tick) runs on the fake clock.
 func findMsg[T any](t *testing.T, cmd tea.Cmd) T {
 	t.Helper()
-	var zero T
-	if cmd == nil {
-		t.Fatalf("no command, want %T", zero)
-	}
-	queue := []tea.Cmd{cmd}
-	for len(queue) > 0 {
-		next := queue[0]
-		queue = queue[1:]
-		if next == nil {
-			continue
+	var got T
+	if !batchEmits(t, cmd, func(msg tea.Msg) bool {
+		v, ok := msg.(T)
+		if ok {
+			got = v
 		}
-		switch msg := next().(type) {
-		case T:
-			return msg
-		case tea.BatchMsg:
-			queue = append(queue, msg...)
-		}
+		return ok
+	}) {
+		t.Fatalf("the command produced no %T", got)
 	}
-	t.Fatalf("the command produced no %T", zero)
-	return zero
+	return got
 }

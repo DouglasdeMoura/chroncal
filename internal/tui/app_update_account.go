@@ -225,7 +225,7 @@ func (m Model) handleAccountSettingsUpdateCredentialsRequested(msg AccountSettin
 }
 
 func (m Model) handleAccountCredentialsUpdateSubmitted(msg AccountCredentialsUpdateSubmittedMsg) (tea.Model, tea.Cmd) {
-	if m.syncing || m.oauthFlowOpen || m.oauthPending || !m.accountCredentialsOpen ||
+	if m.syncing || m.plaintextSaving || m.oauthFlowOpen || m.oauthPending || !m.accountCredentialsOpen ||
 		m.accountCredentials.accountID != msg.AccountID {
 		return m, nil
 	}
@@ -295,7 +295,7 @@ func (m Model) handleAccountSettingsClosed(msg AccountSettingsClosedMsg) (tea.Mo
 }
 
 func (m Model) handleCalendarDiscoveryRequested(msg CalendarDiscoveryRequestedMsg) (tea.Model, tea.Cmd) {
-	if m.syncing || m.oauthFlowOpen {
+	if m.syncing || m.plaintextSaving || m.oauthFlowOpen {
 		return m, nil
 	}
 	if calendarAuthIsOAuth(msg.AuthType) {
@@ -375,10 +375,7 @@ func (m Model) handleAccountDiscoveryReady(msg accountDiscoveryReadyMsg) (tea.Mo
 		m.syncStatus = "Couldn’t add account: " + msg.err.Error()
 		m.calendarManager = m.calendarManager.WithTestStatus(lipgloss.NewStyle().Foreground(m.theme.Error), "✗ "+msg.err.Error())
 		if msg.plaintextRetry != nil && errors.Is(msg.err, auth.ErrPlaintextRequired) {
-			m = m.offerPlaintextOptIn(plaintextRetry{
-				discovery: msg.plaintextRetry,
-				bearer:    accountAuthIsBearer(msg.plaintextRetry.AuthType),
-			})
+			m = m.offerPlaintextOptIn(*msg.plaintextRetry, accountAuthIsBearer(msg.plaintextRetry.AuthType))
 		}
 		return m, m.expireStatusAfter(10*time.Second, m.statusToken)
 	}

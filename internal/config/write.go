@@ -4,21 +4,24 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 
+	"github.com/douglasdemoura/chroncal/internal/fsutil"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/viper"
 )
 
-// FilePath returns the path of the config file that Load reads. When no
+// filePath returns the path of the config file that Load reads. When no
 // config file exists, it returns the path of the TOML file that Load would
 // read: $XDG_CONFIG_HOME/chroncal/config.toml.
-func FilePath() (string, error) {
+func filePath() (string, error) {
 	dir, err := configDir()
 	if err != nil {
 		return "", fmt.Errorf("find the config directory: %w", err)
@@ -50,7 +53,7 @@ func FilePath() (string, error) {
 // it refuses the write when any other value changes or when the result does
 // not parse. The user then edits the file by hand.
 func EnableAllowPlaintext() (string, error) {
-	path, err := FilePath()
+	path, err := filePath()
 	if err != nil {
 		return "", err
 	}
@@ -62,19 +65,9 @@ func EnableAllowPlaintext() (string, error) {
 		path = resolved
 	}
 
-	mode := fs.FileMode(0o600)
-	original, err := os.ReadFile(path)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		original = nil
-	case err != nil:
+	original, mode, err := readConfigFile(path)
+	if err != nil {
 		return path, fmt.Errorf("read config file: %w", err)
-	default:
-		info, statErr := os.Stat(path)
-		if statErr != nil {
-			return path, fmt.Errorf("read config file: %w", statErr)
-		}
-		mode = info.Mode().Perm()
 	}
 
 	updated, err := setSecurityAllowPlaintext(original)
@@ -84,10 +77,33 @@ func EnableAllowPlaintext() (string, error) {
 	if bytes.Equal(updated, original) {
 		return path, nil
 	}
-	if err := writeFileAtomic(path, updated, mode); err != nil {
+	if err := fsutil.WriteFileAtomic(path, updated, mode, ".config-*.toml"); err != nil {
 		return path, fmt.Errorf("write config file: %w", err)
 	}
 	return path, nil
+}
+
+// readConfigFile returns the content and the permission bits of the file at
+// path. One open gives the two values. A file that is not there gives nil
+// content and mode 0600, the mode of a new config file.
+func readConfigFile(path string) ([]byte, fs.FileMode, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, 0o600, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return nil, 0, err
+	}
+	return content, info.Mode().Perm(), nil
 }
 
 var (
@@ -137,14 +153,17 @@ func setSecurityAllowPlaintext(content []byte) ([]byte, error) {
 		}
 	}
 
+	var updated []byte
 	switch {
 	case keyLine >= 0:
 		lines[keyLine] = allowPlaintextLine.ReplaceAllString(lines[keyLine], "${1}true${3}")
+		updated = []byte(strings.Join(lines, "\n"))
 	case headerLine >= 0:
-		lines = append(lines[:headerLine+1],
-			append([]string{"allow_plaintext = true"}, lines[headerLine+1:]...)...)
+		lines = slices.Insert(lines, headerLine+1, "allow_plaintext = true")
+		updated = []byte(strings.Join(lines, "\n"))
 	default:
-		text := strings.Join(lines, "\n")
+		// Append the table after one blank line.
+		text := string(content)
 		switch {
 		case text == "":
 		case strings.HasSuffix(text, "\n"):
@@ -152,9 +171,8 @@ func setSecurityAllowPlaintext(content []byte) ([]byte, error) {
 		default:
 			text += "\n\n"
 		}
-		lines = strings.Split(text+"[security]\nallow_plaintext = true\n", "\n")
+		updated = []byte(text + "[security]\nallow_plaintext = true\n")
 	}
-	updated := []byte(strings.Join(lines, "\n"))
 
 	var after map[string]any
 	if err := toml.Unmarshal(updated, &after); err != nil {
@@ -173,35 +191,4 @@ func setSecurityAllowPlaintext(content []byte) ([]byte, error) {
 		return nil, errors.New("the edit changes other values")
 	}
 	return updated, nil
-}
-
-// writeFileAtomic writes data to a temporary file in the directory of path,
-// then renames it over path. A reader never sees a partial file.
-func writeFileAtomic(path string, data []byte, mode fs.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".config-*.toml")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }

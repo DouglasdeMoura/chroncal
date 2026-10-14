@@ -150,7 +150,7 @@ type pendingTarget struct {
 	defaultCands []accountDefaultCandidate
 	entries      []trash.Entry // purgeEntries
 	move         *calendarMoveState
-	plaintext    *plaintextRetry // plaintextOptIn
+	retry        tea.Msg // plaintextOptIn: the refused request
 }
 
 // isCalendarMove reports whether the armed action drives the calendar
@@ -500,6 +500,10 @@ type Model struct {
 	// flips synchronously so the second press is rejected. Cleared on every
 	// terminal path (flow opened, load failed, or fallback dialog shown).
 	oauthPending bool
+	// plaintextSaving is true while the config write of a confirmed
+	// plaintext opt-in runs. The form handlers refuse a second submit in
+	// that window. The flag does not show the sync spinner.
+	plaintextSaving bool
 	// pendingSyncCalendar holds a calendar whose sync was requested while
 	// another sync was running (e.g. a re-auth completing mid-sync).
 	// syncFinishedMsg drains it so the post-reauth sync isn't lost and the
