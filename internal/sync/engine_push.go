@@ -448,12 +448,13 @@ func (e *Engine) settleMovedSources(ctx context.Context, client *caldav.Client, 
 }
 
 // putResource sends one PUT with the sync retry policy. A PUT can reach the
-// server and mutate the resource even when its response is lost (e.g.
-// connection reset while reading the body), which Retry classifies as
-// transient. The retried PUT then re-sends the stale pre-PUT If-Match and
-// the server, whose ETag already advanced, answers 412 as a false
-// conflict. When an earlier attempt failed transiently, a 412 whose server
-// body equals the sent body counts as the success that happened. See #294.
+// server and change the resource, and the client can still lose the
+// response (for example, a connection reset while the client reads the
+// body). Retry classifies that loss as transient. The retried PUT then
+// sends the old If-Match again. The server already advanced the ETag, so it
+// answers 412, a false conflict. After a transient failure, putResource
+// counts a 412 as the success that happened when the server body equals
+// the sent body. See issue #294.
 func (e *Engine) putResource(ctx context.Context, client *caldav.Client, putPath string, cal *ical.Calendar, etag string) (string, error) {
 	priorAttemptMayHaveLanded := false
 	return caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
