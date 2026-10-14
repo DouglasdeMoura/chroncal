@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -471,19 +470,39 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 // the error names each master and its calendar, because the CLI cannot
 // choose the series.
 func eventOccurrenceMoveError(ctx context.Context, a *app.App, existing event.Event) error {
-	if existing.RecurrenceID == "" {
-		return errOccurrenceMove("event", strconv.FormatInt(existing.ID, 10))
+	var masters []event.Event
+	if existing.RecurrenceID != "" {
+		masters = eventSeriesMasters(ctx, a, existing)
+		if len(masters) > 1 {
+			return splitOverrideMoveError(ctx, a, existing, masters)
+		}
 	}
+	return errOccurrenceMove("event", seriesRef(existing.ID, existing.RecurrenceID, existing.UID, func() (int64, error) {
+		if len(masters) != 1 {
+			return 0, errors.New("no single master")
+		}
+		return masters[0].ID, nil
+	}))
+}
+
+// eventSeriesMasters returns the masters that an override can belong to:
+// the master in the calendar of the override, or else every master of the
+// UID (a legacy override). A failed lookup gives no master.
+func eventSeriesMasters(ctx context.Context, a *app.App, existing event.Event) []event.Event {
 	if m, err := a.Events.GetByCalendarUID(ctx, existing.CalendarID, existing.UID); err == nil {
-		return errOccurrenceMove("event", strconv.FormatInt(m.ID, 10))
+		return []event.Event{m}
 	}
 	masters, err := a.Events.ListMastersByUID(ctx, existing.UID)
-	switch {
-	case err != nil || len(masters) == 0:
-		return errOccurrenceMove("event", existing.UID)
-	case len(masters) == 1:
-		return errOccurrenceMove("event", strconv.FormatInt(masters[0].ID, 10))
+	if err != nil {
+		return nil
 	}
+	return masters
+}
+
+// splitOverrideMoveError returns the error for a legacy override whose UID
+// has a master in more than one calendar. The CLI cannot choose the
+// series, so the error names each master and its calendar.
+func splitOverrideMoveError(ctx context.Context, a *app.App, existing event.Event, masters []event.Event) error {
 	parts := make([]string, len(masters))
 	for i, m := range masters {
 		parts[i] = fmt.Sprintf("%d (calendar %q)", m.ID, calendarName(ctx, a, m.CalendarID))
