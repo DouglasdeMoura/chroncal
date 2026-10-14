@@ -417,13 +417,19 @@ var errMoveSourceChanged = errors.New("the source object changed on the server a
 // create then cannot lose the object on the server.
 //
 // The calendars of one account share one sync lock, so the source DELETE
-// cannot race the source calendar's own pass. An error means that a DELETE
+// cannot race the source calendar's own pass. An error means that the GET
+// of the target href failed with a status other than 404, that a DELETE
 // did not complete, or that the server kept a remotely edited source
 // object (errMoveSourceChanged). The caller then keeps the resource dirty
-// and records no conflict.
+// and records no conflict. A failed GET proves nothing about the target
+// object, so the next pass checks again.
 func (e *Engine) settleMovedSources(ctx context.Context, client *caldav.Client, putPath, uid string, sources []movedSource) (retryPut bool, err error) {
-	if _, getErr := client.GetResource(ctx, putPath); getErr == nil || !caldav.IsNotFound(getErr) {
+	_, getErr := client.GetResource(ctx, putPath)
+	if getErr == nil {
 		return false, nil
+	}
+	if !caldav.IsNotFound(getErr) {
+		return false, fmt.Errorf("move %s: check the move target: %w", uid, getErr)
 	}
 	for _, src := range sources {
 		outcome, delErr := e.deleteTombstone(ctx, client, src.calendarID, src.remoteURL, src.tombstone, src.etag)

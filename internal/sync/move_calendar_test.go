@@ -36,6 +36,8 @@ type icloudFakeServer struct {
 	generic bool
 	// putStatus maps a collection prefix to a forced PUT status.
 	putStatus map[string]int
+	// getStatus maps a collection prefix to a forced GET status.
+	getStatus map[string]int
 	deletes   int
 	puts      int
 }
@@ -113,6 +115,12 @@ func (f *icloudFakeServer) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", etag)
 		w.WriteHeader(http.StatusCreated)
 	case "GET":
+		for prefix, code := range f.getStatus {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				w.WriteHeader(code)
+				return
+			}
+		}
 		body, ok := f.objects[r.URL.Path]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -172,6 +180,15 @@ func (f *icloudFakeServer) setPutStatus(prefix string, code int) {
 		f.putStatus = map[string]int{}
 	}
 	f.putStatus[prefix] = code
+}
+
+func (f *icloudFakeServer) setGetStatus(prefix string, code int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.getStatus == nil {
+		f.getStatus = map[string]int{}
+	}
+	f.getStatus[prefix] = code
 }
 
 // editRemote gives the object at path a new ETag, as a remote edit does.
@@ -525,4 +542,57 @@ func TestMoveEventWithOpenConflictIsRefused(t *testing.T) {
 	if ts, err := q.ListTombstonesByCalendar(ctx, calA); err != nil || len(ts) != 0 {
 		t.Fatalf("tombstones on A = %v, %v; want none", ts, err)
 	}
+}
+
+// TestMoveEventKeepsTargetDirtyWhenTargetCheckFails moves an event on an
+// iCloud-like server. The create PUT in B gets 412, and the GET of the new
+// href then fails with 503. The failed GET proves nothing about the target
+// object. The push must record no conflict, must keep B dirty, and must
+// keep the source object and the tombstone in A. The next pass then
+// completes the move.
+func TestMoveEventKeepsTargetDirtyWhenTargetCheckFails(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+
+	srv.setGetStatus("/cal/b/", http.StatusServiceUnavailable)
+	res, err := engine.PushLocalEdits(ctx, calB)
+	if err != nil {
+		t.Fatalf("PushLocalEdits B: %v", err)
+	}
+	if len(res.Errors) == 0 || res.Pushed != 0 || res.Conflicts != 0 {
+		t.Fatalf("push with a failed target GET = %+v, want an error, no push, no conflict", res)
+	}
+	// The error must name the failed check of the move target, not a
+	// conflict path.
+	if msg := res.Errors[0].Error(); !strings.Contains(msg, "check the move target") || strings.Contains(msg, "conflict") {
+		t.Fatalf("error = %q, want the failed check of the move target", msg)
+	}
+	for _, cal := range []int64{calA, calB} {
+		if conflicts, err := q.ListSyncConflictsByCalendar(ctx, cal); err != nil || len(conflicts) != 0 {
+			t.Fatalf("conflicts on %d = %v, %v; want none", cal, conflicts, err)
+		}
+	}
+	srB, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: evt.UID})
+	if err != nil || srB.Dirty != 1 {
+		t.Fatalf("sync resource B = %+v, %v; want dirty", srB, err)
+	}
+	if !srv.has("/cal/a/" + evt.UID + ".ics") {
+		t.Fatal("source object in A is gone after a failed target GET")
+	}
+	if ts, err := q.ListTombstonesByCalendar(ctx, calA); err != nil || len(ts) != 1 {
+		t.Fatalf("tombstones on A = %v, %v; want one", ts, err)
+	}
+
+	srv.mu.Lock()
+	delete(srv.getStatus, "/cal/b/")
+	srv.mu.Unlock()
+	res, err = engine.PushLocalEdits(ctx, calB)
+	if err != nil || len(res.Errors) != 0 || res.Pushed != 1 {
+		t.Fatalf("retry push = %+v, %v; want one clean push", res, err)
+	}
+	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
 }
