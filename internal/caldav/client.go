@@ -443,7 +443,7 @@ func (c *Client) GetResource(ctx context.Context, path string) (*Resource, error
 	obj, err := c.inner.GetCalendarObject(ctx, path)
 	if err != nil {
 		// Keep the status of the go-webdav error as a typed HTTPError, so
-		// IsNotFound and IsConflict do not depend on the message prefix.
+		// IsAbsent and IsConflict do not depend on the message prefix.
 		wrapped := fmt.Errorf("get resource: %w", err)
 		if code := retry.StatusCode(err); code != 0 {
 			return nil, retry.NewHTTPError(code, wrapped)

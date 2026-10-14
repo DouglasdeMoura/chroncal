@@ -130,20 +130,6 @@ func (s *Service) GetByCalendarUID(ctx context.Context, calendarID int64, uid st
 	return e, nil
 }
 
-// ListMastersByUID returns the live master rows of uid in every calendar,
-// in ID order. Two calendars can hold the same UID.
-func (s *Service) ListMastersByUID(ctx context.Context, uid string) ([]Event, error) {
-	rows, err := s.q.ListEventMastersByUID(ctx, uid)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Event, len(rows))
-	for i, r := range rows {
-		out[i] = FromStorage(r)
-	}
-	return out, nil
-}
-
 func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID string) (Event, error) {
 	r, err := s.q.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
 		Uid:          uid,
