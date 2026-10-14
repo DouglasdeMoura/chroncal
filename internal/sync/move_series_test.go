@@ -9,6 +9,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -262,7 +263,7 @@ func TestMoveTodoAndJournalBetweenCalendarsOfOneICloudAccount(t *testing.T) {
 
 // TestEditLegacyOverrideInOtherCalendarKeepsCalendar proves that an edit
 // of an override that an older version moved to another calendar still
-// saves. The edit form preselects the calendar of the override, so the
+// saves and marks the calendar of the override dirty. The edit form preselects the calendar of the override, so the
 // check must not refuse that calendar.
 func TestEditLegacyOverrideInOtherCalendarKeepsCalendar(t *testing.T) {
 	t.Parallel()
@@ -278,6 +279,12 @@ func TestEditLegacyOverrideInOtherCalendarKeepsCalendar(t *testing.T) {
 		CalendarID: calB, Title: "Later", StartTime: inst, EndTime: inst.Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("UpdateInstance on the legacy override = %v, want nil", err)
+	}
+	// The edit lives in calendar B, so B must be dirty. A dirty mark on the
+	// calendar of the master never pushes the edit.
+	sr, err := engine.q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: master.UID})
+	if err != nil || sr.Dirty != 1 {
+		t.Fatalf("sync resource of B = %+v, %v; want dirty", sr, err)
 	}
 }
 

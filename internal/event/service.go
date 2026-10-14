@@ -721,8 +721,9 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 }
 
 // updateInstanceTx creates or updates a per-occurrence override row and its
-// categories using a tx-bound Queries. It returns the event and the master's
-// calendar ID (for the dirty mark inside the caller's transaction). It opens
+// categories using a tx-bound Queries. It returns the event and the calendar
+// ID of the override row (for the dirty mark inside the caller's
+// transaction). It opens
 // no transaction, so callers can compose it with attendee/alarm writes.
 func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
 	// Every update entry point reaches this function, so the span rule
@@ -809,7 +810,10 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 
 	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
-	return e, master.CalendarID, nil
+	// Return the calendar of the override row. A legacy override keeps its
+	// own calendar, and a dirty mark on the calendar of the master never
+	// pushes the edit.
+	return e, r.CalendarID, nil
 }
 
 // updateOverrideTx updates a stored override row. A span change clears the
@@ -1071,7 +1075,10 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 
 	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
-	return e, master.CalendarID, nil
+	// Return the calendar of the override row. A legacy override keeps its
+	// own calendar, and a dirty mark on the calendar of the master never
+	// pushes the edit.
+	return e, r.CalendarID, nil
 }
 
 // setRRuleUntil adds or replaces the UNTIL parameter in an RRULE string.
