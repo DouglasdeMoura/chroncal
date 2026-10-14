@@ -575,3 +575,38 @@ func TestMoveEventIntoCalendarWithSameUIDIsRefused(t *testing.T) {
 		t.Fatalf("event rows in A = %d, want 1", n)
 	}
 }
+
+// TestUpdateFromInstanceToOtherCalendarMarksMasterDirty splits a series in
+// calendar A with a "this and following" edit that puts the new tail in
+// calendar B. The truncation lives in A, so the sync row of A must be
+// dirty. B must get no sync row for the old UID, and the new tail must be
+// dirty in B.
+func TestUpdateFromInstanceToOtherCalendarMarksMasterDirty(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	master := createSeries(t, engine, calA)
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("initial push = %+v, %v", res, err)
+	}
+	cut := master.StartTime.Add(48 * time.Hour)
+	tail, err := engine.events.UpdateFromInstance(ctx, master.UID, cut, event.UpdateParams{
+		CalendarID: calB, Title: "Tail", StartTime: cut, EndTime: cut.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("UpdateFromInstance: %v", err)
+	}
+	srA, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: master.UID})
+	if err != nil || srA.Dirty != 1 {
+		t.Fatalf("sync resource of the master in A = %+v, %v; want dirty", srA, err)
+	}
+	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: master.UID}); err == nil {
+		t.Fatalf("sync resource of the old UID in B = %+v, want none", sr)
+	}
+	srTail, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: tail.UID})
+	if err != nil || srTail.Dirty != 1 {
+		t.Fatalf("sync resource of the new tail in B = %+v, %v; want dirty", srTail, err)
+	}
+}

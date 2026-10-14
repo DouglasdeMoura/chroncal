@@ -1213,10 +1213,10 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 
 	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
-	// Return the calendar of the override row. A legacy override keeps its
-	// own calendar, and a dirty mark on the calendar of the master never
-	// pushes the edit.
-	return e, r.CalendarID, nil
+	// Return the calendar of the master. The truncation lives there. The
+	// new series can live in another calendar, and the caller marks it
+	// dirty by its own calendar.
+	return e, master.CalendarID, nil
 }
 
 // setRRuleUntil adds or replaces the UNTIL parameter in an RRULE string.
