@@ -36,9 +36,9 @@ type Rows struct {
 	// HasMaster reports whether calendarID holds a live master row of the
 	// UID.
 	HasMaster func(ctx context.Context, calendarID int64) (bool, error)
-	// MasterCalendars returns the calendars that hold a live master row of
-	// the UID. DirtyCalendar reads it.
-	MasterCalendars func(ctx context.Context) ([]int64, error)
+	// Masters returns the live master rows of the UID in all calendars.
+	// CheckOverrideMove and DirtyCalendar read it.
+	Masters func(ctx context.Context) ([]Master, error)
 	// CountCollisions counts the rows (live or soft-deleted) in
 	// toCalendarID that share the UID and a recurrence ID with a row in
 	// fromCalendarID. Leave it nil when the schema of the domain keeps a
@@ -49,6 +49,26 @@ type Rows struct {
 	// calendar to another.
 	MoveRows func(ctx context.Context, fromCalendarID, toCalendarID int64) error
 }
+
+// Master names one live master row of the UID.
+type Master struct {
+	ID         int64
+	CalendarID int64
+}
+
+// OccurrenceMoveError reports a refused calendar move of one override row.
+// It wraps the domain error (Rows.ErrInstanceMove), so errors.Is still
+// matches that error. Masters lists the masters that the row can belong
+// to: the master in the calendar of the row, or else every master of the
+// UID. A caller can name the series with it, for example in a CLI hint.
+type OccurrenceMoveError struct {
+	Err     error
+	Masters []Master
+}
+
+func (e *OccurrenceMoveError) Error() string { return e.Err.Error() }
+
+func (e *OccurrenceMoveError) Unwrap() error { return e.Err }
 
 // Found converts the error of a single-row lookup to a found flag.
 // sql.ErrNoRows gives false and no error.
@@ -78,7 +98,12 @@ func (r Rows) Check(ctx context.Context, recurrenceID string, fromCalendarID, to
 // change. Such a legacy override has no master in its own calendar, and it
 // can move back to a calendar with a master. The rule does nothing for a
 // master row (an empty recurrenceID), for an update that keeps the
-// calendar, or for an update that names no calendar (toCalendarID 0).
+// calendar, or for an update that names no calendar (toCalendarID 0). A
+// fromCalendarID of 0 says that the calendar of the occurrence is not
+// known. Calendar 0 holds no master, so the rule then refuses a move to a
+// calendar with no master, and the refusal names every master.
+//
+// A refusal is an *OccurrenceMoveError.
 func (r Rows) CheckOverrideMove(ctx context.Context, recurrenceID string, fromCalendarID, toCalendarID int64) error {
 	if recurrenceID == "" || fromCalendarID == toCalendarID || toCalendarID == 0 {
 		return nil
@@ -92,9 +117,29 @@ func (r Rows) CheckOverrideMove(ctx context.Context, recurrenceID string, fromCa
 		return fmt.Errorf("find master: %w", err)
 	}
 	if ownMaster || !targetMaster {
-		return r.ErrInstanceMove
+		return r.occurrenceMoveError(ctx, fromCalendarID)
 	}
 	return nil
+}
+
+// occurrenceMoveError builds the refusal of a move of an override row in
+// calendarID. A failed lookup of the masters gives an error with no
+// master, because the refusal is the main result.
+func (r Rows) occurrenceMoveError(ctx context.Context, calendarID int64) error {
+	masters, err := r.Masters(ctx)
+	if err != nil {
+		return &OccurrenceMoveError{Err: r.ErrInstanceMove}
+	}
+	var own []Master
+	for _, m := range masters {
+		if m.CalendarID == calendarID {
+			own = append(own, m)
+		}
+	}
+	if len(own) > 0 {
+		masters = own
+	}
+	return &OccurrenceMoveError{Err: r.ErrInstanceMove, Masters: masters}
 }
 
 // CheckTarget refuses a calendar move of the rows of the UID when the
@@ -145,14 +190,28 @@ func (r Rows) DirtyCalendar(ctx context.Context, recurrenceID string, calendarID
 	if own {
 		return calendarID, nil
 	}
-	cals, err := r.MasterCalendars(ctx)
+	masters, err := r.Masters(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("find master calendars: %w", err)
+		return 0, fmt.Errorf("find masters: %w", err)
 	}
-	if len(cals) == 1 {
-		return cals[0], nil
+	return DirtyCalendarOf(recurrenceID, calendarID, masters), nil
+}
+
+// DirtyCalendarOf is the rule of Rows.DirtyCalendar for a caller that
+// already holds the masters of the UID.
+func DirtyCalendarOf(recurrenceID string, calendarID int64, masters []Master) int64 {
+	if recurrenceID == "" {
+		return calendarID
 	}
-	return calendarID, nil
+	for _, m := range masters {
+		if m.CalendarID == calendarID {
+			return calendarID
+		}
+	}
+	if len(masters) == 1 {
+		return masters[0].CalendarID
+	}
+	return calendarID
 }
 
 // Record records the move of the rows of the UID from one calendar to

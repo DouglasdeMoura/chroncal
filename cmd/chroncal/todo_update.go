@@ -273,10 +273,7 @@ a --progress value other than 100.`,
 			t, err := a.Todos.Update(ctx, existing.ID, p)
 			if errors.Is(err, todo.ErrInstanceCalendarMove) {
 				// A todo UID has one master in all calendars.
-				return errOccurrenceMove("todo", seriesRef(existing.ID, existing.RecurrenceID, existing.UID, func() (int64, error) {
-					m, err := a.Todos.GetByUID(ctx, existing.UID)
-					return m.ID, err
-				}))
+				return errOccurrenceMove(ctx, a, "todo", existing.UID, existing.RecurrenceID, existing.CalendarID, err)
 			}
 			if err != nil {
 				return fmt.Errorf("update todo: %w", err)

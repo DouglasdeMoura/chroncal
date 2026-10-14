@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 // row is the neutral view of one event, todo, or journal row. It carries
@@ -313,26 +315,46 @@ func newPurgeDeletedCmd(r resource, h verbHelp) *cobra.Command {
 	return cmd
 }
 
-// errOccurrenceMove returns the error for a refused calendar move of one
-// occurrence. The error names the command that moves the whole series.
-// kind is "event", "todo", or "journal". ref is the reference of the
-// series: the numeric ID of the master when the caller finds it, because a
-// UID can have a master in two calendars.
-func errOccurrenceMove(kind, ref string) error {
-	return fmt.Errorf("update %s: one occurrence cannot move to another calendar. To move the whole series, run: chroncal %s update %s --calendar NAME",
-		kind, kind, ref)
+// errOccurrenceMove returns the CLI error for a refused calendar move of
+// one occurrence. err is the service error. A uidmove.OccurrenceMoveError
+// in it names the masters that the edited row can belong to. kind is
+// "event", "todo", or "journal". uid, recurrenceID, and calendarID are the
+// fields of the edited row.
+//
+// One master gives a hint with the numeric ID of the master, because a UID
+// can have a master in two calendars. No master gives a hint with the UID.
+// More masters give an error that names each master and its calendar,
+// because the CLI cannot choose the series.
+func errOccurrenceMove(ctx context.Context, a *app.App, kind, uid, recurrenceID string, calendarID int64, err error) error {
+	var moveErr *uidmove.OccurrenceMoveError
+	var masters []uidmove.Master
+	if errors.As(err, &moveErr) {
+		masters = moveErr.Masters
+	}
+	const reason = "one occurrence cannot move to another calendar"
+	switch len(masters) {
+	case 0:
+		return fmt.Errorf("update %s: %s. To move the whole series, run: chroncal %s update %s --calendar NAME", kind, reason, kind, uid)
+	case 1:
+		return fmt.Errorf("update %s: %s. To move the whole series, run: chroncal %s update %d --calendar NAME", kind, reason, kind, masters[0].ID)
+	}
+	parts := make([]string, len(masters))
+	for i, m := range masters {
+		parts[i] = fmt.Sprintf("%d (calendar %q)", m.ID, calendarName(ctx, a, m.CalendarID))
+	}
+	what := "This occurrence can belong to a series"
+	if recurrenceID != "" {
+		what = fmt.Sprintf("This row is an old split override in calendar %q, and the UID has a series", calendarName(ctx, a, calendarID))
+	}
+	return fmt.Errorf("update %s: %s. %s in more than one calendar: %s. To move one series, run: chroncal %s update ID --calendar NAME",
+		kind, reason, what, strings.Join(parts, ", "), kind)
 }
 
-// seriesRef returns the reference of the series of the row that the user
-// edits. id, recurrenceID, and uid are the fields of that row. A master row
-// names itself. For an override row, master returns the ID of its master.
-// When master fails, the reference is the UID.
-func seriesRef(id int64, recurrenceID, uid string, master func() (int64, error)) string {
-	if recurrenceID == "" {
-		return strconv.FormatInt(id, 10)
+// calendarName returns the name of a calendar, or its ID when the lookup
+// fails.
+func calendarName(ctx context.Context, a *app.App, calendarID int64) string {
+	if c, err := a.Calendars.Get(ctx, calendarID); err == nil {
+		return c.Name
 	}
-	if masterID, err := master(); err == nil {
-		return strconv.FormatInt(masterID, 10)
-	}
-	return uid
+	return fmt.Sprint(calendarID)
 }

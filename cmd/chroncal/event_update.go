@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
@@ -344,7 +342,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				e, err = a.Events.Update(ctx, existing.ID, p)
 			}
 			if errors.Is(err, event.ErrInstanceCalendarMove) {
-				return eventOccurrenceMoveError(ctx, a, existing)
+				return errOccurrenceMove(ctx, a, "event", existing.UID, existing.RecurrenceID, existing.CalendarID, err)
 			}
 			if err != nil {
 				return fmt.Errorf("update event: %w", err)
@@ -460,64 +458,4 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related event UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable, replaces all)")
 	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
-}
-
-// eventOccurrenceMoveError returns the error for a refused calendar move of
-// one occurrence of existing. The master of an override is in the calendar
-// of the override. A legacy override (an older version saved it in a
-// calendar with no master) has its master in another calendar. With one
-// master in all calendars, the hint names that master. With more masters,
-// the error names each master and its calendar, because the CLI cannot
-// choose the series.
-func eventOccurrenceMoveError(ctx context.Context, a *app.App, existing event.Event) error {
-	var masters []event.Event
-	if existing.RecurrenceID != "" {
-		masters = eventSeriesMasters(ctx, a, existing)
-		if len(masters) > 1 {
-			return splitOverrideMoveError(ctx, a, existing, masters)
-		}
-	}
-	return errOccurrenceMove("event", seriesRef(existing.ID, existing.RecurrenceID, existing.UID, func() (int64, error) {
-		if len(masters) != 1 {
-			return 0, errors.New("no single master")
-		}
-		return masters[0].ID, nil
-	}))
-}
-
-// eventSeriesMasters returns the masters that an override can belong to:
-// the master in the calendar of the override, or else every master of the
-// UID (a legacy override). A failed lookup gives no master.
-func eventSeriesMasters(ctx context.Context, a *app.App, existing event.Event) []event.Event {
-	if m, err := a.Events.GetByCalendarUID(ctx, existing.CalendarID, existing.UID); err == nil {
-		return []event.Event{m}
-	}
-	masters, err := a.Events.ListMastersByUID(ctx, existing.UID)
-	if err != nil {
-		return nil
-	}
-	return masters
-}
-
-// splitOverrideMoveError returns the error for a legacy override whose UID
-// has a master in more than one calendar. The CLI cannot choose the
-// series, so the error names each master and its calendar.
-func splitOverrideMoveError(ctx context.Context, a *app.App, existing event.Event, masters []event.Event) error {
-	parts := make([]string, len(masters))
-	for i, m := range masters {
-		parts[i] = fmt.Sprintf("%d (calendar %q)", m.ID, calendarName(ctx, a, m.CalendarID))
-	}
-	return fmt.Errorf("update event: one occurrence cannot move to another calendar. "+
-		"This row is an old split override in calendar %q, and the UID has a series in more than one calendar: %s. "+
-		"To move one series, run: chroncal event update ID --calendar NAME",
-		calendarName(ctx, a, existing.CalendarID), strings.Join(parts, ", "))
-}
-
-// calendarName returns the name of a calendar, or its ID when the lookup
-// fails.
-func calendarName(ctx context.Context, a *app.App, calendarID int64) string {
-	if c, err := a.Calendars.Get(ctx, calendarID); err == nil {
-		return c.Name
-	}
-	return fmt.Sprint(calendarID)
 }

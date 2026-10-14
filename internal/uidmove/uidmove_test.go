@@ -3,6 +3,7 @@ package uidmove
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -28,13 +29,14 @@ func fakeRows(masters map[int64]bool, collisions int64) Rows {
 		CountCollisions: func(context.Context, int64, int64) (int64, error) {
 			return collisions, nil
 		},
-		MasterCalendars: func(context.Context) ([]int64, error) {
-			var out []int64
+		Masters: func(context.Context) ([]Master, error) {
+			var out []Master
 			for id, ok := range masters {
 				if ok {
-					out = append(out, id)
+					out = append(out, Master{ID: id * 10, CalendarID: id})
 				}
 			}
+			slices.SortFunc(out, func(a, b Master) int { return int(a.ID - b.ID) })
 			return out, nil
 		},
 	}
@@ -121,6 +123,34 @@ func TestDirtyCalendar(t *testing.T) {
 			got, err := fakeRows(tc.masters, 0).DirtyCalendar(context.Background(), tc.recID, tc.cal)
 			if err != nil || got != tc.want {
 				t.Fatalf("DirtyCalendar = %d, %v; want %d", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestCheckOverrideMoveNamesTheMasters checks the masters that the refusal
+// carries: the master in the calendar of the row, or else every master.
+func TestCheckOverrideMoveNamesTheMasters(t *testing.T) {
+	t.Parallel()
+	const a, b, c = int64(1), int64(2), int64(3)
+	for _, tc := range []struct {
+		name    string
+		masters map[int64]bool
+		from    int64
+		want    []Master
+	}{
+		{"own master", map[int64]bool{a: true, c: true}, a, []Master{{ID: 10, CalendarID: a}}},
+		{"legacy row with two masters", map[int64]bool{a: true, c: true}, b, []Master{{ID: 10, CalendarID: a}, {ID: 30, CalendarID: c}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := fakeRows(tc.masters, 0).CheckOverrideMove(context.Background(), "r", tc.from, 99)
+			var moveErr *OccurrenceMoveError
+			if !errors.As(err, &moveErr) || !errors.Is(err, errInstance) {
+				t.Fatalf("CheckOverrideMove = %v, want an OccurrenceMoveError that wraps the domain error", err)
+			}
+			if !slices.Equal(moveErr.Masters, tc.want) {
+				t.Fatalf("masters = %+v, want %+v", moveErr.Masters, tc.want)
 			}
 		})
 	}

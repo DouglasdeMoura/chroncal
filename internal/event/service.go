@@ -518,6 +518,15 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	return e, dirtyCalendarID, nil
 }
 
+// uidMasters converts master rows to the form of the uidmove package.
+func uidMasters(rows []storage.Event) []uidmove.Master {
+	out := make([]uidmove.Master, len(rows))
+	for i, m := range rows {
+		out[i] = uidmove.Master{ID: m.ID, CalendarID: m.CalendarID}
+	}
+	return out
+}
+
 // uidMoveRows binds the event queries of the transaction to the shared
 // calendar-move rules for uid. Two calendars can hold the same UID, so each
 // lookup stays inside one calendar.
@@ -531,16 +540,12 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 			_, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 			return uidmove.Found(err)
 		},
-		MasterCalendars: func(ctx context.Context) ([]int64, error) {
+		Masters: func(ctx context.Context) ([]uidmove.Master, error) {
 			masters, err := qtx.ListEventMastersByUID(ctx, uid)
 			if err != nil {
 				return nil, err
 			}
-			cals := make([]int64, len(masters))
-			for i, m := range masters {
-				cals[i] = m.CalendarID
-			}
-			return cals, nil
+			return uidMasters(masters), nil
 		},
 		CountCollisions: func(ctx context.Context, fromCalendarID, toCalendarID int64) (int64, error) {
 			return qtx.CountEventUIDMoveCollisions(ctx, storage.CountEventUIDMoveCollisionsParams{
@@ -594,8 +599,10 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 		return storage.Event{}, nil, err
 	}
 	if !legacy {
-		// Each master gives the same answer, so ask with the first one.
-		if err := move.CheckOverrideMove(ctx, recID, masters[0].CalendarID, calendarID); err != nil {
+		// The occurrence can belong to each master, so its calendar is
+		// not known. Calendar 0 holds no master, so the shared rule
+		// refuses the move and names every master.
+		if err := move.CheckOverrideMove(ctx, recID, 0, calendarID); err != nil {
 			return storage.Event{}, nil, err
 		}
 	}
@@ -947,11 +954,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	// A legacy override marks the calendar of its master (see
 	// uidmove.Rows.DirtyCalendar). Issue #842 tracks an export scoped to
 	// one calendar.
-	dirtyCalendarID, err := move.DirtyCalendar(ctx, recID, r.CalendarID)
-	if err != nil {
-		return Event{}, 0, err
-	}
-	return e, dirtyCalendarID, nil
+	return e, uidmove.DirtyCalendarOf(recID, r.CalendarID, uidMasters(masters)), nil
 }
 
 // reviveOverrideTx un-hides a soft-deleted override row that an edit of the
