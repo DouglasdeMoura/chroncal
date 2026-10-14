@@ -55,6 +55,7 @@ func TestLoad_KeysErrors(t *testing.T) {
 		{"duplicate between overrides", "[keys]\nquit = [\"z\"]\nsync = [\"z\"]\n", `key "z" is bound to both quit and sync`},
 		{"duplicate with a default", "[keys]\nquit = [\"m\"]\n", `key "m" is bound to both quit and month_view`},
 		{"duplicate shift alias", "[keys]\nsync = [\"shift+w\"]\n", "bound to both week_start and sync"},
+		{"duplicate upper shift alias", "[keys]\nsync = [\"shift+W\"]\n", "bound to both week_start and sync"},
 		{"main view key", "[keys]\nsync = [\"j\"]\n", `keys.sync: chroncal reserves "j", because the month, week, day, and agenda views use it`},
 		{"main view enter", "[keys]\ncreate = [\"enter\"]\n", `keys.create: chroncal reserves "enter"`},
 		{"agenda key", "[keys]\nundo = [\"o\"]\n", `keys.undo: chroncal reserves "o"`},
@@ -116,6 +117,25 @@ func TestDefaultKeysAreNotReserved(t *testing.T) {
 			if use := reservedKeyUse(a.Name, k); use != "" {
 				t.Errorf("default key %q of %s is reserved, because %s", k, a.Name, use)
 			}
+		}
+	}
+}
+
+// TestCanonicalKeyFoldsShiftedLetters gives one spelling to each name that
+// a terminal or a user can give a shifted letter. "shift+W" is the same key
+// as "shift+w" and "W".
+func TestCanonicalKeyFoldsShiftedLetters(t *testing.T) {
+	for in, want := range map[string]string{
+		"shift+w":   "W",
+		"shift+W":   "W",
+		"W":         "W",
+		"w":         "w",
+		"shift+tab": "shift+tab",
+		"shift+1":   "shift+1",
+		"ctrl+w":    "ctrl+w",
+	} {
+		if got := CanonicalKey(in); got != want {
+			t.Errorf("CanonicalKey(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

@@ -222,12 +222,14 @@ func ValidateKeys(overrides map[string][]string) error {
 	return nil
 }
 
-// CanonicalKey returns one spelling for the two Bubble Tea names of a
-// shifted letter. "shift+w" and "W" give the same result, because a
-// terminal can report the key in either form.
+// CanonicalKey returns one spelling for each name of a shifted letter.
+// "shift+w", "shift+W", and "W" give "W". A terminal can report the key as
+// "shift+w" or "W", and a user can write "shift+W" in the config file.
 func CanonicalKey(k string) string {
-	if rest, ok := strings.CutPrefix(k, "shift+"); ok && len(rest) == 1 && rest[0] >= 'a' && rest[0] <= 'z' {
-		return strings.ToUpper(rest)
+	if rest, ok := strings.CutPrefix(k, "shift+"); ok && len(rest) == 1 {
+		if lower := strings.ToLower(rest); lower[0] >= 'a' && lower[0] <= 'z' {
+			return strings.ToUpper(rest)
+		}
 	}
 	return k
 }
