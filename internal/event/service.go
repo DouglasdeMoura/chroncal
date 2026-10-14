@@ -533,7 +533,7 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 		ErrTargetHasUID: ErrMoveTargetHasUID,
 		HasMaster: func(ctx context.Context, calendarID int64) (bool, error) {
 			_, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
-			return uidmove.Found(err)
+			return storage.Found(err)
 		},
 		Masters: func(ctx context.Context) ([]uidmove.Master, error) {
 			masters, err := qtx.ListEventMastersByUID(ctx, uid)
@@ -589,7 +589,7 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 	_, err = qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
 		CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
 	})
-	legacy, err := uidmove.Found(err)
+	legacy, err := storage.Found(err)
 	if err != nil {
 		return storage.Event{}, nil, err
 	}
@@ -965,7 +965,7 @@ func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, masterCalendarI
 	if err := qtx.RestoreEvent(ctx, row.ID); err != nil {
 		return fmt.Errorf("revive override: %w", err)
 	}
-	if err := clearMasterEXDATEInCalendar(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID); err != nil {
+	if err := clearMasterEXDATE(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID); err != nil {
 		return err
 	}
 	if err := replaceRelationsTx(ctx, qtx, row.ID, nil, nil); err != nil {

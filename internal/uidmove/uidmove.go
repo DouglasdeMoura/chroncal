@@ -11,8 +11,6 @@ package uidmove
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -69,19 +67,6 @@ type OccurrenceMoveError struct {
 func (e *OccurrenceMoveError) Error() string { return e.Err.Error() }
 
 func (e *OccurrenceMoveError) Unwrap() error { return e.Err }
-
-// Found converts the error of a single-row lookup to a found flag.
-// sql.ErrNoRows gives false and no error.
-func Found(err error) (bool, error) {
-	switch {
-	case err == nil:
-		return true, nil
-	case errors.Is(err, sql.ErrNoRows):
-		return false, nil
-	default:
-		return false, err
-	}
-}
 
 // Check applies CheckOverrideMove and then CheckTarget to an update of one
 // row by its ID. recurrenceID is the recurrence ID of that row.
