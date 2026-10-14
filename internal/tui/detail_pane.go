@@ -25,16 +25,30 @@ func paneTitle(lines []string, w int) string {
 // wrapTitleLines wraps a title into lines of at most w cells each, so the
 // full title shows (issue #825). The width of each rune is its display
 // width, so a wide (CJK) rune counts as two cells. The result has at most
-// maxLines lines. When the title needs more lines, the last line gets
-// the remaining words and truncateTo cuts it with "…".
+// maxLines lines. When the title needs more lines, the last line gets the
+// rest of the title, and truncateTo cuts it with "…".
+//
+// The rest comes from the title text, not from a join of the wrapped
+// lines. wrapLine splits a long word (a URL, a CJK run) with no separator,
+// so a join with " " puts a false space into the word.
 func wrapTitleLines(text string, w, maxLines int) []string {
 	lines := wrapLine(text, w)
 	maxLines = max(maxLines, 1)
 	if len(lines) <= maxLines {
 		return lines
 	}
-	rest := strings.Join(lines[maxLines-1:], " ")
-	return append(lines[:maxLines-1:maxLines-1], truncateTo(rest, w))
+	// wrapLine joins the words of strings.Fields with one space, so each
+	// line is a substring of normalized, and one space or no separator
+	// follows it.
+	normalized := strings.Join(strings.Fields(text), " ")
+	offset := 0
+	for _, line := range lines[:maxLines-1] {
+		offset += len(line)
+		if offset < len(normalized) && normalized[offset] == ' ' {
+			offset++
+		}
+	}
+	return append(lines[:maxLines-1:maxLines-1], truncateTo(normalized[offset:], w))
 }
 
 // padTrailing extends s with plain spaces so it is exactly w cells wide.
