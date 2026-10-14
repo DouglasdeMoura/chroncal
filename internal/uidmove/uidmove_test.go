@@ -65,9 +65,17 @@ func TestCheckOverrideMove(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := fakeRows(tc.masters, 0).CheckOverrideMove(context.Background(), tc.recID, a, tc.to)
+			rows := fakeRows(tc.masters, 0)
+			err := rows.CheckOverrideMove(context.Background(), tc.recID, a, tc.to)
 			if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
 				t.Fatalf("CheckOverrideMove = %v, want %v", err, tc.want)
+			}
+			// The variant for a caller that holds the masters gives the
+			// same answer.
+			masters, _ := rows.Masters(context.Background())
+			err = rows.CheckOverrideMoveOf(tc.recID, a, tc.to, masters)
+			if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
+				t.Fatalf("CheckOverrideMoveOf = %v, want %v", err, tc.want)
 			}
 		})
 	}

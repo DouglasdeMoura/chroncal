@@ -597,7 +597,7 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 		// The occurrence can belong to each master, so its calendar is
 		// not known. Calendar 0 holds no master, so the shared rule
 		// refuses the move and names every master.
-		if err := move.CheckOverrideMove(ctx, recID, 0, calendarID); err != nil {
+		if err := move.CheckOverrideMoveOf(recID, 0, calendarID, uidMasters(masters)); err != nil {
 			return storage.Event{}, nil, err
 		}
 	}
@@ -876,7 +876,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	if existErr == nil {
 		fromCalendarID = existing.CalendarID
 	}
-	if err := move.Check(ctx, recID, fromCalendarID, p.CalendarID); err != nil {
+	if err := move.CheckOf(ctx, recID, fromCalendarID, p.CalendarID, uidMasters(masters)); err != nil {
 		return Event{}, 0, err
 	}
 	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {

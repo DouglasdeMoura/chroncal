@@ -90,7 +90,7 @@ func (r Rows) Check(ctx context.Context, recurrenceID string, fromCalendarID, to
 //
 // A refusal is an *OccurrenceMoveError.
 func (r Rows) CheckOverrideMove(ctx context.Context, recurrenceID string, fromCalendarID, toCalendarID int64) error {
-	if recurrenceID == "" || fromCalendarID == toCalendarID || toCalendarID == 0 {
+	if !moveNeedsCheck(recurrenceID, fromCalendarID, toCalendarID) {
 		return nil
 	}
 	ownMaster, err := r.HasMaster(ctx, fromCalendarID)
@@ -101,20 +101,62 @@ func (r Rows) CheckOverrideMove(ctx context.Context, recurrenceID string, fromCa
 	if err != nil {
 		return fmt.Errorf("find master: %w", err)
 	}
-	if ownMaster || !targetMaster {
-		return r.occurrenceMoveError(ctx, fromCalendarID)
+	if overrideMoveAllowed(ownMaster, targetMaster) {
+		return nil
 	}
-	return nil
+	masters, err := r.Masters(ctx)
+	if err != nil {
+		// The refusal is the main result, so it goes out with no master.
+		return &OccurrenceMoveError{Err: r.ErrInstanceMove}
+	}
+	return r.occurrenceMoveError(fromCalendarID, masters)
+}
+
+// CheckOverrideMoveOf is CheckOverrideMove for a caller that already holds
+// the live masters of the UID. It reads nothing.
+func (r Rows) CheckOverrideMoveOf(recurrenceID string, fromCalendarID, toCalendarID int64, masters []Master) error {
+	if !moveNeedsCheck(recurrenceID, fromCalendarID, toCalendarID) {
+		return nil
+	}
+	if overrideMoveAllowed(hasMasterIn(masters, fromCalendarID), hasMasterIn(masters, toCalendarID)) {
+		return nil
+	}
+	return r.occurrenceMoveError(fromCalendarID, masters)
+}
+
+// CheckOf is Check for a caller that already holds the live masters of
+// the UID. See CheckOverrideMoveOf.
+func (r Rows) CheckOf(ctx context.Context, recurrenceID string, fromCalendarID, toCalendarID int64, masters []Master) error {
+	if err := r.CheckOverrideMoveOf(recurrenceID, fromCalendarID, toCalendarID, masters); err != nil {
+		return err
+	}
+	return r.CheckTarget(ctx, fromCalendarID, toCalendarID)
+}
+
+// moveNeedsCheck reports whether the override rule applies: an override row
+// (recurrenceID not empty) that an update sends to another named calendar.
+func moveNeedsCheck(recurrenceID string, fromCalendarID, toCalendarID int64) bool {
+	return recurrenceID != "" && fromCalendarID != toCalendarID && toCalendarID != 0
+}
+
+// overrideMoveAllowed is the override rule. A row beside its master cannot
+// leave it. A legacy row can go only to a calendar with a master.
+func overrideMoveAllowed(ownMaster, targetMaster bool) bool {
+	return !ownMaster && targetMaster
+}
+
+func hasMasterIn(masters []Master, calendarID int64) bool {
+	for _, m := range masters {
+		if m.CalendarID == calendarID {
+			return true
+		}
+	}
+	return false
 }
 
 // occurrenceMoveError builds the refusal of a move of an override row in
-// calendarID. A failed lookup of the masters gives an error with no
-// master, because the refusal is the main result.
-func (r Rows) occurrenceMoveError(ctx context.Context, calendarID int64) error {
-	masters, err := r.Masters(ctx)
-	if err != nil {
-		return &OccurrenceMoveError{Err: r.ErrInstanceMove}
-	}
+// calendarID. It names the master in that calendar, or else every master.
+func (r Rows) occurrenceMoveError(calendarID int64, masters []Master) error {
 	var own []Master
 	for _, m := range masters {
 		if m.CalendarID == calendarID {
