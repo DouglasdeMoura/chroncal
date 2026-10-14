@@ -322,7 +322,9 @@ func newPurgeDeletedCmd(r resource, h verbHelp) *cobra.Command {
 // fields of the edited row.
 //
 // One master gives a hint with the numeric ID of the master, because a UID
-// can have a master in two calendars. No master gives a hint with the UID.
+// can have a master in two calendars. No live master gives no move hint,
+// because a move of the series fails the same way. The error says to
+// restore the master or to edit without --calendar.
 // More masters give an error that names each master and its calendar,
 // because the CLI cannot choose the series.
 func errOccurrenceMove(ctx context.Context, a *app.App, kind, uid, recurrenceID string, calendarID int64, err error) error {
@@ -334,7 +336,8 @@ func errOccurrenceMove(ctx context.Context, a *app.App, kind, uid, recurrenceID 
 	const reason = "one occurrence cannot move to another calendar"
 	switch len(masters) {
 	case 0:
-		return fmt.Errorf("update %s: %s. To move the whole series, run: chroncal %s update %s --calendar NAME", kind, reason, kind, uid)
+		return fmt.Errorf("update %s: %s. The UID %s has no live series to move: its master is in the trash or gone. "+
+			"Restore the master from the trash first, or edit the occurrence without --calendar", kind, reason, uid)
 	case 1:
 		return fmt.Errorf("update %s: %s. To move the whole series, run: chroncal %s update %d --calendar NAME", kind, reason, kind, masters[0].ID)
 	}

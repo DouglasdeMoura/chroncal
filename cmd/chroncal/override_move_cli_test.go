@@ -178,3 +178,47 @@ func TestLegacyOverrideCalendarMoveCLIHint(t *testing.T) {
 		}
 	}
 }
+
+// TestOrphanOverrideCalendarMoveCLIHint moves an override whose master is
+// in the trash. No live series exists, so `update <UID> --calendar` fails
+// the same way. The error must say that no live series exists and give the
+// two ways out.
+func TestOrphanOverrideCalendarMoveCLIHint(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	if _, err := a.Calendars.Create(ctx, "Home", "", ""); err != nil {
+		t.Fatalf("create calendar: %v", err)
+	}
+	start := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
+	master, err := a.Events.Create(ctx, event.CreateParams{CalendarID: 1, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3"})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+	inst := start.Add(24 * time.Hour)
+	override, err := a.Events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE id = ?`, master.ID); err != nil {
+		t.Fatalf("trash the master: %v", err)
+	}
+	a.Close()
+
+	_, stderr, err := runChroncalCommand(t, "event", "update", fmt.Sprint(override.ID), "--calendar", "Home")
+	if err == nil {
+		t.Fatal("move of an orphan override succeeded")
+	}
+	if strings.Contains(stderr, "--calendar NAME") {
+		t.Fatalf("stderr = %q, want no move hint that fails the same way", stderr)
+	}
+	for _, want := range []string{"no live series", "Restore the master from the trash", "without --calendar"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr = %q, want %q", stderr, want)
+		}
+	}
+}
