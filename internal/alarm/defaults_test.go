@@ -205,12 +205,20 @@ func TestDefaultAlarm_CalendarOverrideList(t *testing.T) {
 	assertTriggers(t, dueTriggers(due), "DISPLAY:-PT45M", "AUDIO:-PT5M")
 }
 
+// allDayTestNow is the fixed "now" of the all-day tests. An all-day event
+// starts at midnight, so a "-PT30M" default trigger falls at 23:30 of the
+// day before. With a wall-clock "now" late in the day, that trigger is
+// almost 24 hours old, and the check skips it as stale (StaleThreshold).
+// The result then depends on the time of day. Midday keeps the trigger
+// well inside the threshold.
+var allDayTestNow = time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+
 func TestDefaultAlarm_SkipAllDay(t *testing.T) {
 	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
 		Triggers:   []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},
 		SkipAllDay: true,
 	})
-	now := time.Now().Truncate(time.Second)
+	now := allDayTestNow
 	createEventAt(t, evtSvc, 1, "All-day offsite", now.Add(-10*time.Minute), true)
 
 	due, _, err := svc.Check(context.Background(), now)
@@ -224,7 +232,7 @@ func TestDefaultAlarm_AllDayFiresWhenNotSkipped(t *testing.T) {
 	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
 		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},
 	})
-	now := time.Now().Truncate(time.Second)
+	now := allDayTestNow
 	createEventAt(t, evtSvc, 1, "All-day offsite", now.Add(-10*time.Minute), true)
 
 	due, _, err := svc.Check(context.Background(), now)
