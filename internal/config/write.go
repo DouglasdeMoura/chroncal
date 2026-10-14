@@ -166,6 +166,7 @@ func setSecurityAllowPlaintext(content []byte) ([]byte, error) {
 	table := ""
 	headerLine := -1
 	keyLine := -1
+	dottedLine := -1
 	for i, line := range lines {
 		if tomlArrayHeader.MatchString(line) {
 			table = "[["
@@ -179,6 +180,9 @@ func setSecurityAllowPlaintext(content []byte) ([]byte, error) {
 			continue
 		}
 		isDotted := strings.HasPrefix(strings.TrimSpace(line), "security")
+		if table == "" && isDotted {
+			dottedLine = i
+		}
 		if (table == "security" && !isDotted) || (table == "" && isDotted) {
 			if allowPlaintextLine.MatchString(line) && keyLine < 0 {
 				keyLine = i
@@ -193,6 +197,11 @@ func setSecurityAllowPlaintext(content []byte) ([]byte, error) {
 		updated = []byte(strings.Join(lines, "\n"))
 	case headerLine >= 0:
 		lines = slices.Insert(lines, headerLine+1, "allow_plaintext = true")
+		updated = []byte(strings.Join(lines, "\n"))
+	case dottedLine >= 0:
+		// Dotted keys at the top level define the security table, so a
+		// [security] header would define it again. Add one more dotted key.
+		lines = slices.Insert(lines, dottedLine+1, "security.allow_plaintext = true")
 		updated = []byte(strings.Join(lines, "\n"))
 	default:
 		// Append the table after one blank line.

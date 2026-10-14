@@ -72,6 +72,11 @@ func TestEnableAllowPlaintextKeepsTheRestOfTheFile(t *testing.T) {
 			want: "security.allow_plaintext = true\ndb = \"/tmp/x.db\"\n",
 		},
 		{
+			name: "other dotted security key at the top level",
+			in:   "security.allow_unsafe_alarm_audio_attach = true\ndb = \"/tmp/x.db\"\n\n[ui]\ntheme = \"nord\"\n",
+			want: "security.allow_unsafe_alarm_audio_attach = true\nsecurity.allow_plaintext = true\ndb = \"/tmp/x.db\"\n\n[ui]\ntheme = \"nord\"\n",
+		},
+		{
 			name: "no trailing newline",
 			in:   "db = \"/tmp/x.db\"",
 			want: "db = \"/tmp/x.db\"\n\n[security]\nallow_plaintext = true\n",

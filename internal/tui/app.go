@@ -673,7 +673,8 @@ type RunOptions struct {
 	// The zero value keeps the prompt.
 	SkipQuitConfirm bool
 	// Keys is the [keys] table of config.toml. An entry replaces the
-	// default keys of one app action. config.Load validates the table.
+	// default keys of one app action. Run calls config.ValidateKeys on
+	// the table before it starts the program.
 	Keys map[string][]string
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/softdelete"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 // ErrNotDeleted is returned by Restore when the target row is not soft-deleted.
@@ -440,11 +441,13 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 				Uid:          uid,
 				RecurrenceID: recurrenceID,
 			})
-			return log.ID, err == nil, ignoreNoRows(err)
+			found, err := uidmove.Found(err)
+			return log.ID, found, err
 		},
 		GetMaster: func(ctx context.Context) (int64, string, bool, error) {
 			master, err := qtx.GetEventByUID(ctx, uid)
-			return master.ID, storage.NullableToString(master.Exdates), err == nil, ignoreNoRows(err)
+			found, err := uidmove.Found(err)
+			return master.ID, storage.NullableToString(master.Exdates), found, err
 		},
 		UpdateExdates:   updateMasterExdates(qtx),
 		DeleteDeleteLog: qtx.DeleteEventExdateDelete,
@@ -463,11 +466,13 @@ func clearMasterEXDATEInCalendar(ctx context.Context, qtx *storage.Queries, cale
 				Uid:          uid,
 				RecurrenceID: recurrenceID,
 			})
-			return log.ID, err == nil, ignoreNoRows(err)
+			found, err := uidmove.Found(err)
+			return log.ID, found, err
 		},
 		GetMaster: func(ctx context.Context) (int64, string, bool, error) {
 			master, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
-			return master.ID, storage.NullableToString(master.Exdates), err == nil, ignoreNoRows(err)
+			found, err := uidmove.Found(err)
+			return master.ID, storage.NullableToString(master.Exdates), found, err
 		},
 		UpdateExdates:   updateMasterExdates(qtx),
 		DeleteDeleteLog: qtx.DeleteEventExdateDelete,
@@ -482,15 +487,6 @@ func updateMasterExdates(qtx *storage.Queries) func(context.Context, int64, stri
 			ID:      masterID,
 		})
 	}
-}
-
-// ignoreNoRows returns nil for sql.ErrNoRows and err otherwise. A missing
-// row is a valid answer of a lookup in softdelete.ExdateProvenance.
-func ignoreNoRows(err error) error {
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	return err
 }
 
 // restoreFromInstance reverses a "this and following" truncation for the TUI/CLI
