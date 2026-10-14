@@ -64,6 +64,15 @@ func TestReservedKeysMatchTUIKeymaps(t *testing.T) {
 			bindingKeys(t, defaultDayKeys()),
 			bindingKeys(t, defaultAgendaKeys(), "Create"),
 		),
+		// The sidebar keys of the switch_focus action follow the app
+		// action, so they are not reserved.
+		"the sidebar uses it": canonicalSet(
+			bindingKeys(t, defaultCalendarListKeys(), "Tab", "ShiftTab"),
+			bindingKeys(t, defaultMiniMonthKeys()),
+		),
+		"the trash view uses it": canonicalSet(
+			bindingKeys(t, defaultTrashKeys()),
+		),
 		"the day dialog uses it": canonicalSet(
 			shellKeys,
 			bindingKeys(t, defaultEventDialogKeys(), "Create"),

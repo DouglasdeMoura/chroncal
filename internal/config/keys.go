@@ -70,6 +70,22 @@ var reservedKeys = []ReservedKeys{
 		},
 	},
 	{
+		// handleKeyPress checks every app action before the sidebar keys.
+		// Tab and shift+tab stay out: the switch_focus action owns them.
+		Use: "the sidebar uses it",
+		Keys: []string{
+			"up", "down", "left", "right", "h", "j", "k", "l",
+			"shift+up", "shift+down", "K", "J", "space", "enter",
+			"[", "]", "t",
+		},
+	},
+	{
+		// The help key works over the trash view.
+		Use:     "the trash view uses it",
+		Actions: []string{"help"},
+		Keys:    []string{"r", "x", "delete", "X", "space", "A"},
+	},
+	{
 		// The help key works over the day dialog, and the day dialog
 		// checks the create key before its own keys.
 		Use:     "the day dialog uses it",

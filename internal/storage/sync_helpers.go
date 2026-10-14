@@ -118,9 +118,7 @@ func RecordResourceMove(ctx context.Context, q *Queries, fromCalendarID, toCalen
 	}); err != nil {
 		return fmt.Errorf("clear target tombstone: %w", err)
 	}
-	if err := q.CreateTombstoneFromSyncResource(ctx, CreateTombstoneFromSyncResourceParams{
-		CalendarID: fromCalendarID, Uid: uid,
-	}); err != nil {
+	if _, err := CreateTombstoneIfSynced(ctx, q.db, fromCalendarID, uid); err != nil {
 		return fmt.Errorf("create source tombstone: %w", err)
 	}
 	if err := q.ClearPushedSyncResourceDirty(ctx, ClearPushedSyncResourceDirtyParams{

@@ -719,16 +719,16 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 		return Event{}, 0, err
 	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
+	existing, existErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+		Uid:          uid,
+		RecurrenceID: recID,
+	})
 	// One CalDAV object holds the whole series. An override in another
 	// calendar splits the series, so refuse the move (issue #828). An older
 	// version permitted that move, so an override can already live in
 	// another calendar. An edit that keeps that calendar stays permitted.
 	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
-		legacy, gErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
-			Uid:          uid,
-			RecurrenceID: recID,
-		})
-		if gErr != nil || legacy.CalendarID != p.CalendarID {
+		if existErr != nil || existing.CalendarID != p.CalendarID {
 			return Event{}, 0, ErrInstanceCalendarMove
 		}
 		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
@@ -743,10 +743,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	var r storage.Event
 	// fromCalendarID is the calendar of a stored override before the edit.
 	var fromCalendarID int64
-	if existing, gErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
-		Uid:          uid,
-		RecurrenceID: recID,
-	}); gErr == nil {
+	if existErr == nil {
 		fromCalendarID = existing.CalendarID
 		r, err = updateOverrideTx(ctx, qtx, existing, p)
 		if err != nil {

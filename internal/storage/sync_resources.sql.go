@@ -77,27 +77,6 @@ func (q *Queries) CreateTombstone(ctx context.Context, arg CreateTombstoneParams
 	return err
 }
 
-const createTombstoneFromSyncResource = `-- name: CreateTombstoneFromSyncResource :exec
-INSERT INTO tombstones (calendar_id, uid, remote_url)
-SELECT calendar_id, uid, remote_url FROM sync_resources
-WHERE sync_resources.calendar_id = ? AND sync_resources.uid = ? AND sync_resources.remote_url != ''
-ON CONFLICT(calendar_id, uid) DO UPDATE SET
-    remote_url = excluded.remote_url,
-    deleted_at = excluded.deleted_at
-`
-
-type CreateTombstoneFromSyncResourceParams struct {
-	CalendarID int64
-	Uid        string
-}
-
-// Queue the server delete of one resource that has a server object. A sync
-// row with an empty remote_url gets no tombstone. See issue #828.
-func (q *Queries) CreateTombstoneFromSyncResource(ctx context.Context, arg CreateTombstoneFromSyncResourceParams) error {
-	_, err := q.db.ExecContext(ctx, createTombstoneFromSyncResource, arg.CalendarID, arg.Uid)
-	return err
-}
-
 const deleteStaleTombstones = `-- name: DeleteStaleTombstones :exec
 DELETE FROM tombstones WHERE deleted_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days')
 `
