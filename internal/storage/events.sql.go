@@ -283,6 +283,54 @@ func (q *Queries) GetEventByCalendarUIDAndRecurrenceID(ctx context.Context, arg 
 	return i, err
 }
 
+const getEventByCalendarUIDAndRecurrenceIDIncludingDeleted = `-- name: GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted :one
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?
+`
+
+type GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams struct {
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+}
+
+// The row of one (calendar, UID, recurrence ID) key, live or soft-deleted.
+// A soft-deleted override keeps its UNIQUE key, so a new override of the
+// same occurrence must revive it.
+func (q *Queries) GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx context.Context, arg GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams) (Event, error) {
+	row := q.db.QueryRowContext(ctx, getEventByCalendarUIDAndRecurrenceIDIncludingDeleted, arg.CalendarID, arg.Uid, arg.RecurrenceID)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.Uid,
+		&i.CalendarID,
+		&i.Title,
+		&i.Description,
+		&i.Location,
+		&i.StartTime,
+		&i.EndTime,
+		&i.AllDay,
+		&i.RecurrenceRule,
+		&i.Timezone,
+		&i.Status,
+		&i.Transp,
+		&i.Sequence,
+		&i.Priority,
+		&i.Class,
+		&i.Url,
+		&i.Exdates,
+		&i.Rdates,
+		&i.RecurrenceID,
+		&i.Geo,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Duration,
+		&i.Dtstamp,
+		&i.ConferenceUri,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getEventByUID = `-- name: GetEventByUID :one
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
 `

@@ -39,6 +39,12 @@ SELECT * FROM events WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
 -- name: GetEventByCalendarUIDAndRecurrenceID :one
 SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
 
+-- name: GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted :one
+-- The row of one (calendar, UID, recurrence ID) key, live or soft-deleted.
+-- A soft-deleted override keeps its UNIQUE key, so a new override of the
+-- same occurrence must revive it.
+SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?;
+
 -- name: GetEventIncludingDeleted :one
 SELECT * FROM events WHERE id = ?;
 

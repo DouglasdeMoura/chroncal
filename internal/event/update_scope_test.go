@@ -360,3 +360,50 @@ func TestUpdate_AllEventsRewritesMaster(t *testing.T) {
 		t.Errorf("master.Title = %q, want %q", fresh.Title, "Standup (renamed)")
 	}
 }
+
+// TestUpdateInstance_RevivesDeletedOverride edits one occurrence, deletes
+// that occurrence, and edits it again. The delete soft-deletes the
+// override row, and the row keeps its UNIQUE key. The second edit must
+// revive and update that row, not fail on the key. The delete-recorded
+// EXDATE goes away, so the occurrence shows again. An imported EXDATE of
+// another occurrence stays (issue #86).
+func TestUpdateInstance_RevivesDeletedOverride(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-1", "FREQ=DAILY;COUNT=5")
+	inst := master.StartTime.Add(24 * time.Hour)
+	imported := master.StartTime.Add(72 * time.Hour)
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET exdates = ? WHERE id = ?`, imported.Format(time.RFC3339), master.ID); err != nil {
+		t.Fatalf("seed imported EXDATE: %v", err)
+	}
+
+	edit := func(title string) (Event, error) {
+		return svc.UpdateInstance(ctx, master.UID, inst, UpdateParams{
+			CalendarID: master.CalendarID, Title: title, StartTime: inst, EndTime: inst.Add(time.Hour),
+		})
+	}
+	first, err := edit("First edit")
+	if err != nil {
+		t.Fatalf("first UpdateInstance: %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, master.UID, inst); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	second, err := edit("Second edit")
+	if err != nil {
+		t.Fatalf("UpdateInstance of a deleted occurrence = %v, want nil", err)
+	}
+	if second.ID != first.ID || second.Title != "Second edit" {
+		t.Fatalf("second edit = %+v, want row %d revived with the new title", second, first.ID)
+	}
+	fresh, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master: %v", err)
+	}
+	if strings.Contains(fresh.ExDates, inst.Format("2006-01-02T15")) {
+		t.Fatalf("master EXDATEs = %q, want the delete-recorded EXDATE gone", fresh.ExDates)
+	}
+	if !strings.Contains(fresh.ExDates, imported.Format("2006-01-02T15")) {
+		t.Fatalf("master EXDATEs = %q, want the imported EXDATE kept", fresh.ExDates)
+	}
+}

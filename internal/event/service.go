@@ -899,16 +899,22 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	} else {
 		r, err = qtx.CreateEvent(ctx, overrideCreateParams(uid, recID, master.Sequence+1, p))
 		if err != nil {
-			// Concurrent override creation race: the UNIQUE(uid, recurrence_id)
-			// constraint protects against duplicate rows, so retry as update.
+			// The UNIQUE(calendar_id, uid, recurrence_id) key holds a row:
+			// a concurrent create, or an override that a delete of this
+			// occurrence soft-deleted. Retry as an update of that row.
 			if isUniqueViolationOnRecurrenceID(err) {
-				existing, eErr := qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+				existing, eErr := qtx.GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams{
 					CalendarID:   p.CalendarID,
 					Uid:          uid,
 					RecurrenceID: recID,
 				})
 				if eErr != nil {
 					return Event{}, 0, fmt.Errorf("retry get override: %w", eErr)
+				}
+				if existing.DeletedAt != nil && *existing.DeletedAt != "" {
+					if err := reviveOverrideTx(ctx, qtx, existing); err != nil {
+						return Event{}, 0, err
+					}
 				}
 				storedCalendarID = existing.CalendarID
 				r, err = updateOverrideTx(ctx, qtx, existing, p)
@@ -946,6 +952,17 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 		return Event{}, 0, err
 	}
 	return e, dirtyCalendarID, nil
+}
+
+// reviveOverrideTx un-hides a soft-deleted override row that an edit of the
+// same occurrence takes again. It uses the restore rule of the trash: the
+// master loses the EXDATE that the delete recorded, and an imported EXDATE
+// stays (issue #86, see softdelete.ClearMasterEXDATE).
+func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, row storage.Event) error {
+	if err := qtx.RestoreEvent(ctx, row.ID); err != nil {
+		return fmt.Errorf("revive override: %w", err)
+	}
+	return clearMasterEXDATE(ctx, qtx, row.Uid, row.RecurrenceID)
 }
 
 // updateOverrideTx updates a stored override row. A span change clears the
