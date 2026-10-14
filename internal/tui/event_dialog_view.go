@@ -101,7 +101,7 @@ func (m EventDialogModel) refresh() EventDialogModel {
 		m.shell = m.shell.SetActions(m.actions())
 	}
 
-	m.shell = m.shell.SetShortHelp(m.shortHelp())
+	m.shell = m.shell.SetShortHelp(m.shortHelp()).SyncLayout()
 	return m
 }
 

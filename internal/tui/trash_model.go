@@ -303,7 +303,7 @@ func (m TrashModel) refresh() TrashModel {
 	}
 
 	m.shell = m.shell.SetTitleAction(m.purgeAllTitleAction())
-	m.shell = m.shell.SetShortHelp(m.shortHelp())
+	m.shell = m.shell.SetShortHelp(m.shortHelp()).SyncLayout()
 	return m
 }
 

@@ -241,6 +241,7 @@ func (m ListDialogModel) DetailsOrigin() (int, int) {
 // and their rule (when present) and the current scroll offset. Returns false
 // when the row is scrolled out of view.
 func (m ListDialogModel) BodyRowScreenY(idx int) (int, bool) {
+	m.ensureLayout()
 	_, oy := m.DetailsOrigin()
 	if m.titleLines != nil {
 		oy += len(m.titleLines) + 1
@@ -297,6 +298,7 @@ func (m ListDialogModel) TitleActionAtPosition(x, y int) (tea.Cmd, bool) {
 // result command. Callers dispatch their domain keys (New/Edit/Delete/…)
 // themselves before they fall through to this.
 func (m ListDialogModel) HandleKey(msg tea.KeyPressMsg, onClose func() tea.Msg) (ListDialogModel, tea.Cmd, bool) {
+	m.ensureLayout()
 	switch {
 	case key.Matches(msg, m.keys.Close):
 		return m, func() tea.Msg { return onClose() }, true
@@ -330,6 +332,7 @@ func (m ListDialogModel) HandleKey(msg tea.KeyPressMsg, onClose func() tea.Msg) 
 // user can then scroll long event content with the wheel. That is the same
 // affordance the single-event dialog provides.
 func (m ListDialogModel) HandleMouseWheel(msg tea.MouseWheelMsg) (ListDialogModel, tea.Cmd) {
+	m.ensureLayout()
 	var cmd tea.Cmd
 	m.body, cmd = m.body.Update(msg)
 	return m, cmd
@@ -339,11 +342,13 @@ func (m ListDialogModel) HandleMouseWheel(msg tea.MouseWheelMsg) (ListDialogMode
 // these when up/down arrows belong to the details pane (focus is on actions
 // or RSVP, not on the list itself).
 func (m ListDialogModel) ScrollDetailsUp() ListDialogModel {
+	m.ensureLayout()
 	m.body.ScrollUp(1)
 	return m
 }
 
 func (m ListDialogModel) ScrollDetailsDown() ListDialogModel {
+	m.ensureLayout()
 	m.body.ScrollDown(1)
 	return m
 }

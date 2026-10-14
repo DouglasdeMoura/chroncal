@@ -14,6 +14,7 @@ func (m ListDialogModel) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
+	m.ensureLayout()
 	boxW, boxH := m.boxSize()
 	innerW := max(boxW-5, 10)
 	innerH := max(boxH-3, 6)
