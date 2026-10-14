@@ -63,7 +63,7 @@ func TestLoad_KeysErrors(t *testing.T) {
 		{"calendar manager shift alias", "[keys]\ncalendars = [\"shift+j\"]\n", `keys.calendars: chroncal reserves "shift+j"`},
 		{"sidebar key", "[keys]\nsync = [\"K\"]\n", `keys.sync: chroncal reserves "K", because the sidebar uses it`},
 		{"trash view key", "[keys]\nhelp = [\"r\"]\n", `keys.help: chroncal reserves "r", because the trash view uses it`},
-		{"day dialog key","[keys]\ncreate = [\"n\"]\n", `keys.create: chroncal reserves "n", because the day dialog uses it`},
+		{"day dialog key", "[keys]\ncreate = [\"n\"]\n", `keys.create: chroncal reserves "n", because the day dialog uses it`},
 		{"event dialog key", "[keys]\nhelp = [\"p\"]\n", `keys.help: chroncal reserves "p"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {

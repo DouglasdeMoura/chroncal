@@ -147,7 +147,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			}
 			switch {
 			case gaveUp:
-				msg := fmt.Sprintf("%s; gave up after %d attempts, local copy kept (see sync status)", cause, knownMissLimit)
+				msg := fmt.Sprintf("%s; gave up after %d or more attempts, local copy kept (see sync status)", cause, knownMissLimit)
 				noteWarning(ImportWarning{Path: miss, UID: local.Uid, Message: msg})
 			case unparseable:
 				noteWarning(ImportWarning{

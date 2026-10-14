@@ -89,7 +89,8 @@ func (k *knownMisses) resetIfChanged(ctx context.Context, href, etag string) {
 // noteMiss bumps the miss count for the href. etag is the ETag that the
 // change list gave for the href, or "". The budget is spent when the miss
 // count reaches knownMissLimit and the first miss is at least
-// knownMissMinSpan old. exhausted reports that the budget is spent, so the miss must not withhold the sync-token. gaveUp reports
+// knownMissMinSpan old. exhausted reports that the budget is spent, so the
+// miss must not withhold the sync-token. gaveUp reports
 // that this call spent the budget. The caller must then tell the user
 // once. An href that gave up before needs no write.
 func (k *knownMisses) noteMiss(ctx context.Context, href, uid, reason, etag string) (exhausted, gaveUp bool, err error) {
