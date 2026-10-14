@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +31,11 @@ type Service struct {
 // ErrInstanceCalendarMove reports an edit of one occurrence that asks for
 // another calendar. Move the whole series instead.
 var ErrInstanceCalendarMove = errors.New("event: one occurrence cannot move to another calendar; move the whole series")
+
+// ErrAmbiguousUID reports an edit of one occurrence whose UID has a master
+// in more than one calendar, and the edit names none of those calendars.
+// The service refuses the edit, because it cannot choose the series.
+var ErrAmbiguousUID = errors.New("event: the UID has a series in more than one calendar; name the calendar of the series")
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
 	return &Service{db: db, q: q}
@@ -503,16 +509,99 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 // update of an override row by its ID. One CalDAV object holds the whole
 // series, so an override cannot move alone (issue #828). An override that
 // an older version saved in another calendar can move back to the calendar
-// of the master. The other rules do nothing for a master row.
+// of the master. That legacy override has no master in its own calendar.
+// The lookups stay inside one calendar, because two calendars can hold the
+// same UID. The other rules do nothing for a master row.
 func checkOverrideCalendarTx(ctx context.Context, qtx *storage.Queries, old storage.Event, calendarID int64) error {
 	if old.RecurrenceID == "" || calendarID == old.CalendarID {
 		return nil
 	}
-	master, err := qtx.GetEventByUID(ctx, old.Uid)
-	if err != nil || master.CalendarID != calendarID {
+	ownMaster, err := hasMasterInCalendarTx(ctx, qtx, old.CalendarID, old.Uid)
+	if err != nil {
+		return err
+	}
+	targetMaster, err := hasMasterInCalendarTx(ctx, qtx, calendarID, old.Uid)
+	if err != nil {
+		return err
+	}
+	if ownMaster || !targetMaster {
 		return ErrInstanceCalendarMove
 	}
 	return nil
+}
+
+// hasMasterInCalendarTx reports whether calendarID holds a live master row
+// of uid.
+func hasMasterInCalendarTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (bool, error) {
+	_, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	default:
+		return false, fmt.Errorf("find master: %w", err)
+	}
+}
+
+// findInstanceMasterTx finds the master of an occurrence edit. Two
+// calendars can hold the same UID. One master is the only choice. With
+// more masters, the master in calendarID wins. An edit that names no
+// calendar of the UID gets ErrAmbiguousUID. No master gives sql.ErrNoRows.
+func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, uid string, calendarID int64) (storage.Event, []storage.Event, error) {
+	masters, err := qtx.ListEventMastersByUID(ctx, uid)
+	if err != nil {
+		return storage.Event{}, nil, err
+	}
+	switch len(masters) {
+	case 0:
+		return storage.Event{}, nil, sql.ErrNoRows
+	case 1:
+		return masters[0], masters, nil
+	}
+	for _, m := range masters {
+		if m.CalendarID == calendarID {
+			return m, masters, nil
+		}
+	}
+	return storage.Event{}, nil, ErrAmbiguousUID
+}
+
+// findInstanceOverrideTx finds the stored override of recID for master. It
+// looks in the calendar of the master first. Then it looks for a legacy
+// override: a row that an older version saved in a calendar with no master
+// of the UID. masters lists every master of the UID. More than one legacy
+// row gives ErrAmbiguousUID. No row gives sql.ErrNoRows.
+func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, masters []storage.Event, recID string) (storage.Event, error) {
+	row, err := qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID:   master.CalendarID,
+		Uid:          master.Uid,
+		RecurrenceID: recID,
+	})
+	if err == nil || !errors.Is(err, sql.ErrNoRows) {
+		return row, err
+	}
+	rows, err := qtx.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
+		Uid:          master.Uid,
+		RecurrenceID: recID,
+	})
+	if err != nil {
+		return storage.Event{}, err
+	}
+	var legacy []storage.Event
+	for _, r := range rows {
+		if !slices.ContainsFunc(masters, func(m storage.Event) bool { return m.CalendarID == r.CalendarID }) {
+			legacy = append(legacy, r)
+		}
+	}
+	switch len(legacy) {
+	case 0:
+		return storage.Event{}, sql.ErrNoRows
+	case 1:
+		return legacy[0], nil
+	default:
+		return storage.Event{}, ErrAmbiguousUID
+	}
 }
 
 // recordUIDMoveTx records the move of the event rows of one UID from one
@@ -731,7 +820,10 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
 		return Event{}, 0, err
 	}
-	master, err := qtx.GetEventByUID(ctx, uid)
+	master, masters, err := findInstanceMasterTx(ctx, qtx, uid, p.CalendarID)
+	if errors.Is(err, ErrAmbiguousUID) {
+		return Event{}, 0, err
+	}
 	if err != nil {
 		return Event{}, 0, fmt.Errorf("get master: %w", err)
 	}
@@ -739,10 +831,13 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 		return Event{}, 0, err
 	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
-	existing, existErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
-		Uid:          uid,
-		RecurrenceID: recID,
-	})
+	existing, existErr := findInstanceOverrideTx(ctx, qtx, master, masters, recID)
+	if existErr != nil && !errors.Is(existErr, sql.ErrNoRows) {
+		if errors.Is(existErr, ErrAmbiguousUID) {
+			return Event{}, 0, existErr
+		}
+		return Event{}, 0, fmt.Errorf("get override: %w", existErr)
+	}
 	// One CalDAV object holds the whole series. An override in another
 	// calendar splits the series, so refuse the move (issue #828). An older
 	// version permitted that move, so an override can already live in
@@ -775,7 +870,8 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 			// Concurrent override creation race: the UNIQUE(uid, recurrence_id)
 			// constraint protects against duplicate rows, so retry as update.
 			if isUniqueViolationOnRecurrenceID(err) {
-				existing, eErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+				existing, eErr := qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+					CalendarID:   p.CalendarID,
 					Uid:          uid,
 					RecurrenceID: recID,
 				})

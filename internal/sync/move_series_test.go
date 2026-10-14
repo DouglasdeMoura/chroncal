@@ -459,3 +459,82 @@ func TestMoveTodoAndJournalOverrideRowIsRejected(t *testing.T) {
 		})
 	}
 }
+
+// sameUID gives the event row with id the UID uid. Two calendars can hold
+// the same UID, for example one series in two accounts.
+func sameUID(t *testing.T, engine *Engine, id int64, uid string) {
+	t.Helper()
+	if _, err := engine.db.ExecContext(context.Background(), `UPDATE events SET uid = ? WHERE id = ?`, uid, id); err != nil {
+		t.Fatalf("set uid: %v", err)
+	}
+}
+
+// TestUpdateInstanceFindsMasterInCalendarOfEdit holds one UID in two
+// calendars. An edit of one occurrence in calendar B must find the master
+// in B. An unscoped lookup found the master in A and refused the edit.
+func TestUpdateInstanceFindsMasterInCalendarOfEdit(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	masterA := createSeries(t, engine, calA)
+	masterB := createSeries(t, engine, calB)
+	sameUID(t, engine, masterB.ID, masterA.UID)
+
+	inst := masterA.StartTime.Add(24 * time.Hour)
+	if _, err := engine.events.UpdateInstance(ctx, masterA.UID, inst, event.UpdateParams{
+		CalendarID: calB, Title: "Late in B", StartTime: inst, EndTime: inst.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpdateInstance in B = %v, want nil", err)
+	}
+	if n := countRows(t, engine, "events", calB, masterA.UID); n != 2 {
+		t.Fatalf("event rows in B = %d, want 2 (master and override)", n)
+	}
+	if n := countRows(t, engine, "events", calA, masterA.UID); n != 1 {
+		t.Fatalf("event rows in A = %d, want 1 (master only)", n)
+	}
+
+	// An edit that names neither calendar of the UID cannot choose a
+	// master. It must refuse, not pick one.
+	cal, err := engine.q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "c"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	_, err = engine.events.UpdateInstance(ctx, masterA.UID, inst.Add(24*time.Hour), event.UpdateParams{
+		CalendarID: cal.ID, Title: "Where", StartTime: inst, EndTime: inst.Add(time.Hour),
+	})
+	if !errors.Is(err, event.ErrAmbiguousUID) {
+		t.Fatalf("UpdateInstance in a third calendar = %v, want ErrAmbiguousUID", err)
+	}
+}
+
+// TestMoveOverrideRowRefusedWhenUIDInTargetCalendar holds one UID in two
+// calendars. A has the series and an override, and B has a copy of the
+// master with a lower ID. A move of the override row from A to B must be
+// refused: the override has its master in A, so it is not a legacy split.
+// An unscoped master lookup found the master in B and moved the series.
+func TestMoveOverrideRowRefusedWhenUIDInTargetCalendar(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	masterB := createSeries(t, engine, calB)
+	masterA, override, _ := createSeriesWithOverride(t, engine, calA)
+	sameUID(t, engine, masterB.ID, masterA.UID)
+
+	_, err := engine.events.Update(ctx, override.ID, event.UpdateParams{
+		Title:      override.Title,
+		StartTime:  override.StartTime,
+		EndTime:    override.EndTime,
+		CalendarID: calB,
+		Status:     override.Status,
+		Transp:     override.Transp,
+		Class:      override.Class,
+	})
+	if !errors.Is(err, event.ErrInstanceCalendarMove) {
+		t.Fatalf("Update of an override to another calendar = %v, want ErrInstanceCalendarMove", err)
+	}
+	if n := countRows(t, engine, "events", calA, masterA.UID); n != 2 {
+		t.Fatalf("event rows in A = %d, want 2 (master and override)", n)
+	}
+}
