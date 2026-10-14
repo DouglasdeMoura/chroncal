@@ -183,6 +183,56 @@ func ResolveKeys(overrides map[string][]string) map[string][]string {
 	return out
 }
 
+// ParseKeys converts the raw [keys] table (Config.Keys) to the map that
+// ValidateKeys and ResolveKeys take. It returns an error when the table or
+// a value has the wrong type. A nil value gives a nil map.
+func ParseKeys(raw any) (map[string][]string, error) {
+	switch t := raw.(type) {
+	case nil:
+		return nil, nil
+	case map[string][]string:
+		return t, nil
+	case map[string]any:
+		out := make(map[string][]string, len(t))
+		names := make([]string, 0, len(t))
+		for name := range t {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			keys, ok := keyList(t[name])
+			if !ok {
+				return nil, fmt.Errorf(`keys.%s: the value must be a list of key names, for example ["x"]`, name)
+			}
+			out[name] = keys
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("keys: the value must be a table of actions, for example [keys] with quit = [\"q\"]")
+	}
+}
+
+// keyList converts one raw [keys] value to a list of key names. ok is
+// false when the value is not a list of strings.
+func keyList(raw any) (keys []string, ok bool) {
+	switch v := raw.(type) {
+	case []string:
+		return v, true
+	case []any:
+		keys = make([]string, len(v))
+		for i, k := range v {
+			s, isString := k.(string)
+			if !isString {
+				return nil, false
+			}
+			keys[i] = s
+		}
+		return keys, true
+	default:
+		return nil, false
+	}
+}
+
 // ValidateKeys reports the first problem in a [keys] table:
 //   - an action name that the TUI does not know
 //   - an empty key list or an empty key string

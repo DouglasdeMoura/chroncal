@@ -672,10 +672,11 @@ type RunOptions struct {
 	// "Quit chroncal?" prompt. It maps the inverse of ui.confirm_quit.
 	// The zero value keeps the prompt.
 	SkipQuitConfirm bool
-	// Keys is the [keys] table of config.toml. An entry replaces the
-	// default keys of one app action. Run calls config.ValidateKeys on
-	// the table before it starts the program.
-	Keys map[string][]string
+	// Keys is the raw [keys] table of config.toml (config.Config.Keys). An
+	// entry replaces the default keys of one app action. Run reads it with
+	// config.ParseKeys and checks it with config.ValidateKeys before it
+	// starts the program.
+	Keys any
 }
 
 // resolveFullSyncStrategy maps the configured conflict-strategy name to the
@@ -696,7 +697,11 @@ func Run(a *app.App, themeName string, opts RunOptions) error {
 	// config.Load does not check the [keys] table, so the CLI keeps
 	// working with a bad remap. The TUI refuses to start with it. A silent
 	// fallback to the defaults hides the typo.
-	if err := config.ValidateKeys(opts.Keys); err != nil {
+	keys, err := config.ParseKeys(opts.Keys)
+	if err != nil {
+		return err
+	}
+	if err := config.ValidateKeys(keys); err != nil {
 		return err
 	}
 	// Query the terminal before Bubble Tea takes over stdin. The helper
@@ -719,7 +724,7 @@ func Run(a *app.App, themeName string, opts RunOptions) error {
 	model := newModel(a, themeName, opts.WeekStart)
 	model.fullSyncStrategy = resolveFullSyncStrategy(opts.SyncConflictStrategy)
 	model.skipQuitConfirm = opts.SkipQuitConfirm
-	model = model.withKeys(newAppKeys(opts.Keys))
+	model = model.withKeys(newAppKeys(keys))
 	if opts.Event.ID != 0 {
 		model = model.WithOpenEvent(opts.Event)
 	}
@@ -735,6 +740,6 @@ func Run(a *app.App, themeName string, opts RunOptions) error {
 		go func() { p.Send(tea.BackgroundColorMsg{Color: bg}) }()
 	}
 
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }

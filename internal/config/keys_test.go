@@ -9,6 +9,16 @@ import (
 
 // loadWithConfigFile writes body to config.toml in a temporary
 // XDG_CONFIG_HOME and calls Load.
+// mustParseKeys returns the parsed [keys] table of cfg.
+func mustParseKeys(t *testing.T, cfg Config) map[string][]string {
+	t.Helper()
+	keys, err := ParseKeys(cfg.Keys)
+	if err != nil {
+		t.Fatalf("ParseKeys() error = %v", err)
+	}
+	return keys
+}
+
 func loadWithConfigFile(t *testing.T, body string) (Config, error) {
 	t.Helper()
 	dir := t.TempDir()
@@ -31,7 +41,7 @@ month_view = ["M", "ctrl+m"]
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	keys := ResolveKeys(cfg.Keys)
+	keys := ResolveKeys(mustParseKeys(t, cfg))
 	if got := strings.Join(keys["quit"], ","); got != "z" {
 		t.Errorf("quit = %q, want z", got)
 	}
@@ -77,7 +87,7 @@ func TestValidateKeys_Errors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load() error = %v, want nil", err)
 			}
-			err = ValidateKeys(cfg.Keys)
+			err = ValidateKeys(mustParseKeys(t, cfg))
 			if err == nil {
 				t.Fatalf("ValidateKeys() error = nil, want %q", c.want)
 			}
@@ -95,7 +105,7 @@ func TestLoad_KeysSwapIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if err := ValidateKeys(cfg.Keys); err != nil {
+	if err := ValidateKeys(mustParseKeys(t, cfg)); err != nil {
 		t.Fatalf("ValidateKeys() error = %v", err)
 	}
 }
@@ -108,7 +118,7 @@ func TestLoad_KeysReservedOnlyWhereTheActionRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if err := ValidateKeys(cfg.Keys); err != nil {
+	if err := ValidateKeys(mustParseKeys(t, cfg)); err != nil {
 		t.Fatalf("ValidateKeys() error = %v", err)
 	}
 }
@@ -173,5 +183,33 @@ func TestReadmeListsEachReservedKeyList(t *testing.T) {
 	rows := strings.Count(table, "\n") // the separator row and each data row but the last
 	if rows != len(reservedKeys) {
 		t.Fatalf("README.md table of rejected keys has %d rows, want %d (one for each reserved list)", rows, len(reservedKeys))
+	}
+}
+
+// TestLoad_KeysWithWrongTypeLoads gives the [keys] table values of the
+// wrong type. Only the TUI reads the table, so Load must still work for
+// the CLI, sync, and the alarm daemon. ParseKeys, which the TUI calls at
+// start, must name the problem.
+func TestLoad_KeysWithWrongTypeLoads(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"inline table value", "[keys]\nquit = { key = \"x\" }\n", `keys.quit: the value must be a list of key names, for example ["x"]`},
+		{"string value", "[keys]\nquit = \"x\"\n", `keys.quit: the value must be a list of key names, for example ["x"]`},
+		{"list of numbers", "[keys]\nquit = [1]\n", `keys.quit: the value must be a list of key names, for example ["x"]`},
+		{"keys is not a table", "keys = \"x\"\n", "keys: the value must be a table of actions"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, err := loadWithConfigFile(t, c.body)
+			if err != nil {
+				t.Fatalf("Load() error = %v, want nil", err)
+			}
+			_, err = ParseKeys(cfg.Keys)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("ParseKeys() error = %v, want %q", err, c.want)
+			}
+		})
 	}
 }
