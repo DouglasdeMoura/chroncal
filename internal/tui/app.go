@@ -659,6 +659,18 @@ type RunOptions struct {
 	// "Quit chroncal?" prompt. It maps the inverse of ui.confirm_quit.
 	// The zero value keeps the prompt.
 	SkipQuitConfirm bool
+	// Keys is the [keys] table of config.toml. An entry replaces the
+	// default keys of one app action. config.Load validates the table.
+	Keys map[string][]string
+}
+
+// withKeys installs the app keymap. The footer, the help dialog, the
+// palette, and the agenda then show and use the same keys.
+func (m Model) withKeys(keys appKeyMap) Model {
+	m.keys = keys
+	m.footer.SetKeys(keys)
+	m.agenda = m.agenda.SetCreateKey(keys.Create)
+	return m
 }
 
 // resolveFullSyncStrategy maps the configured conflict-strategy name to the
@@ -696,6 +708,7 @@ func Run(a *app.App, themeName string, opts RunOptions) error {
 	model := newModel(a, themeName, opts.WeekStart)
 	model.fullSyncStrategy = resolveFullSyncStrategy(opts.SyncConflictStrategy)
 	model.skipQuitConfirm = opts.SkipQuitConfirm
+	model = model.withKeys(newAppKeys(opts.Keys))
 	if opts.Event.ID != 0 {
 		model = model.WithOpenEvent(opts.Event)
 	}

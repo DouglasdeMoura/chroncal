@@ -42,12 +42,18 @@ type footerHint struct {
 // toast override each frame.
 type FooterModel struct {
 	theme Theme
+	// keys is the app keymap. The hints show its first keys, so a remap in
+	// the [keys] table of config.toml shows in the footer.
+	keys appKeyMap
 }
 
 // NewFooterModel returns a footer bound to the given theme.
 func NewFooterModel(theme Theme) FooterModel {
-	return FooterModel{theme: theme}
+	return FooterModel{theme: theme, keys: defaultAppKeys()}
 }
+
+// SetKeys sets the app keymap that the hints show.
+func (f *FooterModel) SetKeys(keys appKeyMap) { f.keys = keys }
 
 // SetTheme updates the theme for subsequent renders.
 func (f *FooterModel) SetTheme(theme Theme) { f.theme = theme }
@@ -69,7 +75,7 @@ func (f FooterModel) Render(ctx FooterContext, width int, syncStatus, toast stri
 	}
 
 	prefixLabel := footerPrefix(ctx)
-	hints := footerHints(ctx, hasRSVP, showTodayHint)
+	hints := footerHints(f.keys, ctx, hasRSVP, showTodayHint)
 
 	// Collapse mode for very narrow terminals.
 	if width < footerMinCols {
@@ -134,8 +140,8 @@ func (f FooterModel) renderCollapsed(ctx FooterContext, width int) string {
 	descStyle := lipgloss.NewStyle().Foreground(f.theme.TextDim)
 	sepStyle := lipgloss.NewStyle().Foreground(f.theme.Muted)
 
-	top := collapsedTopHint(ctx)
-	help := keyStyle.Render("?") + " " + descStyle.Render("help")
+	top := collapsedTopHint(f.keys, ctx)
+	help := keyStyle.Render(keyLabel(f.keys.Help)) + " " + descStyle.Render("help")
 	if top.keys == "" {
 		return help
 	}
@@ -174,7 +180,7 @@ func (f FooterModel) RenderMinimal(width int, syncStatus, toast string, showHelp
 	if right == "" && showHelpHint {
 		keyStyle := lipgloss.NewStyle().Foreground(f.theme.Text)
 		descStyle := lipgloss.NewStyle().Foreground(f.theme.TextDim)
-		right = keyStyle.Render("?") + " " + descStyle.Render("help")
+		right = keyStyle.Render(keyLabel(f.keys.Help)) + " " + descStyle.Render("help")
 	}
 	if width < footerEllipsisCols {
 		return truncateTo(right, width)
@@ -202,19 +208,21 @@ func footerPrefix(ctx FooterContext) string {
 	return ""
 }
 
-func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
+func footerHints(keys appKeyMap, ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
+	create := keyLabel(keys.Create)
+	tail := []footerHint{{keyLabel(keys.TrashView), "recently deleted"}, {keyLabel(keys.Help), "help"}}
 	switch ctx {
 	case FooterMonth, FooterWeek, FooterDay:
 		hints := []footerHint{
 			{"↑↓←→", "move"},
 			{"[]", bracketDesc(ctx)},
 			{"enter", "open"},
-			{"c", "new"},
+			{create, "new"},
 		}
 		if showTodayHint {
 			hints = append(hints, footerHint{"t", "today"})
 		}
-		return append(hints, footerHint{"D", "recently deleted"}, footerHint{"?", "help"})
+		return append(hints, tail...)
 	case FooterAgenda:
 		hints := []footerHint{
 			{"↑↓", "move"},
@@ -223,22 +231,22 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 			{"e", "edit"},
 			{"ctrl+d", "duplicate"},
 			{"x", "delete"},
-			{"c", "new"},
+			{create, "new"},
 			{"o", "empty days"},
 		}
 		if showTodayHint {
 			hints = append(hints, footerHint{"t", "today"})
 		}
-		return append(hints, footerHint{"D", "recently deleted"}, footerHint{"?", "help"})
+		return append(hints, tail...)
 	case FooterAgendaEmpty:
 		hints := []footerHint{
-			{"c", "create event"},
+			{create, "create event"},
 			{"o", "empty days"},
 		}
 		if showTodayHint {
 			hints = append(hints, footerHint{"t", "today"})
 		}
-		return append(hints, footerHint{"D", "recently deleted"}, footerHint{"?", "help"})
+		return append(hints, tail...)
 	case FooterEventPopup:
 		h := []footerHint{
 			{"e", "edit"},
@@ -262,7 +270,7 @@ func footerHints(ctx FooterContext, hasRSVP, showTodayHint bool) []footerHint {
 		return []footerHint{
 			{"↑↓", "move"},
 			{"space", "toggle"},
-			{"\\", "collapse"},
+			{keyLabel(keys.Sidebar), "collapse"},
 			{"tab", "back"},
 		}
 	}
@@ -287,14 +295,14 @@ func bracketDesc(ctx FooterContext) string {
 
 // collapsedTopHint returns the single most important hint for the given
 // context when the footer has to collapse to near-nothing.
-func collapsedTopHint(ctx FooterContext) footerHint {
+func collapsedTopHint(keys appKeyMap, ctx FooterContext) footerHint {
 	switch ctx {
 	case FooterMonth, FooterWeek, FooterDay:
-		return footerHint{"c", "new"}
+		return footerHint{keyLabel(keys.Create), "new"}
 	case FooterAgenda:
 		return footerHint{"x", "delete"}
 	case FooterAgendaEmpty:
-		return footerHint{"c", "create"}
+		return footerHint{keyLabel(keys.Create), "create"}
 	case FooterEventPopup:
 		return footerHint{"x", "delete"}
 	case FooterCalendarPopup:

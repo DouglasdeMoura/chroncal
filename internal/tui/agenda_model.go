@@ -152,6 +152,14 @@ func NewAgendaModel(today time.Time) AgendaModel {
 	}
 }
 
+// SetCreateKey replaces the create binding with the create binding of the
+// app keymap. A remap of the create action in config.toml then also
+// applies in the agenda, and the old key stops there too.
+func (m AgendaModel) SetCreateKey(b key.Binding) AgendaModel {
+	m.keys.Create = b
+	return m
+}
+
 func (m AgendaModel) Cursor() time.Time { return m.cursor }
 
 // WindowStart returns the first day included in the current agenda window.

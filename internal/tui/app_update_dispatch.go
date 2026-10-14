@@ -279,7 +279,7 @@ func (m Model) dispatchAppMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleCalendarManagerClosed(msg)
 
 	case HelpDialogRequestedMsg:
-		m.helpDialog = NewHelpDialogModel(m.theme).SetSize(m.width, m.height)
+		m.helpDialog = NewHelpDialogModel(m.theme).SetKeys(m.keys).SetSize(m.width, m.height)
 		m.helpDialogOpen = true
 		return m, nil
 

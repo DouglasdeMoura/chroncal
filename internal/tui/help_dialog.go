@@ -18,6 +18,9 @@ type HelpDialogClosedMsg struct{}
 type HelpDialogModel struct {
 	dialog Dialog
 	theme  Theme
+	// keys is the app keymap. The sections show its keys, so a remap in
+	// the [keys] table of config.toml shows in the help text.
+	keys   appKeyMap
 	width  int
 	height int
 	scroll int
@@ -35,7 +38,13 @@ const helpDialogChrome = 7
 
 func NewHelpDialogModel(theme Theme) HelpDialogModel {
 	dialog := NewDialog("Keyboard Shortcuts", DefaultDialogStyles())
-	return HelpDialogModel{dialog: dialog, theme: theme}
+	return HelpDialogModel{dialog: dialog, theme: theme, keys: defaultAppKeys()}
+}
+
+// SetKeys sets the app keymap that the sections show.
+func (m HelpDialogModel) SetKeys(keys appKeyMap) HelpDialogModel {
+	m.keys = keys
+	return m
 }
 
 func (m HelpDialogModel) footerHint(scrollable bool) string {
@@ -85,7 +94,7 @@ func (m HelpDialogModel) Update(msg tea.Msg) (HelpDialogModel, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if key.Matches(msg, key.NewBinding(key.WithKeys("esc", "q", "?"))) {
+		if key.Matches(msg, key.NewBinding(key.WithKeys("esc", "q")), m.keys.Help) {
 			return m, func() tea.Msg { return HelpDialogClosedMsg{} }
 		}
 		switch msg.String() {
@@ -137,6 +146,8 @@ type helpSection struct {
 // near its sibling actions. Context tags in parens disambiguate
 // the few keys whose meaning depends on focus (e.g. "enter (sidebar)").
 func (m HelpDialogModel) sections() []helpSection {
+	k := m.keys
+	views := strings.Join([]string{keyLabel(k.MonthView), keyLabel(k.WeekView), keyLabel(k.DayView), keyLabel(k.AgendaView)}, " · ")
 	return []helpSection{
 		{
 			title: "Getting Around",
@@ -145,19 +156,19 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"[ · pgup", "previous week / month"},
 				{"] · pgdn", "next week / month"},
 				{"t", "today"},
-				{"m · w · d · a", "month / week / day / agenda view"},
+				{views, "month / week / day / agenda view"},
 				{"enter (mini calendar)", "jump main view to selected day"},
 			},
 		},
 		{
 			title: "Events",
 			entries: []helpEntry{
-				{"c", "new event"},
+				{keysLabel(k.Create), "new event"},
 				{"enter", "open / select day"},
 				{"e", "edit"},
 				{"ctrl+d", "duplicate"},
 				{"x · delete", "delete"},
-				{"u", "undo last delete"},
+				{keysLabel(k.Undo), "undo last delete"},
 				{"o", "toggle empty days (agenda)"},
 				{"←→ · hl", "previous / next event (popup)"},
 				{"p", "copy event details"},
@@ -181,8 +192,8 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Calendars",
 			entries: []helpEntry{
-				{"C · shift+c", "calendars"},
-				{"s", "sync all"},
+				{keysLabel(k.CalendarList), "calendars"},
+				{keysLabel(k.Sync), "sync all"},
 				{"enter (sidebar)", "open calendar"},
 				{"space (sidebar)", "toggle visibility"},
 				{"shift+↑/↓ · K/J", "reorder calendar (sidebar or manage dialog)"},
@@ -192,7 +203,7 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Command Palette",
 			entries: []helpEntry{
-				{"/ · ctrl+k", "open"},
+				{keysLabel(k.Palette), "open"},
 				{"↑↓ · ctrl+k/j", "move selection"},
 				{"pgup · pgdn", "jump by page"},
 				{"enter", "run command"},
@@ -202,22 +213,22 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Windows",
 			entries: []helpEntry{
-				{"D · shift+d", "recently deleted"},
+				{keysLabel(k.TrashView), "recently deleted"},
 				{"r (trash)", "restore"},
 				{"x · delete (trash)", "purge"},
 				{"X · shift+x (trash)", "purge all"},
 				{"space (trash)", "select / deselect"},
 				{"A · shift+a (trash)", "select all / clear selection"},
-				{"?", "this help"},
-				{"\\", "toggle sidebar"},
-				{"#", "toggle week numbers"},
-				{"W", "toggle week start"},
-				{"tab · shift+tab", "move focus"},
+				{keysLabel(k.Help), "this help"},
+				{keysLabel(k.Sidebar), "toggle sidebar"},
+				{keysLabel(k.WeekNumbers), "toggle week numbers"},
+				{keysLabel(k.WeekStart), "toggle week start"},
+				{keysLabel(k.SwitchFocus), "move focus"},
 				{"esc · q", "close (read-only dialogs)"},
 				{"esc", "close (forms)"},
 				{"ctrl+s", "save form"},
 				{"ctrl+c", "force quit"},
-				{"q (main view)", "quit"},
+				{keysLabel(k.Quit) + " (main view)", "quit"},
 			},
 		},
 	}
