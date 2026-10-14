@@ -70,6 +70,11 @@ type ListDialogModel struct {
 	selectedColor color.Color
 	width, height int
 	body          viewport.Model
+	// titleLines holds the wrapped rows of the pinned title. syncBody
+	// computes them once per layout change. The value is nil when the
+	// detail pane has no pinned title. renderDetails and BodyRowScreenY
+	// read this field, so they do not wrap the title again.
+	titleLines []string
 	// cache holds per-frame memoized sub-renders that don't depend on
 	// the selection (action bar, help line). It's a pointer so that
 	// value copies of the model — which the bubbletea Update cycle
@@ -120,16 +125,15 @@ func (m ListDialogModel) SetSelectedColor(c color.Color) ListDialogModel {
 // SetRows replaces the list rows. The caller is responsible for a pre-render
 // of each row (swatch, time prefix, …). Scroll and selection are clamped.
 // Disabled-row state is cleared because it belongs to the row set.
-// It does not touch the body viewport. Rows live in the left column only.
-// The body shows the right-column details. Other setters
-// (SetDetailLines, SetActions, SetDetailTitle, SetEmptyList, SetSize)
-// trigger syncBody when they actually need it.
+// The row count changes the detail-pane layout (the pinned title and the
+// stacked list height), so SetRows also calls syncBody.
 func (m ListDialogModel) SetRows(rows []string) ListDialogModel {
 	m.rows = rows
 	m.rowDisabled = nil
 	if m.selected >= len(rows) {
 		m.selected = max(len(rows)-1, 0)
 	}
+	m.syncBody()
 	return m
 }
 
@@ -274,21 +278,22 @@ func (m ListDialogModel) firstEnabledAction() int {
 	return -1
 }
 
-// syncBody pushes the current detail dimensions and content into the body
-// viewport. HandleKey/HandleMouseWheel can then scroll with no wait for the
-// next View() call to learn about layout. Width/height/content match the
-// values renderDetails would compute for the same model state.
+// syncBody computes the detail-pane layout once: the wrapped pinned title
+// and the body size. It pushes the body size and content into the body
+// viewport. HandleKey/HandleMouseWheel can then scroll with no wait for
+// the next View() call. renderDetails and BodyRowScreenY read the same
+// layout from the model.
 func (m *ListDialogModel) syncBody() {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
 	detailW, detailH := m.detailPaneSize()
-	titleLines := m.pinnedTitleLines(detailW, detailH)
+	m.titleLines = m.pinnedTitleLines(detailW, detailH)
 	if len(m.actions) > 0 {
 		detailH = max(detailH-2, 1)
 	}
-	if titleLines != nil {
-		detailH = max(detailH-len(titleLines)-1, 1)
+	if m.titleLines != nil {
+		detailH = max(detailH-len(m.titleLines)-1, 1)
 	}
 
 	lines := m.detailLines

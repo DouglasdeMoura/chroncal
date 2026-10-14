@@ -92,6 +92,9 @@ type EventViewDialogModel struct {
 	focusZone     int
 	focusedAction int
 	focusedRSVP   int
+	// title holds the event title wrapped to the content width. SetSize
+	// computes it once, so View does not wrap the title again.
+	title []string
 }
 
 // eventViewActionEditIdx, eventViewActionDupIdx, and eventViewActionDeleteIdx
@@ -129,10 +132,12 @@ func (m EventViewDialogModel) SetSize(w, h int) EventViewDialogModel {
 	cw := m.dialog.ContentWidth()
 	m.body.SetWidth(cw)
 	if cw > 0 {
+		m.title = m.titleLines(cw)
 		bodyLines := m.buildBodyLines(cw)
-		m.body.SetHeight(min(len(bodyLines), m.viewportHeight(len(m.titleLines(cw)))))
+		m.body.SetHeight(min(len(bodyLines), m.viewportHeight(len(m.title))))
 		m.body.SetContentLines(bodyLines)
 	} else {
+		m.title = nil
 		m.body.SetHeight(m.viewportHeight(1))
 	}
 	return m
@@ -483,18 +488,6 @@ func (m EventViewDialogModel) titleLines(w int) []string {
 	return wrapTitleLines(textsafe.Display(m.event.Title), w, max(avail/2, 1))
 }
 
-// titleRow renders the bold event title above a faint divider rule.
-// Destructive actions are deliberately absent here. They live in the
-// bottom action bar, away from the dialog's visual anchor.
-func (m EventViewDialogModel) titleRow(lines []string, w int) []string {
-	bold := lipgloss.NewStyle().Bold(true)
-	out := make([]string, 0, len(lines)+1)
-	for _, line := range lines {
-		out = append(out, bold.Render(line))
-	}
-	return append(out, lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", w)))
-}
-
 // actionsSeparator renders the faint rule that sits between the body
 // and the action bar. When the body has scrolled-away content above or
 // below, a small "↑↓ more" glyph is centered on the rule to advertise
@@ -619,17 +612,17 @@ func (m EventViewDialogModel) View() string {
 		return ""
 	}
 
-	title := m.titleLines(cw)
-	titleLines := m.titleRow(title, cw)
 	bodyLines := m.buildBodyLines(cw)
 	actionsRow := m.renderActions(cw)
 
 	m.body.SetWidth(cw)
-	m.body.SetHeight(min(len(bodyLines), m.viewportHeight(len(title))))
+	m.body.SetHeight(min(len(bodyLines), m.viewportHeight(len(m.title))))
 	m.body.SetContentLines(bodyLines)
 
-	sep := m.actionsSeparator(cw)
-	parts := append(titleLines, m.body.View(), sep, actionsRow)
+	// paneTitle draws the bold title above a faint rule. Destructive
+	// actions are not in the title area. They live in the bottom action
+	// bar, away from the visual anchor of the dialog.
+	parts := []string{paneTitle(m.title, cw), m.body.View(), m.actionsSeparator(cw), actionsRow}
 	body := strings.Join(parts, "\n")
 
 	var helpKeys []key.Binding

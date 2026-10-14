@@ -242,8 +242,8 @@ func (m ListDialogModel) DetailsOrigin() (int, int) {
 // when the row is scrolled out of view.
 func (m ListDialogModel) BodyRowScreenY(idx int) (int, bool) {
 	_, oy := m.DetailsOrigin()
-	if titleLines := m.pinnedTitleLines(m.detailPaneSize()); titleLines != nil {
-		oy += len(titleLines) + 1
+	if m.titleLines != nil {
+		oy += len(m.titleLines) + 1
 	}
 	visible := idx - m.body.YOffset()
 	if visible < 0 || visible >= m.body.Height() {

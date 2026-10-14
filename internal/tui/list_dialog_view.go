@@ -92,7 +92,7 @@ func (m *ListDialogModel) viewColumns(innerW, bodyH int) string {
 	// splitAndPad would do.
 	listCol := trustedSplit(m.renderList(listW, bodyH), listW, bodyH)
 	dividerCol := trustedSplit(m.renderDivider(dialogDividerWidth, bodyH), dialogDividerWidth, bodyH)
-	detailsCol := trustedSplit(m.renderDetails(detailsW, bodyH), detailsW, bodyH)
+	detailsCol := trustedSplit(m.renderDetails(detailsW), detailsW, bodyH)
 
 	// Manual row-zip: lipgloss.JoinHorizontal re-measures every grapheme
 	// of every line in every column to align them. We've already padded
@@ -141,13 +141,12 @@ func trustedSplit(s string, w, h int) []string {
 func (m *ListDialogModel) viewStacked(innerW, bodyH int) string {
 	rowCount := max(len(m.rows), 1)
 	listH := min(max(rowCount+1, 3), max(bodyH/3, 3))
-	detailsH := max(bodyH-listH-1, 3)
 
 	m.adjustScroll(listH)
 	list := m.renderList(innerW, listH)
 	sep := lipgloss.NewStyle().Faint(true).Width(innerW).
 		Render(strings.Repeat("─", innerW))
-	details := m.renderDetails(innerW, detailsH)
+	details := m.renderDetails(innerW)
 
 	return lipgloss.JoinVertical(lipgloss.Left, list, sep, details)
 }
@@ -336,42 +335,21 @@ func (m ListDialogModel) actionsCacheKey(w int) uint64 {
 	return h.Sum64()
 }
 
-func (m *ListDialogModel) renderDetails(w, h int) string {
-	lines := m.detailLines
-	if len(m.rows) == 0 {
-		lines = m.emptyDetails
-	}
-
-	bodyH := h
-	var pinned string
-	if titleLines := m.pinnedTitleLines(w, h); titleLines != nil {
-		pinned = paneTitle(titleLines, w)
-		bodyH = max(bodyH-len(titleLines)-1, 1)
-	}
-
-	if len(m.actions) == 0 {
-		m.body.SetWidth(w)
-		m.body.SetHeight(bodyH)
-		m.body.SetContentLines(lines)
-		if pinned != "" {
-			return pinned + "\n" + m.body.View()
-		}
-		return m.body.View()
-	}
-
-	bodyH = max(bodyH-2, 1)
-	m.body.SetWidth(w)
-	m.body.SetHeight(bodyH)
-	m.body.SetContentLines(lines)
-
+// renderDetails renders the detail pane of w cells. syncBody
+// already sized the body viewport and wrapped the pinned title for the
+// same pane size, so this function only assembles the parts.
+func (m *ListDialogModel) renderDetails(w int) string {
 	parts := make([]string, 0, 4)
-	if pinned != "" {
-		parts = append(parts, pinned)
+	if m.titleLines != nil {
+		parts = append(parts, paneTitle(m.titleLines, w))
 	}
-	// renderActions returns ≤ w cells (truncateTo); pad it so the whole
-	// detail column is width-correct and viewColumns can trustedSplit it
-	// without re-measuring every body line.
-	parts = append(parts, m.body.View(), m.actionsSeparator(w), padTrailing(m.renderActions(w), w))
+	parts = append(parts, m.body.View())
+	if len(m.actions) > 0 {
+		// renderActions returns ≤ w cells (truncateTo); pad it so the whole
+		// detail column is width-correct and viewColumns can trustedSplit it
+		// without re-measuring every body line.
+		parts = append(parts, m.actionsSeparator(w), padTrailing(m.renderActions(w), w))
+	}
 	return strings.Join(parts, "\n")
 }
 
