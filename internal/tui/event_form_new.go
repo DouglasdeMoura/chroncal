@@ -118,6 +118,16 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 			}
 			return dot + " " + name
 		})
+		// Preselect the default calendar, as `event add` without
+		// --calendar does (issue #829). When no listed calendar is the
+		// default, the first calendar by name stays selected.
+		for i, c := range calOpts {
+			if calendars[c.ID].IsDefault {
+				m.calendarField.SetSelected(i)
+				m.calendarIdx = i
+				break
+			}
+		}
 	}
 
 	m.peopleField = NewTextField("Comma-separated emails")

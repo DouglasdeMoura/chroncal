@@ -199,7 +199,7 @@ func (m Model) handleEventViewLoaded(msg eventViewLoadedMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) handleEventDuplicate(msg EventDuplicateMsg) (tea.Model, tea.Cmd) {
-	form, cmd := NewEventFormModelForDuplicate(msg.Event, eventFormCalendars(m.calendars), m.theme)
+	form, cmd := NewEventFormModelForDuplicate(msg.Event, m.createFormCalendars(), m.theme)
 	if m.viewDialogOpen {
 		m.viewReturnEvent = msg.Event
 	}

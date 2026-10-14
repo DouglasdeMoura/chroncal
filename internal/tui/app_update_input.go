@@ -178,7 +178,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			cursor = m.calendar.Cursor()
 		}
-		form, cmd := NewEventFormModel(cursor, eventFormCalendars(m.calendars), m.theme)
+		form, cmd := NewEventFormModel(cursor, m.createFormCalendars(), m.theme)
 		return m.openEventForm(form, cmd)
 	}
 	if m.focus == focusCalendar {

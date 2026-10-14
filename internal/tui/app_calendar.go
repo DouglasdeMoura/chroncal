@@ -192,6 +192,21 @@ func eventFormCalendars(calendars map[int64]CalendarInfo) map[int64]CalendarInfo
 	return filtered
 }
 
+// createFormCalendars returns the eventFormCalendars set for a create
+// form. It clears IsDefault on a hidden calendar. The form then does not
+// preselect a calendar that the user hid, because the new event would not
+// show in the view (issue #829).
+func (m Model) createFormCalendars() map[int64]CalendarInfo {
+	filtered := eventFormCalendars(m.calendars)
+	for id, info := range filtered {
+		if info.IsDefault && m.hiddenCalendars[id] {
+			info.IsDefault = false
+			filtered[id] = info
+		}
+	}
+	return filtered
+}
+
 // syncHealthFor derives the sidebar health marker state from a calendar's
 // persisted sync fields. Local-only calendars (not Synced) get no marker.
 // A recorded last_sync_error is the only loud (SyncHealthError) state.
