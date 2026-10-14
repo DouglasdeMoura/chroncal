@@ -140,3 +140,27 @@ func TestEnableAllowPlaintextRefusesAFileItCannotEditSafely(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckAllowPlaintextEnv matches the bool rule of Load: an empty value
+// is ignored, a true value is accepted, and any other value turns
+// plaintext storage off.
+func TestCheckAllowPlaintextEnv(t *testing.T) {
+	for _, tc := range []struct {
+		value  string
+		refuse bool
+	}{
+		{"", false},
+		{"true", false},
+		{"1", false},
+		{"false", true},
+		{"0", true},
+		{"no", true},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv(allowPlaintextEnv, tc.value)
+			if err := checkAllowPlaintextEnv(); (err != nil) != tc.refuse {
+				t.Fatalf("checkAllowPlaintextEnv(%q) = %v, want refuse %v", tc.value, err, tc.refuse)
+			}
+		})
+	}
+}

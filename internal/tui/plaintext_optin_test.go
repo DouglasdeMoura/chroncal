@@ -325,3 +325,32 @@ func findMsg[T any](t *testing.T, cmd tea.Cmd) T {
 	}
 	return got
 }
+
+// TestPlaintextOptInRefusesAFalseEnvOverride sets
+// CHRONCAL_SECURITY_ALLOW_PLAINTEXT to a false value. The variable
+// overrides the config file, so a write of the file has no effect on the
+// next launch. The opt-in must refuse, must name the variable, must write
+// nothing, and must keep plaintext storage off.
+func TestPlaintextOptInRefusesAFalseEnvOverride(t *testing.T) {
+	m, _ := refusedAddAccount(t)
+	path := optInConfigPath(t)
+	t.Setenv("CHRONCAL_SECURITY_ALLOW_PLAINTEXT", "false")
+
+	updated, cmd := m.Update(ConfirmDialogResultMsg{Confirmed: true})
+	m = updated.(Model)
+	saved := findMsg[plaintextOptInSavedMsg](t, cmd)
+	if saved.err == nil || !strings.Contains(saved.err.Error(), "unset CHRONCAL_SECURITY_ALLOW_PLAINTEXT") {
+		t.Fatalf("config write err = %v, want a refusal that names the variable", saved.err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused opt-in wrote the config file: %v", err)
+	}
+	updated, _ = m.Update(saved)
+	m = updated.(Model)
+	if m.app.AllowPlaintext {
+		t.Fatal("the refused opt-in turned on plaintext storage")
+	}
+	if !strings.Contains(m.syncStatus, "CHRONCAL_SECURITY_ALLOW_PLAINTEXT") {
+		t.Fatalf("status = %q, want the variable name", m.syncStatus)
+	}
+}

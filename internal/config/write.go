@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/douglasdemoura/chroncal/internal/fsutil"
@@ -52,7 +53,14 @@ func filePath() (string, error) {
 // and the other keys of the file. It parses the result before it writes, and
 // it refuses the write when any other value changes or when the result does
 // not parse. The user then edits the file by hand.
+//
+// It also refuses the write when CHRONCAL_SECURITY_ALLOW_PLAINTEXT holds a
+// false value. The variable overrides the file, so the write has no effect
+// on the next launch. The user must unset the variable.
 func EnableAllowPlaintext() (string, error) {
+	if err := checkAllowPlaintextEnv(); err != nil {
+		return "", err
+	}
 	path, err := filePath()
 	if err != nil {
 		return "", err
@@ -115,6 +123,24 @@ var (
 	allowPlaintextLine = regexp.MustCompile(
 		`^(\s*(?:security\s*\.\s*)?allow_plaintext\s*=\s*)(true|false)(\s*(?:#.*)?)$`)
 )
+
+// allowPlaintextEnv is the variable that overrides security.allow_plaintext.
+const allowPlaintextEnv = "CHRONCAL_SECURITY_ALLOW_PLAINTEXT"
+
+// checkAllowPlaintextEnv returns an error when allowPlaintextEnv holds a
+// value that Load reads as false. Load ignores an empty value. A value that
+// does not parse as a bool also reads as false.
+func checkAllowPlaintextEnv() error {
+	value, ok := os.LookupEnv(allowPlaintextEnv)
+	if !ok || value == "" {
+		return nil
+	}
+	if on, err := strconv.ParseBool(value); err == nil && on {
+		return nil
+	}
+	return fmt.Errorf("%s=%q in the environment turns plaintext storage off and overrides the config file; unset %s, then try again",
+		allowPlaintextEnv, value, allowPlaintextEnv)
+}
 
 // setSecurityAllowPlaintext returns content with security.allow_plaintext set
 // to true. It changes one line, inserts one line, or appends one table. It
