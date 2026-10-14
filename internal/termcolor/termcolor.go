@@ -12,6 +12,8 @@ const (
 	Bold = "1"
 	// Dim marks dates, times, and descriptions.
 	Dim = "2"
+	// Green marks a completed todo.
+	Green = "32"
 	// Yellow marks categories and times in the verbose view.
 	Yellow = "33"
 	// Magenta marks calendar names.

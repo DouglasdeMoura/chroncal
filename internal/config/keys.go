@@ -55,8 +55,10 @@ func KeyActions() []KeyAction {
 func ResolveKeys(overrides map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(keyActions))
 	for _, a := range keyActions {
-		if keys, ok := overrides[a.Name]; ok {
-			out[a.Name] = normalizeKeyList(keys)
+		// A list with no usable key keeps the defaults. The TUI reads the
+		// first key of each list, so an empty list must not reach it.
+		if keys := normalizeKeyList(overrides[a.Name]); len(keys) > 0 {
+			out[a.Name] = keys
 			continue
 		}
 		out[a.Name] = slices.Clone(a.Defaults)

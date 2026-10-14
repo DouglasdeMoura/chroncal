@@ -121,9 +121,9 @@ func writeCompactTodoTable(w io.Writer, todos []todo.Todo, showHeader, useColor 
 		} else {
 			hasCategories = true
 		}
-		stateColor := "2"
+		stateColor := termcolor.Dim
 		if td.IsCompleted() {
-			stateColor = "32"
+			stateColor = termcolor.Green
 		}
 		rows[i] = []compactCell{
 			{fmt.Sprintf("%d", td.ID), termcolor.BoldCyan},

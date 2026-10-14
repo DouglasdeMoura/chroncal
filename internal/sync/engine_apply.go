@@ -124,7 +124,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 
 			// Inside the retry budget a known miss withholds the token.
 			// After the budget the miss no longer counts: a server that
-			// keeps a bad body must not keep the calendar failing forever.
+			// keeps a bad body must not make each pull of the calendar fail.
 			// The local row stays, and sync status names the href. A
 			// record failure withholds the token. See issue #816.
 			reason, cause := knownMissReasonMissing, "server returns 404 for a known resource"
