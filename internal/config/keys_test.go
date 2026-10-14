@@ -66,6 +66,7 @@ func TestLoad_KeysErrors(t *testing.T) {
 		{"trash view key", "[keys]\nhelp = [\"r\"]\n", `keys.help: chroncal reserves "r", because the trash view uses it`},
 		{"day dialog key", "[keys]\ncreate = [\"n\"]\n", `keys.create: chroncal reserves "n", because the day dialog uses it`},
 		{"event dialog key", "[keys]\nhelp = [\"p\"]\n", `keys.help: chroncal reserves "p"`},
+		{"help dialog key", "[keys]\nhelp = [\"G\"]\n", `keys.help: chroncal reserves "G", because the help dialog uses it`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := loadWithConfigFile(t, c.body)

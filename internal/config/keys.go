@@ -49,6 +49,15 @@ type ReservedKeys struct {
 	Keys    []string
 }
 
+// eventDialogKeys holds the keys of the day dialog and the event dialog.
+// The two dialogs use the same keys.
+var eventDialogKeys = []string{
+	"up", "down", "left", "right", "h", "j", "k", "l",
+	"tab", "shift+tab", "enter", "space", "esc", "q",
+	"pgup", "pgdown", "ctrl+b", "ctrl+f", "home", "end",
+	"e", "ctrl+d", "x", "delete", "y", "n", "m", "p",
+}
+
 // reservedKeys lists the keys that ValidateKeys rejects. It cannot read the
 // TUI keymaps, because the TUI imports this package. The TUI test
 // TestReservedKeysMatchTUIKeymaps compares each list with the keymaps, so
@@ -90,22 +99,22 @@ var reservedKeys = []ReservedKeys{
 		// checks the create key before its own keys.
 		Use:     "the day dialog uses it",
 		Actions: []string{"help", "create"},
-		Keys: []string{
-			"up", "down", "left", "right", "h", "j", "k", "l",
-			"tab", "shift+tab", "enter", "space", "esc", "q",
-			"pgup", "pgdown", "ctrl+b", "ctrl+f", "home", "end",
-			"e", "ctrl+d", "x", "delete", "y", "n", "m", "p",
-		},
+		Keys:    eventDialogKeys,
 	},
 	{
 		// The help key works over the event dialog.
 		Use:     "the event dialog uses it",
 		Actions: []string{"help"},
+		Keys:    eventDialogKeys,
+	},
+	{
+		// The help dialog checks the help key before its own keys, so a
+		// help key on a scroll key closes the dialog.
+		Use:     "the help dialog uses it",
+		Actions: []string{"help"},
 		Keys: []string{
-			"up", "down", "left", "right", "h", "j", "k", "l",
-			"tab", "shift+tab", "enter", "space", "esc", "q",
-			"pgup", "pgdown", "ctrl+b", "ctrl+f", "home", "end",
-			"e", "ctrl+d", "x", "delete", "y", "n", "m", "p",
+			"esc", "q", "up", "k", "down", "j",
+			"pgup", "pgdown", "space", "home", "g", "end", "G",
 		},
 	},
 	{

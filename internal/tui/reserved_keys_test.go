@@ -80,6 +80,9 @@ func TestReservedKeysMatchTUIKeymaps(t *testing.T) {
 		"the event dialog uses it": canonicalSet(
 			bindingKeys(t, defaultEventViewKeys()),
 		),
+		"the help dialog uses it": canonicalSet(
+			bindingKeys(t, defaultHelpDialogKeys()),
+		),
 		"the calendar manager uses it": canonicalSet(
 			bindingKeys(t, managerKeys),
 			bindingKeys(t, defaultCalendarListKeys()),

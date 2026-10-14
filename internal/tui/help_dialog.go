@@ -94,21 +94,22 @@ func (m HelpDialogModel) Update(msg tea.Msg) (HelpDialogModel, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if key.Matches(msg, key.NewBinding(key.WithKeys("esc", "q")), m.keys.Help) {
+		hk := helpDialogKeyMap
+		if key.Matches(msg, hk.Close, m.keys.Help) {
 			return m, func() tea.Msg { return HelpDialogClosedMsg{} }
 		}
-		switch msg.String() {
-		case "up", "k":
+		switch {
+		case key.Matches(msg, hk.Up):
 			m.scroll--
-		case "down", "j":
+		case key.Matches(msg, hk.Down):
 			m.scroll++
-		case "pgup":
+		case key.Matches(msg, hk.PageUp):
 			m.scroll -= vp
-		case "pgdown", " ":
+		case key.Matches(msg, hk.PageDown):
 			m.scroll += vp
-		case "home", "g":
+		case key.Matches(msg, hk.Top):
 			m.scroll = 0
-		case "end", "G":
+		case key.Matches(msg, hk.Bottom):
 			m.scroll = maxScroll
 		}
 	case tea.MouseWheelMsg:
@@ -121,6 +122,34 @@ func (m HelpDialogModel) Update(msg tea.Msg) (HelpDialogModel, tea.Cmd) {
 	}
 	m.scroll = max(min(m.scroll, maxScroll), 0)
 	return m, nil
+}
+
+// helpDialogKeys holds the keys of the help dialog. The dialog checks the
+// help key with Close, before the scroll keys, so config reserves these
+// keys for the help action (see TestReservedKeysMatchTUIKeymaps).
+type helpDialogKeys struct {
+	Close    key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
+	Top      key.Binding
+	Bottom   key.Binding
+}
+
+// helpDialogKeyMap is the keymap that HelpDialogModel.Update reads.
+var helpDialogKeyMap = defaultHelpDialogKeys()
+
+func defaultHelpDialogKeys() helpDialogKeys {
+	return helpDialogKeys{
+		Close:    key.NewBinding(key.WithKeys("esc", "q")),
+		Up:       key.NewBinding(key.WithKeys("up", "k")),
+		Down:     key.NewBinding(key.WithKeys("down", "j")),
+		PageUp:   key.NewBinding(key.WithKeys("pgup")),
+		PageDown: key.NewBinding(key.WithKeys("pgdown", "space")),
+		Top:      key.NewBinding(key.WithKeys("home", "g")),
+		Bottom:   key.NewBinding(key.WithKeys("end", "G")),
+	}
 }
 
 func (m HelpDialogModel) viewportHeight() int {
