@@ -773,14 +773,14 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, calendarID, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
+	e, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
 	if err != nil {
 		return Event{}, err
 	}
 	// Mark the override dirty inside the transaction so a failed sync-tracking
 	// write rolls the override back rather than committing a change that is
 	// never pushed (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, calendarID, uid, "event"); err != nil {
+	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, uid, "event"); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -812,7 +812,7 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, calendarID, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
+	e, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
 	if err != nil {
 		return Event{}, err
 	}
@@ -822,7 +822,7 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 	// Mark the override dirty inside the transaction so a failed sync-tracking
 	// write rolls the override and its children back rather than committing a
 	// change that is never pushed (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, calendarID, uid, "event"); err != nil {
+	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, uid, "event"); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -832,35 +832,35 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 }
 
 // updateInstanceTx creates or updates a per-occurrence override row and its
-// categories using a tx-bound Queries. It returns the event and the calendar
-// of the override row for the dirty mark inside the caller's transaction.
-// storage.MarkResourceDirty sends the mark of a legacy override to the
-// calendar of its master. It opens no transaction, so callers can compose
-// it with attendee/alarm writes.
-func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
+// categories using a tx-bound Queries. The caller marks the calendar of the
+// returned event dirty inside its transaction. storage.MarkResourceDirty
+// sends the mark of a legacy override to the calendar of its master. It
+// opens no transaction, so callers can compose it with attendee/alarm
+// writes.
+func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
-		return Event{}, 0, err
+		return Event{}, err
 	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
 	move := uidMoveRows(qtx, uid)
 	master, masters, err := findInstanceMasterTx(ctx, qtx, move, p.CalendarID, recID)
 	if errors.Is(err, ErrAmbiguousUID) || errors.Is(err, ErrInstanceCalendarMove) {
-		return Event{}, 0, err
+		return Event{}, err
 	}
 	if err != nil {
-		return Event{}, 0, fmt.Errorf("get master: %w", err)
+		return Event{}, fmt.Errorf("get master: %w", err)
 	}
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
-		return Event{}, 0, err
+		return Event{}, err
 	}
 	existing, existErr := findInstanceOverrideTx(ctx, qtx, master, masters, recID)
 	if existErr != nil && !errors.Is(existErr, sql.ErrNoRows) {
 		if errors.Is(existErr, ErrAmbiguousUID) {
-			return Event{}, 0, existErr
+			return Event{}, existErr
 		}
-		return Event{}, 0, fmt.Errorf("get override: %w", existErr)
+		return Event{}, fmt.Errorf("get override: %w", existErr)
 	}
 	// The occurrence lives in the calendar of its stored override, or in
 	// the calendar of the master when no override exists. The shared rule
@@ -873,11 +873,11 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 		fromCalendarID = existing.CalendarID
 	}
 	if err := move.CheckOf(ctx, recID, fromCalendarID, p.CalendarID, uidMasters(masters)); err != nil {
-		return Event{}, 0, err
+		return Event{}, err
 	}
 	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
 		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
-			return Event{}, 0, err
+			return Event{}, err
 		}
 	}
 
@@ -893,7 +893,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 		storedCalendarID = existing.CalendarID
 		r, err = updateOverrideTx(ctx, qtx, existing, p)
 		if err != nil {
-			return Event{}, 0, fmt.Errorf("update override: %w", err)
+			return Event{}, fmt.Errorf("update override: %w", err)
 		}
 	} else {
 		r, err = qtx.CreateEvent(ctx, overrideCreateParams(uid, recID, master.Sequence+1, p))
@@ -908,20 +908,20 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 					RecurrenceID: recID,
 				})
 				if eErr != nil {
-					return Event{}, 0, fmt.Errorf("retry get override: %w", eErr)
+					return Event{}, fmt.Errorf("retry get override: %w", eErr)
 				}
 				if existing.DeletedAt != nil && *existing.DeletedAt != "" {
 					if err := reviveOverrideTx(ctx, qtx, master.CalendarID, existing); err != nil {
-						return Event{}, 0, err
+						return Event{}, err
 					}
 				}
 				storedCalendarID = existing.CalendarID
 				r, err = updateOverrideTx(ctx, qtx, existing, p)
 				if err != nil {
-					return Event{}, 0, fmt.Errorf("retry update override: %w", err)
+					return Event{}, fmt.Errorf("retry update override: %w", err)
 				}
 			} else {
-				return Event{}, 0, fmt.Errorf("create override: %w", err)
+				return Event{}, fmt.Errorf("create override: %w", err)
 			}
 		}
 	}
@@ -933,17 +933,17 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	// iCloud refuses the later PUT (issue #828).
 	if storedCalendarID != 0 {
 		if err := move.Record(ctx, storedCalendarID, r.CalendarID); err != nil {
-			return Event{}, 0, fmt.Errorf("record override calendar move: %w", err)
+			return Event{}, fmt.Errorf("record override calendar move: %w", err)
 		}
 	}
 
 	if err := replaceCategoriesTx(ctx, qtx, r.ID, carriedCats); err != nil {
-		return Event{}, 0, err
+		return Event{}, err
 	}
 
 	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
-	return e, r.CalendarID, nil
+	return e, nil
 }
 
 // reviveOverrideTx un-hides a soft-deleted override row that an edit of the
