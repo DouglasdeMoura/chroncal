@@ -39,3 +39,30 @@ func TestWriteFileAtomicReplacesFileAndSetsMode(t *testing.T) {
 		t.Fatalf("directory has %d entries, want only the file", len(entries))
 	}
 }
+
+// TestWriteFileAtomicIgnoresDirectorySyncFailure writes into a directory
+// that the process can write and search but not read. The rename works,
+// and the open of the directory for the sync fails. The file holds the new
+// data, so the write must succeed.
+func TestWriteFileAtomicIgnoresDirectorySyncFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any directory")
+	}
+	dir := filepath.Join(t.TempDir(), "noread")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	path := filepath.Join(dir, "config.toml")
+
+	if err := WriteFileAtomic(path, []byte("new"), 0o600, ".tmp-*"); err != nil {
+		t.Fatalf("WriteFileAtomic = %v, want nil after the rename", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "new" {
+		t.Fatalf("file = %q, %v; want the new data", got, err)
+	}
+}

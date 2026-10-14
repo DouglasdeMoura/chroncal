@@ -21,7 +21,9 @@ import (
 //   - syncs the data before the rename, so a power loss cannot keep the
 //     rename and lose the data blocks
 //   - syncs the parent directory after the rename, so the rename survives
-//     a power loss
+//     a power loss. This step is best effort. After the rename the file
+//     holds the new data, so a failure to open or sync the directory does
+//     not fail the write.
 func WriteFileAtomic(path string, data []byte, perm fs.FileMode, tmpPattern string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -51,14 +53,13 @@ func WriteFileAtomic(path string, data []byte, perm fs.FileMode, tmpPattern stri
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replace file: %w", err)
 	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("open directory: %w", err)
+	// The directory sync is best effort. Some platforms reject fsync on a
+	// directory, and a directory can deny a read. The data file is already
+	// synced, and the rename is done. The loss of the directory entry on a
+	// crash is the risk that remains, so ignore each failure here.
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
 	}
-	// Some platforms reject fsync on a directory. The data file is already
-	// synced. The loss of the directory entry on a crash is the risk that
-	// remains, so ignore that failure.
-	_ = d.Sync()
-	d.Close()
 	return nil
 }
