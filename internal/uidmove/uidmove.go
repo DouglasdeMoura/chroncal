@@ -65,7 +65,7 @@ func (e *OccurrenceMoveError) Error() string { return e.Err.Error() }
 
 func (e *OccurrenceMoveError) Unwrap() error { return e.Err }
 
-// Check applies the override rule (CheckOverrideMoveOf) and then
+// Check applies the override rule (CheckOverrideMove) and then
 // CheckTarget to an update of one row by its ID. recurrenceID is the
 // recurrence ID of that row. It reads the masters of the UID only when the
 // override rule applies.
@@ -80,7 +80,7 @@ func (r Rows) Check(ctx context.Context, recurrenceID string, fromCalendarID, to
 	return r.CheckOf(ctx, recurrenceID, fromCalendarID, toCalendarID, masters)
 }
 
-// CheckOverrideMoveOf refuses the calendar move of one override row.
+// CheckOverrideMove refuses the calendar move of one override row.
 // masters holds the live masters of the UID. One CalDAV object holds the
 // whole series, so an override cannot move alone. An older version saved
 // an override in another calendar on a calendar change. Such a legacy
@@ -93,7 +93,7 @@ func (r Rows) Check(ctx context.Context, recurrenceID string, fromCalendarID, to
 // refusal names every master.
 //
 // A refusal is an *OccurrenceMoveError. The function reads nothing.
-func (r Rows) CheckOverrideMoveOf(recurrenceID string, fromCalendarID, toCalendarID int64, masters []Master) error {
+func (r Rows) CheckOverrideMove(recurrenceID string, fromCalendarID, toCalendarID int64, masters []Master) error {
 	if !moveNeedsCheck(recurrenceID, fromCalendarID, toCalendarID) {
 		return nil
 	}
@@ -106,7 +106,7 @@ func (r Rows) CheckOverrideMoveOf(recurrenceID string, fromCalendarID, toCalenda
 // CheckOf is Check for a caller that already holds the live masters of
 // the UID. It reads the target calendar only (CheckTarget).
 func (r Rows) CheckOf(ctx context.Context, recurrenceID string, fromCalendarID, toCalendarID int64, masters []Master) error {
-	if err := r.CheckOverrideMoveOf(recurrenceID, fromCalendarID, toCalendarID, masters); err != nil {
+	if err := r.CheckOverrideMove(recurrenceID, fromCalendarID, toCalendarID, masters); err != nil {
 		return err
 	}
 	return r.CheckTarget(ctx, fromCalendarID, toCalendarID)

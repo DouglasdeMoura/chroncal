@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// loadWithConfigFile writes body to config.toml in a temporary
-// XDG_CONFIG_HOME and calls Load.
 // mustParseKeys returns the parsed [keys] table of cfg.
 func mustParseKeys(t *testing.T, cfg Config) map[string][]string {
 	t.Helper()
@@ -19,6 +17,8 @@ func mustParseKeys(t *testing.T, cfg Config) map[string][]string {
 	return keys
 }
 
+// loadWithConfigFile writes body to config.toml in a temporary
+// XDG_CONFIG_HOME and calls Load.
 func loadWithConfigFile(t *testing.T, body string) (Config, error) {
 	t.Helper()
 	dir := t.TempDir()

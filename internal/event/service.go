@@ -560,7 +560,7 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 // master. A legacy override of recID in that calendar can belong to any
 // master, so it gets ErrAmbiguousUID. With no such override, the
 // occurrence lives in the calendar of a master, and the shared rule
-// (uidmove.Rows.CheckOverrideMoveOf) refuses the move for each master. An
+// (uidmove.Rows.CheckOverrideMove) refuses the move for each master. An
 // edit that names no calendar gets ErrAmbiguousUID.
 func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmove.Rows, calendarID int64, recID string) (storage.Event, []storage.Event, error) {
 	uid := move.UID
@@ -593,7 +593,7 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 		// The occurrence can belong to each master, so its calendar is
 		// not known. Calendar 0 holds no master, so the shared rule
 		// refuses the move and names every master.
-		if err := move.CheckOverrideMoveOf(recID, 0, calendarID, uidMasters(masters)); err != nil {
+		if err := move.CheckOverrideMove(recID, 0, calendarID, uidMasters(masters)); err != nil {
 			return storage.Event{}, nil, err
 		}
 	}

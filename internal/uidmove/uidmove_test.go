@@ -70,9 +70,9 @@ func TestCheckOverrideRule(t *testing.T) {
 			// The rule for a caller that holds the masters gives the same
 			// answer.
 			masters, _ := rows.Masters(context.Background())
-			err = rows.CheckOverrideMoveOf(tc.recID, a, tc.to, masters)
+			err = rows.CheckOverrideMove(tc.recID, a, tc.to, masters)
 			if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
-				t.Fatalf("CheckOverrideMoveOf = %v, want %v", err, tc.want)
+				t.Fatalf("CheckOverrideMove = %v, want %v", err, tc.want)
 			}
 		})
 	}
