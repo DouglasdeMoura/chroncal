@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -470,4 +471,58 @@ func TestMoveEventOnGenericServerLeavesSourceToTombstonePass(t *testing.T) {
 
 	syncPairClean(t, engine, calA, calB)
 	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
+}
+
+// TestMoveEventWithOpenConflictIsRefused moves an event whose UID has an
+// open sync conflict in the source calendar. The move would clear the
+// source dirty flag, and the next pass would resolve the conflict for the
+// server in silence. The recorded local body would then be lost. The move
+// must be refused and must change nothing.
+func TestMoveEventWithOpenConflictIsRefused(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createPushedEvent(t, engine, calA)
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calA,
+		OwnerType:  "event",
+		OwnerID:    evt.ID,
+		Uid:        evt.UID,
+		LocalIcal:  "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+		ServerIcal: "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+		ServerEtag: `"server"`,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+	if err := q.MarkResourceDirty(ctx, calA, evt.UID, "event"); err != nil {
+		t.Fatalf("MarkResourceDirty: %v", err)
+	}
+
+	_, err := engine.events.Update(ctx, evt.ID, event.UpdateParams{
+		Title:      evt.Title,
+		StartTime:  evt.StartTime,
+		EndTime:    evt.EndTime,
+		CalendarID: calB,
+		Status:     evt.Status,
+		Transp:     evt.Transp,
+		Class:      evt.Class,
+	})
+	if !errors.Is(err, storage.ErrMoveOpenConflict) {
+		t.Fatalf("move with an open conflict = %v, want ErrMoveOpenConflict", err)
+	}
+	if !strings.Contains(err.Error(), "chroncal sync resolve") {
+		t.Fatalf("error = %q, want the resolve command", err)
+	}
+	got, err := engine.events.Get(ctx, evt.ID)
+	if err != nil || got.CalendarID != calA {
+		t.Fatalf("event after the refused move = %+v, %v; want it in A", got, err)
+	}
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
+	if err != nil || sr.Dirty != 1 {
+		t.Fatalf("sync resource A = %+v, %v; want dirty", sr, err)
+	}
+	if ts, err := q.ListTombstonesByCalendar(ctx, calA); err != nil || len(ts) != 0 {
+		t.Fatalf("tombstones on A = %v, %v; want none", ts, err)
+	}
 }

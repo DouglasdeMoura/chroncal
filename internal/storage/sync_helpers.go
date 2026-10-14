@@ -86,6 +86,12 @@ func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, 
 	return MarkResourceDirty(ctx, q.db, calendarID, uid, ownerType)
 }
 
+// ErrMoveOpenConflict reports a move of a UID that has an open sync conflict
+// in the source calendar. The move would clear the source dirty flag, and a
+// later pass would resolve the conflict for the server. The recorded local
+// body would then be lost. Resolve the conflict first.
+var ErrMoveOpenConflict = errors.New("the item has an open sync conflict; resolve the sync conflict first (chroncal sync conflicts, then chroncal sync resolve <id>)")
+
 // RecordResourceMove completes a local move of a resource from one calendar
 // to another (issue #828). Call it in the transaction of the move, after
 // the update of the moved row. q must be bound to that transaction.
@@ -95,6 +101,10 @@ func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, 
 // the source calendar to the target calendar. Each domain binds its own
 // queries into moveRows. The rows include the soft-deleted rows and the
 // delete-log rows, so a later restore finds them in the target calendar.
+//
+// A UID with an open sync conflict in the source calendar does not move.
+// RecordResourceMove then returns ErrMoveOpenConflict, and the caller rolls
+// the transaction back.
 //
 // On the target calendar it clears a pending tombstone for the UID. A move
 // back to a calendar then cannot delete the server object of that calendar.
@@ -109,6 +119,13 @@ func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, 
 func RecordResourceMove(ctx context.Context, q *Queries, fromCalendarID, toCalendarID int64, uid string, moveRows func(context.Context) error) error {
 	if fromCalendarID == toCalendarID || uid == "" {
 		return nil
+	}
+	open, err := q.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: fromCalendarID, Uid: uid})
+	if err != nil {
+		return fmt.Errorf("check open conflict: %w", err)
+	}
+	if open > 0 {
+		return fmt.Errorf("move %s: %w", uid, ErrMoveOpenConflict)
 	}
 	if err := moveRows(ctx); err != nil {
 		return fmt.Errorf("move rows: %w", err)
