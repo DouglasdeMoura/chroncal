@@ -115,7 +115,7 @@ func expandKeyAliases(keys []string) []string {
 		canon := config.CanonicalKey(k)
 		if len(canon) == 1 && canon[0] >= 'A' && canon[0] <= 'Z' {
 			add(canon)
-			add("shift+" + strings.ToLower(canon))
+			add("shift+" + string(canon[0]-'A'+'a'))
 			continue
 		}
 		add(k)

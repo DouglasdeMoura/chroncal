@@ -236,8 +236,11 @@ func ValidateKeys(overrides map[string][]string) error {
 // "shift+w" or "W", and a user can write "shift+W" in the config file.
 func CanonicalKey(k string) string {
 	if rest, ok := strings.CutPrefix(k, "shift+"); ok && len(rest) == 1 {
-		if lower := strings.ToLower(rest); lower[0] >= 'a' && lower[0] <= 'z' {
-			return strings.ToUpper(rest)
+		switch c := rest[0]; {
+		case c >= 'a' && c <= 'z':
+			return string(c - 'a' + 'A')
+		case c >= 'A' && c <= 'Z':
+			return rest
 		}
 	}
 	return k
