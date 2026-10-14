@@ -113,7 +113,7 @@ type Config struct {
 	UI         UIConfig         `mapstructure:"ui"`
 	// Keys maps a TUI action name to the keys that trigger it (issue #797).
 	// An entry replaces the default keys of that action. KeyActions lists
-	// the action names. Load validates the table with ValidateKeys.
+	// the action names. tui.Run validates the table with ValidateKeys.
 	Keys map[string][]string `mapstructure:"keys"`
 }
 
@@ -200,11 +200,9 @@ func Load() (Config, error) {
 	if err := cfg.SMTP.Validate(); err != nil {
 		return Config{}, err
 	}
-	// Validate the key table at load time. A bad remap must fail with a
-	// clear error. A silent fallback to the defaults hides the typo.
-	if err := ValidateKeys(cfg.Keys); err != nil {
-		return Config{}, err
-	}
+	// Load does not validate the [keys] table. Only the TUI reads it, so a
+	// bad remap must not stop the CLI, sync, or the alarm daemon. The TUI
+	// calls ValidateKeys when it starts (see tui.Run).
 	return cfg, nil
 }
 

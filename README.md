@@ -982,7 +982,7 @@ Write a key with its Bubble Tea name, for example `"x"`, `"ctrl+k"`, `"tab"`, `"
 | `undo` | Undo the last delete | `u` |
 | `trash` | Open the recently deleted list | `D` |
 
-Chroncal checks the table when it loads the config file. Each of these conditions stops the command with an error:
+Chroncal checks the table when the TUI starts. Each of these conditions stops the TUI with an error. The CLI commands, sync, and the alarm daemon do not read the table, so they keep working:
 
 - The table names an unknown action.
 - An action has an empty list or an empty key.
@@ -997,6 +997,7 @@ An action key has priority over the keys of a view. Thus chroncal rejects these 
 | Month, week, day, and agenda views | All actions | arrows, `h`, `j`, `k`, `l`, `[`, `]`, `pgup`, `pgdown`, `t`, `enter`, `space`, `e`, `ctrl+d`, `x`, `delete`, `o` |
 | Day dialog | `help`, `create` | arrows, `h`, `j`, `k`, `l`, `tab`, `shift+tab`, `enter`, `space`, `esc`, `q`, `pgup`, `pgdown`, `ctrl+b`, `ctrl+f`, `home`, `end`, `e`, `ctrl+d`, `x`, `delete`, `y`, `n`, `m`, `p` |
 | Event dialog | `help` | the same keys as the day dialog |
+| Help dialog | `help` | `esc`, `q`, `up`, `k`, `down`, `j`, `pgup`, `pgdown`, `space`, `home`, `g`, `end`, `G` |
 | Calendar manager | `calendars` | arrows, `h`, `j`, `k`, `l`, `shift+up`, `shift+down`, `K`, `J`, `tab`, `shift+tab`, `enter`, `space`, `esc`, `q`, `a` |
 
 The default key of an action is never in its list. For example, the calendar manager uses `a`, but chroncal accepts `a` for `agenda_view`, because that action does not work in the calendar manager.

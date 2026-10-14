@@ -692,6 +692,12 @@ func resolveFullSyncStrategy(name string) syncpkg.ConflictStrategy {
 }
 
 func Run(a *app.App, themeName string, opts RunOptions) error {
+	// config.Load does not check the [keys] table, so the CLI keeps
+	// working with a bad remap. The TUI refuses to start with it. A silent
+	// fallback to the defaults hides the typo.
+	if err := config.ValidateKeys(opts.Keys); err != nil {
+		return err
+	}
 	// Query the terminal before Bubble Tea takes over stdin. The helper
 	// sends OSC 11 (bg) + OSC 10 (fg) + OSC 4 (palette 0..15) + DA1 in
 	// one raw-mode session:

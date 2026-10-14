@@ -168,7 +168,7 @@ func KeyActions() []KeyAction {
 
 // ResolveKeys returns the effective keys for each action. A key list in
 // overrides replaces the defaults of that action. The function does not
-// validate overrides. Load calls ValidateKeys first.
+// validate overrides. tui.Run calls ValidateKeys first.
 func ResolveKeys(overrides map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(keyActions))
 	for _, a := range keyActions {

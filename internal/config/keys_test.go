@@ -43,7 +43,7 @@ month_view = ["M", "ctrl+m"]
 	}
 }
 
-func TestLoad_KeysErrors(t *testing.T) {
+func TestValidateKeys_Errors(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		body string
@@ -69,12 +69,18 @@ func TestLoad_KeysErrors(t *testing.T) {
 		{"help dialog key", "[keys]\nhelp = [\"G\"]\n", `keys.help: chroncal reserves "G", because the help dialog uses it`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := loadWithConfigFile(t, c.body)
+			// Load accepts the table, so the CLI, sync, and the alarm
+			// daemon keep working. The TUI checks it with ValidateKeys.
+			cfg, err := loadWithConfigFile(t, c.body)
+			if err != nil {
+				t.Fatalf("Load() error = %v, want nil", err)
+			}
+			err = ValidateKeys(cfg.Keys)
 			if err == nil {
-				t.Fatalf("Load() error = nil, want %q", c.want)
+				t.Fatalf("ValidateKeys() error = nil, want %q", c.want)
 			}
 			if !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("Load() error = %q, want it to contain %q", err, c.want)
+				t.Fatalf("ValidateKeys() error = %q, want it to contain %q", err, c.want)
 			}
 		})
 	}
@@ -83,8 +89,12 @@ func TestLoad_KeysErrors(t *testing.T) {
 func TestLoad_KeysSwapIsValid(t *testing.T) {
 	// A swap moves two keys at once. The check uses the effective keys, so
 	// the swap is valid.
-	if _, err := loadWithConfigFile(t, "[keys]\nmonth_view = [\"w\"]\nweek_view = [\"m\"]\n"); err != nil {
+	cfg, err := loadWithConfigFile(t, "[keys]\nmonth_view = [\"w\"]\nweek_view = [\"m\"]\n")
+	if err != nil {
 		t.Fatalf("Load() error = %v", err)
+	}
+	if err := ValidateKeys(cfg.Keys); err != nil {
+		t.Fatalf("ValidateKeys() error = %v", err)
 	}
 }
 
@@ -92,8 +102,12 @@ func TestLoad_KeysSwapIsValid(t *testing.T) {
 // uses for an action that the dialog does not check. The day dialog uses
 // n, but only the help and create keys reach the day dialog.
 func TestLoad_KeysReservedOnlyWhereTheActionRuns(t *testing.T) {
-	if _, err := loadWithConfigFile(t, "[keys]\nsync = [\"n\"]\nagenda_view = [\"A\"]\nday_view = [\"a\"]\n"); err != nil {
+	cfg, err := loadWithConfigFile(t, "[keys]\nsync = [\"n\"]\nagenda_view = [\"A\"]\nday_view = [\"a\"]\n")
+	if err != nil {
 		t.Fatalf("Load() error = %v", err)
+	}
+	if err := ValidateKeys(cfg.Keys); err != nil {
+		t.Fatalf("ValidateKeys() error = %v", err)
 	}
 }
 
