@@ -271,7 +271,7 @@ func footerHints(keys appKeyMap, ctx FooterContext, hasRSVP, showTodayHint bool)
 			{"↑↓", "move"},
 			{"space", "toggle"},
 			{keyLabel(keys.Sidebar), "collapse"},
-			{"tab", "back"},
+			{keyLabel(keys.SwitchFocus), "back"},
 		}
 	}
 	return nil

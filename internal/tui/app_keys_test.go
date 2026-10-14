@@ -230,3 +230,15 @@ func helpEntryKeys(t *testing.T, h HelpDialogModel, desc string) string {
 	t.Fatalf("help dialog has no entry %q", desc)
 	return ""
 }
+
+// TestSidebarFooterShowsRemappedSwitchFocusKey remaps the switch_focus
+// action to "F". The sidebar footer hint for the way back must show "F",
+// not the default tab.
+func TestSidebarFooterShowsRemappedSwitchFocusKey(t *testing.T) {
+	m := NewModel(nil, "")
+	m = m.withKeys(newAppKeys(map[string][]string{"switch_focus": {"F"}}))
+	footer := stripANSI(m.footer.Render(FooterSidebar, 200, "", "", false, false))
+	if !strings.Contains(footer, "F back") || strings.Contains(footer, "tab back") {
+		t.Fatalf("sidebar footer = %q, want the F back hint", footer)
+	}
+}
