@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
 )
@@ -342,12 +344,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				e, err = a.Events.Update(ctx, existing.ID, p)
 			}
 			if errors.Is(err, event.ErrInstanceCalendarMove) {
-				// The master of the occurrence is in the calendar of the
-				// edited row. Two calendars can hold the same UID.
-				return errOccurrenceMove("event", existing.ID, existing.RecurrenceID, existing.UID, func() (int64, error) {
-					m, err := a.Events.GetByCalendarUID(ctx, existing.CalendarID, existing.UID)
-					return m.ID, err
-				})
+				return eventOccurrenceMoveError(ctx, a, existing)
 			}
 			if err != nil {
 				return fmt.Errorf("update event: %w", err)
@@ -463,4 +460,52 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related event UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable, replaces all)")
 	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
 	return cmd
+}
+
+// errNoSingleMaster reports that a legacy override has no master or more
+// than one master.
+var errNoSingleMaster = errors.New("no single master")
+
+// eventOccurrenceMoveError returns the error for a refused calendar move of
+// one occurrence of existing. The master of an override is in the calendar
+// of the override. A legacy override (an older version saved it in a
+// calendar with no master) has its master in another calendar. With one
+// master in all calendars, the hint names that master. With more masters,
+// the error names each master and its calendar, because the CLI cannot
+// choose the series.
+func eventOccurrenceMoveError(ctx context.Context, a *app.App, existing event.Event) error {
+	var masters []event.Event
+	moveErr := errOccurrenceMove("event", existing.ID, existing.RecurrenceID, existing.UID, func() (int64, error) {
+		if m, err := a.Events.GetByCalendarUID(ctx, existing.CalendarID, existing.UID); err == nil {
+			return m.ID, nil
+		}
+		var err error
+		if masters, err = a.Events.ListMastersByUID(ctx, existing.UID); err != nil {
+			return 0, err
+		}
+		if len(masters) == 1 {
+			return masters[0].ID, nil
+		}
+		return 0, errNoSingleMaster
+	})
+	if len(masters) < 2 {
+		return moveErr
+	}
+	parts := make([]string, len(masters))
+	for i, m := range masters {
+		parts[i] = fmt.Sprintf("%d (calendar %q)", m.ID, calendarName(ctx, a, m.CalendarID))
+	}
+	return fmt.Errorf("update event: one occurrence cannot move to another calendar. "+
+		"This row is an old split override in calendar %q, and the UID has a series in more than one calendar: %s. "+
+		"To move one series, run: chroncal event update ID --calendar NAME",
+		calendarName(ctx, a, existing.CalendarID), strings.Join(parts, ", "))
+}
+
+// calendarName returns the name of a calendar, or its ID when the lookup
+// fails.
+func calendarName(ctx context.Context, a *app.App, calendarID int64) string {
+	if c, err := a.Calendars.Get(ctx, calendarID); err == nil {
+		return c.Name
+	}
+	return fmt.Sprint(calendarID)
 }

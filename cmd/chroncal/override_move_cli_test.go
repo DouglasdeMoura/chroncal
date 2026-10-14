@@ -97,3 +97,84 @@ func TestOverrideCalendarMoveCLIError(t *testing.T) {
 		}
 	}
 }
+
+// TestLegacyOverrideCalendarMoveCLIHint moves a legacy override: an older
+// version saved it in calendar Old, which holds no master of the UID. With
+// one master, the hint names the ID of that master. With two masters, the
+// hint says that the row is an old split override and names each master
+// with its calendar.
+func TestLegacyOverrideCalendarMoveCLIHint(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	ctx := context.Background()
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	mkCal := func(name string) int64 {
+		t.Helper()
+		c, err := a.Calendars.Create(ctx, name, "", "")
+		if err != nil {
+			t.Fatalf("create calendar %s: %v", name, err)
+		}
+		return c.ID
+	}
+	oldCal, other := mkCal("Old"), mkCal("Other")
+	mkCal("Home")
+	first, err := a.Calendars.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("get calendar 1: %v", err)
+	}
+	start := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
+	mkSeries := func(calID int64) event.Event {
+		t.Helper()
+		e, err := a.Events.Create(ctx, event.CreateParams{CalendarID: calID, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3"})
+		if err != nil {
+			t.Fatalf("create series: %v", err)
+		}
+		return e
+	}
+	master := mkSeries(1)
+	inst := start.Add(24 * time.Hour)
+	override, err := a.Events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, oldCal, override.ID); err != nil {
+		t.Fatalf("seed legacy override: %v", err)
+	}
+	a.Close()
+
+	_, stderr, err := runChroncalCommand(t, "event", "update", fmt.Sprint(override.ID), "--calendar", "Home")
+	if err == nil {
+		t.Fatal("move of a legacy override to a third calendar succeeded")
+	}
+	if want := fmt.Sprintf("chroncal event update %d --calendar NAME", master.ID); !strings.Contains(stderr, want) {
+		t.Fatalf("stderr = %q, want %q", stderr, want)
+	}
+
+	// A copy of the series in Other gives the UID a second master.
+	a, err = app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	copySeries := mkSeries(other)
+	if _, err := a.DB.ExecContext(ctx, `UPDATE events SET uid = ? WHERE id = ?`, master.UID, copySeries.ID); err != nil {
+		t.Fatalf("seed the copy: %v", err)
+	}
+	a.Close()
+
+	_, stderr, err = runChroncalCommand(t, "event", "update", fmt.Sprint(override.ID), "--calendar", "Home")
+	if err == nil {
+		t.Fatal("move of a legacy override with two masters succeeded")
+	}
+	for _, want := range []string{
+		"old split override",
+		fmt.Sprintf(`%d (calendar %q)`, master.ID, first.Name),
+		fmt.Sprintf(`%d (calendar "Other")`, copySeries.ID),
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr = %q, want %q", stderr, want)
+		}
+	}
+}
