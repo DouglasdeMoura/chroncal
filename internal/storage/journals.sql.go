@@ -140,6 +140,42 @@ func (q *Queries) GetJournal(ctx context.Context, id int64) (Journal, error) {
 	return i, err
 }
 
+const getJournalByCalendarUID = `-- name: GetJournalByCalendarUID :one
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' AND deleted_at IS NULL
+`
+
+type GetJournalByCalendarUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) GetJournalByCalendarUID(ctx context.Context, arg GetJournalByCalendarUIDParams) (Journal, error) {
+	row := q.db.QueryRowContext(ctx, getJournalByCalendarUID, arg.CalendarID, arg.Uid)
+	var i Journal
+	err := row.Scan(
+		&i.ID,
+		&i.Uid,
+		&i.CalendarID,
+		&i.Summary,
+		&i.Description,
+		&i.StartDate,
+		&i.Status,
+		&i.Class,
+		&i.Url,
+		&i.RecurrenceRule,
+		&i.Timezone,
+		&i.Sequence,
+		&i.Exdates,
+		&i.Rdates,
+		&i.RecurrenceID,
+		&i.Dtstamp,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getJournalByUID = `-- name: GetJournalByUID :one
 SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
 `

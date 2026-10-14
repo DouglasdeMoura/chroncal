@@ -3,6 +3,7 @@ package journal
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -60,6 +61,11 @@ func (s *Service) dirtyExec() storage.DBTX {
 	}
 	return s.db
 }
+
+// ErrInstanceCalendarMove reports an edit of one occurrence that asks for
+// another calendar. One CalDAV object holds the whole series, so move the
+// master instead (issue #828).
+var ErrInstanceCalendarMove = errors.New("journal: one occurrence cannot move to another calendar; move the whole series")
 
 type CreateParams struct {
 	CalendarID     int64
@@ -343,6 +349,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 		if err := s.ensureWritable(ctx, p.CalendarID); err != nil {
 			return Journal{}, err
 		}
+	}
+	if err := checkOverrideCalendar(ctx, s.q, existing, p.CalendarID); err != nil {
+		return Journal{}, err
 	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 
@@ -722,6 +731,25 @@ func fromStorageSlice(rows []storage.Journal) []Journal {
 		journals[i] = fromStorage(r)
 	}
 	return journals
+}
+
+// checkOverrideCalendar refuses the calendar move of one override row. One
+// CalDAV object holds the whole series, so an override cannot move alone,
+// and a move of its UID rows moves the whole series (issue #828). An older
+// version saved an override in another calendar on a calendar change. Such
+// an override can move back to the calendar of its master. The rule does
+// nothing for a master row.
+func checkOverrideCalendar(ctx context.Context, q *storage.Queries, old storage.Journal, calendarID int64) error {
+	if old.RecurrenceID == "" || calendarID == old.CalendarID {
+		return nil
+	}
+	if _, err := q.GetJournalByCalendarUID(ctx, storage.GetJournalByCalendarUIDParams{CalendarID: calendarID, Uid: old.Uid}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInstanceCalendarMove
+		}
+		return fmt.Errorf("find master: %w", err)
+	}
+	return nil
 }
 
 // recordUIDMoveTx records the move of the journal rows of one UID from one

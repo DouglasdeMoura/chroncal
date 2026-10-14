@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -270,6 +271,9 @@ a --progress value other than 100.`,
 			}
 
 			t, err := a.Todos.Update(ctx, existing.ID, p)
+			if errors.Is(err, todo.ErrInstanceCalendarMove) {
+				return fmt.Errorf("update todo: one occurrence cannot move to another calendar. To move the whole series, run: chroncal todo update %s --calendar NAME", existing.UID)
+			}
 			if err != nil {
 				return fmt.Errorf("update todo: %w", err)
 			}

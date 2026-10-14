@@ -33,6 +33,9 @@ SELECT * FROM todos WHERE id = ?;
 -- name: GetTodoByUID :one
 SELECT * FROM todos WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
 
+-- name: GetTodoByCalendarUID :one
+SELECT * FROM todos WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
+
 -- name: GetTodoByUIDIncludingDeleted :one
 SELECT * FROM todos WHERE uid = ? AND recurrence_id = '';
 

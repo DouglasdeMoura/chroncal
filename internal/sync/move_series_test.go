@@ -329,3 +329,126 @@ func TestEditLegacyOverrideBackToMasterCalendarReunitesSeries(t *testing.T) {
 	syncPairClean(t, engine, calA, calB)
 	wantOnlyServerObject(t, srv, pathA)
 }
+
+// TestMoveTodoAndJournalOverrideRowIsRejected updates a todo override row
+// and a journal override row by its ID with another calendar. One CalDAV
+// object holds the whole series, so the override cannot move alone. Before
+// the fix, the update moved the whole series in silence. An override that
+// an older version saved in another calendar can still move back to the
+// calendar of the master. A move of the master still moves the series.
+func TestMoveTodoAndJournalOverrideRowIsRejected(t *testing.T) {
+	t.Parallel()
+	type item struct {
+		table   string
+		wantErr error
+		// create creates a master and an override row on calA. It returns
+		// the UID, the master ID, and the override ID.
+		create func(t *testing.T, engine *Engine, calA int64) (uid string, masterID, overrideID int64)
+		// move updates the row with id to calendar calID.
+		move func(engine *Engine, id, calID int64) error
+	}
+	asOverride := func(t *testing.T, engine *Engine, table, uid string, id int64) {
+		t.Helper()
+		if _, err := engine.db.ExecContext(context.Background(),
+			`UPDATE `+table+` SET uid = ?, recurrence_id = '2026-05-19T09:00:00Z', recurrence_rule = NULL WHERE id = ?`, uid, id,
+		); err != nil {
+			t.Fatalf("seed override row: %v", err)
+		}
+	}
+	tests := []item{
+		{
+			table:   "todos",
+			wantErr: todo.ErrInstanceCalendarMove,
+			create: func(t *testing.T, engine *Engine, calA int64) (string, int64, int64) {
+				ctx := context.Background()
+				master, err := engine.todos.Create(ctx, todo.CreateParams{CalendarID: calA, Summary: "Water plants", DueDate: "2026-05-18T09:00:00Z", RecurrenceRule: "FREQ=DAILY;COUNT=5"})
+				if err != nil {
+					t.Fatalf("Create todo: %v", err)
+				}
+				other, err := engine.todos.Create(ctx, todo.CreateParams{CalendarID: calA, Summary: "Water plants late", DueDate: "2026-05-19T10:00:00Z"})
+				if err != nil {
+					t.Fatalf("Create todo override: %v", err)
+				}
+				asOverride(t, engine, "todos", master.UID, other.ID)
+				return master.UID, master.ID, other.ID
+			},
+			move: func(engine *Engine, id, calID int64) error {
+				td, err := engine.todos.Get(context.Background(), id)
+				if err != nil {
+					return err
+				}
+				_, err = engine.todos.Update(context.Background(), id, todo.UpdateParams{
+					CalendarID: calID, Summary: td.Summary, DueDate: td.DueDate, RecurrenceRule: td.RecurrenceRule, Status: td.Status, Class: td.Class,
+				})
+				return err
+			},
+		},
+		{
+			table:   "journals",
+			wantErr: journal.ErrInstanceCalendarMove,
+			create: func(t *testing.T, engine *Engine, calA int64) (string, int64, int64) {
+				ctx := context.Background()
+				master, err := engine.journals.Create(ctx, journal.CreateParams{CalendarID: calA, Summary: "Log", StartDate: "2026-05-18", RecurrenceRule: "FREQ=DAILY;COUNT=5"})
+				if err != nil {
+					t.Fatalf("Create journal: %v", err)
+				}
+				other, err := engine.journals.Create(ctx, journal.CreateParams{CalendarID: calA, Summary: "Log late", StartDate: "2026-05-19"})
+				if err != nil {
+					t.Fatalf("Create journal override: %v", err)
+				}
+				asOverride(t, engine, "journals", master.UID, other.ID)
+				return master.UID, master.ID, other.ID
+			},
+			move: func(engine *Engine, id, calID int64) error {
+				j, err := engine.journals.Get(context.Background(), id)
+				if err != nil {
+					return err
+				}
+				_, err = engine.journals.Update(context.Background(), id, journal.UpdateParams{
+					CalendarID: calID, Summary: j.Summary, StartDate: j.StartDate, RecurrenceRule: j.RecurrenceRule, Status: j.Status, Class: j.Class,
+				})
+				return err
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.table, func(t *testing.T) {
+			t.Parallel()
+			engine, _, _, calA, calB := newICloudPairEngine(t)
+			ctx := context.Background()
+
+			uid, masterID, overrideID := tc.create(t, engine, calA)
+			if err := tc.move(engine, overrideID, calB); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("move of an override row = %v, want %v", err, tc.wantErr)
+			}
+			if n := countRows(t, engine, tc.table, calA, uid); n != 2 {
+				t.Fatalf("rows in calendar A = %d, want 2 (master and override)", n)
+			}
+			if n := countRows(t, engine, tc.table, calB, uid); n != 0 {
+				t.Fatalf("rows in calendar B = %d, want 0", n)
+			}
+			if err := tc.move(engine, overrideID, calA); err != nil {
+				t.Fatalf("edit of an override in its own calendar = %v, want nil", err)
+			}
+
+			// A legacy override in B can move back to the master in A.
+			if _, err := engine.db.ExecContext(ctx, `UPDATE `+tc.table+` SET calendar_id = ? WHERE id = ?`, calB, overrideID); err != nil {
+				t.Fatalf("seed legacy override: %v", err)
+			}
+			if err := tc.move(engine, overrideID, calA); err != nil {
+				t.Fatalf("move of a legacy override back to the master = %v, want nil", err)
+			}
+			if n := countRows(t, engine, tc.table, calB, uid); n != 0 {
+				t.Fatalf("rows left in calendar B = %d, want 0", n)
+			}
+
+			// A move of the master moves the whole series.
+			if err := tc.move(engine, masterID, calB); err != nil {
+				t.Fatalf("move of the master = %v, want nil", err)
+			}
+			if n := countRows(t, engine, tc.table, calB, uid); n != 2 {
+				t.Fatalf("rows in calendar B after the master move = %d, want 2", n)
+			}
+		})
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -555,6 +556,9 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 			}
 
 			j, err := a.Journals.Update(ctx, existing.ID, p)
+			if errors.Is(err, journal.ErrInstanceCalendarMove) {
+				return fmt.Errorf("update journal: one occurrence cannot move to another calendar. To move the whole series, run: chroncal journal update %s --calendar NAME", existing.UID)
+			}
 			if err != nil {
 				return fmt.Errorf("update journal: %w", err)
 			}

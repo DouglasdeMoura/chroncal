@@ -160,6 +160,11 @@ const (
 
 var ErrInvalidTiming = errors.New("invalid todo timing")
 
+// ErrInstanceCalendarMove reports an edit of one occurrence that asks for
+// another calendar. One CalDAV object holds the whole series, so move the
+// master instead (issue #828).
+var ErrInstanceCalendarMove = errors.New("todo: one occurrence cannot move to another calendar; move the whole series")
+
 func defaults(status, class string) (string, string) {
 	if status == "" {
 		status = defaultStatus
@@ -494,6 +499,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 			return Todo{}, err
 		}
 	}
+	if err := checkOverrideCalendar(ctx, s.q, existing, p.CalendarID); err != nil {
+		return Todo{}, err
+	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
 	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
@@ -762,6 +770,25 @@ func (s *Service) collect(ctx context.Context, t *Todo, failFast bool) *hydrate.
 
 func (s *Service) hydrate(ctx context.Context, t *Todo, failFast bool) error {
 	return s.collect(ctx, t, failFast).Err()
+}
+
+// checkOverrideCalendar refuses the calendar move of one override row. One
+// CalDAV object holds the whole series, so an override cannot move alone,
+// and a move of its UID rows moves the whole series (issue #828). An older
+// version saved an override in another calendar on a calendar change. Such
+// an override can move back to the calendar of its master. The rule does
+// nothing for a master row.
+func checkOverrideCalendar(ctx context.Context, q *storage.Queries, old storage.Todo, calendarID int64) error {
+	if old.RecurrenceID == "" || calendarID == old.CalendarID {
+		return nil
+	}
+	if _, err := q.GetTodoByCalendarUID(ctx, storage.GetTodoByCalendarUIDParams{CalendarID: calendarID, Uid: old.Uid}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInstanceCalendarMove
+		}
+		return fmt.Errorf("find master: %w", err)
+	}
+	return nil
 }
 
 // recordUIDMoveTx records the move of the todo rows of one UID from one
