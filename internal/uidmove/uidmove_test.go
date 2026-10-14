@@ -49,6 +49,7 @@ func TestCheckOverrideMove(t *testing.T) {
 		{"override leaves its master for a copy", map[int64]bool{a: true, b: true}, "r", b, errInstance},
 		{"legacy override goes back to its master", map[int64]bool{b: true}, "r", b, nil},
 		{"legacy override goes to no master", map[int64]bool{}, "r", b, errInstance},
+		{"override update names no calendar", map[int64]bool{a: true}, "r", 0, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

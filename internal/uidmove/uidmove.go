@@ -74,10 +74,10 @@ func (r Rows) Check(ctx context.Context, recurrenceID string, fromCalendarID, to
 // An older version saved an override in another calendar on a calendar
 // change. Such a legacy override has no master in its own calendar, and it
 // can move back to a calendar with a master. The rule does nothing for a
-// master row (an empty recurrenceID) or for an update that keeps the
-// calendar.
+// master row (an empty recurrenceID), for an update that keeps the
+// calendar, or for an update that names no calendar (toCalendarID 0).
 func (r Rows) CheckOverrideMove(ctx context.Context, recurrenceID string, fromCalendarID, toCalendarID int64) error {
-	if recurrenceID == "" || fromCalendarID == toCalendarID {
+	if recurrenceID == "" || fromCalendarID == toCalendarID || toCalendarID == 0 {
 		return nil
 	}
 	ownMaster, err := r.HasMaster(ctx, fromCalendarID)
