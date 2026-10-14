@@ -590,7 +590,8 @@ Conflict handling:
 Stuck resources:
 
 - Sometimes the server keeps a body that chroncal cannot import for a resource that chroncal already synced. The multiget returns 404, or the body does not parse. Sync then keeps the local copy and tries again on the next run.
-- After three failed runs, sync stops the retries. The calendar is no longer marked as failing. The local copy stays, and the server changes to that resource are not imported.
+- Sync stops the retries after three failed runs, when at least one hour has gone by since the first failure. A frequent background sync then cannot use up the retries on a short server problem. The calendar is then no longer marked as failing. The local copy stays, and the server changes to that resource are not imported.
+- A new version of the resource on the server (a new ETag) starts the three runs again.
 - `chroncal sync status` lists each such resource on a `stuck href=...` line below its calendar. The `-o json` output lists it under `stuck_hrefs`. Correct the resource on the server. The next good fetch removes the entry.
 
 ### Google Calendar via CalDAV
@@ -995,6 +996,8 @@ An action key has priority over the keys of a view. Thus chroncal rejects these 
 |-----------------|---------|---------------|
 | All parts | All actions | `esc`, `ctrl+c` |
 | Month, week, day, and agenda views | All actions | arrows, `h`, `j`, `k`, `l`, `[`, `]`, `pgup`, `pgdown`, `t`, `enter`, `space`, `e`, `ctrl+d`, `x`, `delete`, `o` |
+| Sidebar | All actions | arrows, `h`, `j`, `k`, `l`, `shift+up`, `shift+down`, `K`, `J`, `space`, `enter`, `[`, `]`, `t` |
+| Trash view | `help` | `r`, `x`, `delete`, `X`, `space`, `A` |
 | Day dialog | `help`, `create` | arrows, `h`, `j`, `k`, `l`, `tab`, `shift+tab`, `enter`, `space`, `esc`, `q`, `pgup`, `pgdown`, `ctrl+b`, `ctrl+f`, `home`, `end`, `e`, `ctrl+d`, `x`, `delete`, `y`, `n`, `m`, `p` |
 | Event dialog | `help` | the same keys as the day dialog |
 | Help dialog | `help` | `esc`, `q`, `up`, `k`, `down`, `j`, `pgup`, `pgdown`, `space`, `home`, `g`, `end`, `G` |

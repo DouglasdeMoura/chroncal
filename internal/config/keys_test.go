@@ -154,3 +154,22 @@ func TestCanonicalKeyFoldsShiftedLetters(t *testing.T) {
 		}
 	}
 }
+
+// TestReadmeListsEachReservedKeyList counts the rows of the table of
+// rejected keys in README.md. The table must have one row for each list in
+// reservedKeys, so a new list also gets a README row.
+func TestReadmeListsEachReservedKeyList(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	_, table, ok := strings.Cut(string(body), "| Part of the TUI | Actions | Rejected keys |\n")
+	if !ok {
+		t.Fatal("README.md has no table of rejected keys")
+	}
+	table, _, _ = strings.Cut(table, "\n\n")
+	rows := strings.Count(table, "\n") // the separator row and each data row but the last
+	if rows != len(reservedKeys) {
+		t.Fatalf("README.md table of rejected keys has %d rows, want %d (one for each reserved list)", rows, len(reservedKeys))
+	}
+}
