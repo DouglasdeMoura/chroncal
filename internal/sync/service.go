@@ -81,6 +81,19 @@ type SyncStatus struct {
 	LastSyncError       string
 	PendingPush         int
 	Conflicts           int
+	// StuckHrefs lists the known hrefs that the pull stopped retrying.
+	// Each one keeps its local row. See issue #816.
+	StuckHrefs []StuckHref
+}
+
+// StuckHref is a known href whose server body the pull cannot import
+// after the retry budget. Reason is "missing" (multiget 404) or
+// "unparseable" (the ical decoder rejects the body).
+type StuckHref struct {
+	Href     string
+	UID      string
+	Reason   string
+	GaveUpAt string // RFC 3339
 }
 
 // Status returns sync status for all synced calendars.
@@ -104,6 +117,19 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 		if err != nil {
 			conflicts = nil
 		}
+		stuckRows, err := s.q.ListGaveUpSyncKnownMissesByCalendar(ctx, cal.ID)
+		if err != nil {
+			stuckRows = nil
+		}
+		var stuck []StuckHref
+		for _, r := range stuckRows {
+			stuck = append(stuck, StuckHref{
+				Href:     r.Href,
+				UID:      r.Uid,
+				Reason:   r.Reason,
+				GaveUpAt: storage.NullableToString(r.GaveUpAt),
+			})
+		}
 		statuses = append(statuses, SyncStatus{
 			CalendarID:          cal.ID,
 			CalendarName:        cal.Name,
@@ -113,6 +139,7 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 			LastSyncError:       storage.NullableToString(cal.LastSyncError),
 			PendingPush:         len(dirty),
 			Conflicts:           len(conflicts),
+			StuckHrefs:          stuck,
 		})
 	}
 	return statuses, nil
@@ -395,6 +422,9 @@ func (s *Service) ResetCalendar(ctx context.Context, calendarID int64) error {
 	}
 	if err := qtx.DeleteSyncPendingHrefsByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete pending hrefs: %w", err)
+	}
+	if err := qtx.DeleteSyncKnownMissesByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("delete known misses: %w", err)
 	}
 	if err := qtx.DeleteSyncConflictsByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete conflicts: %w", err)

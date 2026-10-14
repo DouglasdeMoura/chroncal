@@ -131,6 +131,34 @@ func TestWriteSyncStatusLine_SanitizesControlSequences(t *testing.T) {
 	}
 }
 
+// TestWriteSyncStatusLine_NamesStuckHrefs verifies that sync status names
+// each href that the pull stopped retrying (issue #816). The href comes
+// from the server, so the line must also remove control sequences.
+func TestWriteSyncStatusLine_NamesStuckHrefs(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writeSyncStatusLine(&buf, syncPkg.SyncStatus{
+		CalendarName: "Work",
+		StuckHrefs: []syncPkg.StuckHref{{
+			Href:     "/calendar/stuck\x1b[31m.ics",
+			UID:      "stuck-uid",
+			Reason:   "unparseable",
+			GaveUpAt: "2026-04-04T09:30:00Z",
+		}},
+	})
+
+	out := buf.String()
+	if strings.Contains(out, "\x1b") {
+		t.Fatalf("stuck href line contains escape sequence: %q", out)
+	}
+	for _, want := range []string{"stuck href=/calendar/stuck", "uid=stuck-uid", "reason=unparseable", "since=2026-04-04T09:30:00Z"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("sync status output %q does not contain %q", out, want)
+		}
+	}
+}
+
 func TestWriteSyncConflictLine_SanitizesControlSequences(t *testing.T) {
 	t.Parallel()
 

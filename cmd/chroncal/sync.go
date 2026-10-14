@@ -280,6 +280,15 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 	if outputFmt != "text" {
 		items := make([]map[string]any, 0, len(statuses))
 		for _, s := range statuses {
+			stuck := make([]map[string]any, 0, len(s.StuckHrefs))
+			for _, h := range s.StuckHrefs {
+				stuck = append(stuck, map[string]any{
+					"href":       h.Href,
+					"uid":        h.UID,
+					"reason":     h.Reason,
+					"gave_up_at": h.GaveUpAt,
+				})
+			}
 			items = append(items, map[string]any{
 				"calendar_id":            s.CalendarID,
 				"calendar_name":          s.CalendarName,
@@ -288,6 +297,7 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 				"last_sync_error":        s.LastSyncError,
 				"pending_push":           s.PendingPush,
 				"conflicts":              s.Conflicts,
+				"stuck_hrefs":            stuck,
 			})
 		}
 		return printOutput(w, items)

@@ -24,7 +24,10 @@ const pendingHrefMissLimit = 3
 //	localRowsSafe: may the sync-token advance?
 //
 // A known miss (a local row whose body was not fetched) answers no to
-// both. That is the data-loss guard. An unknown miss has no local row.
+// both. That is the data-loss guard. knownMisses counts only the misses
+// inside knownMissLimit. After the budget a known miss no longer counts:
+// the engine keeps its UID in seenUIDs, so absence deletion still spares
+// the local row (issue #816). An unknown miss has no local row.
 // It does not flip inventoryObserved. Token advance still requires a
 // recorded retry obligation. A record failure withholds the token. It
 // does not withhold absence deletion.

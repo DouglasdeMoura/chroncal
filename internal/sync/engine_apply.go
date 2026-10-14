@@ -84,6 +84,13 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	pending.forgetSet(ctx, tombstonedPaths)
 	fetchPaths = pending.appendUnseen(fetchPaths)
 
+	known, err := loadKnownMisses(ctx, e.q, e.logger, calendarID, localByPath)
+	if err != nil {
+		return nil, err
+	}
+	known.forgetSet(ctx, deletedSet)
+	known.forgetSet(ctx, tombstonedPaths)
+
 	// Per-resource 404s from the multiget are NOT deletions. Google can list
 	// an href that 404s on multiget for a reason other than a real delete.
 	// classifyMultigetMiss splits a known miss (local row: incomplete) from
@@ -108,14 +115,37 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		}
 		switch kind {
 		case multigetMissKnown:
-			view.knownMisses++
 			// Treat the missing path's UID as "still seen" so the initial
 			// snapshot deletion loop below does not conclude the resource
 			// is gone from the server. Otherwise an empty token + a
 			// transient multiget 404 would soft-delete the local event
 			// even though we have no actual evidence of deletion.
 			seenUIDs[local.Uid] = true
+
+			// Inside the retry budget a known miss withholds the token.
+			// After the budget the miss no longer counts: a server that
+			// keeps a bad body must not keep the calendar failing forever.
+			// The local row stays, and sync status names the href. A
+			// record failure withholds the token. See issue #816.
+			reason := knownMissReasonMissing
 			if unparseable {
+				reason = knownMissReasonUnparseable
+			}
+			exhausted, gaveUp, recErr := known.noteMiss(ctx, canonical, local.Uid, reason)
+			if recErr != nil {
+				e.logger.Warn("record known multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
+			}
+			if !exhausted {
+				view.knownMisses++
+			}
+			switch {
+			case gaveUp:
+				msg := fmt.Sprintf("server returns 404 for a known resource; gave up after %d attempts, local copy kept (see sync status)", knownMissLimit)
+				if unparseable {
+					msg = fmt.Sprintf("server body unparseable; gave up after %d attempts, local copy kept (see sync status)", knownMissLimit)
+				}
+				noteWarning(ImportWarning{Path: miss, UID: local.Uid, Message: msg})
+			case unparseable:
 				noteWarning(ImportWarning{
 					Path:    miss,
 					UID:     local.Uid,
@@ -205,6 +235,9 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				view.persistFailures++
 				continue
 			}
+			// The body arrived and the pull handled it. A known miss for
+			// the href is over, so its retry budget starts again.
+			known.forget(ctx, resPath)
 			if !imported {
 				// A tombstoned UID never comes back; drop its retry
 				// obligation. Any other skip keeps it for the next pull.
