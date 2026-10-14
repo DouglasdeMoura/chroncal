@@ -17,6 +17,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/termcolor"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -778,11 +779,7 @@ func writeCompactTable(w io.Writer, headers []string, rows [][]compactCell, flex
 	}
 	writeCell := func(text, code string, width int, pad bool) {
 		text = runewidth.Truncate(text, width, "…")
-		if useColor && code != "" {
-			fmt.Fprintf(w, "\x1b[%sm%s\x1b[0m", code, text)
-		} else {
-			fmt.Fprint(w, text)
-		}
+		fmt.Fprint(w, termcolor.Colorize(text, code, useColor))
 		if !pad {
 			return
 		}
@@ -793,11 +790,11 @@ func writeCompactTable(w io.Writer, headers []string, rows [][]compactCell, flex
 	if header {
 		for i, h := range headers {
 			if i < last {
-				writeCell(h, "1;36", widths[i], true)
+				writeCell(h, termcolor.BoldCyan, widths[i], true)
 				fmt.Fprint(w, "  ")
 			}
 		}
-		writeCell(headers[last], "1;36", widths[last], false)
+		writeCell(headers[last], termcolor.BoldCyan, widths[last], false)
 		fmt.Fprintln(w)
 	}
 	for _, row := range rows {

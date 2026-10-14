@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/termcolor"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
@@ -143,9 +144,9 @@ func writeCompactJournalTable(w io.Writer, journals []journal.Journal, showHeade
 			hasCategories = true
 		}
 		rows[i] = []compactCell{
-			{fmt.Sprintf("%d", j.ID), "1;36"},
-			{compactDateColumn(j.StartDate), "2"},
-			{categories, "33"},
+			{fmt.Sprintf("%d", j.ID), termcolor.BoldCyan},
+			{compactDateColumn(j.StartDate), termcolor.Dim},
+			{categories, termcolor.Yellow},
 			{textsafe.Display(j.Summary), ""},
 		}
 	}

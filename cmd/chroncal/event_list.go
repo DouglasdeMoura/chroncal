@@ -9,6 +9,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/termcolor"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/douglasdemoura/chroncal/internal/tui"
 )
@@ -170,10 +171,10 @@ func writeCompactEventTable(w io.Writer, events []event.Event, calendarNames map
 			hasCategories = true
 		}
 		row := []compactCell{
-			{fmt.Sprintf("%d", e.ID), "1;36"},
-			{dateCol, "2"},
-			{timeCol, "2"},
-			{categories, "33"},
+			{fmt.Sprintf("%d", e.ID), termcolor.BoldCyan},
+			{dateCol, termcolor.Dim},
+			{timeCol, termcolor.Dim},
+			{categories, termcolor.Yellow},
 			{textsafe.Display(e.Title), ""},
 		}
 		if showCalendar {
@@ -181,7 +182,7 @@ func writeCompactEventTable(w io.Writer, events []event.Event, calendarNames map
 			if calendarName, ok := calendarNames[e.CalendarID]; ok && calendarName != "" {
 				name = textsafe.Display(calendarName)
 			}
-			row = append(row[:4], append([]compactCell{{name, "35"}}, row[4:]...)...)
+			row = append(row[:4], append([]compactCell{{name, termcolor.Magenta}}, row[4:]...)...)
 		}
 		rows[i] = row
 	}
