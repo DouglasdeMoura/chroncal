@@ -417,11 +417,11 @@ func TestMoveEventKeepsSourceWhenTargetPutFailsOnGenericServer(t *testing.T) {
 	}
 }
 
-// TestMoveEventWaitsWhenSourceChangedOnServer moves an event on an
+// TestMoveEventStopsWhenSourceChangedOnServer moves an event on an
 // iCloud-like server after a remote edit of the source object. The source
 // DELETE gets 412. The push must not retry the PUT, must keep B dirty,
-// must record a clear error, and must record no conflict.
-func TestMoveEventWaitsWhenSourceChangedOnServer(t *testing.T) {
+// must record a true error, and must record no conflict.
+func TestMoveEventStopsWhenSourceChangedOnServer(t *testing.T) {
 	t.Parallel()
 	engine, q, srv, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
@@ -441,6 +441,14 @@ func TestMoveEventWaitsWhenSourceChangedOnServer(t *testing.T) {
 	msg := res.Errors[0].Error()
 	if !strings.Contains(msg, evt.UID) || !strings.Contains(msg, "changed on the server") {
 		t.Fatalf("error = %q, want the UID and a source-changed reason", msg)
+	}
+	// The source DELETE dropped the tombstone, so the move does not resume.
+	// The error must say what the user must do, not that the move waits.
+	if strings.Contains(msg, "waits") || !strings.Contains(msg, "delete one copy or move the item again") {
+		t.Fatalf("error = %q, want the steps for the user and no claim that the move waits", msg)
+	}
+	if ts, err := q.ListTombstonesByCalendar(ctx, calA); err != nil || len(ts) != 0 {
+		t.Fatalf("tombstones on A = %v, %v; want none", ts, err)
 	}
 	if puts, _ := srv.counts(); puts != putsBefore+1 {
 		t.Fatalf("PUTs = %d, want %d: no PUT retry after a refused source DELETE", puts, putsBefore+1)

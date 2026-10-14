@@ -401,8 +401,13 @@ func (e *Engine) siblingTombstones(ctx context.Context, calendarID int64) (map[s
 
 // errMoveSourceChanged reports that the source object of a local move
 // changed on the server after the move. The source DELETE got 412, so the
-// move waits and the target resource stays dirty.
-var errMoveSourceChanged = errors.New("the source object changed on the server after the move; the move waits")
+// server kept the remote edit in the source calendar. deleteTombstone then
+// dropped the tombstone, so the move does not resume. The next pull of the
+// source calendar brings the item back there. The user must delete one
+// copy or move the item again.
+var errMoveSourceChanged = errors.New("the source object changed on the server after the move; " +
+	"the server kept the remote edit in the source calendar, and the next sync brings it back there; " +
+	"delete one copy or move the item again")
 
 // settleMovedSources handles a 412 on the create PUT of a moved resource.
 // Some servers (iCloud) keep a UID unique in the whole account. They refuse
