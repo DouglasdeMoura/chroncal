@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -339,6 +340,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				e, err = a.Events.UpdateInstance(ctx, existing.UID, instanceTime, p)
 			} else {
 				e, err = a.Events.Update(ctx, existing.ID, p)
+			}
+			if errors.Is(err, event.ErrInstanceCalendarMove) {
+				return fmt.Errorf("update event: one occurrence cannot move to another calendar. To move the whole series, run: chroncal event update %s --calendar NAME", existing.UID)
 			}
 			if err != nil {
 				return fmt.Errorf("update event: %w", err)

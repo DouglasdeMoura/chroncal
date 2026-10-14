@@ -450,6 +450,9 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	if err != nil {
 		return Event{}, err
 	}
+	if err := checkOverrideCalendarTx(ctx, qtx, old, p.CalendarID); err != nil {
+		return Event{}, err
+	}
 	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
 		Title:          p.Title,
@@ -494,6 +497,22 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	}
 	e.Categories = p.Categories
 	return e, nil
+}
+
+// checkOverrideCalendarTx applies the calendar rule of UpdateInstance to an
+// update of an override row by its ID. One CalDAV object holds the whole
+// series, so an override cannot move alone (issue #828). An override that
+// an older version saved in another calendar can move back to the calendar
+// of the master. The other rules do nothing for a master row.
+func checkOverrideCalendarTx(ctx context.Context, qtx *storage.Queries, old storage.Event, calendarID int64) error {
+	if old.RecurrenceID == "" || calendarID == old.CalendarID {
+		return nil
+	}
+	master, err := qtx.GetEventByUID(ctx, old.Uid)
+	if err != nil || master.CalendarID != calendarID {
+		return ErrInstanceCalendarMove
+	}
+	return nil
 }
 
 // recordUIDMoveTx records the move of the event rows of one UID from one

@@ -121,19 +121,62 @@ func TestMoveRecurringSeriesMovesOverrides(t *testing.T) {
 	}
 }
 
-// TestMoveOverrideRowMovesWholeSeries moves an override row by its ID. The
-// master and the other rows of the UID must move with it.
-func TestMoveOverrideRowMovesWholeSeries(t *testing.T) {
+// TestMoveOverrideRowIsRejected updates an override row by its ID with
+// another calendar. UpdateInstance refuses that request, so Update must
+// refuse it too and change nothing. An edit that keeps the calendar still
+// saves.
+func TestMoveOverrideRowIsRejected(t *testing.T) {
 	t.Parallel()
-	engine, _, srv, calA, calB := newICloudPairEngine(t)
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
 
 	master, override, _ := createSeriesWithOverride(t, engine, calA)
-	moveEvent(t, engine, override, calB)
-	if n := countRows(t, engine, "events", calA, master.UID); n != 0 {
-		t.Fatalf("event rows left in source calendar = %d, want 0", n)
+	params := event.UpdateParams{
+		Title:      override.Title,
+		StartTime:  override.StartTime,
+		EndTime:    override.EndTime,
+		CalendarID: calB,
+		Status:     override.Status,
+		Transp:     override.Transp,
+		Class:      override.Class,
 	}
-	syncPairClean(t, engine, calA, calB)
-	wantOnlyServerObject(t, srv, "/cal/b/"+master.UID+".ics")
+	if _, err := engine.events.Update(ctx, override.ID, params); !errors.Is(err, event.ErrInstanceCalendarMove) {
+		t.Fatalf("Update of an override to another calendar = %v, want ErrInstanceCalendarMove", err)
+	}
+	if _, err := engine.events.UpdateWithRelations(ctx, override.ID, params, nil, nil); !errors.Is(err, event.ErrInstanceCalendarMove) {
+		t.Fatalf("UpdateWithRelations of an override to another calendar = %v, want ErrInstanceCalendarMove", err)
+	}
+	if n := countRows(t, engine, "events", calA, master.UID); n != 2 {
+		t.Fatalf("event rows in calendar A = %d, want 2 (master and override)", n)
+	}
+	if n := countRows(t, engine, "events", calB, master.UID); n != 0 {
+		t.Fatalf("event rows in calendar B = %d, want 0", n)
+	}
+
+	params.CalendarID = calA
+	params.Title = "Renamed"
+	if _, err := engine.events.Update(ctx, override.ID, params); err != nil {
+		t.Fatalf("Update of an override in its own calendar = %v, want nil", err)
+	}
+}
+
+// TestUpdateLegacyOverrideRowBackToMasterCalendar updates an override row
+// that an older version saved in calendar B. The master stays in A. Update
+// permits the move back to A, as UpdateInstance does, and the whole series
+// is then in A.
+func TestUpdateLegacyOverrideRowBackToMasterCalendar(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	master, override, _ := createSeriesWithOverride(t, engine, calA)
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, calB, override.ID); err != nil {
+		t.Fatalf("move override row: %v", err)
+	}
+	moveEvent(t, engine, override, calA)
+	if n := countRows(t, engine, "events", calB, master.UID); n != 0 {
+		t.Fatalf("event rows left in calendar B = %d, want 0", n)
+	}
 }
 
 // TestMoveSingleInstanceToOtherCalendarIsRejected proves that one
