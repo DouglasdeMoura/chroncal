@@ -912,7 +912,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 					return Event{}, 0, fmt.Errorf("retry get override: %w", eErr)
 				}
 				if existing.DeletedAt != nil && *existing.DeletedAt != "" {
-					if err := reviveOverrideTx(ctx, qtx, existing); err != nil {
+					if err := reviveOverrideTx(ctx, qtx, master.CalendarID, existing); err != nil {
 						return Event{}, 0, err
 					}
 				}
@@ -955,14 +955,41 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 }
 
 // reviveOverrideTx un-hides a soft-deleted override row that an edit of the
-// same occurrence takes again. It uses the restore rule of the trash: the
-// master loses the EXDATE that the delete recorded, and an imported EXDATE
-// stays (issue #86, see softdelete.ClearMasterEXDATE).
-func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, row storage.Event) error {
+// same occurrence takes again. masterCalendarID is the calendar of the
+// master of the edit. Two calendars can hold the same UID, so the EXDATE
+// rule reads that calendar only. It uses the restore rule of the trash:
+// the master loses the EXDATE that the delete recorded, and an imported
+// EXDATE stays (issue #86, see softdelete.ClearMasterEXDATE).
+//
+// The edit makes a fresh override, so the old child rows of the row go:
+// the attendees, the alarms, the attachments, the comments, the contacts,
+// the resources, the relations, and the x-properties. A *WithRelations
+// caller then writes its own attendees and alarms.
+func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, masterCalendarID int64, row storage.Event) error {
 	if err := qtx.RestoreEvent(ctx, row.ID); err != nil {
 		return fmt.Errorf("revive override: %w", err)
 	}
-	return clearMasterEXDATE(ctx, qtx, row.Uid, row.RecurrenceID)
+	if err := clearMasterEXDATEInCalendar(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID); err != nil {
+		return err
+	}
+	if err := replaceRelationsTx(ctx, qtx, row.ID, nil, nil); err != nil {
+		return err
+	}
+	for _, del := range []func(context.Context, int64) error{
+		qtx.DeleteEventAttachmentsByEventID,
+		qtx.DeleteEventCommentsByEventID,
+		qtx.DeleteEventContactsByEventID,
+		qtx.DeleteEventResourcesByEventID,
+		qtx.DeleteEventRelationsByEventID,
+	} {
+		if err := del(ctx, row.ID); err != nil {
+			return fmt.Errorf("clear revived override: %w", err)
+		}
+	}
+	if err := qtx.DeleteXPropertiesByOwner(ctx, storage.DeleteXPropertiesByOwnerParams{OwnerType: "event", OwnerID: row.ID}); err != nil {
+		return fmt.Errorf("clear revived override: %w", err)
+	}
+	return nil
 }
 
 // updateOverrideTx updates a stored override row. A span change clears the

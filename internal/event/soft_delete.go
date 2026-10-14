@@ -440,34 +440,57 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 				Uid:          uid,
 				RecurrenceID: recurrenceID,
 			})
-			if errors.Is(err, sql.ErrNoRows) {
-				return 0, false, nil
-			}
-			if err != nil {
-				return 0, false, err
-			}
-			return log.ID, true, nil
+			return log.ID, err == nil, ignoreNoRows(err)
 		},
 		GetMaster: func(ctx context.Context) (int64, string, bool, error) {
 			master, err := qtx.GetEventByUID(ctx, uid)
-			if errors.Is(err, sql.ErrNoRows) {
-				return 0, "", false, nil
-			}
-			if err != nil {
-				return 0, "", false, err
-			}
-			return master.ID, storage.NullableToString(master.Exdates), true, nil
+			return master.ID, storage.NullableToString(master.Exdates), err == nil, ignoreNoRows(err)
 		},
-		UpdateExdates: func(ctx context.Context, masterID int64, exdates string) error {
-			return qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
-				Exdates: storage.StringToNullable(exdates),
-				ID:      masterID,
-			})
-		},
-		DeleteDeleteLog: func(ctx context.Context, logID int64) error {
-			return qtx.DeleteEventExdateDelete(ctx, logID)
-		},
+		UpdateExdates:   updateMasterExdates(qtx),
+		DeleteDeleteLog: qtx.DeleteEventExdateDelete,
 	}, recurrenceID)
+}
+
+// clearMasterEXDATEInCalendar is clearMasterEXDATE for the series of uid in
+// one calendar. Two calendars can hold the same UID, so a caller that knows
+// the master uses it. The delete log and the master come from calendarID
+// only.
+func clearMasterEXDATEInCalendar(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string) error {
+	return softdelete.ClearMasterEXDATE(ctx, softdelete.ExdateProvenance{
+		GetDeleteLog: func(ctx context.Context) (int64, bool, error) {
+			log, err := qtx.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
+				CalendarID:   calendarID,
+				Uid:          uid,
+				RecurrenceID: recurrenceID,
+			})
+			return log.ID, err == nil, ignoreNoRows(err)
+		},
+		GetMaster: func(ctx context.Context) (int64, string, bool, error) {
+			master, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+			return master.ID, storage.NullableToString(master.Exdates), err == nil, ignoreNoRows(err)
+		},
+		UpdateExdates:   updateMasterExdates(qtx),
+		DeleteDeleteLog: qtx.DeleteEventExdateDelete,
+	}, recurrenceID)
+}
+
+// updateMasterExdates returns the EXDATE write of softdelete.ExdateProvenance.
+func updateMasterExdates(qtx *storage.Queries) func(context.Context, int64, string) error {
+	return func(ctx context.Context, masterID int64, exdates string) error {
+		return qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
+			Exdates: storage.StringToNullable(exdates),
+			ID:      masterID,
+		})
+	}
+}
+
+// ignoreNoRows returns nil for sql.ErrNoRows and err otherwise. A missing
+// row is a valid answer of a lookup in softdelete.ExdateProvenance.
+func ignoreNoRows(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return err
 }
 
 // restoreFromInstance reverses a "this and following" truncation for the TUI/CLI

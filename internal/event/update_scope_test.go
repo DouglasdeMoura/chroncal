@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 func newRecurringMaster(t *testing.T, svc *Service, uid string, rule string) Event {
@@ -405,5 +408,98 @@ func TestUpdateInstance_RevivesDeletedOverride(t *testing.T) {
 	}
 	if !strings.Contains(fresh.ExDates, imported.Format("2006-01-02T15")) {
 		t.Fatalf("master EXDATEs = %q, want the imported EXDATE kept", fresh.ExDates)
+	}
+}
+
+// TestUpdateInstance_RevivedOverrideStartsWithoutOldRelations edits one
+// occurrence and gives the override an alarm, an attendee, and an
+// attachment. A delete of the occurrence and a new plain edit revive the
+// row. The new edit is a fresh override, so the old relations must not
+// come back.
+func TestUpdateInstance_RevivedOverrideStartsWithoutOldRelations(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-2", "FREQ=DAILY;COUNT=5")
+	inst := master.StartTime.Add(24 * time.Hour)
+	params := UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: inst, EndTime: inst.Add(time.Hour)}
+
+	first, err := svc.UpdateInstanceWithRelations(ctx, master.UID, inst, params,
+		[]model.Attendee{{Email: "a@example.com"}},
+		[]model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT5M", Description: "soon"}})
+	if err != nil {
+		t.Fatalf("first UpdateInstanceWithRelations: %v", err)
+	}
+	if err := svc.ReplaceAttachments(ctx, first.ID, []model.Attachment{{URI: "https://example.com/a.pdf"}}); err != nil {
+		t.Fatalf("ReplaceAttachments: %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, master.UID, inst); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	second, err := svc.UpdateInstance(ctx, master.UID, inst, params)
+	if err != nil {
+		t.Fatalf("second UpdateInstance: %v", err)
+	}
+	if alarms, err := svc.ListAlarms(ctx, second.ID); err != nil || len(alarms) != 0 {
+		t.Fatalf("alarms of the revived override = %+v, %v; want none", alarms, err)
+	}
+	if att, err := svc.ListAttendees(ctx, second.ID); err != nil || len(att) != 0 {
+		t.Fatalf("attendees of the revived override = %+v, %v; want none", att, err)
+	}
+	if files, err := svc.ListAttachments(ctx, second.ID); err != nil || len(files) != 0 {
+		t.Fatalf("attachments of the revived override = %+v, %v; want none", files, err)
+	}
+}
+
+// TestUpdateInstance_RevivesOverrideOfItsOwnSeries holds one UID in two
+// calendars, Work and Home. Each master has the same deleted occurrence.
+// A new edit of that occurrence in Home revives the Home override. Only
+// the EXDATE of the Home master may go; the Work master keeps its EXDATE.
+func TestUpdateInstance_RevivesOverrideOfItsOwnSeries(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	home, err := svc.q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Home"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	work := newRecurringMaster(t, svc, "revive-uid-3", "FREQ=DAILY;COUNT=5")
+	inst := work.StartTime.Add(24 * time.Hour)
+	homeMaster, err := svc.Create(ctx, CreateParams{CalendarID: home.ID, Title: "Standup", StartTime: work.StartTime, EndTime: work.EndTime, RecurrenceRule: "FREQ=DAILY;COUNT=5"})
+	if err != nil {
+		t.Fatalf("Create Home master: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET uid = ? WHERE id = ?`, work.UID, homeMaster.ID); err != nil {
+		t.Fatalf("seed the Home copy: %v", err)
+	}
+	exdate := inst.Format(time.RFC3339)
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET exdates = ? WHERE id IN (?, ?)`, exdate, work.ID, homeMaster.ID); err != nil {
+		t.Fatalf("seed EXDATEs: %v", err)
+	}
+	// The deleted override of Home and the delete log of that EXDATE.
+	if _, err := svc.db.ExecContext(ctx,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at) VALUES (?, ?, 'Old', ?, ?, ?, '2026-05-01T00:00:00Z')`,
+		work.UID, home.ID, exdate, inst.Add(time.Hour).Format(time.RFC3339), exdate); err != nil {
+		t.Fatalf("seed deleted override: %v", err)
+	}
+	if err := svc.q.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{CalendarID: home.ID, Uid: work.UID, RecurrenceID: exdate}); err != nil {
+		t.Fatalf("seed delete log: %v", err)
+	}
+
+	if _, err := svc.UpdateInstance(ctx, work.UID, inst, UpdateParams{
+		CalendarID: home.ID, Title: "Back", StartTime: inst, EndTime: inst.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpdateInstance in Home: %v", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		id      int64
+		wantHas bool
+	}{{"Work", work.ID, true}, {"Home", homeMaster.ID, false}} {
+		m, err := svc.Get(ctx, tc.id)
+		if err != nil {
+			t.Fatalf("Get %s master: %v", tc.name, err)
+		}
+		if got := strings.Contains(m.ExDates, inst.Format("2006-01-02T15")); got != tc.wantHas {
+			t.Fatalf("%s master EXDATEs = %q, want the EXDATE kept = %v", tc.name, m.ExDates, tc.wantHas)
+		}
 	}
 }

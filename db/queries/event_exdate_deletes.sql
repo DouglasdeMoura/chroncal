@@ -16,6 +16,11 @@ SELECT * FROM event_exdate_deletes WHERE id = ?;
 -- name: GetEventExdateDeleteByUIDRecurrence :one
 SELECT * FROM event_exdate_deletes WHERE uid = ? AND recurrence_id = ?;
 
+-- name: GetEventExdateDeleteByCalendarUIDRecurrence :one
+-- The delete log of one occurrence of the series in one calendar. Two
+-- calendars can hold the same UID.
+SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?;
+
 -- name: DeleteEventExdateDelete :exec
 DELETE FROM event_exdate_deletes WHERE id = ?;
 

@@ -35,6 +35,31 @@ func (q *Queries) GetEventExdateDelete(ctx context.Context, id int64) (EventExda
 	return i, err
 }
 
+const getEventExdateDeleteByCalendarUIDRecurrence = `-- name: GetEventExdateDeleteByCalendarUIDRecurrence :one
+SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?
+`
+
+type GetEventExdateDeleteByCalendarUIDRecurrenceParams struct {
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+}
+
+// The delete log of one occurrence of the series in one calendar. Two
+// calendars can hold the same UID.
+func (q *Queries) GetEventExdateDeleteByCalendarUIDRecurrence(ctx context.Context, arg GetEventExdateDeleteByCalendarUIDRecurrenceParams) (EventExdateDelete, error) {
+	row := q.db.QueryRowContext(ctx, getEventExdateDeleteByCalendarUIDRecurrence, arg.CalendarID, arg.Uid, arg.RecurrenceID)
+	var i EventExdateDelete
+	err := row.Scan(
+		&i.ID,
+		&i.CalendarID,
+		&i.Uid,
+		&i.RecurrenceID,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getEventExdateDeleteByUIDRecurrence = `-- name: GetEventExdateDeleteByUIDRecurrence :one
 SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE uid = ? AND recurrence_id = ?
 `
