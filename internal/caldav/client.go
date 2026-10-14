@@ -380,6 +380,18 @@ func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calend
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusForbidden {
+		// RFC 4791 section 5.3.2.1: a duplicate UID gets 403 with the
+		// CALDAV:no-uid-conflict precondition. Keep the typed 403 and mark
+		// it, so the caller can tell it from a plain 403.
+		lr := &io.LimitedReader{R: resp.Body, N: httpErrorBodyLimit}
+		body, _ := io.ReadAll(lr)
+		err := httpErrorFromBody(resp, body, lr.N == 0)
+		if hasNoUIDConflict(body) {
+			return "", fmt.Errorf("put resource: %w: %w", errUIDConflict, err)
+		}
+		return "", fmt.Errorf("put resource: %w", err)
+	}
 	if resp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("put resource: %w", httpError(resp))
 	}

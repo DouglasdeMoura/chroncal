@@ -155,13 +155,14 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		}
 
 		newEtag, putErr := e.putResource(ctx, client, putPath, cal, res.Etag)
-		if putErr != nil && res.RemoteUrl == "" && caldav.IsConflict(putErr) {
+		if putErr != nil && res.RemoteUrl == "" && (caldav.IsConflict(putErr) || caldav.IsUIDConflict(putErr)) {
 			// A new resource can be the target half of a local move
 			// between two calendars of this account. Only a server that
-			// keeps UIDs unique per account refuses that create, so the
-			// lookup of the move sources runs after the 412 only. A plain
-			// create then never depends on it (issue #828). See
-			// settleMovedSources.
+			// keeps UIDs unique per account refuses that create: iCloud
+			// with 412, an RFC 4791 server with 403 and the
+			// CALDAV:no-uid-conflict precondition. The lookup of the move
+			// sources runs after that refusal only. A plain create then
+			// never depends on it (issue #828). See settleMovedSources.
 			movedFrom, siblingsErr := e.movedSources(ctx, calendarID, res.Uid)
 			if siblingsErr != nil {
 				// A failed lookup proves nothing. Keep this resource
@@ -405,13 +406,14 @@ var errMoveSourceChanged = errors.New("the source object changed on the server a
 	"the server kept the remote edit in the source calendar, and the next sync brings it back there; " +
 	"delete one copy or move the item again")
 
-// settleMovedSources handles a 412 on the create PUT of a moved resource.
-// Some servers (iCloud) keep a UID unique in the whole account. They refuse
-// the create with 412 while the source object still exists, and the new
+// settleMovedSources handles a refused create PUT of a moved resource.
+// Some servers keep a UID unique in the whole account. They refuse the
+// create while the source object still exists: iCloud with 412, an RFC
+// 4791 server with 403 and the CALDAV:no-uid-conflict precondition. The new
 // href then answers 404 (issue #828). Only that case sends the pending
 // source DELETEs. retryPut reports that the caller must send the PUT once
-// more. A 412 with a target object is a real conflict: retryPut is false,
-// the error is nil, and the caller handles the conflict as usual.
+// more. A refusal with a target object is a real conflict: retryPut is
+// false, the error is nil, and the caller handles the PUT error as usual.
 //
 // The source DELETE is reactive. A server that accepts the create keeps the
 // source object until the source calendar's own tombstone pass. A failed

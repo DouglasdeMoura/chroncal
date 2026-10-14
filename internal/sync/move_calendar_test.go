@@ -36,6 +36,9 @@ type icloudFakeServer struct {
 	generic bool
 	// putStatus maps a collection prefix to a forced PUT status.
 	putStatus map[string]int
+	// uidConflict403 makes the account-wide UID rule answer 403 with the
+	// CALDAV:no-uid-conflict precondition (RFC 4791 section 5.3.2.1), not 412.
+	uidConflict403 bool
 	// getStatus maps a collection prefix to a forced GET status.
 	getStatus map[string]int
 	deletes   int
@@ -98,6 +101,15 @@ func (f *icloudFakeServer) serve(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if om := icloudUIDPattern.FindStringSubmatch(b); om != nil && om[1] == uid {
+				if f.uidConflict403 {
+					w.Header().Set("Content-Type", "application/xml")
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+<D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <C:no-uid-conflict><D:href>` + p + `</D:href></C:no-uid-conflict>
+</D:error>`))
+					return
+				}
 				w.WriteHeader(http.StatusPreconditionFailed)
 				return
 			}
@@ -638,5 +650,30 @@ func TestPlainCreateDoesNotNeedSiblingTombstones(t *testing.T) {
 	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
 	if err != nil || sr.Dirty != 0 {
 		t.Fatalf("sync resource = %+v, %v; want clean", sr, err)
+	}
+}
+
+// TestMoveEventOnServerWithNoUIDConflict403 moves an event on a server that
+// refuses the duplicate UID with 403 and the CALDAV:no-uid-conflict
+// precondition, as RFC 4791 section 5.3.2.1 says. That answer must start
+// the source DELETE, as a 412 does. The move then completes.
+func TestMoveEventOnServerWithNoUIDConflict403(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	srv.mu.Lock()
+	srv.uidConflict403 = true
+	srv.mu.Unlock()
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+
+	res, err := engine.PushLocalEdits(ctx, calB)
+	if err != nil || len(res.Errors) != 0 || res.Pushed != 1 {
+		t.Fatalf("push of the moved event = %+v, %v; want one clean push", res, err)
+	}
+	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
+	if ts, err := q.ListTombstonesByCalendar(ctx, calA); err != nil || len(ts) != 0 {
+		t.Fatalf("tombstones on A = %v, %v; want none", ts, err)
 	}
 }
