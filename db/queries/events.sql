@@ -212,6 +212,17 @@ WHERE src.calendar_id = ? AND src.deleted_at IS NULL AND src.uid != ''
 GROUP BY uid
 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
 
+-- name: CountEventUIDMoveCollisions :one
+-- Count the rows (live or soft-deleted) in the target calendar that share
+-- the UID and the recurrence ID of a row that MoveEventUIDToCalendar moves.
+-- A nonzero count means the move breaks the UNIQUE key.
+SELECT COUNT(*) FROM events AS dst
+WHERE dst.calendar_id = sqlc.arg(to_calendar_id) AND dst.uid = sqlc.arg(uid)
+  AND dst.recurrence_id IN (
+    SELECT src.recurrence_id FROM events AS src
+    WHERE src.calendar_id = sqlc.arg(from_calendar_id) AND src.uid = sqlc.arg(uid)
+  );
+
 -- name: MoveEventUIDToCalendar :exec
 -- Move every row of one UID (live or soft-deleted) from one calendar to
 -- another. A local calendar move of a resource calls it. See issue #828.

@@ -538,3 +538,40 @@ func TestMoveOverrideRowRefusedWhenUIDInTargetCalendar(t *testing.T) {
 		t.Fatalf("event rows in A = %d, want 2 (master and override)", n)
 	}
 }
+
+// TestMoveEventIntoCalendarWithSameUIDIsRefused moves an event to a
+// calendar that already holds a soft-deleted row with the same UID. The
+// move must return a clear error that names the target calendar and the
+// UID, not a raw UNIQUE constraint error. The move changes nothing.
+func TestMoveEventIntoCalendarWithSameUIDIsRefused(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createSeries(t, engine, calA)
+	copyB := createSeries(t, engine, calB)
+	sameUID(t, engine, copyB.ID, evt.UID)
+	if err := engine.events.Delete(ctx, copyB.ID); err != nil {
+		t.Fatalf("Delete copy in B: %v", err)
+	}
+
+	_, err := engine.events.Update(ctx, evt.ID, event.UpdateParams{
+		Title:          evt.Title,
+		StartTime:      evt.StartTime,
+		EndTime:        evt.EndTime,
+		RecurrenceRule: evt.RecurrenceRule,
+		CalendarID:     calB,
+		Status:         evt.Status,
+		Transp:         evt.Transp,
+		Class:          evt.Class,
+	})
+	if !errors.Is(err, event.ErrMoveTargetHasUID) {
+		t.Fatalf("move into a calendar with the same UID = %v, want ErrMoveTargetHasUID", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, `"b"`) || !strings.Contains(msg, evt.UID) {
+		t.Fatalf("error = %q, want the target calendar and the UID", msg)
+	}
+	if n := countRows(t, engine, "events", calA, evt.UID); n != 1 {
+		t.Fatalf("event rows in A = %d, want 1", n)
+	}
+}

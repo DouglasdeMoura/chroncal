@@ -32,6 +32,11 @@ type Service struct {
 // another calendar. Move the whole series instead.
 var ErrInstanceCalendarMove = errors.New("event: one occurrence cannot move to another calendar; move the whole series")
 
+// ErrMoveTargetHasUID reports a calendar move to a calendar that already
+// holds a row of the UID with the same recurrence ID. The row can be in
+// the trash. Purge or restore that row first.
+var ErrMoveTargetHasUID = errors.New("event: the target calendar already holds this UID")
+
 // ErrAmbiguousUID reports an edit of one occurrence whose UID has a master
 // in more than one calendar, and the edit names none of those calendars.
 // The service refuses the edit, because it cannot choose the series.
@@ -459,6 +464,9 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	if err := checkOverrideCalendarTx(ctx, qtx, old, p.CalendarID); err != nil {
 		return Event{}, err
 	}
+	if err := checkMoveTargetTx(ctx, qtx, old.CalendarID, p.CalendarID, old.Uid); err != nil {
+		return Event{}, err
+	}
 	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
 		ID:             id,
 		Title:          p.Title,
@@ -528,6 +536,32 @@ func checkOverrideCalendarTx(ctx context.Context, qtx *storage.Queries, old stor
 		return ErrInstanceCalendarMove
 	}
 	return nil
+}
+
+// checkMoveTargetTx refuses a calendar move of the rows of uid when the
+// target calendar already holds a row (live or soft-deleted) with the same
+// UID and recurrence ID. Without the check the move fails on the UNIQUE key
+// with a raw constraint error. It does nothing when the two calendars are
+// the same.
+func checkMoveTargetTx(ctx context.Context, qtx *storage.Queries, fromCalendarID, toCalendarID int64, uid string) error {
+	if fromCalendarID == toCalendarID || toCalendarID == 0 {
+		return nil
+	}
+	n, err := qtx.CountEventUIDMoveCollisions(ctx, storage.CountEventUIDMoveCollisionsParams{
+		ToCalendarID: toCalendarID, Uid: uid, FromCalendarID: fromCalendarID,
+	})
+	if err != nil {
+		return fmt.Errorf("check move target: %w", err)
+	}
+	if n == 0 {
+		return nil
+	}
+	name := fmt.Sprint(toCalendarID)
+	if cal, err := qtx.GetCalendar(ctx, toCalendarID); err == nil {
+		name = cal.Name
+	}
+	return fmt.Errorf("%w: calendar %q already holds a row of UID %s; the row can be in the trash, so purge or restore it first",
+		ErrMoveTargetHasUID, name, uid)
 }
 
 // hasMasterInCalendarTx reports whether calendarID holds a live master row
@@ -847,6 +881,14 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 			return Event{}, 0, ErrInstanceCalendarMove
 		}
 		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
+			return Event{}, 0, err
+		}
+	}
+	// A legacy override that moves back to the calendar of the master
+	// takes the rows of its UID along. Refuse that move when the target
+	// already holds one of those rows.
+	if existErr == nil {
+		if err := checkMoveTargetTx(ctx, qtx, existing.CalendarID, p.CalendarID, uid); err != nil {
 			return Event{}, 0, err
 		}
 	}
