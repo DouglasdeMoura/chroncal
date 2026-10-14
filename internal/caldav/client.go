@@ -384,9 +384,8 @@ func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calend
 		// RFC 4791 section 5.3.2.1: a duplicate UID gets 403 with the
 		// CALDAV:no-uid-conflict precondition. Keep the typed 403 and mark
 		// it, so the caller can tell it from a plain 403.
-		lr := &io.LimitedReader{R: resp.Body, N: httpErrorBodyLimit}
-		body, _ := io.ReadAll(lr)
-		err := httpErrorFromBody(resp, body, lr.N == 0)
+		body, truncated := readErrorBody(resp)
+		err := httpErrorFromBody(resp, body, truncated)
 		if hasNoUIDConflict(body) {
 			return "", fmt.Errorf("put resource: %w: %w", errUIDConflict, err)
 		}
@@ -667,14 +666,19 @@ func httpError(resp *http.Response) error {
 		return fmt.Errorf("HTTP 0")
 	}
 
-	var body []byte
-	truncated := false
-	if resp.Body != nil {
-		lr := &io.LimitedReader{R: resp.Body, N: httpErrorBodyLimit}
-		body, _ = io.ReadAll(lr)
-		truncated = lr.N == 0
-	}
+	body, truncated := readErrorBody(resp)
 	return httpErrorFromBody(resp, body, truncated)
+}
+
+// readErrorBody reads at most httpErrorBodyLimit bytes of an error
+// response body. truncated reports that the body can hold more bytes.
+func readErrorBody(resp *http.Response) (body []byte, truncated bool) {
+	if resp.Body == nil {
+		return nil, false
+	}
+	lr := &io.LimitedReader{R: resp.Body, N: httpErrorBodyLimit}
+	body, _ = io.ReadAll(lr)
+	return body, lr.N == 0
 }
 
 // httpErrorFromBody builds the same typed HTTP error as httpError when the

@@ -146,38 +146,33 @@ func TestEnableAllowPlaintextRefusesAFileItCannotEditSafely(t *testing.T) {
 // storage off. Load fails on a value that does not parse as a bool, so the
 // error must say that the value is not a bool.
 func TestCheckAllowPlaintextEnv(t *testing.T) {
+	const off, notBool = "turns plaintext storage off", "is not a bool"
 	for _, tc := range []struct {
-		value  string
-		refuse bool
+		value string
+		// wantMsg is the reason that a refusal names. An empty value means
+		// no refusal.
+		wantMsg string
 	}{
-		{"", false},
-		{"true", false},
-		{"1", false},
-		{"false", true},
-		{"0", true},
-		{"no", true},
-		{"maybe", true},
+		{"", ""},
+		{"true", ""},
+		{"1", ""},
+		{"false", off},
+		{"0", off},
+		{"no", notBool},
+		{"maybe", notBool},
 	} {
 		t.Run(tc.value, func(t *testing.T) {
 			t.Setenv(allowPlaintextEnv, tc.value)
 			err := CheckAllowPlaintextEnv()
-			if (err != nil) != tc.refuse {
-				t.Fatalf("CheckAllowPlaintextEnv(%q) = %v, want refuse %v", tc.value, err, tc.refuse)
+			if tc.wantMsg == "" {
+				if err != nil {
+					t.Fatalf("CheckAllowPlaintextEnv(%q) = %v, want nil", tc.value, err)
+				}
+				return
 			}
-			if err != nil && !strings.Contains(err.Error(), "unset "+allowPlaintextEnv) {
-				t.Fatalf("CheckAllowPlaintextEnv(%q) = %v, want the remedy", tc.value, err)
+			if err == nil || !strings.Contains(err.Error(), tc.wantMsg) || !strings.Contains(err.Error(), "unset "+allowPlaintextEnv) {
+				t.Fatalf("CheckAllowPlaintextEnv(%q) = %v, want %q and the remedy", tc.value, err, tc.wantMsg)
 			}
 		})
-	}
-}
-
-// TestCheckAllowPlaintextEnvNamesABadBool sets a value that does not parse
-// as a bool. Load fails on that value, so the error must not claim that
-// the value turns plaintext storage off.
-func TestCheckAllowPlaintextEnvNamesABadBool(t *testing.T) {
-	t.Setenv(allowPlaintextEnv, "maybe")
-	err := CheckAllowPlaintextEnv()
-	if err == nil || !strings.Contains(err.Error(), "is not a bool") || strings.Contains(err.Error(), "turns plaintext storage off") {
-		t.Fatalf("CheckAllowPlaintextEnv = %v, want a not-a-bool refusal", err)
 	}
 }

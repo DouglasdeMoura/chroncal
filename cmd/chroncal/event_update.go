@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -462,10 +463,6 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 	return cmd
 }
 
-// errNoSingleMaster reports that a legacy override has no master or more
-// than one master.
-var errNoSingleMaster = errors.New("no single master")
-
 // eventOccurrenceMoveError returns the error for a refused calendar move of
 // one occurrence of existing. The master of an override is in the calendar
 // of the override. A legacy override (an older version saved it in a
@@ -474,22 +471,18 @@ var errNoSingleMaster = errors.New("no single master")
 // the error names each master and its calendar, because the CLI cannot
 // choose the series.
 func eventOccurrenceMoveError(ctx context.Context, a *app.App, existing event.Event) error {
-	var masters []event.Event
-	moveErr := errOccurrenceMove("event", existing.ID, existing.RecurrenceID, existing.UID, func() (int64, error) {
-		if m, err := a.Events.GetByCalendarUID(ctx, existing.CalendarID, existing.UID); err == nil {
-			return m.ID, nil
-		}
-		var err error
-		if masters, err = a.Events.ListMastersByUID(ctx, existing.UID); err != nil {
-			return 0, err
-		}
-		if len(masters) == 1 {
-			return masters[0].ID, nil
-		}
-		return 0, errNoSingleMaster
-	})
-	if len(masters) < 2 {
-		return moveErr
+	if existing.RecurrenceID == "" {
+		return errOccurrenceMove("event", strconv.FormatInt(existing.ID, 10))
+	}
+	if m, err := a.Events.GetByCalendarUID(ctx, existing.CalendarID, existing.UID); err == nil {
+		return errOccurrenceMove("event", strconv.FormatInt(m.ID, 10))
+	}
+	masters, err := a.Events.ListMastersByUID(ctx, existing.UID)
+	switch {
+	case err != nil || len(masters) == 0:
+		return errOccurrenceMove("event", existing.UID)
+	case len(masters) == 1:
+		return errOccurrenceMove("event", strconv.FormatInt(masters[0].ID, 10))
 	}
 	parts := make([]string, len(masters))
 	for i, m := range masters {
