@@ -541,10 +541,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	}
 	// A move to another calendar takes the other rows of the UID along and
 	// queues the delete of the source server object (issue #828).
-	move := storage.MoveTodoUIDToCalendarParams{FromCalendarID: existing.CalendarID, ToCalendarID: r.CalendarID, Uid: r.Uid}
-	if err := storage.RecordResourceMove(ctx, qtx, move.FromCalendarID, move.ToCalendarID, move.Uid, func(ctx context.Context) error {
-		return moveUIDRowsTx(ctx, qtx, move)
-	}); err != nil {
+	if err := recordUIDMoveTx(ctx, qtx, existing.CalendarID, r.CalendarID, r.Uid); err != nil {
 		return Todo{}, fmt.Errorf("record calendar move: %w", err)
 	}
 	// Mark the target dirty in the same transaction. A move commits the
@@ -765,6 +762,15 @@ func (s *Service) collect(ctx context.Context, t *Todo, failFast bool) *hydrate.
 
 func (s *Service) hydrate(ctx context.Context, t *Todo, failFast bool) error {
 	return s.collect(ctx, t, failFast).Err()
+}
+
+// recordUIDMoveTx records the move of the todo rows of one UID from one
+// calendar to another. It does nothing when the two calendars are the same.
+func recordUIDMoveTx(ctx context.Context, qtx *storage.Queries, fromCalendarID, toCalendarID int64, uid string) error {
+	move := storage.MoveTodoUIDToCalendarParams{FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid}
+	return storage.RecordResourceMove(ctx, qtx, fromCalendarID, toCalendarID, uid, func(ctx context.Context) error {
+		return moveUIDRowsTx(ctx, qtx, move)
+	})
 }
 
 // moveUIDRowsTx moves the todo rows and the delete-log rows of one UID to
