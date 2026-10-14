@@ -31,11 +31,8 @@ type Rows struct {
 	// ErrTargetHasUID is the domain error for a move into a calendar that
 	// holds a row of the UID with the same recurrence ID.
 	ErrTargetHasUID error
-	// HasMaster reports whether calendarID holds a live master row of the
-	// UID.
-	HasMaster func(ctx context.Context, calendarID int64) (bool, error)
 	// Masters returns the live master rows of the UID in all calendars.
-	// CheckOverrideMove reads it.
+	// Check reads it.
 	Masters func(ctx context.Context) ([]Master, error)
 	// CountCollisions counts the rows (live or soft-deleted) in
 	// toCalendarID that share the UID and a recurrence ID with a row in
@@ -68,52 +65,34 @@ func (e *OccurrenceMoveError) Error() string { return e.Err.Error() }
 
 func (e *OccurrenceMoveError) Unwrap() error { return e.Err }
 
-// Check applies CheckOverrideMove and then CheckTarget to an update of one
-// row by its ID. recurrenceID is the recurrence ID of that row.
+// Check applies the override rule (CheckOverrideMoveOf) and then
+// CheckTarget to an update of one row by its ID. recurrenceID is the
+// recurrence ID of that row. It reads the masters of the UID only when the
+// override rule applies.
 func (r Rows) Check(ctx context.Context, recurrenceID string, fromCalendarID, toCalendarID int64) error {
-	if err := r.CheckOverrideMove(ctx, recurrenceID, fromCalendarID, toCalendarID); err != nil {
-		return err
+	var masters []Master
+	if moveNeedsCheck(recurrenceID, fromCalendarID, toCalendarID) {
+		var err error
+		if masters, err = r.Masters(ctx); err != nil {
+			return fmt.Errorf("find masters: %w", err)
+		}
 	}
-	return r.CheckTarget(ctx, fromCalendarID, toCalendarID)
+	return r.CheckOf(ctx, recurrenceID, fromCalendarID, toCalendarID, masters)
 }
 
-// CheckOverrideMove refuses the calendar move of one override row. One
-// CalDAV object holds the whole series, so an override cannot move alone.
-// An older version saved an override in another calendar on a calendar
-// change. Such a legacy override has no master in its own calendar, and it
-// can move back to a calendar with a master. The rule does nothing for a
-// master row (an empty recurrenceID), for an update that keeps the
-// calendar, or for an update that names no calendar (toCalendarID 0). A
-// fromCalendarID of 0 says that the calendar of the occurrence is not
-// known. Calendar 0 holds no master, so the rule then refuses a move to a
-// calendar with no master, and the refusal names every master.
+// CheckOverrideMoveOf refuses the calendar move of one override row.
+// masters holds the live masters of the UID. One CalDAV object holds the
+// whole series, so an override cannot move alone. An older version saved
+// an override in another calendar on a calendar change. Such a legacy
+// override has no master in its own calendar, and it can move back to a
+// calendar with a master. The rule does nothing for a master row (an empty
+// recurrenceID), for an update that keeps the calendar, or for an update
+// that names no calendar (toCalendarID 0). A fromCalendarID of 0 says that
+// the calendar of the occurrence is not known. Calendar 0 holds no master,
+// so the rule then refuses a move to a calendar with no master, and the
+// refusal names every master.
 //
-// A refusal is an *OccurrenceMoveError.
-func (r Rows) CheckOverrideMove(ctx context.Context, recurrenceID string, fromCalendarID, toCalendarID int64) error {
-	if !moveNeedsCheck(recurrenceID, fromCalendarID, toCalendarID) {
-		return nil
-	}
-	ownMaster, err := r.HasMaster(ctx, fromCalendarID)
-	if err != nil {
-		return fmt.Errorf("find master: %w", err)
-	}
-	targetMaster, err := r.HasMaster(ctx, toCalendarID)
-	if err != nil {
-		return fmt.Errorf("find master: %w", err)
-	}
-	if overrideMoveAllowed(ownMaster, targetMaster) {
-		return nil
-	}
-	masters, err := r.Masters(ctx)
-	if err != nil {
-		// The refusal is the main result, so it goes out with no master.
-		return &OccurrenceMoveError{Err: r.ErrInstanceMove}
-	}
-	return r.occurrenceMoveError(fromCalendarID, masters)
-}
-
-// CheckOverrideMoveOf is CheckOverrideMove for a caller that already holds
-// the live masters of the UID. It reads nothing.
+// A refusal is an *OccurrenceMoveError. The function reads nothing.
 func (r Rows) CheckOverrideMoveOf(recurrenceID string, fromCalendarID, toCalendarID int64, masters []Master) error {
 	if !moveNeedsCheck(recurrenceID, fromCalendarID, toCalendarID) {
 		return nil
@@ -125,7 +104,7 @@ func (r Rows) CheckOverrideMoveOf(recurrenceID string, fromCalendarID, toCalenda
 }
 
 // CheckOf is Check for a caller that already holds the live masters of
-// the UID. See CheckOverrideMoveOf.
+// the UID. It reads the target calendar only (CheckTarget).
 func (r Rows) CheckOf(ctx context.Context, recurrenceID string, fromCalendarID, toCalendarID int64, masters []Master) error {
 	if err := r.CheckOverrideMoveOf(recurrenceID, fromCalendarID, toCalendarID, masters); err != nil {
 		return err

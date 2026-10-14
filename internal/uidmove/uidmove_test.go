@@ -23,9 +23,6 @@ func fakeRows(masters map[int64]bool, collisions int64) Rows {
 		UID:             "u1",
 		ErrInstanceMove: errInstance,
 		ErrTargetHasUID: errTarget,
-		HasMaster: func(_ context.Context, calendarID int64) (bool, error) {
-			return masters[calendarID], nil
-		},
 		CountCollisions: func(context.Context, int64, int64) (int64, error) {
 			return collisions, nil
 		},
@@ -42,7 +39,7 @@ func fakeRows(masters map[int64]bool, collisions int64) Rows {
 	}
 }
 
-func TestCheckOverrideMove(t *testing.T) {
+func TestCheckOverrideRule(t *testing.T) {
 	t.Parallel()
 	const a, b = int64(1), int64(2)
 	tests := []struct {
@@ -66,12 +63,12 @@ func TestCheckOverrideMove(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			rows := fakeRows(tc.masters, 0)
-			err := rows.CheckOverrideMove(context.Background(), tc.recID, a, tc.to)
+			err := rows.Check(context.Background(), tc.recID, a, tc.to)
 			if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
-				t.Fatalf("CheckOverrideMove = %v, want %v", err, tc.want)
+				t.Fatalf("Check = %v, want %v", err, tc.want)
 			}
-			// The variant for a caller that holds the masters gives the
-			// same answer.
+			// The rule for a caller that holds the masters gives the same
+			// answer.
 			masters, _ := rows.Masters(context.Background())
 			err = rows.CheckOverrideMoveOf(tc.recID, a, tc.to, masters)
 			if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
@@ -126,14 +123,30 @@ func TestCheckOverrideMoveNamesTheMasters(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := fakeRows(tc.masters, 0).CheckOverrideMove(context.Background(), "r", tc.from, 99)
+			err := fakeRows(tc.masters, 0).Check(context.Background(), "r", tc.from, 99)
 			var moveErr *OccurrenceMoveError
 			if !errors.As(err, &moveErr) || !errors.Is(err, errInstance) {
-				t.Fatalf("CheckOverrideMove = %v, want an OccurrenceMoveError that wraps the domain error", err)
+				t.Fatalf("Check = %v, want an OccurrenceMoveError that wraps the domain error", err)
 			}
 			if !slices.Equal(moveErr.Masters, tc.want) {
 				t.Fatalf("masters = %+v, want %+v", moveErr.Masters, tc.want)
 			}
 		})
+	}
+}
+
+// TestCheckPropagatesMastersError fails the read of the masters. Check
+// must return that error, not a refusal or a pass.
+func TestCheckPropagatesMastersError(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("boom")
+	rows := fakeRows(nil, 0)
+	rows.Masters = func(context.Context) ([]Master, error) { return nil, boom }
+	if err := rows.Check(context.Background(), "r", 1, 2); !errors.Is(err, boom) || errors.Is(err, errInstance) {
+		t.Fatalf("Check = %v, want the masters error", err)
+	}
+	// A master row needs no master read.
+	if err := rows.Check(context.Background(), "", 1, 2); err != nil {
+		t.Fatalf("Check of a master row = %v, want nil", err)
 	}
 }
