@@ -211,6 +211,9 @@ func ValidateKeys(overrides map[string][]string) error {
 			if k == "" {
 				return fmt.Errorf("keys.%s: a key is empty", name)
 			}
+			if lower, ok := keyCaseProblem(k); ok {
+				return fmt.Errorf("keys.%s: %q never matches a key press; write %q", name, k, lower)
+			}
 			if use := reservedKeyUse(name, k); use != "" {
 				return fmt.Errorf("keys.%s: chroncal reserves %q, because %s; choose another key", name, k, use)
 			}
@@ -229,6 +232,24 @@ func ValidateKeys(overrides map[string][]string) error {
 		}
 	}
 	return nil
+}
+
+// keyCaseProblem reports a key name that Bubble Tea never gives because of
+// its case. Bubble Tea names a key in lowercase ("ctrl+q", "tab"). An
+// uppercase ASCII letter is valid only as a single letter ("W") or after
+// "shift+" ("shift+W"). For a bad name it returns the lowercase form.
+func keyCaseProblem(k string) (lower string, bad bool) {
+	if c := CanonicalKey(k); len(c) == 1 {
+		return "", false
+	}
+	b := []byte(k)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c - 'A' + 'a'
+			bad = true
+		}
+	}
+	return string(b), bad
 }
 
 // CanonicalKey returns one spelling for each name of a shifted letter.

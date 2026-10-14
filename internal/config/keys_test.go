@@ -52,6 +52,8 @@ func TestValidateKeys_Errors(t *testing.T) {
 		{"unknown action", "[keys]\nfly = [\"f\"]\n", `unknown action "fly"`},
 		{"empty list", "[keys]\nquit = []\n", "keys.quit: the key list is empty"},
 		{"empty key", "[keys]\nquit = [\" \"]\n", "keys.quit: a key is empty"},
+		{"uppercase modifier", "[keys]\nquit = [\"Ctrl+Q\"]\n", `keys.quit: "Ctrl+Q" never matches a key press; write "ctrl+q"`},
+		{"uppercase key name", "[keys]\nswitch_focus = [\"Tab\"]\n", `keys.switch_focus: "Tab" never matches a key press; write "tab"`},
 		{"duplicate between overrides", "[keys]\nquit = [\"z\"]\nsync = [\"z\"]\n", `key "z" is bound to both quit and sync`},
 		{"duplicate with a default", "[keys]\nquit = [\"m\"]\n", `key "m" is bound to both quit and month_view`},
 		{"duplicate shift alias", "[keys]\nsync = [\"shift+w\"]\n", "bound to both week_start and sync"},

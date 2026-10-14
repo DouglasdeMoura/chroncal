@@ -987,6 +987,7 @@ Chroncal checks the table when the TUI starts. Each of these conditions stops th
 
 - The table names an unknown action.
 - An action has an empty list or an empty key.
+- A key name has an uppercase letter that Bubble Tea never gives, for example `"Ctrl+Q"` or `"Tab"`. Write the name in lowercase. A single uppercase letter (`"W"`) and `"shift+W"` stay valid.
 - Two actions use the same key. Chroncal compares the keys after the table replaces the defaults. To swap two keys, set the two actions together.
 - An action uses a key that a view or a dialog uses. See the list below.
 
