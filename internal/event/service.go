@@ -735,10 +735,13 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	carriedCats := ParseCategoryList(p.Categories)
 
 	var r storage.Event
+	// fromCalendarID is the calendar of a stored override before the edit.
+	var fromCalendarID int64
 	if existing, gErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
 		Uid:          uid,
 		RecurrenceID: recID,
 	}); gErr == nil {
+		fromCalendarID = existing.CalendarID
 		r, err = updateOverrideTx(ctx, qtx, existing, p)
 		if err != nil {
 			return Event{}, 0, fmt.Errorf("update override: %w", err)
@@ -756,6 +759,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 				if eErr != nil {
 					return Event{}, 0, fmt.Errorf("retry get override: %w", eErr)
 				}
+				fromCalendarID = existing.CalendarID
 				r, err = updateOverrideTx(ctx, qtx, existing, p)
 				if err != nil {
 					return Event{}, 0, fmt.Errorf("retry update override: %w", err)
@@ -763,6 +767,20 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 			} else {
 				return Event{}, 0, fmt.Errorf("create override: %w", err)
 			}
+		}
+	}
+
+	// An override that an older version saved in another calendar can move
+	// back to the calendar of the master. Record that move. The other rows
+	// of the UID then move too, and the server object in the old calendar
+	// gets a tombstone. Without it that stale object keeps the UID, and
+	// iCloud refuses the later PUT (issue #828).
+	if fromCalendarID != 0 && fromCalendarID != r.CalendarID {
+		move := storage.MoveEventUIDToCalendarParams{FromCalendarID: fromCalendarID, ToCalendarID: r.CalendarID, Uid: uid}
+		if err := storage.RecordResourceMove(ctx, qtx, move.FromCalendarID, move.ToCalendarID, move.Uid, func(ctx context.Context) error {
+			return moveUIDRowsTx(ctx, qtx, move)
+		}); err != nil {
+			return Event{}, 0, fmt.Errorf("record override calendar move: %w", err)
 		}
 	}
 

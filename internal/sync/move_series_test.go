@@ -237,3 +237,52 @@ func TestEditLegacyOverrideInOtherCalendarKeepsCalendar(t *testing.T) {
 		t.Fatalf("UpdateInstance on the legacy override = %v, want nil", err)
 	}
 }
+
+// TestEditLegacyOverrideBackToMasterCalendarReunitesSeries edits an
+// override that an older version saved in calendar B, while the master
+// stays in calendar A. The edit moves the override back to A. The move
+// must delete the server object in B, or that stale copy keeps the UID
+// and iCloud refuses the later PUT to A.
+func TestEditLegacyOverrideBackToMasterCalendarReunitesSeries(t *testing.T) {
+	t.Parallel()
+	engine, _, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	master, override, inst := createSeriesWithOverride(t, engine, calA)
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("initial push = %+v, %v", res, err)
+	}
+	// Seed the legacy state: the override row and a server object of the
+	// UID live in B.
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, calB, override.ID); err != nil {
+		t.Fatalf("move override row: %v", err)
+	}
+	pathA, pathB := "/cal/a/"+master.UID+".ics", "/cal/b/"+master.UID+".ics"
+	srv.mu.Lock()
+	srv.objects[pathB] = srv.objects[pathA]
+	srv.etags[pathB] = `"legacy"`
+	srv.mu.Unlock()
+	var hrefA string
+	if err := engine.db.QueryRowContext(ctx,
+		`SELECT remote_url FROM sync_resources WHERE calendar_id = ? AND uid = ?`, calA, master.UID,
+	).Scan(&hrefA); err != nil {
+		t.Fatalf("read sync row of A: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty) VALUES (?, ?, 'event', ?, '"legacy"', 0)`,
+		calB, master.UID, strings.Replace(hrefA, "/cal/a/", "/cal/b/", 1),
+	); err != nil {
+		t.Fatalf("seed sync row of B: %v", err)
+	}
+
+	if _, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
+		CalendarID: calA, Title: "Back", StartTime: inst, EndTime: inst.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpdateInstance back to the master calendar = %v, want nil", err)
+	}
+	if n := countRows(t, engine, "events", calB, master.UID); n != 0 {
+		t.Fatalf("event rows left in calendar B = %d, want 0", n)
+	}
+	syncPairClean(t, engine, calA, calB)
+	wantOnlyServerObject(t, srv, pathA)
+}
