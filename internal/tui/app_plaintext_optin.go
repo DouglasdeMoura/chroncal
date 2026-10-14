@@ -40,7 +40,16 @@ func plaintextOptInMessage(noun string) string {
 // is the refused request. bearer is true when the secret is a token, not a
 // password. The prompt is security-relevant, so the confirm button uses the
 // Danger variant, and Cancel has the focus.
+//
+// An environment variable can override the opt-in (see
+// config.CheckAllowPlaintextEnv). A confirm then cannot take effect, so the
+// prompt does not open, and the status line gives the remedy. The caller
+// owns the status token and the expiry of the status line.
 func (m Model) offerPlaintextOptIn(retry tea.Msg, bearer bool) Model {
+	if err := config.CheckAllowPlaintextEnv(); err != nil {
+		m.syncStatus = "Plaintext storage cannot turn on: " + err.Error()
+		return m
+	}
 	noun := "password"
 	if bearer {
 		noun = "token"

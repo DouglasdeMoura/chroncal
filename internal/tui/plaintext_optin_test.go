@@ -354,3 +354,38 @@ func TestPlaintextOptInRefusesAFalseEnvOverride(t *testing.T) {
 		t.Fatalf("status = %q, want the variable name", m.syncStatus)
 	}
 }
+
+// TestPlaintextOptInPromptSkippedUnderFalseEnvOverride sets
+// CHRONCAL_SECURITY_ALLOW_PLAINTEXT to a false value before the refusal.
+// A confirm could not take effect, so the destructive prompt must not
+// open. The status line must give the remedy instead.
+func TestPlaintextOptInPromptSkippedUnderFalseEnvOverride(t *testing.T) {
+	secretlessEnv(t)
+	t.Setenv("CHRONCAL_SECURITY_ALLOW_PLAINTEXT", "false")
+	m, _ := newDBBackedModel(t)
+	m.calendarManagerOpen = true
+	m.calendarManager = m.calendarManager.OpenAccountConnection()
+
+	req := CalendarDiscoveryRequestedMsg{
+		ServerURL: "https://cloud.example.com/remote.php/dav/",
+		Username:  "scott",
+		AuthType:  "basic",
+		Secret:    "hunter2",
+	}
+	cred := auth.Credential{Username: req.Username, Password: req.Secret}
+	ready, ok := m.connectAndDiscoverCalendar(context.Background(), req, cred)().(accountDiscoveryReadyMsg)
+	if !ok || !errors.Is(ready.err, auth.ErrPlaintextRequired) {
+		t.Fatalf("discovery = %+v, want ErrPlaintextRequired", ready)
+	}
+	updated, _ := m.Update(ready)
+	m = updated.(Model)
+	if m.confirmOpen {
+		t.Fatal("the plaintext prompt opened under a false env override")
+	}
+	if !strings.Contains(m.syncStatus, "unset CHRONCAL_SECURITY_ALLOW_PLAINTEXT") {
+		t.Fatalf("status = %q, want the remedy", m.syncStatus)
+	}
+	if !m.calendarManagerOpen {
+		t.Fatal("the Add Account form closed")
+	}
+}

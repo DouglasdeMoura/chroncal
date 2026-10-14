@@ -160,12 +160,12 @@ func TestCheckAllowPlaintextEnv(t *testing.T) {
 	} {
 		t.Run(tc.value, func(t *testing.T) {
 			t.Setenv(allowPlaintextEnv, tc.value)
-			err := checkAllowPlaintextEnv()
+			err := CheckAllowPlaintextEnv()
 			if (err != nil) != tc.refuse {
-				t.Fatalf("checkAllowPlaintextEnv(%q) = %v, want refuse %v", tc.value, err, tc.refuse)
+				t.Fatalf("CheckAllowPlaintextEnv(%q) = %v, want refuse %v", tc.value, err, tc.refuse)
 			}
 			if err != nil && !strings.Contains(err.Error(), "unset "+allowPlaintextEnv) {
-				t.Fatalf("checkAllowPlaintextEnv(%q) = %v, want the remedy", tc.value, err)
+				t.Fatalf("CheckAllowPlaintextEnv(%q) = %v, want the remedy", tc.value, err)
 			}
 		})
 	}
@@ -176,8 +176,8 @@ func TestCheckAllowPlaintextEnv(t *testing.T) {
 // the value turns plaintext storage off.
 func TestCheckAllowPlaintextEnvNamesABadBool(t *testing.T) {
 	t.Setenv(allowPlaintextEnv, "maybe")
-	err := checkAllowPlaintextEnv()
+	err := CheckAllowPlaintextEnv()
 	if err == nil || !strings.Contains(err.Error(), "is not a bool") || strings.Contains(err.Error(), "turns plaintext storage off") {
-		t.Fatalf("checkAllowPlaintextEnv = %v, want a not-a-bool refusal", err)
+		t.Fatalf("CheckAllowPlaintextEnv = %v, want a not-a-bool refusal", err)
 	}
 }

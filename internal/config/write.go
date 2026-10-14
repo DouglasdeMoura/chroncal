@@ -58,7 +58,7 @@ func filePath() (string, error) {
 // false value. The variable overrides the file, so the write has no effect
 // on the next launch. The user must unset the variable.
 func EnableAllowPlaintext() (string, error) {
-	if err := checkAllowPlaintextEnv(); err != nil {
+	if err := CheckAllowPlaintextEnv(); err != nil {
 		return "", err
 	}
 	path, err := filePath()
@@ -127,12 +127,12 @@ var (
 // allowPlaintextEnv is the variable that overrides security.allow_plaintext.
 const allowPlaintextEnv = "CHRONCAL_SECURITY_ALLOW_PLAINTEXT"
 
-// checkAllowPlaintextEnv returns an error when allowPlaintextEnv holds a
+// CheckAllowPlaintextEnv returns an error when allowPlaintextEnv holds a
 // value other than a true bool. Load ignores an empty value. A false value
 // overrides the config file, so the write has no effect. Load fails on a
 // value that does not parse as a bool. Both errors tell the user to unset
 // the variable.
-func checkAllowPlaintextEnv() error {
+func CheckAllowPlaintextEnv() error {
 	value, ok := os.LookupEnv(allowPlaintextEnv)
 	if !ok || value == "" {
 		return nil
