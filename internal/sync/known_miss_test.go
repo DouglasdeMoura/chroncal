@@ -374,3 +374,33 @@ func TestEngineKnownMissNeedsTimeSpanToGiveUp(t *testing.T) {
 		t.Fatalf("sync_token after the time span = %q, want %q", tok, token)
 	}
 }
+
+// TestBumpSyncKnownMissKeepsKnownETag bumps one known miss twice. The
+// second miss has no listed ETag (an href that the pull fetches again
+// without a change-list entry). The row must keep the ETag of the first
+// miss. An empty ETag tells nothing, and resetIfChanged needs the old one.
+func TestBumpSyncKnownMissKeepsKnownETag(t *testing.T) {
+	t.Parallel()
+	_, _, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := firstCalendarID(t, q)
+
+	bump := func(etag string) storage.SyncKnownMiss {
+		t.Helper()
+		row, err := q.BumpSyncKnownMiss(ctx, storage.BumpSyncKnownMissParams{
+			CalendarID: calendarID, Href: knownMissHref, Uid: "stuck", Reason: knownMissReasonMissing,
+			Etag: etag, FirstMissAt: "2026-01-01T00:00:00Z",
+		})
+		if err != nil {
+			t.Fatalf("BumpSyncKnownMiss(%q): %v", etag, err)
+		}
+		return row
+	}
+	bump(`"e1"`)
+	if row := bump(""); row.Etag != `"e1"` {
+		t.Fatalf("etag after a miss with no ETag = %q, want %q", row.Etag, `"e1"`)
+	}
+	if row := bump(`"e2"`); row.Etag != `"e2"` {
+		t.Fatalf("etag after a miss with a new ETag = %q, want %q", row.Etag, `"e2"`)
+	}
+}

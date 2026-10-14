@@ -15,7 +15,7 @@ VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, href) DO UPDATE SET
     uid = excluded.uid,
     reason = excluded.reason,
-    etag = excluded.etag,
+    etag = COALESCE(NULLIF(excluded.etag, ''), sync_known_misses.etag),
     miss_count = sync_known_misses.miss_count + 1
 RETURNING id, calendar_id, href, uid, reason, miss_count, gave_up_at, etag, first_miss_at
 `
@@ -29,6 +29,7 @@ type BumpSyncKnownMissParams struct {
 	FirstMissAt string
 }
 
+// An empty etag names no ETag, so the update keeps the known one.
 func (q *Queries) BumpSyncKnownMiss(ctx context.Context, arg BumpSyncKnownMissParams) (SyncKnownMiss, error) {
 	row := q.db.QueryRowContext(ctx, bumpSyncKnownMiss,
 		arg.CalendarID,
