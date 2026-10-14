@@ -224,15 +224,23 @@ func (m Model) handleAccountSettingsUpdateCredentialsRequested(msg AccountSettin
 	return m, nil
 }
 
-func (m Model) handleAccountCredentialsUpdateSubmitted(msg AccountCredentialsUpdateSubmittedMsg) (tea.Model, tea.Cmd) {
+// credentialsUpdateBlocked reports whether the model drops a credential
+// rotation. handlePlaintextOptInSaved asks the same question before it
+// sends the refused rotation again.
+func (m Model) credentialsUpdateBlocked(msg AccountCredentialsUpdateSubmittedMsg) bool {
 	if m.syncing || m.plaintextSaving || m.oauthFlowOpen || m.oauthPending || !m.accountCredentialsOpen ||
 		m.accountCredentials.accountID != msg.AccountID {
-		return m, nil
+		return true
 	}
 	configured, ok := m.accounts[msg.AccountID]
-	if !ok || !accountAuthIsBasicOrBearer(configured.AuthType) {
+	return !ok || !accountAuthIsBasicOrBearer(configured.AuthType)
+}
+
+func (m Model) handleAccountCredentialsUpdateSubmitted(msg AccountCredentialsUpdateSubmittedMsg) (tea.Model, tea.Cmd) {
+	if m.credentialsUpdateBlocked(msg) {
 		return m, nil
 	}
+	configured := m.accounts[msg.AccountID]
 	m.accountCredentialsOpen = false
 	m.syncing = true
 	m.syncStatus = "Updating credentials…"
@@ -294,8 +302,15 @@ func (m Model) handleAccountSettingsClosed(msg AccountSettingsClosedMsg) (tea.Mo
 	return m, nil
 }
 
+// calendarDiscoveryBlocked reports whether the model drops an Add Account
+// request. handlePlaintextOptInSaved asks the same question before it
+// sends the refused request again.
+func (m Model) calendarDiscoveryBlocked() bool {
+	return m.syncing || m.plaintextSaving || m.oauthFlowOpen
+}
+
 func (m Model) handleCalendarDiscoveryRequested(msg CalendarDiscoveryRequestedMsg) (tea.Model, tea.Cmd) {
-	if m.syncing || m.plaintextSaving || m.oauthFlowOpen {
+	if m.calendarDiscoveryBlocked() {
 		return m, nil
 	}
 	if calendarAuthIsOAuth(msg.AuthType) {

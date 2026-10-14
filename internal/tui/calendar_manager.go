@@ -171,6 +171,13 @@ func (m CalendarManagerModel) CalendarForm() (*CalendarDialogModel, bool) {
 	return nil, false
 }
 
+// AddAccountFormOpen reports whether the Add Account form is the active
+// screen.
+func (m CalendarManagerModel) AddAccountFormOpen() bool {
+	form, ok := m.CalendarForm()
+	return ok && form.accountConnection
+}
+
 func (m CalendarManagerModel) AccountSettings() (*AccountSettingsDialogModel, bool) {
 	if m.screen == CalendarManagerScreenAccount && m.accountSettings != nil {
 		return m.accountSettings, true

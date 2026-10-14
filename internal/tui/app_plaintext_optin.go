@@ -72,11 +72,30 @@ func (m Model) confirmPlaintextOptIn(retry tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// plaintextRetryDroppedStatus returns the status line for a refused request
+// that can no longer run. It returns "" when the request can run. The user
+// can close the form while the config write runs. The opt-in is then on, but
+// the secret is not saved, and the status line must say so.
+func (m Model) plaintextRetryDroppedStatus(retry tea.Msg) string {
+	switch r := retry.(type) {
+	case AccountCredentialsUpdateSubmittedMsg:
+		if m.credentialsUpdateBlocked(r) {
+			return "Plaintext storage is on, but the credentials were not saved. Save the credentials again."
+		}
+	case CalendarDiscoveryRequestedMsg:
+		if m.calendarDiscoveryBlocked() || !m.calendarManagerOpen || !m.calendarManager.AddAccountFormOpen() {
+			return "Plaintext storage is on, but the account was not added. Add the account again."
+		}
+	}
+	return ""
+}
+
 // handlePlaintextOptInSaved turns on plaintext storage for this session and
 // dispatches the refused request again. openCredentialStore reads
 // app.AllowPlaintext each time it opens a store, so the retry uses the
 // plaintext store with no restart. A failed write keeps the setting off and
-// leaves the user in the form.
+// leaves the user in the form. A request that can no longer run gets a
+// status line, because a silent drop leaves the secret unsaved.
 func (m Model) handlePlaintextOptInSaved(msg plaintextOptInSavedMsg) (tea.Model, tea.Cmd) {
 	m.plaintextSaving = false
 	if msg.err != nil {
@@ -88,6 +107,11 @@ func (m Model) handlePlaintextOptInSaved(msg plaintextOptInSavedMsg) (tea.Model,
 		)
 	}
 	m.app.AllowPlaintext = true
+	if status := m.plaintextRetryDroppedStatus(msg.retry); status != "" {
+		m.statusToken++
+		m.syncStatus = status
+		return m, m.expireStatusAfter(10*time.Second, m.statusToken)
+	}
 	m.syncStatus = ""
 	return m.Update(msg.retry)
 }

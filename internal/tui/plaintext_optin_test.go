@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/account"
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/config"
 )
@@ -32,6 +33,7 @@ func refusedAddAccount(t *testing.T) (Model, CalendarDiscoveryRequestedMsg) {
 	secretlessEnv(t)
 	m, _ := newDBBackedModel(t)
 	m.calendarManagerOpen = true
+	m.calendarManager = m.calendarManager.OpenAccountConnection()
 
 	req := CalendarDiscoveryRequestedMsg{
 		ServerURL: "https://cloud.example.com/remote.php/dav/",
@@ -163,13 +165,14 @@ func TestPlaintextOptInConfirmWritesConfigAndRetriesAddAccount(t *testing.T) {
 	}
 }
 
-// TestPlaintextOptInConfirmSavesTheRotatedPassword covers the account
-// settings path: the refused password rotation continues after the opt-in,
-// and the store keeps the password the user typed.
-func TestPlaintextOptInConfirmSavesTheRotatedPassword(t *testing.T) {
+// refusedRotation runs a password rotation of a basic-auth account
+// against the secretless store and feeds the refusal back to the model. The
+// model then shows the plaintext opt-in prompt over the Update Credentials
+// form.
+func refusedRotation(t *testing.T) (Model, *app.App, account.Account) {
+	t.Helper()
 	secretlessEnv(t)
 	m, a := newDBBackedModel(t)
-	path := optInConfigPath(t)
 	ctx := context.Background()
 
 	store, err := auth.NewCredentialStore(a.CredentialNamespace, nil, false, false)
@@ -205,8 +208,17 @@ func TestPlaintextOptInConfirmSavesTheRotatedPassword(t *testing.T) {
 	if !m.accountCredentialsOpen {
 		t.Fatal("the credentials form closed behind the prompt")
 	}
+	return m, a, created
+}
 
-	updated, cmd = m.Update(ConfirmDialogResultMsg{Confirmed: true})
+// TestPlaintextOptInConfirmSavesTheRotatedPassword covers the account
+// settings path: the refused password rotation continues after the opt-in,
+// and the store keeps the password the user typed.
+func TestPlaintextOptInConfirmSavesTheRotatedPassword(t *testing.T) {
+	m, a, created := refusedRotation(t)
+	path := optInConfigPath(t)
+
+	updated, cmd := m.Update(ConfirmDialogResultMsg{Confirmed: true})
 	m = updated.(Model)
 	saved := findMsg[plaintextOptInSavedMsg](t, cmd)
 	if saved.err != nil {
@@ -221,7 +233,7 @@ func TestPlaintextOptInConfirmSavesTheRotatedPassword(t *testing.T) {
 		t.Fatalf("AllowPlaintext = %v, form open = %v, syncing = %v; want the rotation retry",
 			m.app.AllowPlaintext, m.accountCredentialsOpen, m.syncing)
 	}
-	stored = findMsg[accountCredentialStoredMsg](t, cmd)
+	stored := findMsg[accountCredentialStoredMsg](t, cmd)
 	if stored.err != nil {
 		t.Fatalf("the retried rotation failed: %v", stored.err)
 	}
@@ -237,6 +249,63 @@ func TestPlaintextOptInConfirmSavesTheRotatedPassword(t *testing.T) {
 	if cred.Password != "hunter2" {
 		t.Fatalf("Password = %q, want the typed password", cred.Password)
 	}
+}
+
+// wantDroppedRetryStatus checks the model after a confirmed opt-in whose
+// retry can no longer run. Plaintext storage is on, the retry did not
+// start, and the status tells the user to save the secret again.
+func wantDroppedRetryStatus(t *testing.T, m Model, cmd tea.Cmd, want string) {
+	t.Helper()
+	if !m.app.AllowPlaintext {
+		t.Fatal("app.AllowPlaintext stayed false after the opt-in")
+	}
+	if m.syncing {
+		t.Fatal("the retry started after the user closed the form")
+	}
+	if !strings.Contains(m.syncStatus, "Plaintext storage is on") || !strings.Contains(m.syncStatus, want) {
+		t.Fatalf("status = %q, want a note that plaintext storage is on and %q", m.syncStatus, want)
+	}
+	if cmd == nil {
+		t.Fatal("the dropped retry produced no command, so the status never expires")
+	}
+}
+
+// TestPlaintextOptInRotationFormClosedDuringWriteReports closes the Update
+// Credentials form while the config write runs. The rotation cannot run
+// again, so the status must say that the password was not saved.
+func TestPlaintextOptInRotationFormClosedDuringWriteReports(t *testing.T) {
+	m, _, created := refusedRotation(t)
+	optInConfigPath(t)
+
+	updated, cmd := m.Update(ConfirmDialogResultMsg{Confirmed: true})
+	m = updated.(Model)
+	saved := findMsg[plaintextOptInSavedMsg](t, cmd)
+	if saved.err != nil {
+		t.Fatalf("config write: %v", saved.err)
+	}
+	updated, _ = m.Update(AccountCredentialsUpdateClosedMsg{AccountID: created.ID})
+	m = updated.(Model)
+	updated, cmd = m.Update(saved)
+	wantDroppedRetryStatus(t, updated.(Model), cmd, "not saved")
+}
+
+// TestPlaintextOptInAddAccountFormClosedDuringWriteReports closes the Add
+// Account form while the config write runs. The retry must not add the
+// account behind the back of the user, and the status must say so.
+func TestPlaintextOptInAddAccountFormClosedDuringWriteReports(t *testing.T) {
+	m, _ := refusedAddAccount(t)
+	optInConfigPath(t)
+
+	updated, cmd := m.Update(ConfirmDialogResultMsg{Confirmed: true})
+	m = updated.(Model)
+	saved := findMsg[plaintextOptInSavedMsg](t, cmd)
+	if saved.err != nil {
+		t.Fatalf("config write: %v", saved.err)
+	}
+	// The user closes the calendar manager, and the Add Account form with it.
+	m.calendarManagerOpen = false
+	updated, cmd = m.Update(saved)
+	wantDroppedRetryStatus(t, updated.(Model), cmd, "not added")
 }
 
 // findMsg runs cmd and returns the first message of type T. It uses
