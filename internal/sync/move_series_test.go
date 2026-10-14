@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
@@ -847,5 +848,32 @@ func TestLegacyOverrideInLocalCalendarMarksSyncedMaster(t *testing.T) {
 	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: master.UID})
 	if err != nil || sr.Dirty != 1 {
 		t.Fatalf("sync resource of A = %+v, %v; want dirty", sr, err)
+	}
+}
+
+// TestEditLegacyOverrideInReadOnlyCalendarIsRefused holds a legacy
+// override in a read-only calendar B, with its master in A. An occurrence
+// edit that moves the override back to A writes B (the row leaves it). The
+// edit must be refused, as an update by row ID is.
+func TestEditLegacyOverrideInReadOnlyCalendarIsRefused(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	master, override, inst := createSeriesWithOverride(t, engine, calA)
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, calB, override.ID); err != nil {
+		t.Fatalf("seed legacy override: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read' WHERE id = ?`, calB); err != nil {
+		t.Fatalf("make B read-only: %v", err)
+	}
+	_, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
+		CalendarID: calA, Title: "Back", StartTime: inst, EndTime: inst.Add(time.Hour),
+	})
+	if !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("UpdateInstance out of a read-only calendar = %v, want ErrReadOnly", err)
+	}
+	if n := countRows(t, engine, "events", calB, master.UID); n != 1 {
+		t.Fatalf("event rows in B = %d, want 1 (the override stays)", n)
 	}
 }

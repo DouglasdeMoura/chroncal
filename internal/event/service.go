@@ -872,6 +872,14 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	if existErr == nil {
 		fromCalendarID = existing.CalendarID
 	}
+	// A legacy override lives in another calendar than its master. The
+	// edit writes that calendar (an update in place, or a move out of it),
+	// so that calendar must take the write too, as in an update by row ID.
+	if fromCalendarID != master.CalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, qtx, fromCalendarID, "VEVENT"); err != nil {
+			return Event{}, err
+		}
+	}
 	if err := move.CheckOf(ctx, recID, fromCalendarID, p.CalendarID, uidMasters(masters)); err != nil {
 		return Event{}, err
 	}
