@@ -60,8 +60,9 @@ func (k *appKeyMap) bindings() map[string]*key.Binding {
 // newAppKeys builds the app keymap from the [keys] table of config.toml
 // (issue #797). An action without an entry keeps its default keys. The
 // help text of a binding shows its first key and the help text of the
-// config action. The caller validates overrides with config.ValidateKeys
-// before the call.
+// config action. The first key shows in its canonical form ("W", not
+// "shift+w"), as the help dialog shows it. The caller validates overrides
+// with config.ValidateKeys before the call.
 func newAppKeys(overrides map[string][]string) appKeyMap {
 	keys := config.ResolveKeys(overrides)
 	var k appKeyMap
@@ -72,7 +73,7 @@ func newAppKeys(overrides map[string][]string) appKeyMap {
 			panic("tui: the app keymap has no field for the config key action " + a.Name)
 		}
 		list := keys[a.Name]
-		*field = key.NewBinding(key.WithKeys(expandKeyAliases(list)...), key.WithHelp(list[0], a.Help))
+		*field = key.NewBinding(key.WithKeys(expandKeyAliases(list)...), key.WithHelp(config.CanonicalKey(list[0]), a.Help))
 	}
 	return k
 }

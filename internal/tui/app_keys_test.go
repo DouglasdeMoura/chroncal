@@ -187,6 +187,29 @@ func TestRemappedKeysShowInHelpFooterAndPalette(t *testing.T) {
 	}
 }
 
+// TestShiftKeyLabelMatchesHelp remaps the help action to "shift+w" and
+// the week view to "shift+v". The help dialog shows "W". The footer hint
+// and the palette shortcut must show the uppercase letter too, not the raw
+// "shift+" spelling.
+func TestShiftKeyLabelMatchesHelp(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.viewMode = viewMonth
+	m = m.withKeys(newAppKeys(map[string][]string{"help": {"shift+w"}, "week_view": {"shift+v"}}))
+
+	updated, _ := m.Update(HelpDialogRequestedMsg{})
+	if got := helpEntryKeys(t, updated.(Model).helpDialog, "this help"); got != "W" {
+		t.Fatalf("help entry keys = %q, want W", got)
+	}
+	footer := stripANSI(m.footer.Render(FooterMonth, 200, "", "", false, false))
+	if !strings.Contains(footer, "W help") || strings.Contains(footer, "shift+w") {
+		t.Errorf("footer = %q, want the W help hint", footer)
+	}
+	if got := paletteCommandByID(t, buildPaletteCommands(m), "view.week").Shortcut; got != "V" {
+		t.Errorf("palette week shortcut = %q, want V", got)
+	}
+}
+
 func TestExpandKeyAliasesAddsShiftForm(t *testing.T) {
 	got := expandKeyAliases([]string{"shift+g", "x", "G"})
 	want := []string{"G", "shift+g", "x"}
