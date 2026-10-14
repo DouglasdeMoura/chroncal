@@ -10,6 +10,9 @@
 -- the last miss. A given-up row whose href comes back with another ETag
 -- names a new version of the object. The pull then deletes the row, so
 -- the new version gets a new retry budget. An empty value names no ETag.
+-- first_miss_at is the RFC 3339 UTC time of the first miss. The give-up
+-- needs the miss count and a minimum time from first_miss_at, so a frequent
+-- background sync cannot spend the budget on one transient miss.
 -- UNIQUE(calendar_id, href) already indexes calendar_id.
 
 CREATE TABLE sync_known_misses (
@@ -21,6 +24,7 @@ CREATE TABLE sync_known_misses (
     miss_count INTEGER NOT NULL DEFAULT 1,
     gave_up_at TEXT,
     etag TEXT NOT NULL DEFAULT '',
+    first_miss_at TEXT NOT NULL DEFAULT '',
     UNIQUE(calendar_id, href)
 );
 

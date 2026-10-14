@@ -88,7 +88,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	pending.forgetSet(ctx, tombstonedPaths)
 	fetchPaths = pending.appendUnseen(fetchPaths)
 
-	known, err := loadKnownMisses(ctx, e.q, e.logger, calendarID, localByPath)
+	known, err := loadKnownMisses(ctx, e.q, e.logger, calendarID, localByPath, e.clock())
 	if err != nil {
 		return nil, err
 	}

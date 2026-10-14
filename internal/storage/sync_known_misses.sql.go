@@ -10,22 +10,23 @@ import (
 )
 
 const bumpSyncKnownMiss = `-- name: BumpSyncKnownMiss :one
-INSERT INTO sync_known_misses (calendar_id, href, uid, reason, etag)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO sync_known_misses (calendar_id, href, uid, reason, etag, first_miss_at)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, href) DO UPDATE SET
     uid = excluded.uid,
     reason = excluded.reason,
     etag = excluded.etag,
     miss_count = sync_known_misses.miss_count + 1
-RETURNING id, calendar_id, href, uid, reason, miss_count, gave_up_at, etag
+RETURNING id, calendar_id, href, uid, reason, miss_count, gave_up_at, etag, first_miss_at
 `
 
 type BumpSyncKnownMissParams struct {
-	CalendarID int64
-	Href       string
-	Uid        string
-	Reason     string
-	Etag       string
+	CalendarID  int64
+	Href        string
+	Uid         string
+	Reason      string
+	Etag        string
+	FirstMissAt string
 }
 
 func (q *Queries) BumpSyncKnownMiss(ctx context.Context, arg BumpSyncKnownMissParams) (SyncKnownMiss, error) {
@@ -35,6 +36,7 @@ func (q *Queries) BumpSyncKnownMiss(ctx context.Context, arg BumpSyncKnownMissPa
 		arg.Uid,
 		arg.Reason,
 		arg.Etag,
+		arg.FirstMissAt,
 	)
 	var i SyncKnownMiss
 	err := row.Scan(
@@ -46,6 +48,7 @@ func (q *Queries) BumpSyncKnownMiss(ctx context.Context, arg BumpSyncKnownMissPa
 		&i.MissCount,
 		&i.GaveUpAt,
 		&i.Etag,
+		&i.FirstMissAt,
 	)
 	return i, err
 }
@@ -74,7 +77,7 @@ func (q *Queries) DeleteSyncKnownMissesByCalendar(ctx context.Context, calendarI
 }
 
 const listGaveUpSyncKnownMisses = `-- name: ListGaveUpSyncKnownMisses :many
-SELECT id, calendar_id, href, uid, reason, miss_count, gave_up_at, etag FROM sync_known_misses
+SELECT id, calendar_id, href, uid, reason, miss_count, gave_up_at, etag, first_miss_at FROM sync_known_misses
 WHERE gave_up_at IS NOT NULL
 ORDER BY calendar_id, id
 `
@@ -97,6 +100,7 @@ func (q *Queries) ListGaveUpSyncKnownMisses(ctx context.Context) ([]SyncKnownMis
 			&i.MissCount,
 			&i.GaveUpAt,
 			&i.Etag,
+			&i.FirstMissAt,
 		); err != nil {
 			return nil, err
 		}
@@ -112,7 +116,7 @@ func (q *Queries) ListGaveUpSyncKnownMisses(ctx context.Context) ([]SyncKnownMis
 }
 
 const listSyncKnownMissesByCalendar = `-- name: ListSyncKnownMissesByCalendar :many
-SELECT id, calendar_id, href, uid, reason, miss_count, gave_up_at, etag FROM sync_known_misses WHERE calendar_id = ? ORDER BY id
+SELECT id, calendar_id, href, uid, reason, miss_count, gave_up_at, etag, first_miss_at FROM sync_known_misses WHERE calendar_id = ? ORDER BY id
 `
 
 func (q *Queries) ListSyncKnownMissesByCalendar(ctx context.Context, calendarID int64) ([]SyncKnownMiss, error) {
@@ -133,6 +137,7 @@ func (q *Queries) ListSyncKnownMissesByCalendar(ctx context.Context, calendarID 
 			&i.MissCount,
 			&i.GaveUpAt,
 			&i.Etag,
+			&i.FirstMissAt,
 		); err != nil {
 			return nil, err
 		}

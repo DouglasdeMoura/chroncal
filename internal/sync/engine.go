@@ -205,6 +205,10 @@ type Engine struct {
 	journals  *journal.Service
 	logger    *slog.Logger
 
+	// now returns the current time. It is nil in production, and clock
+	// then uses time.Now. Tests assign a fake clock.
+	now func() time.Time
+
 	// testHooks is nil in production. Tests assign an engineTestHooks value
 	// to inject failure windows. Call sites treat nil as "no hook".
 	testHooks *engineTestHooks
@@ -354,6 +358,14 @@ func NewEngine(db *sql.DB, q *storage.Queries, credStore authpkg.CredentialStore
 		logger = slog.New(slog.DiscardHandler)
 	}
 	return &Engine{db: db, q: q, credStore: credStore, calendars: calendars, events: events, todos: todos, journals: journals, logger: logger}
+}
+
+// clock returns the current time of the engine.
+func (e *Engine) clock() time.Time {
+	if e.now != nil {
+		return e.now()
+	}
+	return time.Now()
 }
 
 // loadCalendarClient loads the calendar, its account, and a ready CalDAV client.

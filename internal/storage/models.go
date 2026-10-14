@@ -314,14 +314,15 @@ type SyncConflict struct {
 }
 
 type SyncKnownMiss struct {
-	ID         int64
-	CalendarID int64
-	Href       string
-	Uid        string
-	Reason     string
-	MissCount  int64
-	GaveUpAt   *string
-	Etag       string
+	ID          int64
+	CalendarID  int64
+	Href        string
+	Uid         string
+	Reason      string
+	MissCount   int64
+	GaveUpAt    *string
+	Etag        string
+	FirstMissAt string
 }
 
 type SyncPendingHref struct {

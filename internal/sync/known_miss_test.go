@@ -78,6 +78,7 @@ func TestEngineKnownHrefStopsBlockingAfterBudget(t *testing.T) {
 			t.Parallel()
 
 			engine, db, q := newTestEngine(t)
+			advance := fakeEngineClock(engine)
 			ctx := context.Background()
 			calendarID := seedKnownMissCalendar(t, db, q)
 			svc := &Service{engine: engine, db: db, q: q}
@@ -123,6 +124,8 @@ func TestEngineKnownHrefStopsBlockingAfterBudget(t *testing.T) {
 				}
 			}
 
+			// The give-up needs the time span from the first miss too.
+			advance(knownMissMinSpan)
 			result := pullOnce(knownMissLimit)
 			if len(result.errors) != 0 {
 				t.Fatalf("run %d: errors = %v, want none after the budget", knownMissLimit, result.errors)
@@ -253,6 +256,7 @@ func TestEngineKnownMissChangedAfterGiveUpGetsFreshBudget(t *testing.T) {
 	t.Parallel()
 
 	engine, db, q := newTestEngine(t)
+	advance := fakeEngineClock(engine)
 	ctx := context.Background()
 	calendarID := seedKnownMissCalendar(t, db, q)
 
@@ -283,6 +287,9 @@ func TestEngineKnownMissChangedAfterGiveUpGetsFreshBudget(t *testing.T) {
 	}
 
 	for run := 1; run <= knownMissLimit; run++ {
+		if run == knownMissLimit {
+			advance(knownMissMinSpan)
+		}
 		pullOnce("give up")
 	}
 	if tok := calendarToken(t, q, calendarID); tok != firstToken {
@@ -307,5 +314,63 @@ func TestEngineKnownMissChangedAfterGiveUpGetsFreshBudget(t *testing.T) {
 	}
 	if tok := calendarToken(t, q, calendarID); tok != secondToken {
 		t.Fatalf("sync_token after the good fetch = %q, want %q", tok, secondToken)
+	}
+}
+
+// fakeEngineClock gives engine a fake clock. The returned func moves the
+// clock forward by d.
+func fakeEngineClock(engine *Engine) (advance func(d time.Duration)) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	engine.now = func() time.Time { return now }
+	return func(d time.Duration) { now = now.Add(d) }
+}
+
+// TestEngineKnownMissNeedsTimeSpanToGiveUp is the regression test for a
+// frequent background sync. knownMissLimit misses in a few minutes must not
+// spend the budget: a transient 404 can last that long. The give-up needs
+// knownMissMinSpan from the first miss too.
+func TestEngineKnownMissNeedsTimeSpanToGiveUp(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	advance := fakeEngineClock(engine)
+	ctx := context.Background()
+	calendarID := seedKnownMissCalendar(t, db, q)
+
+	const token = "https://example.com/sync/t1"
+	client := newScriptedClient(t,
+		func(string) string { return syncCollectionXML(token, knownMissHref) },
+		func(int, string) string { return multigetXML(nil, []string{knownMissHref}) },
+	)
+	pullOnce := func(run int) *pullResult {
+		t.Helper()
+		result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+		if err != nil {
+			t.Fatalf("pull %d: %v", run, err)
+		}
+		return result
+	}
+
+	for run := 1; run <= knownMissLimit+1; run++ {
+		result := pullOnce(run)
+		if len(result.errors) == 0 {
+			t.Fatalf("run %d: no incomplete-pull error inside the time span", run)
+		}
+		if tok := calendarToken(t, q, calendarID); tok != "" {
+			t.Fatalf("run %d: sync_token = %q, want it withheld inside the time span", run, tok)
+		}
+		advance(time.Minute)
+	}
+	if rows := listKnownMisses(t, q, calendarID); len(rows) != 1 || rows[0].GaveUpAt != nil {
+		t.Fatalf("known misses = %+v, want one row and no give-up", rows)
+	}
+
+	advance(knownMissMinSpan)
+	result := pullOnce(knownMissLimit + 2)
+	if len(result.errors) != 0 {
+		t.Fatalf("errors after the time span = %v, want none", result.errors)
+	}
+	if tok := calendarToken(t, q, calendarID); tok != token {
+		t.Fatalf("sync_token after the time span = %q, want %q", tok, token)
 	}
 }
