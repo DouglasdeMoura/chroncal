@@ -106,6 +106,7 @@ roughly when the event occurred.`,
 				Events:      events,
 				ShowAllDays: false,
 				ShowMonth:   true,
+				Color:       compactTableColorEnabled(w),
 			}))
 			return nil
 		},

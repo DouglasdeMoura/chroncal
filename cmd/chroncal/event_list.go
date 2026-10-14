@@ -122,6 +122,7 @@ Set ui.event_list_days in config.toml to change the window.`,
 				Verbose:       verbose,
 				ShowID:        showID,
 				ShowCalendar:  showCalendar,
+				Color:         compactTableColorEnabled(w),
 				From:          from,
 				To:            to,
 			}))

@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
 func withLocalUTC(t *testing.T) {
@@ -136,5 +138,141 @@ func TestFormatEventListVerbose_RendersOvernightContinuation(t *testing.T) {
 		"        | until 09:00\n"
 	if got != want {
 		t.Fatalf("FormatEventList verbose overnight output mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func verboseColorTestOptions(color bool) FormatEventListOptions {
+	return FormatEventListOptions{
+		Events: []event.Event{
+			{
+				ID:          42,
+				CalendarID:  1,
+				Title:       "Team Standup",
+				Location:    "Zoom",
+				Description: "Sprint planning\nRetro",
+				StartTime:   time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC),
+				EndTime:     time.Date(2026, 4, 21, 9, 30, 0, 0, time.UTC),
+			},
+			{
+				Title:     "Offsite",
+				AllDay:    true,
+				StartTime: time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
+				EndTime:   time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
+			},
+		},
+		CalendarNames: map[int64]string{1: "Work"},
+		ShowWeekday:   true,
+		ShowMonth:     true,
+		ShowCalendar:  true,
+		Verbose:       true,
+		Color:         color,
+	}
+}
+
+func TestFormatEventListVerbose_ColorFalseIsPlain(t *testing.T) {
+	withLocalUTC(t)
+
+	got := FormatEventList(verboseColorTestOptions(false))
+	want := "" +
+		"Apr 21 Tue\n" +
+		"----------\n" +
+		"all day | Offsite\n" +
+		"09:00   | Team Standup\n" +
+		"        | Zoom\n" +
+		"        | Sprint planning\n" +
+		"        | Retro\n" +
+		"        | Calendar: Work\n"
+	if got != want {
+		t.Fatalf("FormatEventList verbose plain mismatch\nwant:\n%q\ngot:\n%q", want, got)
+	}
+}
+
+func TestFormatEventListVerbose_ColorTrueAddsSGRAndKeepsAlignment(t *testing.T) {
+	withLocalUTC(t)
+
+	got := FormatEventList(verboseColorTestOptions(true))
+	want := "" +
+		"\x1b[1;36mApr 21 Tue\x1b[0m\n" +
+		"\x1b[1;36m----------\x1b[0m\n" +
+		"\x1b[33mall day\x1b[0m | \x1b[1mOffsite\x1b[0m\n" +
+		"\x1b[33m09:00  \x1b[0m | \x1b[1mTeam Standup\x1b[0m\n" +
+		"        | Zoom\n" +
+		"        | \x1b[2mSprint planning\x1b[0m\n" +
+		"        | \x1b[2mRetro\x1b[0m\n" +
+		"        | \x1b[35mCalendar: Work\x1b[0m\n"
+	if got != want {
+		t.Fatalf("FormatEventList verbose color mismatch\nwant:\n%q\ngot:\n%q", want, got)
+	}
+
+	// The color must not change the layout: with the SGR codes removed,
+	// the output is the same as the plain output.
+	plain := FormatEventList(verboseColorTestOptions(false))
+	if stripped := textsafe.StripEscapes(got); stripped != plain {
+		t.Fatalf("color output without SGR codes differs from plain output\nwant:\n%q\ngot:\n%q", plain, stripped)
+	}
+}
+
+func TestFormatEventListCompact_IgnoresColor(t *testing.T) {
+	withLocalUTC(t)
+
+	opts := verboseColorTestOptions(true)
+	opts.Verbose = false
+	got := FormatEventList(opts)
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("compact FormatEventList output has SGR codes: %q", got)
+	}
+}
+
+func TestFormatEventListVerbose_PrefixesEveryDescriptionLine(t *testing.T) {
+	withLocalUTC(t)
+
+	got := FormatEventList(FormatEventListOptions{
+		Events: []event.Event{{
+			Title:       "Review",
+			Description: "Agenda:\r\n- item one\n\n- item two\n",
+			StartTime:   time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC),
+			EndTime:     time.Date(2026, 4, 21, 9, 30, 0, 0, time.UTC),
+		}},
+		ShowMonth: true,
+		Verbose:   true,
+	})
+
+	want := "" +
+		"Apr 21\n" +
+		"------\n" +
+		"09:00   | Review\n" +
+		"        | Agenda:\n" +
+		"        | - item one\n" +
+		"        |\n" +
+		"        | - item two\n"
+	if got != want {
+		t.Fatalf("FormatEventList verbose multi-line description mismatch\nwant:\n%q\ngot:\n%q", want, got)
+	}
+}
+
+func TestFormatEventListVerbose_SanitizesText(t *testing.T) {
+	withLocalUTC(t)
+
+	got := FormatEventList(FormatEventListOptions{
+		Events: []event.Event{{
+			Title:       "Evil\x1b[31m title\u202e",
+			Location:    "Room\x1b]0;pwned\x07 7\tB",
+			Description: "line\x1b[2J one\nline\x07 two",
+			StartTime:   time.Date(2026, 4, 21, 9, 0, 0, 0, time.UTC),
+			EndTime:     time.Date(2026, 4, 21, 9, 30, 0, 0, time.UTC),
+		}},
+		ShowMonth: true,
+		Verbose:   true,
+	})
+
+	want := "" +
+		"Apr 21\n" +
+		"------\n" +
+		"09:00   | Evil title\n" +
+		"        | Room 7 B\n" +
+		"        | line one\n" +
+		"        | line two\n"
+	if got != want {
+		t.Fatalf("FormatEventList verbose sanitize mismatch\nwant:\n%q\ngot:\n%q", want, got)
 	}
 }

@@ -92,3 +92,29 @@ func Display(s string) string {
 
 	return strings.Join(strings.Fields(b.String()), " ")
 }
+
+// DisplayLines is Display for multi-line text. It splits s at each line
+// break ("\n", "\r\n", or "\r") and runs Display on each line. It removes
+// blank lines at the start and at the end. A blank line between two text
+// lines stays as an empty string. It returns nil when s has no visible text.
+func DisplayLines(s string) []string {
+	// Strip the escapes before the split. An escape sequence that contains
+	// a line break then does not leave its payload as visible text.
+	s = StripEscapes(s)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = Display(line)
+	}
+	for len(lines) > 0 && lines[0] == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return lines
+}
