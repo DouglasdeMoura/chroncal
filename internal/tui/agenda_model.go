@@ -152,11 +152,11 @@ func NewAgendaModel(today time.Time) AgendaModel {
 	}
 }
 
-// SetCreateKey replaces the create binding with the create binding of the
+// WithAppKeys replaces the create binding with the create binding of the
 // app keymap. A remap of the create action in config.toml then also
 // applies in the agenda, and the old key stops there too.
-func (m AgendaModel) SetCreateKey(b key.Binding) AgendaModel {
-	m.keys.Create = b
+func (m AgendaModel) WithAppKeys(keys appKeyMap) AgendaModel {
+	m.keys.Create = keys.Create
 	return m
 }
 

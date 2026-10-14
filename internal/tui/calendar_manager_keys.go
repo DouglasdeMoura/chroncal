@@ -26,3 +26,12 @@ func defaultCalendarManagerKeys() calendarManagerKeyMap {
 		Activate: key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter/space", "activate")),
 	}
 }
+
+// WithAppKeys makes the close binding follow the app keymap. Esc and q
+// close the manager. The keys of the app calendars action also close it,
+// so the key that opens the manager also closes it after a remap.
+func (m CalendarManagerModel) WithAppKeys(keys appKeyMap) CalendarManagerModel {
+	closeKeys := append([]string{"esc", "q"}, keys.CalendarList.Keys()...)
+	m.keys.Close = key.NewBinding(key.WithKeys(closeKeys...), key.WithHelp("esc", "close"))
+	return m
+}

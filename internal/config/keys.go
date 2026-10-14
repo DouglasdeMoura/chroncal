@@ -9,40 +9,42 @@ import (
 
 // KeyAction names one TUI action that the [keys] table can remap. Defaults
 // holds the built-in keys. The TUI uses them when the table does not name
-// the action.
+// the action. Help is the short description that the TUI help text shows.
 type KeyAction struct {
 	Name     string
+	Help     string
 	Defaults []string
 }
 
 // keyActions lists the remappable actions of the TUI app keymap in the
-// order of the documentation. The key strings use the Bubble Tea names
+// order of the documentation. It is the single source of truth: the TUI
+// builds its app keymap from this list. The key strings use the Bubble Tea names
 // (for example "ctrl+k", "tab", "shift+tab").
 var keyActions = []KeyAction{
-	{Name: "quit", Defaults: []string{"q"}},
-	{Name: "month_view", Defaults: []string{"m"}},
-	{Name: "week_view", Defaults: []string{"w"}},
-	{Name: "day_view", Defaults: []string{"d"}},
-	{Name: "agenda_view", Defaults: []string{"a"}},
-	{Name: "sidebar", Defaults: []string{"\\"}},
-	{Name: "week_numbers", Defaults: []string{"#"}},
-	{Name: "week_start", Defaults: []string{"W"}},
-	{Name: "create", Defaults: []string{"c"}},
-	{Name: "switch_focus", Defaults: []string{"tab", "shift+tab"}},
-	{Name: "help", Defaults: []string{"?"}},
-	{Name: "palette", Defaults: []string{"/", "ctrl+k"}},
-	{Name: "calendars", Defaults: []string{"C"}},
-	{Name: "sync", Defaults: []string{"s"}},
-	{Name: "undo", Defaults: []string{"u"}},
-	{Name: "trash", Defaults: []string{"D"}},
+	{Name: "quit", Help: "quit", Defaults: []string{"q"}},
+	{Name: "month_view", Help: "month", Defaults: []string{"m"}},
+	{Name: "week_view", Help: "week", Defaults: []string{"w"}},
+	{Name: "day_view", Help: "day", Defaults: []string{"d"}},
+	{Name: "agenda_view", Help: "agenda", Defaults: []string{"a"}},
+	{Name: "sidebar", Help: "sidebar", Defaults: []string{"\\"}},
+	{Name: "week_numbers", Help: "week numbers", Defaults: []string{"#"}},
+	{Name: "week_start", Help: "week start", Defaults: []string{"W"}},
+	{Name: "create", Help: "new", Defaults: []string{"c"}},
+	{Name: "switch_focus", Help: "switch focus", Defaults: []string{"tab", "shift+tab"}},
+	{Name: "help", Help: "help", Defaults: []string{"?"}},
+	{Name: "palette", Help: "commands", Defaults: []string{"/", "ctrl+k"}},
+	{Name: "calendars", Help: "calendars", Defaults: []string{"C"}},
+	{Name: "sync", Help: "sync", Defaults: []string{"s"}},
+	{Name: "undo", Help: "undo", Defaults: []string{"u"}},
+	{Name: "trash", Help: "recently deleted", Defaults: []string{"D"}},
 }
 
 // KeyActions returns a copy of the remappable TUI actions with their
-// default keys.
+// default keys and their help text.
 func KeyActions() []KeyAction {
 	out := make([]KeyAction, len(keyActions))
 	for i, a := range keyActions {
-		out[i] = KeyAction{Name: a.Name, Defaults: slices.Clone(a.Defaults)}
+		out[i] = KeyAction{Name: a.Name, Help: a.Help, Defaults: slices.Clone(a.Defaults)}
 	}
 	return out
 }

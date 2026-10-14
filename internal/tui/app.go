@@ -673,15 +673,6 @@ type RunOptions struct {
 	Keys map[string][]string
 }
 
-// withKeys installs the app keymap. The footer, the help dialog, the
-// palette, and the agenda then show and use the same keys.
-func (m Model) withKeys(keys appKeyMap) Model {
-	m.keys = keys
-	m.footer.SetKeys(keys)
-	m.agenda = m.agenda.SetCreateKey(keys.Create)
-	return m
-}
-
 // resolveFullSyncStrategy maps the configured conflict-strategy name to the
 // value the TUI's full sync passes use. An empty name parses to prompt. An
 // invalid name falls back to prompt as well, so a hand-edited config file can
