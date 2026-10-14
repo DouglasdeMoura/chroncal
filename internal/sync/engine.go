@@ -20,6 +20,7 @@ import (
 	authpkg "github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
@@ -615,13 +616,7 @@ func (e *Engine) PushLocalEdits(ctx context.Context, calendarID int64) (*SyncRes
 }
 
 func remoteCalendarIsReadOnly(cal storage.Calendar) bool {
-	return remoteAccessIsReadOnly(cal.RemoteAccess)
-}
-
-// remoteAccessIsReadOnly reports whether a calendars.remote_access value
-// marks a read-only server collection.
-func remoteAccessIsReadOnly(access string) bool {
-	return strings.EqualFold(strings.TrimSpace(access), "read")
+	return calendaraccess.IsReadOnly(cal.RemoteAccess)
 }
 
 // resolveMootConflicts marks open conflicts resolved when their resource is

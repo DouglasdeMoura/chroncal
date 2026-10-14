@@ -9,6 +9,7 @@ import (
 	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -382,7 +383,7 @@ func (e *Engine) movedSources(ctx context.Context, calendarID int64, uid string)
 	}
 	var out []movedSource
 	for _, row := range rows {
-		if remoteAccessIsReadOnly(row.CalendarRemoteAccess) {
+		if calendaraccess.IsReadOnly(row.CalendarRemoteAccess) {
 			continue
 		}
 		ts := row.Tombstone
