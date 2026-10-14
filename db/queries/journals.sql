@@ -161,3 +161,9 @@ FROM journals AS src
 WHERE src.calendar_id = ? AND src.deleted_at IS NULL AND src.uid != ''
 GROUP BY uid
 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
+
+-- name: MoveJournalUIDToCalendar :exec
+-- Move every row of one UID (live or soft-deleted) from one calendar to
+-- another. A local calendar move of a resource calls it. See issue #828.
+UPDATE journals SET calendar_id = sqlc.arg(to_calendar_id)
+WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);

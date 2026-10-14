@@ -103,6 +103,19 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 		return nil, fmt.Errorf("list calendars: %w", err)
 	}
 
+	// Like the dirty and conflict counts, a read failure shows no stuck
+	// hrefs. It does not fail the status.
+	stuckRows, _ := s.q.ListGaveUpSyncKnownMisses(ctx)
+	stuckByCalendar := make(map[int64][]StuckHref)
+	for _, r := range stuckRows {
+		stuckByCalendar[r.CalendarID] = append(stuckByCalendar[r.CalendarID], StuckHref{
+			Href:     r.Href,
+			UID:      r.Uid,
+			Reason:   r.Reason,
+			GaveUpAt: storage.NullableToString(r.GaveUpAt),
+		})
+	}
+
 	var statuses []SyncStatus
 	for _, cal := range cals {
 		if cal.AccountID == nil || *cal.AccountID == 0 {
@@ -117,19 +130,6 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 		if err != nil {
 			conflicts = nil
 		}
-		stuckRows, err := s.q.ListGaveUpSyncKnownMissesByCalendar(ctx, cal.ID)
-		if err != nil {
-			stuckRows = nil
-		}
-		var stuck []StuckHref
-		for _, r := range stuckRows {
-			stuck = append(stuck, StuckHref{
-				Href:     r.Href,
-				UID:      r.Uid,
-				Reason:   r.Reason,
-				GaveUpAt: storage.NullableToString(r.GaveUpAt),
-			})
-		}
 		statuses = append(statuses, SyncStatus{
 			CalendarID:          cal.ID,
 			CalendarName:        cal.Name,
@@ -139,7 +139,7 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 			LastSyncError:       storage.NullableToString(cal.LastSyncError),
 			PendingPush:         len(dirty),
 			Conflicts:           len(conflicts),
-			StuckHrefs:          stuck,
+			StuckHrefs:          stuckByCalendar[cal.ID],
 		})
 	}
 	return statuses, nil
@@ -420,11 +420,8 @@ func (s *Service) ResetCalendar(ctx context.Context, calendarID int64) error {
 	if err := qtx.DeleteTombstonesByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete tombstones: %w", err)
 	}
-	if err := qtx.DeleteSyncPendingHrefsByCalendar(ctx, calendarID); err != nil {
-		return fmt.Errorf("delete pending hrefs: %w", err)
-	}
-	if err := qtx.DeleteSyncKnownMissesByCalendar(ctx, calendarID); err != nil {
-		return fmt.Errorf("delete known misses: %w", err)
+	if err := qtx.DeleteSyncHrefRetriesByCalendar(ctx, calendarID); err != nil {
+		return err
 	}
 	if err := qtx.DeleteSyncConflictsByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete conflicts: %w", err)

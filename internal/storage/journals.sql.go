@@ -752,6 +752,24 @@ func (q *Queries) MarkJournalIdentitiesDirtyForMigration(ctx context.Context, ar
 	return err
 }
 
+const moveJournalUIDToCalendar = `-- name: MoveJournalUIDToCalendar :exec
+UPDATE journals SET calendar_id = ?1
+WHERE calendar_id = ?2 AND uid = ?3
+`
+
+type MoveJournalUIDToCalendarParams struct {
+	ToCalendarID   int64
+	FromCalendarID int64
+	Uid            string
+}
+
+// Move every row of one UID (live or soft-deleted) from one calendar to
+// another. A local calendar move of a resource calls it. See issue #828.
+func (q *Queries) MoveJournalUIDToCalendar(ctx context.Context, arg MoveJournalUIDToCalendarParams) error {
+	_, err := q.db.ExecContext(ctx, moveJournalUIDToCalendar, arg.ToCalendarID, arg.FromCalendarID, arg.Uid)
+	return err
+}
+
 const purgeJournalByID = `-- name: PurgeJournalByID :execrows
 DELETE FROM journals WHERE id = ? AND deleted_at IS NOT NULL
 `

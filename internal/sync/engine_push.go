@@ -3,9 +3,9 @@ package sync
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	gosync "sync"
 
 	"github.com/emersion/go-ical"
 
@@ -45,11 +45,9 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 	result := &pushResult{}
 	// The pending source tombstones of local moves load once, at the first
 	// new resource. See deleteMovedSources.
-	var (
-		siblings       map[string][]movedSource
-		siblingsLoaded bool
-		siblingsErr    error
-	)
+	loadSiblings := gosync.OnceValues(func() (map[string][]movedSource, error) {
+		return e.siblingTombstones(ctx, calendarID)
+	})
 	for _, res := range dirty {
 		// CalDAV's PUT contract (RFC 4791 §4.1) only lets the organizer
 		// modify a meeting resource. Attendees are supposed to round-trip
@@ -164,16 +162,11 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			// between two calendars of this account. Delete the source
 			// object first, or a server that keeps UIDs unique per
 			// account refuses the create (issue #828).
-			if !siblingsLoaded {
-				siblings, err = e.siblingTombstones(ctx, calendarID)
-				if err != nil {
-					// A failed lookup proves nothing. Keep every new
-					// resource dirty and retry on the next pass.
-					err = fmt.Errorf("list moved sources: %w", err)
-				}
-				siblingsLoaded, siblingsErr = true, err
-			}
+			siblings, siblingsErr := loadSiblings()
 			if siblingsErr != nil {
+				// A failed lookup proves nothing. Keep every new
+				// resource dirty and retry on the next pass.
+				siblingsErr = fmt.Errorf("list moved sources: %w", siblingsErr)
 				result.errors = append(result.errors, fmt.Errorf("%s: %w", res.Uid, siblingsErr))
 				e.recordPushFailure(ctx, calendarID, res.Uid, siblingsErr)
 				continue
@@ -386,11 +379,13 @@ func (e *Engine) deleteTombstone(ctx context.Context, client *caldav.Client, cal
 }
 
 // movedSource is a pending tombstone of a sibling calendar: a calendar of
-// the same account as the calendar that the push serves.
+// the same account as the calendar that the push serves. etag is the last
+// known etag of the source object, or empty.
 type movedSource struct {
 	calendarID int64
 	remoteURL  string
 	tombstone  storage.Tombstone
+	etag       string
 }
 
 // siblingTombstones indexes the pending tombstones of the other writable
@@ -398,30 +393,22 @@ type movedSource struct {
 // one account leaves a tombstone in the source calendar and a new resource
 // in the target calendar (issue #828).
 func (e *Engine) siblingTombstones(ctx context.Context, calendarID int64) (map[string][]movedSource, error) {
-	cal, err := e.q.GetCalendar(ctx, calendarID)
+	rows, err := e.q.ListSiblingTombstones(ctx, calendarID)
 	if err != nil {
-		return nil, fmt.Errorf("get calendar: %w", err)
-	}
-	if cal.AccountID == nil || *cal.AccountID == 0 {
-		return nil, nil
-	}
-	siblings, err := e.q.ListCalendarsByAccount(ctx, cal.AccountID)
-	if err != nil {
-		return nil, fmt.Errorf("list account calendars: %w", err)
+		return nil, err
 	}
 	out := make(map[string][]movedSource)
-	for _, sib := range siblings {
-		sibURL := storage.NullableToString(sib.RemoteUrl)
-		if sib.ID == calendarID || sibURL == "" || remoteCalendarIsReadOnly(sib) {
+	for _, row := range rows {
+		if remoteAccessIsReadOnly(row.CalendarRemoteAccess) {
 			continue
 		}
-		tombstones, err := e.q.ListTombstonesByCalendar(ctx, sib.ID)
-		if err != nil {
-			return nil, fmt.Errorf("list tombstones of calendar %d: %w", sib.ID, err)
-		}
-		for _, ts := range tombstones {
-			out[ts.Uid] = append(out[ts.Uid], movedSource{calendarID: sib.ID, remoteURL: sibURL, tombstone: ts})
-		}
+		ts := row.Tombstone
+		out[ts.Uid] = append(out[ts.Uid], movedSource{
+			calendarID: ts.CalendarID,
+			remoteURL:  storage.NullableToString(row.CalendarRemoteUrl),
+			tombstone:  ts,
+			etag:       row.Etag,
+		})
 	}
 	return out, nil
 }
@@ -436,14 +423,7 @@ func (e *Engine) siblingTombstones(ctx context.Context, calendarID int64) (map[s
 // so the next pass tries the DELETE and the create again.
 func (e *Engine) deleteMovedSources(ctx context.Context, client *caldav.Client, sources []movedSource) error {
 	for _, src := range sources {
-		sr, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
-			CalendarID: src.calendarID,
-			Uid:        src.tombstone.Uid,
-		})
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("get source sync resource %s: %w", src.tombstone.Uid, err)
-		}
-		if _, err := e.deleteTombstone(ctx, client, src.calendarID, src.remoteURL, src.tombstone, sr.Etag); err != nil {
+		if _, err := e.deleteTombstone(ctx, client, src.calendarID, src.remoteURL, src.tombstone, src.etag); err != nil {
 			return fmt.Errorf("move %s: %w", src.tombstone.Uid, err)
 		}
 	}

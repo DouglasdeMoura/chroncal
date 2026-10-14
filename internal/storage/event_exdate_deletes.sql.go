@@ -92,6 +92,24 @@ func (q *Queries) ListEventExdateDeletesByCalendar(ctx context.Context, calendar
 	return items, nil
 }
 
+const moveEventExdateDeletesUIDToCalendar = `-- name: MoveEventExdateDeletesUIDToCalendar :exec
+UPDATE event_exdate_deletes SET calendar_id = ?1
+WHERE calendar_id = ?2 AND uid = ?3
+`
+
+type MoveEventExdateDeletesUIDToCalendarParams struct {
+	ToCalendarID   int64
+	FromCalendarID int64
+	Uid            string
+}
+
+// Move every row of one UID (live or soft-deleted) from one calendar to
+// another. A local calendar move of a resource calls it. See issue #828.
+func (q *Queries) MoveEventExdateDeletesUIDToCalendar(ctx context.Context, arg MoveEventExdateDeletesUIDToCalendarParams) error {
+	_, err := q.db.ExecContext(ctx, moveEventExdateDeletesUIDToCalendar, arg.ToCalendarID, arg.FromCalendarID, arg.Uid)
+	return err
+}
+
 const purgeOldEventExdateDeletes = `-- name: PurgeOldEventExdateDeletes :execrows
 DELETE FROM event_exdate_deletes WHERE deleted_at < ?
 `

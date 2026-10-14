@@ -916,6 +916,24 @@ func (q *Queries) MarkTodoIdentitiesDirtyForMigration(ctx context.Context, arg M
 	return err
 }
 
+const moveTodoUIDToCalendar = `-- name: MoveTodoUIDToCalendar :exec
+UPDATE todos SET calendar_id = ?1
+WHERE calendar_id = ?2 AND uid = ?3
+`
+
+type MoveTodoUIDToCalendarParams struct {
+	ToCalendarID   int64
+	FromCalendarID int64
+	Uid            string
+}
+
+// Move every row of one UID (live or soft-deleted) from one calendar to
+// another. A local calendar move of a resource calls it. See issue #828.
+func (q *Queries) MoveTodoUIDToCalendar(ctx context.Context, arg MoveTodoUIDToCalendarParams) error {
+	_, err := q.db.ExecContext(ctx, moveTodoUIDToCalendar, arg.ToCalendarID, arg.FromCalendarID, arg.Uid)
+	return err
+}
+
 const purgeSoftDeletedTodos = `-- name: PurgeSoftDeletedTodos :execrows
 DELETE FROM todos WHERE deleted_at IS NOT NULL AND deleted_at < ?
 `

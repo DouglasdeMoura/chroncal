@@ -14,10 +14,10 @@ WHERE calendar_id = ? AND href = ? AND gave_up_at IS NULL;
 -- name: ListSyncKnownMissesByCalendar :many
 SELECT * FROM sync_known_misses WHERE calendar_id = ? ORDER BY id;
 
--- name: ListGaveUpSyncKnownMissesByCalendar :many
+-- name: ListGaveUpSyncKnownMisses :many
 SELECT * FROM sync_known_misses
-WHERE calendar_id = ? AND gave_up_at IS NOT NULL
-ORDER BY id;
+WHERE gave_up_at IS NOT NULL
+ORDER BY calendar_id, id;
 
 -- name: DeleteSyncKnownMiss :exec
 DELETE FROM sync_known_misses WHERE calendar_id = ? AND href = ?;

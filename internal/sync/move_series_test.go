@@ -64,27 +64,31 @@ func createSeries(t *testing.T, engine *Engine, calID int64) event.Event {
 	return master
 }
 
+// createSeriesWithOverride creates a daily series on calID and one
+// override of the second occurrence. inst is the start of that occurrence.
+func createSeriesWithOverride(t *testing.T, engine *Engine, calID int64) (master, override event.Event, inst time.Time) {
+	t.Helper()
+	master = createSeries(t, engine, calID)
+	inst = master.StartTime.Add(24 * time.Hour)
+	override, err := engine.events.UpdateInstance(context.Background(), master.UID, inst, event.UpdateParams{
+		CalendarID: calID, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("UpdateInstance: %v", err)
+	}
+	return master, override, inst
+}
+
 // TestMoveRecurringSeriesMovesOverrides moves the master of a series with
 // one override and one deleted instance. Every row of the UID must move
 // with the master, so the source calendar keeps nothing and the server
 // object moves as one unit (issue #828).
 func TestMoveRecurringSeriesMovesOverrides(t *testing.T) {
 	t.Parallel()
-	engine, _, q := newTestEngine(t)
+	engine, _, srv, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
-	srv := newICloudFakeServer(t)
-	calA, calB := seedICloudPair(t, engine, q, srv)
 
-	master := createSeries(t, engine, calA)
-	inst := master.StartTime.Add(24 * time.Hour)
-	if _, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
-		CalendarID: calA,
-		Title:      "Standup (late)",
-		StartTime:  inst.Add(time.Hour),
-		EndTime:    inst.Add(90 * time.Minute),
-	}); err != nil {
-		t.Fatalf("UpdateInstance: %v", err)
-	}
+	master, _, _ := createSeriesWithOverride(t, engine, calA)
 	if err := engine.events.DeleteInstance(ctx, master.UID, master.StartTime.Add(48*time.Hour)); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
@@ -121,19 +125,9 @@ func TestMoveRecurringSeriesMovesOverrides(t *testing.T) {
 // master and the other rows of the UID must move with it.
 func TestMoveOverrideRowMovesWholeSeries(t *testing.T) {
 	t.Parallel()
-	engine, _, q := newTestEngine(t)
-	ctx := context.Background()
-	srv := newICloudFakeServer(t)
-	calA, calB := seedICloudPair(t, engine, q, srv)
+	engine, _, srv, calA, calB := newICloudPairEngine(t)
 
-	master := createSeries(t, engine, calA)
-	inst := master.StartTime.Add(24 * time.Hour)
-	override, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
-		CalendarID: calA, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("UpdateInstance: %v", err)
-	}
+	master, override, _ := createSeriesWithOverride(t, engine, calA)
 	moveEvent(t, engine, override, calB)
 	if n := countRows(t, engine, "events", calA, master.UID); n != 0 {
 		t.Fatalf("event rows left in source calendar = %d, want 0", n)
@@ -147,10 +141,8 @@ func TestMoveOverrideRowMovesWholeSeries(t *testing.T) {
 // a lone override in another calendar splits the series.
 func TestMoveSingleInstanceToOtherCalendarIsRejected(t *testing.T) {
 	t.Parallel()
-	engine, _, q := newTestEngine(t)
+	engine, _, _, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
-	srv := newICloudFakeServer(t)
-	calA, calB := seedICloudPair(t, engine, q, srv)
 
 	master := createSeries(t, engine, calA)
 	inst := master.StartTime.Add(24 * time.Hour)
@@ -165,54 +157,64 @@ func TestMoveSingleInstanceToOtherCalendarIsRejected(t *testing.T) {
 	}
 }
 
-// TestMoveTodoBetweenCalendarsOfOneICloudAccount is the todo form of
-// issue #828.
-func TestMoveTodoBetweenCalendarsOfOneICloudAccount(t *testing.T) {
+// TestMoveTodoAndJournalBetweenCalendarsOfOneICloudAccount is the todo
+// and journal form of issue #828.
+func TestMoveTodoAndJournalBetweenCalendarsOfOneICloudAccount(t *testing.T) {
 	t.Parallel()
-	engine, _, q := newTestEngine(t)
-	ctx := context.Background()
-	srv := newICloudFakeServer(t)
-	calA, calB := seedICloudPair(t, engine, q, srv)
+	tests := []struct {
+		name string
+		// create creates one item on calA and returns its UID. move moves
+		// that item to calB.
+		create func(t *testing.T, engine *Engine, calA int64) (uid string, move func(calB int64) error)
+	}{
+		{
+			name: "todo",
+			create: func(t *testing.T, engine *Engine, calA int64) (string, func(int64) error) {
+				td, err := engine.todos.Create(context.Background(), todo.CreateParams{CalendarID: calA, Summary: "Buy milk"})
+				if err != nil {
+					t.Fatalf("Create todo: %v", err)
+				}
+				return td.UID, func(calB int64) error {
+					_, err := engine.todos.Update(context.Background(), td.ID, todo.UpdateParams{
+						CalendarID: calB, Summary: td.Summary, Status: td.Status, Class: td.Class,
+					})
+					return err
+				}
+			},
+		},
+		{
+			name: "journal",
+			create: func(t *testing.T, engine *Engine, calA int64) (string, func(int64) error) {
+				j, err := engine.journals.Create(context.Background(), journal.CreateParams{CalendarID: calA, Summary: "Notes", StartDate: "2026-05-18"})
+				if err != nil {
+					t.Fatalf("Create journal: %v", err)
+				}
+				return j.UID, func(calB int64) error {
+					_, err := engine.journals.Update(context.Background(), j.ID, journal.UpdateParams{
+						CalendarID: calB, Summary: j.Summary, StartDate: "2026-05-18", Status: j.Status, Class: j.Class,
+					})
+					return err
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			engine, _, srv, calA, calB := newICloudPairEngine(t)
+			ctx := context.Background()
 
-	td, err := engine.todos.Create(ctx, todo.CreateParams{CalendarID: calA, Summary: "Buy milk"})
-	if err != nil {
-		t.Fatalf("Create todo: %v", err)
+			uid, move := tc.create(t, engine, calA)
+			if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 || res.Pushed != 1 {
+				t.Fatalf("initial push = %+v, %v", res, err)
+			}
+			if err := move(calB); err != nil {
+				t.Fatalf("Update %s (move): %v", tc.name, err)
+			}
+			syncPairClean(t, engine, calA, calB)
+			wantOnlyServerObject(t, srv, "/cal/b/"+uid+".ics")
+		})
 	}
-	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 || res.Pushed != 1 {
-		t.Fatalf("initial push = %+v, %v", res, err)
-	}
-	if _, err := engine.todos.Update(ctx, td.ID, todo.UpdateParams{
-		CalendarID: calB, Summary: td.Summary, Status: td.Status, Class: td.Class,
-	}); err != nil {
-		t.Fatalf("Update todo (move): %v", err)
-	}
-	syncPairClean(t, engine, calA, calB)
-	wantOnlyServerObject(t, srv, "/cal/b/"+td.UID+".ics")
-}
-
-// TestMoveJournalBetweenCalendarsOfOneICloudAccount is the journal form of
-// issue #828.
-func TestMoveJournalBetweenCalendarsOfOneICloudAccount(t *testing.T) {
-	t.Parallel()
-	engine, _, q := newTestEngine(t)
-	ctx := context.Background()
-	srv := newICloudFakeServer(t)
-	calA, calB := seedICloudPair(t, engine, q, srv)
-
-	j, err := engine.journals.Create(ctx, journal.CreateParams{CalendarID: calA, Summary: "Notes", StartDate: "2026-05-18"})
-	if err != nil {
-		t.Fatalf("Create journal: %v", err)
-	}
-	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 || res.Pushed != 1 {
-		t.Fatalf("initial push = %+v, %v", res, err)
-	}
-	if _, err := engine.journals.Update(ctx, j.ID, journal.UpdateParams{
-		CalendarID: calB, Summary: j.Summary, StartDate: "2026-05-18", Status: j.Status, Class: j.Class,
-	}); err != nil {
-		t.Fatalf("Update journal (move): %v", err)
-	}
-	syncPairClean(t, engine, calA, calB)
-	wantOnlyServerObject(t, srv, "/cal/b/"+j.UID+".ics")
 }
 
 // TestEditLegacyOverrideInOtherCalendarKeepsCalendar proves that an edit
@@ -221,19 +223,10 @@ func TestMoveJournalBetweenCalendarsOfOneICloudAccount(t *testing.T) {
 // check must not refuse that calendar.
 func TestEditLegacyOverrideInOtherCalendarKeepsCalendar(t *testing.T) {
 	t.Parallel()
-	engine, _, q := newTestEngine(t)
+	engine, _, _, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
-	srv := newICloudFakeServer(t)
-	calA, calB := seedICloudPair(t, engine, q, srv)
 
-	master := createSeries(t, engine, calA)
-	inst := master.StartTime.Add(24 * time.Hour)
-	override, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
-		CalendarID: calA, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("UpdateInstance: %v", err)
-	}
+	master, override, inst := createSeriesWithOverride(t, engine, calA)
 	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, calB, override.ID); err != nil {
 		t.Fatalf("move override row: %v", err)
 	}

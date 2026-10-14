@@ -27,11 +27,11 @@ const (
 //
 //	noteMiss: bump the miss count and mark the row given up after the budget
 //	forget: the body landed, or the href is gone
+//
+// The value of each href is true when its row gave up.
 type knownMisses struct {
-	q          *storage.Queries
-	logger     *slog.Logger
-	calendarID int64
-	byHref     map[string]struct{}
+	hrefSet[bool]
+	q *storage.Queries
 }
 
 // loadKnownMisses reads the rows of one calendar. It deletes each row whose
@@ -42,9 +42,13 @@ func loadKnownMisses(ctx context.Context, q *storage.Queries, logger *slog.Logge
 	if err != nil {
 		return nil, fmt.Errorf("list known misses: %w", err)
 	}
-	k := &knownMisses{q: q, logger: logger, calendarID: calendarID, byHref: make(map[string]struct{}, len(rows))}
+	set := loadHrefSet(logger, calendarID, "known miss", rows,
+		func(row storage.SyncKnownMiss) (string, bool) { return row.Href, row.GaveUpAt != nil },
+		func(ctx context.Context, href string) error {
+			return q.DeleteSyncKnownMiss(ctx, storage.DeleteSyncKnownMissParams{CalendarID: calendarID, Href: href})
+		})
+	k := &knownMisses{hrefSet: set, q: q}
 	for _, row := range rows {
-		k.byHref[row.Href] = struct{}{}
 		if _, ok := localByPath[row.Href]; !ok {
 			k.forget(ctx, row.Href)
 		}
@@ -52,31 +56,14 @@ func loadKnownMisses(ctx context.Context, q *storage.Queries, logger *slog.Logge
 	return k, nil
 }
 
-func (k *knownMisses) forget(ctx context.Context, href string) {
-	if _, ok := k.byHref[href]; !ok {
-		return
-	}
-	if err := k.q.DeleteSyncKnownMiss(ctx, storage.DeleteSyncKnownMissParams{
-		CalendarID: k.calendarID,
-		Href:       href,
-	}); err != nil {
-		k.logger.Warn("delete known miss", "calendar_id", k.calendarID, "href", href, "error", err)
-		return
-	}
-	delete(k.byHref, href)
-}
-
-func (k *knownMisses) forgetSet(ctx context.Context, hrefs map[string]bool) {
-	for href := range hrefs {
-		k.forget(ctx, href)
-	}
-}
-
 // noteMiss bumps the miss count for the href. exhausted reports that the
 // budget is spent, so the miss must not withhold the sync-token. gaveUp
 // reports that this call spent the budget. The caller must then tell the
-// user once.
+// user once. An href that gave up before needs no write.
 func (k *knownMisses) noteMiss(ctx context.Context, href, uid, reason string) (exhausted, gaveUp bool, err error) {
+	if k.byHref[href] {
+		return true, false, nil
+	}
 	row, err := k.q.BumpSyncKnownMiss(ctx, storage.BumpSyncKnownMissParams{
 		CalendarID: k.calendarID,
 		Href:       href,
@@ -86,7 +73,7 @@ func (k *knownMisses) noteMiss(ctx context.Context, href, uid, reason string) (e
 	if err != nil {
 		return false, false, err
 	}
-	k.byHref[href] = struct{}{}
+	k.byHref[href] = row.GaveUpAt != nil
 	if row.MissCount < knownMissLimit {
 		return false, false, nil
 	}
@@ -101,5 +88,6 @@ func (k *knownMisses) noteMiss(ctx context.Context, href, uid, reason string) (e
 	}); err != nil {
 		return false, false, err
 	}
+	k.byHref[href] = true
 	return true, true, nil
 }

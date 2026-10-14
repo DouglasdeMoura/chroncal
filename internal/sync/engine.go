@@ -603,7 +603,13 @@ func (e *Engine) PushLocalEdits(ctx context.Context, calendarID int64) (*SyncRes
 }
 
 func remoteCalendarIsReadOnly(cal storage.Calendar) bool {
-	return strings.EqualFold(strings.TrimSpace(cal.RemoteAccess), "read")
+	return remoteAccessIsReadOnly(cal.RemoteAccess)
+}
+
+// remoteAccessIsReadOnly reports whether a calendars.remote_access value
+// marks a read-only server collection.
+func remoteAccessIsReadOnly(access string) bool {
+	return strings.EqualFold(strings.TrimSpace(access), "read")
 }
 
 // resolveMootConflicts marks open conflicts resolved when their resource is

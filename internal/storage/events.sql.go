@@ -803,6 +803,24 @@ func (q *Queries) MarkEventIdentitiesDirtyForMigration(ctx context.Context, arg 
 	return err
 }
 
+const moveEventUIDToCalendar = `-- name: MoveEventUIDToCalendar :exec
+UPDATE events SET calendar_id = ?1
+WHERE calendar_id = ?2 AND uid = ?3
+`
+
+type MoveEventUIDToCalendarParams struct {
+	ToCalendarID   int64
+	FromCalendarID int64
+	Uid            string
+}
+
+// Move every row of one UID (live or soft-deleted) from one calendar to
+// another. A local calendar move of a resource calls it. See issue #828.
+func (q *Queries) MoveEventUIDToCalendar(ctx context.Context, arg MoveEventUIDToCalendarParams) error {
+	_, err := q.db.ExecContext(ctx, moveEventUIDToCalendar, arg.ToCalendarID, arg.FromCalendarID, arg.Uid)
+	return err
+}
+
 const purgeEventByID = `-- name: PurgeEventByID :execrows
 DELETE FROM events WHERE id = ? AND deleted_at IS NOT NULL
 `
@@ -1150,11 +1168,12 @@ type UpsertEventByUIDParams struct {
 	ConferenceUri  string
 }
 
-// NOTE: ON CONFLICT UPDATE clears deleted_at. This query resurrects
-// soft-deleted rows. Callers outside the pull path in the sync engine
-// must know this. The pull path is safe. The engine excludes
-// tombstoned UIDs before this query runs (engine.go loads tombstones
-// first and skips them during pull).
+// NOTE: ON CONFLICT matches (calendar_id, uid, recurrence_id). The same
+// UID on a second calendar inserts a new row (issue #756). ON CONFLICT
+// UPDATE clears deleted_at. This query resurrects soft-deleted rows.
+// Callers outside the pull path in the sync engine must know this. The
+// pull path is safe. The engine excludes tombstoned UIDs before this
+// query runs (engine.go loads tombstones first and skips them during pull).
 func (q *Queries) UpsertEventByUID(ctx context.Context, arg UpsertEventByUIDParams) (Event, error) {
 	row := q.db.QueryRowContext(ctx, upsertEventByUID,
 		arg.Uid,

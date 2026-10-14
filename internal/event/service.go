@@ -373,7 +373,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateEventTx(ctx, tx, qtx, id, p)
+	e, err := updateEventTx(ctx, qtx, id, p)
 	if err != nil {
 		return Event{}, err
 	}
@@ -417,7 +417,7 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateEventTx(ctx, tx, qtx, id, p)
+	e, err := updateEventTx(ctx, qtx, id, p)
 	if err != nil {
 		return Event{}, err
 	}
@@ -437,11 +437,10 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 }
 
 // updateEventTx writes the event row and its categories using a tx-bound
-// Queries. tx is the same transaction for the raw sync-row writes of a
-// calendar move. It opens no transaction and does not commit or mark the
-// resource dirty, so callers can compose it with attendee/alarm writes
-// inside one transaction.
-func updateEventTx(ctx context.Context, tx storage.DBTX, qtx *storage.Queries, id int64, p UpdateParams) (Event, error) {
+// Queries. It opens no transaction and does not commit or mark the resource
+// dirty, so callers can compose it with attendee/alarm writes inside one
+// transaction.
+func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p UpdateParams) (Event, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
@@ -490,11 +489,29 @@ func updateEventTx(ctx context.Context, tx storage.DBTX, qtx *storage.Queries, i
 	// queues the delete of the source server object. Without it the source
 	// object stays on the server, and a server that keeps UIDs unique per
 	// account refuses the target create (issue #828).
-	if err := storage.RecordResourceMove(ctx, tx, "event", old.CalendarID, r.CalendarID, r.Uid); err != nil {
+	move := storage.MoveEventUIDToCalendarParams{FromCalendarID: old.CalendarID, ToCalendarID: r.CalendarID, Uid: r.Uid}
+	if err := storage.RecordResourceMove(ctx, qtx, move.FromCalendarID, move.ToCalendarID, move.Uid, func(ctx context.Context) error {
+		return moveUIDRowsTx(ctx, qtx, move)
+	}); err != nil {
 		return Event{}, fmt.Errorf("record calendar move: %w", err)
 	}
 	e.Categories = p.Categories
 	return e, nil
+}
+
+// moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
+// another calendar. storage.RecordResourceMove calls it.
+func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams) error {
+	if err := qtx.MoveEventUIDToCalendar(ctx, arg); err != nil {
+		return fmt.Errorf("move events: %w", err)
+	}
+	if err := qtx.MoveEventExdateDeletesUIDToCalendar(ctx, storage.MoveEventExdateDeletesUIDToCalendarParams(arg)); err != nil {
+		return fmt.Errorf("move event_exdate_deletes: %w", err)
+	}
+	if err := qtx.MoveEventTruncateDeletesUIDToCalendar(ctx, storage.MoveEventTruncateDeletesUIDToCalendarParams(arg)); err != nil {
+		return fmt.Errorf("move event_truncate_deletes: %w", err)
+	}
+	return nil
 }
 
 // localSpanEdit reports whether an update replaces the stored end time or

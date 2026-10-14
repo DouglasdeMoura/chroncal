@@ -40,6 +40,24 @@ func (q *Queries) GetJournalExdateDeleteByUIDRecurrence(ctx context.Context, arg
 	return i, err
 }
 
+const moveJournalExdateDeletesUIDToCalendar = `-- name: MoveJournalExdateDeletesUIDToCalendar :exec
+UPDATE journal_exdate_deletes SET calendar_id = ?1
+WHERE calendar_id = ?2 AND uid = ?3
+`
+
+type MoveJournalExdateDeletesUIDToCalendarParams struct {
+	ToCalendarID   int64
+	FromCalendarID int64
+	Uid            string
+}
+
+// Move every row of one UID (live or soft-deleted) from one calendar to
+// another. A local calendar move of a resource calls it. See issue #828.
+func (q *Queries) MoveJournalExdateDeletesUIDToCalendar(ctx context.Context, arg MoveJournalExdateDeletesUIDToCalendarParams) error {
+	_, err := q.db.ExecContext(ctx, moveJournalExdateDeletesUIDToCalendar, arg.ToCalendarID, arg.FromCalendarID, arg.Uid)
+	return err
+}
+
 const purgeOldJournalExdateDeletes = `-- name: PurgeOldJournalExdateDeletes :execrows
 DELETE FROM journal_exdate_deletes WHERE deleted_at < ?
 `

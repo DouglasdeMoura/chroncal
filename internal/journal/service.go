@@ -41,21 +41,14 @@ func (s *Service) WithTx(tx *sql.Tx) *Service {
 // (see WithTx), the work joins that transaction. Commit is a no-op. Rollback
 // is left to the outer owner. Otherwise it opens and owns a fresh transaction.
 func (s *Service) txscope(ctx context.Context) (qtx *storage.Queries, commit func() error, rollback func(), err error) {
-	qtx, _, commit, rollback, err = s.txscopeExec(ctx)
-	return qtx, commit, rollback, err
-}
-
-// txscopeExec is txscope that also returns the transaction as a DBTX, for
-// the raw SQL helpers of the storage package.
-func (s *Service) txscopeExec(ctx context.Context) (qtx *storage.Queries, exec storage.DBTX, commit func() error, rollback func(), err error) {
 	if s.tx != nil {
-		return s.q, s.tx, func() error { return nil }, func() {}, nil
+		return s.q, func() error { return nil }, func() {}, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("begin tx: %w", err)
+		return nil, nil, nil, fmt.Errorf("begin tx: %w", err)
 	}
-	return s.q.WithTx(tx), tx, tx.Commit, func() { _ = tx.Rollback() }, nil
+	return s.q.WithTx(tx), tx.Commit, func() { _ = tx.Rollback() }, nil
 }
 
 // dirtyExec returns the DBTX the dirty-mark side effect must use. That is the
@@ -353,7 +346,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 
-	qtx, exec, commit, rollback, err := s.txscopeExec(ctx)
+	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return Journal{}, err
 	}
@@ -383,13 +376,16 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 	}
 	// A move to another calendar takes the other rows of the UID along and
 	// queues the delete of the source server object (issue #828).
-	if err := storage.RecordResourceMove(ctx, exec, "journal", existing.CalendarID, r.CalendarID, r.Uid); err != nil {
+	move := storage.MoveJournalUIDToCalendarParams{FromCalendarID: existing.CalendarID, ToCalendarID: r.CalendarID, Uid: r.Uid}
+	if err := storage.RecordResourceMove(ctx, qtx, move.FromCalendarID, move.ToCalendarID, move.Uid, func(ctx context.Context) error {
+		return moveUIDRowsTx(ctx, qtx, move)
+	}); err != nil {
 		return Journal{}, fmt.Errorf("record calendar move: %w", err)
 	}
 	// Mark the target dirty in the same transaction. A move commits the
 	// source tombstone, so a dirty mark after the commit that fails would
 	// delete the server object and never create the target object.
-	if err := storage.MarkResourceDirty(ctx, exec, j.CalendarID, j.UID, "journal"); err != nil {
+	if err := qtx.MarkResourceDirty(ctx, j.CalendarID, j.UID, "journal"); err != nil {
 		return Journal{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := commit(); err != nil {
@@ -729,4 +725,16 @@ func fromStorageSlice(rows []storage.Journal) []Journal {
 		journals[i] = fromStorage(r)
 	}
 	return journals
+}
+
+// moveUIDRowsTx moves the journal rows and the delete-log rows of one UID to
+// another calendar. storage.RecordResourceMove calls it.
+func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveJournalUIDToCalendarParams) error {
+	if err := qtx.MoveJournalUIDToCalendar(ctx, arg); err != nil {
+		return fmt.Errorf("move journals: %w", err)
+	}
+	if err := qtx.MoveJournalExdateDeletesUIDToCalendar(ctx, storage.MoveJournalExdateDeletesUIDToCalendarParams(arg)); err != nil {
+		return fmt.Errorf("move journal_exdate_deletes: %w", err)
+	}
+	return nil
 }

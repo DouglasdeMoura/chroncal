@@ -89,3 +89,45 @@ DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?;
 
 -- name: DeleteStaleTombstones :exec
 DELETE FROM tombstones WHERE deleted_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days');
+
+-- name: CreateTombstoneFromSyncResource :exec
+-- Queue the server delete of one resource that has a server object. A sync
+-- row with an empty remote_url gets no tombstone. See issue #828.
+INSERT INTO tombstones (calendar_id, uid, remote_url)
+SELECT calendar_id, uid, remote_url FROM sync_resources
+WHERE sync_resources.calendar_id = ? AND sync_resources.uid = ? AND sync_resources.remote_url != ''
+ON CONFLICT(calendar_id, uid) DO UPDATE SET
+    remote_url = excluded.remote_url,
+    deleted_at = excluded.deleted_at;
+
+-- name: ClearPushedSyncResourceDirty :exec
+-- Clear the dirty flag of a sync row that has a server object. The etag
+-- stays. A calendar move calls it on the source row. See issue #828.
+UPDATE sync_resources SET dirty = 0
+WHERE calendar_id = ? AND uid = ? AND remote_url != '';
+
+-- name: DeleteUnpushedSyncResource :exec
+-- Delete a sync row that has no server object. A push of that row would
+-- create a copy on the server. See issue #828.
+DELETE FROM sync_resources
+WHERE calendar_id = ? AND uid = ? AND remote_url = '';
+
+-- name: ListSiblingTombstones :many
+-- The pending tombstones of the other calendars of one account, with the
+-- last known etag of each source object. A calendar without a remote_url
+-- has no server object to delete. The caller drops the read-only
+-- calendars. A local move between two calendars of one account leaves a
+-- tombstone in the source calendar. See issue #828.
+SELECT
+    sqlc.embed(t),
+    c.remote_url AS calendar_remote_url,
+    c.remote_access AS calendar_remote_access,
+    COALESCE(sr.etag, '') AS etag
+FROM tombstones t
+JOIN calendars c ON c.id = t.calendar_id
+LEFT JOIN sync_resources sr ON sr.calendar_id = t.calendar_id AND sr.uid = t.uid
+WHERE c.account_id = (SELECT own.account_id FROM calendars own WHERE own.id = sqlc.arg(calendar_id))
+  AND c.account_id != 0
+  AND c.id != sqlc.arg(calendar_id)
+  AND c.remote_url IS NOT NULL AND c.remote_url != ''
+ORDER BY c.display_order, c.name, t.deleted_at;

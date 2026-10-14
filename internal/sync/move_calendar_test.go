@@ -183,6 +183,16 @@ func seedICloudPair(t *testing.T, engine *Engine, q *storage.Queries, srv *iclou
 	return link("a"), link("b")
 }
 
+// newICloudPairEngine returns a test engine with one iCloud-like account
+// and its two linked calendars.
+func newICloudPairEngine(t *testing.T) (engine *Engine, q *storage.Queries, srv *icloudFakeServer, calA, calB int64) {
+	t.Helper()
+	engine, _, q = newTestEngine(t)
+	srv = newICloudFakeServer(t)
+	calA, calB = seedICloudPair(t, engine, q, srv)
+	return engine, q, srv, calA, calB
+}
+
 // createPushedEvent creates one event on calID and pushes it to the server.
 func createPushedEvent(t *testing.T, engine *Engine, calID int64) event.Event {
 	t.Helper()
@@ -225,30 +235,14 @@ func moveEvent(t *testing.T, engine *Engine, evt event.Event, toCal int64) {
 // the source object in A still exists (issue #828).
 func TestMoveEventBetweenCalendarsOfOneICloudAccount(t *testing.T) {
 	t.Parallel()
-	engine, _, q := newTestEngine(t)
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
-	srv := newICloudFakeServer(t)
-	calA, calB := seedICloudPair(t, engine, q, srv)
 
 	evt := createPushedEvent(t, engine, calA)
 	moveEvent(t, engine, evt, calB)
 
-	for pass := range 2 {
-		for _, calID := range []int64{calB, calA} {
-			res, err := engine.SyncCalendar(ctx, calID, ConflictPrompt)
-			if err != nil {
-				t.Fatalf("pass %d SyncCalendar(%d): %v", pass, calID, err)
-			}
-			if len(res.Errors) != 0 || res.Conflicts != 0 {
-				t.Fatalf("pass %d SyncCalendar(%d) = errors %v, conflicts %d; want a clean pass", pass, calID, res.Errors, res.Conflicts)
-			}
-		}
-	}
-
-	wantPath := "/cal/b/" + evt.UID + ".ics"
-	if got := srv.paths(); len(got) != 1 || got[0] != wantPath {
-		t.Fatalf("server objects = %v, want only %s", got, wantPath)
-	}
+	syncPairClean(t, engine, calA, calB)
+	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
 	if conflicts, err := q.ListSyncConflictsByCalendar(ctx, calB); err != nil || len(conflicts) != 0 {
 		t.Fatalf("conflicts on B = %v, %v; want none", conflicts, err)
 	}
@@ -273,10 +267,8 @@ func TestMoveEventBetweenCalendarsOfOneICloudAccount(t *testing.T) {
 // sync then completes the move.
 func TestMoveEventKeepsTargetDirtyWhenSourceDeleteFails(t *testing.T) {
 	t.Parallel()
-	engine, _, q := newTestEngine(t)
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
-	srv := newICloudFakeServer(t)
-	calA, calB := seedICloudPair(t, engine, q, srv)
 
 	evt := createPushedEvent(t, engine, calA)
 	moveEvent(t, engine, evt, calB)
@@ -306,10 +298,7 @@ func TestMoveEventKeepsTargetDirtyWhenSourceDeleteFails(t *testing.T) {
 	if err != nil || len(res.Errors) != 0 || res.Pushed != 1 {
 		t.Fatalf("retry push = %+v, %v; want one clean push", res, err)
 	}
-	wantPath := "/cal/b/" + evt.UID + ".ics"
-	if got := srv.paths(); len(got) != 1 || got[0] != wantPath {
-		t.Fatalf("server objects = %v, want only %s", got, wantPath)
-	}
+	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
 }
 
 // TestMoveEventBackBeforeSyncKeepsSource moves an event to B and back to A
@@ -317,10 +306,8 @@ func TestMoveEventKeepsTargetDirtyWhenSourceDeleteFails(t *testing.T) {
 // copy.
 func TestMoveEventBackBeforeSyncKeepsSource(t *testing.T) {
 	t.Parallel()
-	engine, _, q := newTestEngine(t)
+	engine, _, srv, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
-	srv := newICloudFakeServer(t)
-	calA, calB := seedICloudPair(t, engine, q, srv)
 
 	evt := createPushedEvent(t, engine, calA)
 	moveEvent(t, engine, evt, calB)
@@ -330,14 +317,6 @@ func TestMoveEventBackBeforeSyncKeepsSource(t *testing.T) {
 	}
 	moveEvent(t, engine, moved, calA)
 
-	for _, calID := range []int64{calA, calB} {
-		res, err := engine.SyncCalendar(ctx, calID, ConflictPrompt)
-		if err != nil || len(res.Errors) != 0 || res.Conflicts != 0 {
-			t.Fatalf("SyncCalendar(%d) = %+v, %v; want a clean pass", calID, res, err)
-		}
-	}
-	wantPath := "/cal/a/" + evt.UID + ".ics"
-	if got := srv.paths(); len(got) != 1 || got[0] != wantPath {
-		t.Fatalf("server objects = %v, want only %s", got, wantPath)
-	}
+	syncPairClean(t, engine, calA, calB)
+	wantOnlyServerObject(t, srv, "/cal/a/"+evt.UID+".ics")
 }

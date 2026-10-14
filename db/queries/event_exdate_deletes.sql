@@ -21,3 +21,9 @@ DELETE FROM event_exdate_deletes WHERE id = ?;
 
 -- name: PurgeOldEventExdateDeletes :execrows
 DELETE FROM event_exdate_deletes WHERE deleted_at < ?;
+
+-- name: MoveEventExdateDeletesUIDToCalendar :exec
+-- Move every row of one UID (live or soft-deleted) from one calendar to
+-- another. A local calendar move of a resource calls it. See issue #828.
+UPDATE event_exdate_deletes SET calendar_id = sqlc.arg(to_calendar_id)
+WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);

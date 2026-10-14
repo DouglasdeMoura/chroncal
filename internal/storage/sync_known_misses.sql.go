@@ -69,14 +69,14 @@ func (q *Queries) DeleteSyncKnownMissesByCalendar(ctx context.Context, calendarI
 	return err
 }
 
-const listGaveUpSyncKnownMissesByCalendar = `-- name: ListGaveUpSyncKnownMissesByCalendar :many
+const listGaveUpSyncKnownMisses = `-- name: ListGaveUpSyncKnownMisses :many
 SELECT id, calendar_id, href, uid, reason, miss_count, gave_up_at FROM sync_known_misses
-WHERE calendar_id = ? AND gave_up_at IS NOT NULL
-ORDER BY id
+WHERE gave_up_at IS NOT NULL
+ORDER BY calendar_id, id
 `
 
-func (q *Queries) ListGaveUpSyncKnownMissesByCalendar(ctx context.Context, calendarID int64) ([]SyncKnownMiss, error) {
-	rows, err := q.db.QueryContext(ctx, listGaveUpSyncKnownMissesByCalendar, calendarID)
+func (q *Queries) ListGaveUpSyncKnownMisses(ctx context.Context) ([]SyncKnownMiss, error) {
+	rows, err := q.db.QueryContext(ctx, listGaveUpSyncKnownMisses)
 	if err != nil {
 		return nil, err
 	}

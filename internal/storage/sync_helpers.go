@@ -79,25 +79,22 @@ func CreateTombstoneIfSynced(ctx context.Context, db DBTX, calendarID int64, uid
 	return true, nil
 }
 
-// moveTables maps a sync owner type to the tables whose rows carry the
-// calendar of one UID: the item table first, then the delete logs that
-// restore reads. Table names go into SQL text, so only these fixed names
-// are allowed.
-var moveTables = map[string][]string{
-	"event":   {"events", "event_exdate_deletes", "event_truncate_deletes"},
-	"todo":    {"todos", "todo_exdate_deletes"},
-	"journal": {"journals", "journal_exdate_deletes"},
+// MarkResourceDirty is MarkResourceDirty on the connection of q. A service
+// that holds a tx-bound Queries then marks the resource dirty in the same
+// transaction.
+func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, ownerType string) error {
+	return MarkResourceDirty(ctx, q.db, calendarID, uid, ownerType)
 }
 
 // RecordResourceMove completes a local move of a resource from one calendar
 // to another (issue #828). Call it in the transaction of the move, after
-// the update of the moved row.
+// the update of the moved row. q must be bound to that transaction.
 //
 // A CalDAV object holds the master and all overrides of one UID, so the
-// series moves as one unit. The function moves every other row of the UID
-// in the source calendar to the target calendar. This includes the
-// soft-deleted rows and the delete-log rows, so a later restore finds them
-// in the target calendar.
+// series moves as one unit. moveRows moves every other row of the UID in
+// the source calendar to the target calendar. Each domain binds its own
+// queries into moveRows. The rows include the soft-deleted rows and the
+// delete-log rows, so a later restore finds them in the target calendar.
 //
 // On the target calendar it clears a pending tombstone for the UID. A move
 // back to a calendar then cannot delete the server object of that calendar.
@@ -109,57 +106,46 @@ var moveTables = map[string][]string{
 //   - A sync row with no server object is deleted. Nothing on the server
 //     needs a delete, and a push of that row would create a copy in the
 //     source calendar.
-func RecordResourceMove(ctx context.Context, db DBTX, ownerType string, fromCalendarID, toCalendarID int64, uid string) error {
+func RecordResourceMove(ctx context.Context, q *Queries, fromCalendarID, toCalendarID int64, uid string, moveRows func(context.Context) error) error {
 	if fromCalendarID == toCalendarID || uid == "" {
 		return nil
 	}
-	tables, ok := moveTables[ownerType]
-	if !ok {
-		return fmt.Errorf("record resource move: unknown owner type %q", ownerType)
+	if err := moveRows(ctx); err != nil {
+		return fmt.Errorf("move rows: %w", err)
 	}
-	for _, table := range tables {
-		if _, err := db.ExecContext(ctx,
-			`UPDATE `+table+` SET calendar_id = ? WHERE calendar_id = ? AND uid = ?`,
-			toCalendarID, fromCalendarID, uid,
-		); err != nil {
-			return fmt.Errorf("move %s rows: %w", table, err)
-		}
-	}
-	if _, err := db.ExecContext(ctx,
-		`DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?`,
-		toCalendarID, uid,
-	); err != nil {
+	if err := q.DeleteTombstonesByCalendarAndUID(ctx, DeleteTombstonesByCalendarAndUIDParams{
+		CalendarID: toCalendarID, Uid: uid,
+	}); err != nil {
 		return fmt.Errorf("clear target tombstone: %w", err)
 	}
-
-	var remoteURL string
-	err := db.QueryRowContext(ctx,
-		`SELECT remote_url FROM sync_resources WHERE calendar_id = ? AND uid = ?`,
-		fromCalendarID, uid,
-	).Scan(&remoteURL)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("get source sync resource: %w", err)
-	}
-	if remoteURL == "" {
-		if _, err := db.ExecContext(ctx,
-			`DELETE FROM sync_resources WHERE calendar_id = ? AND uid = ?`,
-			fromCalendarID, uid,
-		); err != nil {
-			return fmt.Errorf("delete unpushed source sync resource: %w", err)
-		}
-		return nil
-	}
-	if _, err := CreateTombstoneIfSynced(ctx, db, fromCalendarID, uid); err != nil {
+	if err := q.CreateTombstoneFromSyncResource(ctx, CreateTombstoneFromSyncResourceParams{
+		CalendarID: fromCalendarID, Uid: uid,
+	}); err != nil {
 		return fmt.Errorf("create source tombstone: %w", err)
 	}
-	if _, err := db.ExecContext(ctx,
-		`UPDATE sync_resources SET dirty = 0 WHERE calendar_id = ? AND uid = ?`,
-		fromCalendarID, uid,
-	); err != nil {
+	if err := q.ClearPushedSyncResourceDirty(ctx, ClearPushedSyncResourceDirtyParams{
+		CalendarID: fromCalendarID, Uid: uid,
+	}); err != nil {
 		return fmt.Errorf("clear source dirty flag: %w", err)
+	}
+	if err := q.DeleteUnpushedSyncResource(ctx, DeleteUnpushedSyncResourceParams{
+		CalendarID: fromCalendarID, Uid: uid,
+	}); err != nil {
+		return fmt.Errorf("delete unpushed source sync resource: %w", err)
+	}
+	return nil
+}
+
+// DeleteSyncHrefRetriesByCalendar deletes the two per-href retry tables of
+// one calendar: sync_pending_hrefs and sync_known_misses. A calendar reset
+// and a remote unlink call it, so a new server state starts with no old
+// retry budget.
+func (q *Queries) DeleteSyncHrefRetriesByCalendar(ctx context.Context, calendarID int64) error {
+	if err := q.DeleteSyncPendingHrefsByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("delete pending hrefs: %w", err)
+	}
+	if err := q.DeleteSyncKnownMissesByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("delete known misses: %w", err)
 	}
 	return nil
 }

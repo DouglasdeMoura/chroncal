@@ -127,9 +127,9 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			// keeps a bad body must not keep the calendar failing forever.
 			// The local row stays, and sync status names the href. A
 			// record failure withholds the token. See issue #816.
-			reason := knownMissReasonMissing
+			reason, cause := knownMissReasonMissing, "server returns 404 for a known resource"
 			if unparseable {
-				reason = knownMissReasonUnparseable
+				reason, cause = knownMissReasonUnparseable, "server body unparseable"
 			}
 			exhausted, gaveUp, recErr := known.noteMiss(ctx, canonical, local.Uid, reason)
 			if recErr != nil {
@@ -140,10 +140,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			}
 			switch {
 			case gaveUp:
-				msg := fmt.Sprintf("server returns 404 for a known resource; gave up after %d attempts, local copy kept (see sync status)", knownMissLimit)
-				if unparseable {
-					msg = fmt.Sprintf("server body unparseable; gave up after %d attempts, local copy kept (see sync status)", knownMissLimit)
-				}
+				msg := fmt.Sprintf("%s; gave up after %d attempts, local copy kept (see sync status)", cause, knownMissLimit)
 				noteWarning(ImportWarning{Path: miss, UID: local.Uid, Message: msg})
 			case unparseable:
 				noteWarning(ImportWarning{
