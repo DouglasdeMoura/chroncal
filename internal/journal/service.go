@@ -13,6 +13,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 type Service struct {
@@ -350,9 +351,6 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 			return Journal{}, err
 		}
 	}
-	if err := checkOverrideCalendar(ctx, s.q, existing, p.CalendarID); err != nil {
-		return Journal{}, err
-	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 
 	qtx, commit, rollback, err := s.txscope(ctx)
@@ -360,6 +358,13 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 		return Journal{}, err
 	}
 	defer rollback()
+
+	// The move rules run inside the transaction, so no other write can
+	// change the rows of the UID between the check and the move.
+	move := uidMoveRows(qtx, existing.Uid)
+	if err := move.Check(ctx, existing.RecurrenceID, existing.CalendarID, p.CalendarID); err != nil {
+		return Journal{}, err
+	}
 
 	r, err := qtx.UpdateJournal(ctx, storage.UpdateJournalParams{
 		ID:             id,
@@ -385,7 +390,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 	}
 	// A move to another calendar takes the other rows of the UID along and
 	// queues the delete of the source server object (issue #828).
-	if err := recordUIDMoveTx(ctx, qtx, existing.CalendarID, r.CalendarID, r.Uid); err != nil {
+	if err := move.Record(ctx, existing.CalendarID, r.CalendarID); err != nil {
 		return Journal{}, fmt.Errorf("record calendar move: %w", err)
 	}
 	// Mark the target dirty in the same transaction. A move commits the
@@ -733,36 +738,29 @@ func fromStorageSlice(rows []storage.Journal) []Journal {
 	return journals
 }
 
-// checkOverrideCalendar refuses the calendar move of one override row. One
-// CalDAV object holds the whole series, so an override cannot move alone,
-// and a move of its UID rows moves the whole series (issue #828). An older
-// version saved an override in another calendar on a calendar change. Such
-// an override can move back to the calendar of its master. The rule does
-// nothing for a master row.
-func checkOverrideCalendar(ctx context.Context, q *storage.Queries, old storage.Journal, calendarID int64) error {
-	if old.RecurrenceID == "" || calendarID == old.CalendarID {
-		return nil
+// uidMoveRows binds the journal queries of the transaction to the shared
+// calendar-move rules for uid. The journals table keeps the key
+// UNIQUE(uid, recurrence_id) across all calendars. A move then cannot
+// collide with a row of the target calendar, so CountCollisions stays nil.
+func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
+	return uidmove.Rows{
+		Q:               qtx,
+		UID:             uid,
+		ErrInstanceMove: ErrInstanceCalendarMove,
+		HasMaster: func(ctx context.Context, calendarID int64) (bool, error) {
+			_, err := qtx.GetJournalByCalendarUID(ctx, storage.GetJournalByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+			return uidmove.Found(err)
+		},
+		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
+			return moveUIDRowsTx(ctx, qtx, storage.MoveJournalUIDToCalendarParams{
+				FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid,
+			})
+		},
 	}
-	if _, err := q.GetJournalByCalendarUID(ctx, storage.GetJournalByCalendarUIDParams{CalendarID: calendarID, Uid: old.Uid}); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrInstanceCalendarMove
-		}
-		return fmt.Errorf("find master: %w", err)
-	}
-	return nil
-}
-
-// recordUIDMoveTx records the move of the journal rows of one UID from one
-// calendar to another. It does nothing when the two calendars are the same.
-func recordUIDMoveTx(ctx context.Context, qtx *storage.Queries, fromCalendarID, toCalendarID int64, uid string) error {
-	move := storage.MoveJournalUIDToCalendarParams{FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid}
-	return storage.RecordResourceMove(ctx, qtx, fromCalendarID, toCalendarID, uid, func(ctx context.Context) error {
-		return moveUIDRowsTx(ctx, qtx, move)
-	})
 }
 
 // moveUIDRowsTx moves the journal rows and the delete-log rows of one UID to
-// another calendar. storage.RecordResourceMove calls it.
+// another calendar. uidmove.Rows.Record calls it.
 func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveJournalUIDToCalendarParams) error {
 	if err := qtx.MoveJournalUIDToCalendar(ctx, arg); err != nil {
 		return fmt.Errorf("move journals: %w", err)

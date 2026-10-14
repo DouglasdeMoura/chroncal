@@ -16,6 +16,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 type Service struct {
@@ -462,10 +463,8 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	if err != nil {
 		return Event{}, err
 	}
-	if err := checkOverrideCalendarTx(ctx, qtx, old, p.CalendarID); err != nil {
-		return Event{}, err
-	}
-	if err := checkMoveTargetTx(ctx, qtx, old.CalendarID, p.CalendarID, old.Uid); err != nil {
+	move := uidMoveRows(qtx, old.Uid)
+	if err := move.Check(ctx, old.RecurrenceID, old.CalendarID, p.CalendarID); err != nil {
 		return Event{}, err
 	}
 	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
@@ -507,75 +506,36 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	// queues the delete of the source server object. Without it the source
 	// object stays on the server, and a server that keeps UIDs unique per
 	// account refuses the target create (issue #828).
-	if err := recordUIDMoveTx(ctx, qtx, old.CalendarID, r.CalendarID, r.Uid); err != nil {
+	if err := move.Record(ctx, old.CalendarID, r.CalendarID); err != nil {
 		return Event{}, fmt.Errorf("record calendar move: %w", err)
 	}
 	e.Categories = p.Categories
 	return e, nil
 }
 
-// checkOverrideCalendarTx applies the calendar rule of UpdateInstance to an
-// update of an override row by its ID. One CalDAV object holds the whole
-// series, so an override cannot move alone (issue #828). An override that
-// an older version saved in another calendar can move back to the calendar
-// of the master. That legacy override has no master in its own calendar.
-// The lookups stay inside one calendar, because two calendars can hold the
-// same UID. The other rules do nothing for a master row.
-func checkOverrideCalendarTx(ctx context.Context, qtx *storage.Queries, old storage.Event, calendarID int64) error {
-	if old.RecurrenceID == "" || calendarID == old.CalendarID {
-		return nil
-	}
-	ownMaster, err := hasMasterInCalendarTx(ctx, qtx, old.CalendarID, old.Uid)
-	if err != nil {
-		return err
-	}
-	targetMaster, err := hasMasterInCalendarTx(ctx, qtx, calendarID, old.Uid)
-	if err != nil {
-		return err
-	}
-	if ownMaster || !targetMaster {
-		return ErrInstanceCalendarMove
-	}
-	return nil
-}
-
-// checkMoveTargetTx refuses a calendar move of the rows of uid when the
-// target calendar already holds a row (live or soft-deleted) with the same
-// UID and recurrence ID. Without the check the move fails on the UNIQUE key
-// with a raw constraint error. It does nothing when the two calendars are
-// the same.
-func checkMoveTargetTx(ctx context.Context, qtx *storage.Queries, fromCalendarID, toCalendarID int64, uid string) error {
-	if fromCalendarID == toCalendarID || toCalendarID == 0 {
-		return nil
-	}
-	n, err := qtx.CountEventUIDMoveCollisions(ctx, storage.CountEventUIDMoveCollisionsParams{
-		ToCalendarID: toCalendarID, Uid: uid, FromCalendarID: fromCalendarID,
-	})
-	if err != nil {
-		return fmt.Errorf("check move target: %w", err)
-	}
-	if n == 0 {
-		return nil
-	}
-	name := fmt.Sprint(toCalendarID)
-	if cal, err := qtx.GetCalendar(ctx, toCalendarID); err == nil {
-		name = cal.Name
-	}
-	return fmt.Errorf("%w: calendar %q already holds a row of UID %s; the row can be in the trash, so purge or restore it first",
-		ErrMoveTargetHasUID, name, uid)
-}
-
-// hasMasterInCalendarTx reports whether calendarID holds a live master row
-// of uid.
-func hasMasterInCalendarTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (bool, error) {
-	_, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
-	switch {
-	case err == nil:
-		return true, nil
-	case errors.Is(err, sql.ErrNoRows):
-		return false, nil
-	default:
-		return false, fmt.Errorf("find master: %w", err)
+// uidMoveRows binds the event queries of the transaction to the shared
+// calendar-move rules for uid. Two calendars can hold the same UID, so each
+// lookup stays inside one calendar.
+func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
+	return uidmove.Rows{
+		Q:               qtx,
+		UID:             uid,
+		ErrInstanceMove: ErrInstanceCalendarMove,
+		ErrTargetHasUID: ErrMoveTargetHasUID,
+		HasMaster: func(ctx context.Context, calendarID int64) (bool, error) {
+			_, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+			return uidmove.Found(err)
+		},
+		CountCollisions: func(ctx context.Context, fromCalendarID, toCalendarID int64) (int64, error) {
+			return qtx.CountEventUIDMoveCollisions(ctx, storage.CountEventUIDMoveCollisionsParams{
+				ToCalendarID: toCalendarID, Uid: uid, FromCalendarID: fromCalendarID,
+			})
+		},
+		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
+			return moveUIDRowsTx(ctx, qtx, storage.MoveEventUIDToCalendarParams{
+				FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid,
+			})
+		},
 	}
 }
 
@@ -658,17 +618,8 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 	}
 }
 
-// recordUIDMoveTx records the move of the event rows of one UID from one
-// calendar to another. It does nothing when the two calendars are the same.
-func recordUIDMoveTx(ctx context.Context, qtx *storage.Queries, fromCalendarID, toCalendarID int64, uid string) error {
-	move := storage.MoveEventUIDToCalendarParams{FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid}
-	return storage.RecordResourceMove(ctx, qtx, fromCalendarID, toCalendarID, uid, func(ctx context.Context) error {
-		return moveUIDRowsTx(ctx, qtx, move)
-	})
-}
-
 // moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
-// another calendar. storage.RecordResourceMove calls it.
+// another calendar. uidmove.Rows.Record calls it.
 func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams) error {
 	if err := qtx.MoveEventUIDToCalendar(ctx, arg); err != nil {
 		return fmt.Errorf("move events: %w", err)
@@ -908,7 +859,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	// takes the rows of its UID along. Refuse that move when the target
 	// already holds one of those rows.
 	if existErr == nil {
-		if err := checkMoveTargetTx(ctx, qtx, existing.CalendarID, p.CalendarID, uid); err != nil {
+		if err := uidMoveRows(qtx, uid).CheckTarget(ctx, existing.CalendarID, p.CalendarID); err != nil {
 			return Event{}, 0, err
 		}
 	}
@@ -957,7 +908,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	// gets a tombstone. Without it that stale object keeps the UID, and
 	// iCloud refuses the later PUT (issue #828).
 	if fromCalendarID != 0 {
-		if err := recordUIDMoveTx(ctx, qtx, fromCalendarID, r.CalendarID, uid); err != nil {
+		if err := uidMoveRows(qtx, uid).Record(ctx, fromCalendarID, r.CalendarID); err != nil {
 			return Event{}, 0, fmt.Errorf("record override calendar move: %w", err)
 		}
 	}
