@@ -321,6 +321,7 @@ type SyncKnownMiss struct {
 	Reason     string
 	MissCount  int64
 	GaveUpAt   *string
+	Etag       string
 }
 
 type SyncPendingHref struct {

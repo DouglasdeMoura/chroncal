@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -242,4 +243,69 @@ func listKnownMisses(t *testing.T, q *storage.Queries, calendarID int64) []stora
 		t.Fatalf("ListSyncKnownMissesByCalendar: %v", err)
 	}
 	return rows
+}
+
+// TestEngineKnownMissChangedAfterGiveUpGetsFreshBudget gives up on an href,
+// and then the server changes the object. The new version must get a new
+// retry budget: one temporary 404 on it withholds the sync-token. Without
+// the reset, the given-up row drops that miss at once.
+func TestEngineKnownMissChangedAfterGiveUpGetsFreshBudget(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := seedKnownMissCalendar(t, db, q)
+
+	const firstToken, secondToken = "https://example.com/sync/t1", "https://example.com/sync/t2"
+	changed, good := false, false
+	client := newScriptedClient(t,
+		func(string) string {
+			if !changed {
+				return syncCollectionXML(firstToken, knownMissHref)
+			}
+			// The server lists the href again with a new etag.
+			return strings.ReplaceAll(syncCollectionXML(secondToken, knownMissHref), "&quot;etag&quot;", "&quot;etag2&quot;")
+		},
+		func(int, string) string {
+			if good {
+				return multigetXML(map[string]string{knownMissHref: testEventICS("stuck", "fixed")}, nil)
+			}
+			return multigetXML(nil, []string{knownMissHref})
+		},
+	)
+	pullOnce := func(label string) *pullResult {
+		t.Helper()
+		result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+		if err != nil {
+			t.Fatalf("pull %s: %v", label, err)
+		}
+		return result
+	}
+
+	for run := 1; run <= knownMissLimit; run++ {
+		pullOnce("give up")
+	}
+	if tok := calendarToken(t, q, calendarID); tok != firstToken {
+		t.Fatalf("sync_token after the give-up = %q, want %q", tok, firstToken)
+	}
+
+	changed = true
+	if result := pullOnce("changed, 404"); len(result.errors) == 0 {
+		t.Fatal("a 404 on the changed object gave no incomplete-pull error, want a fresh budget")
+	}
+	if tok := calendarToken(t, q, calendarID); tok != firstToken {
+		t.Fatalf("sync_token after a 404 on the changed object = %q, want it withheld at %q", tok, firstToken)
+	}
+	rows := listKnownMisses(t, q, calendarID)
+	if len(rows) != 1 || rows[0].MissCount != 1 || rows[0].GaveUpAt != nil {
+		t.Fatalf("known misses = %+v, want one row with miss_count 1 and no give-up", rows)
+	}
+
+	good = true
+	if result := pullOnce("changed, good"); result.pulled != 1 {
+		t.Fatalf("good pull: pulled = %d, want 1", result.pulled)
+	}
+	if tok := calendarToken(t, q, calendarID); tok != secondToken {
+		t.Fatalf("sync_token after the good fetch = %q, want %q", tok, secondToken)
+	}
 }

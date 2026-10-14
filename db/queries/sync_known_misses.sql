@@ -1,9 +1,10 @@
 -- name: BumpSyncKnownMiss :one
-INSERT INTO sync_known_misses (calendar_id, href, uid, reason)
-VALUES (?, ?, ?, ?)
+INSERT INTO sync_known_misses (calendar_id, href, uid, reason, etag)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, href) DO UPDATE SET
     uid = excluded.uid,
     reason = excluded.reason,
+    etag = excluded.etag,
     miss_count = sync_known_misses.miss_count + 1
 RETURNING *;
 

@@ -51,6 +51,9 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 
 	var fetchPaths []string
 	var deletedPaths []string
+	// listedETags holds the ETag of each changed href. A known miss
+	// records it, so a later change of the object is visible.
+	listedETags := make(map[string]string, len(syncResult.Changes))
 	seenUIDs := make(map[string]bool, len(syncResult.Changes))
 	for _, ch := range syncResult.Changes {
 		canonical, hrefErr := client.CanonicalObjectRef(remoteURL, ch.Path)
@@ -65,6 +68,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		if tombstonedPaths[canonical] {
 			continue
 		}
+		listedETags[canonical] = ch.ETag
 		if local, exists := localByPath[canonical]; exists && local.Etag == ch.ETag {
 			seenUIDs[local.Uid] = true
 			continue
@@ -90,6 +94,9 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	}
 	known.forgetSet(ctx, deletedSet)
 	known.forgetSet(ctx, tombstonedPaths)
+	for href, etag := range listedETags {
+		known.resetIfChanged(ctx, href, etag)
+	}
 
 	// Per-resource 404s from the multiget are NOT deletions. Google can list
 	// an href that 404s on multiget for a reason other than a real delete.
@@ -131,7 +138,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			if unparseable {
 				reason, cause = knownMissReasonUnparseable, "server body unparseable"
 			}
-			exhausted, gaveUp, recErr := known.noteMiss(ctx, canonical, local.Uid, reason)
+			exhausted, gaveUp, recErr := known.noteMiss(ctx, canonical, local.Uid, reason, listedETags[canonical])
 			if recErr != nil {
 				e.logger.Warn("record known multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
 			}

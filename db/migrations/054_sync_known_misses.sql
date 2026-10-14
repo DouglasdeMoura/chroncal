@@ -6,6 +6,10 @@
 -- retry budget. After the budget the engine sets gave_up_at, advances the
 -- token, and keeps the local row. sync status lists each row with a
 -- gave_up_at value. A good fetch of the href deletes the row. See issue #816.
+-- etag is the ETag that the sync-collection REPORT listed for the href at
+-- the last miss. A given-up row whose href comes back with another ETag
+-- names a new version of the object. The pull then deletes the row, so
+-- the new version gets a new retry budget. An empty value names no ETag.
 -- UNIQUE(calendar_id, href) already indexes calendar_id.
 
 CREATE TABLE sync_known_misses (
@@ -16,6 +20,7 @@ CREATE TABLE sync_known_misses (
     reason TEXT NOT NULL CHECK(reason IN ('missing', 'unparseable')),
     miss_count INTEGER NOT NULL DEFAULT 1,
     gave_up_at TEXT,
+    etag TEXT NOT NULL DEFAULT '',
     UNIQUE(calendar_id, href)
 );
 
