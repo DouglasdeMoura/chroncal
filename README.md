@@ -987,8 +987,19 @@ Chroncal checks the table when it loads the config file. Each of these condition
 - The table names an unknown action.
 - An action has an empty list or an empty key.
 - Two actions use the same key. Chroncal compares the keys after the table replaces the defaults. To swap two keys, set the two actions together.
+- An action uses a key that a view or a dialog uses. See the list below.
 
-An action key has priority over the keys of the views. Do not bind an action to a key that a view uses, for example `t`, `enter`, `h`, `j`, `k`, `l`, `e`, `x`, or `o`. Otherwise, the view loses that key.
+An action key has priority over the keys of a view. Thus chroncal rejects these keys:
+
+| Part of the TUI | Actions | Rejected keys |
+|-----------------|---------|---------------|
+| All parts | All actions | `esc`, `ctrl+c` |
+| Month, week, day, and agenda views | All actions | arrows, `h`, `j`, `k`, `l`, `[`, `]`, `pgup`, `pgdown`, `t`, `enter`, `space`, `e`, `ctrl+d`, `x`, `delete`, `o` |
+| Day dialog | `help`, `create` | arrows, `h`, `j`, `k`, `l`, `tab`, `shift+tab`, `enter`, `space`, `esc`, `q`, `pgup`, `pgdown`, `ctrl+b`, `ctrl+f`, `home`, `end`, `e`, `ctrl+d`, `x`, `delete`, `y`, `n`, `m`, `p` |
+| Event dialog | `help` | the same keys as the day dialog |
+| Calendar manager | `calendars` | arrows, `h`, `j`, `k`, `l`, `shift+up`, `shift+down`, `K`, `J`, `tab`, `shift+tab`, `enter`, `space`, `esc`, `q`, `a` |
+
+The default key of an action is never in its list. For example, the calendar manager uses `a`, but chroncal accepts `a` for `agenda_view`, because that action does not work in the calendar manager.
 
 The table does not change these keys:
 

@@ -39,6 +39,98 @@ var keyActions = []KeyAction{
 	{Name: "trash", Help: "recently deleted", Defaults: []string{"D"}},
 }
 
+// ReservedKeys names keys that a part of the TUI uses for its own work.
+// Actions lists the app actions that the TUI checks before that part, so a
+// key of such an action hides the key of the part. An empty Actions list
+// means every action. Use names the part for the error text.
+type ReservedKeys struct {
+	Use     string
+	Actions []string
+	Keys    []string
+}
+
+// reservedKeys lists the keys that ValidateKeys rejects. It cannot read the
+// TUI keymaps, because the TUI imports this package. The TUI test
+// TestReservedKeysMatchTUIKeymaps compares each list with the keymaps, so
+// the two cannot drift. A key that follows an app action (for example the
+// create key in the agenda) is not in a list.
+var reservedKeys = []ReservedKeys{
+	{
+		// interceptGlobalKeys checks these keys before every other key.
+		Use:  "the TUI uses it to cancel and to quit",
+		Keys: []string{"esc", "ctrl+c"},
+	},
+	{
+		// handleKeyPress checks every app action before the view keys.
+		Use: "the month, week, day, and agenda views use it",
+		Keys: []string{
+			"up", "down", "left", "right", "h", "j", "k", "l",
+			"[", "]", "pgup", "pgdown", "t", "enter",
+			"space", "e", "ctrl+d", "x", "delete", "o",
+		},
+	},
+	{
+		// The help key works over the day dialog, and the day dialog
+		// checks the create key before its own keys.
+		Use:     "the day dialog uses it",
+		Actions: []string{"help", "create"},
+		Keys: []string{
+			"up", "down", "left", "right", "h", "j", "k", "l",
+			"tab", "shift+tab", "enter", "space", "esc", "q",
+			"pgup", "pgdown", "ctrl+b", "ctrl+f", "home", "end",
+			"e", "ctrl+d", "x", "delete", "y", "n", "m", "p",
+		},
+	},
+	{
+		// The help key works over the event dialog.
+		Use:     "the event dialog uses it",
+		Actions: []string{"help"},
+		Keys: []string{
+			"up", "down", "left", "right", "h", "j", "k", "l",
+			"tab", "shift+tab", "enter", "space", "esc", "q",
+			"pgup", "pgdown", "ctrl+b", "ctrl+f", "home", "end",
+			"e", "ctrl+d", "x", "delete", "y", "n", "m", "p",
+		},
+	},
+	{
+		// The calendar manager closes on the calendars key, and it
+		// checks that key before its own keys.
+		Use:     "the calendar manager uses it",
+		Actions: []string{"calendars"},
+		Keys: []string{
+			"up", "down", "left", "right", "h", "j", "k", "l",
+			"shift+up", "shift+down", "K", "J",
+			"tab", "shift+tab", "enter", "space", "esc", "q", "a",
+		},
+	},
+}
+
+// ReservedKeyLists returns a copy of the keys that ValidateKeys rejects.
+func ReservedKeyLists() []ReservedKeys {
+	out := make([]ReservedKeys, len(reservedKeys))
+	for i, r := range reservedKeys {
+		out[i] = ReservedKeys{Use: r.Use, Actions: slices.Clone(r.Actions), Keys: slices.Clone(r.Keys)}
+	}
+	return out
+}
+
+// reservedKeyUse returns the Use text of the first list that reserves key k
+// for the action. It returns "" when no list reserves k for the action.
+func reservedKeyUse(action, k string) string {
+	canon := CanonicalKey(k)
+	for _, r := range reservedKeys {
+		if len(r.Actions) > 0 && !slices.Contains(r.Actions, action) {
+			continue
+		}
+		for _, rk := range r.Keys {
+			if CanonicalKey(rk) == canon {
+				return r.Use
+			}
+		}
+	}
+	return ""
+}
+
 // KeyActions returns a copy of the remappable TUI actions with their
 // default keys and their help text.
 func KeyActions() []KeyAction {
@@ -69,6 +161,7 @@ func ResolveKeys(overrides map[string][]string) map[string][]string {
 // ValidateKeys reports the first problem in a [keys] table:
 //   - an action name that the TUI does not know
 //   - an empty key list or an empty key string
+//   - a key that a view or a dialog uses (see reservedKeys)
 //   - one key on two actions, after the overrides replace the defaults
 func ValidateKeys(overrides map[string][]string) error {
 	known := make(map[string]bool, len(keyActions))
@@ -89,8 +182,12 @@ func ValidateKeys(overrides map[string][]string) error {
 			return fmt.Errorf("keys.%s: the key list is empty; set at least one key or remove the entry to use the default", name)
 		}
 		for _, k := range keys {
-			if strings.TrimSpace(k) == "" {
+			k = strings.TrimSpace(k)
+			if k == "" {
 				return fmt.Errorf("keys.%s: a key is empty", name)
+			}
+			if use := reservedKeyUse(name, k); use != "" {
+				return fmt.Errorf("keys.%s: chroncal reserves %q, because %s; choose another key", name, k, use)
 			}
 		}
 	}
