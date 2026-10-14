@@ -155,35 +155,11 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			}
 		}
 
-		newEtag, putErr := e.putResource(ctx, client, putPath, cal, res.Etag)
-		if putErr != nil && res.RemoteUrl == "" && (caldav.IsConflict(putErr) || caldav.IsUIDConflict(putErr)) {
-			// A new resource can be the target half of a local move
-			// between two calendars of this account. Only a server that
-			// keeps UIDs unique per account refuses that create: iCloud
-			// with 412, an RFC 4791 server with 403 and the
-			// CALDAV:no-uid-conflict precondition. The lookup of the move
-			// sources runs after that refusal only. A plain create then
-			// never depends on it (issue #828). See settleMovedSources.
-			movedFrom, siblingsErr := e.movedSources(ctx, calendarID, res.Uid)
-			if siblingsErr != nil {
-				// A failed lookup proves nothing. Keep this resource
-				// dirty and retry on the next pass.
-				siblingsErr = fmt.Errorf("%s: list moved sources: %w", res.Uid, siblingsErr)
-				result.errors = append(result.errors, siblingsErr)
-				e.recordPushFailure(ctx, calendarID, res.Uid, siblingsErr)
-				continue
-			}
-			if len(movedFrom) > 0 {
-				retryPut, moveErr := e.settleMovedSources(ctx, client, putPath, res.Uid, movedFrom)
-				if moveErr != nil {
-					result.errors = append(result.errors, moveErr)
-					e.recordPushFailure(ctx, calendarID, res.Uid, moveErr)
-					continue
-				}
-				if retryPut {
-					newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag)
-				}
-			}
+		newEtag, putErr, moveErr := e.putOrSettleMove(ctx, client, calendarID, putPath, cal, res)
+		if moveErr != nil {
+			result.errors = append(result.errors, moveErr)
+			e.recordPushFailure(ctx, calendarID, res.Uid, moveErr)
+			continue
 		}
 		if putErr != nil {
 			// Check for 412 Precondition Failed (ETag conflict)
@@ -446,6 +422,43 @@ func (e *Engine) settleMovedSources(ctx context.Context, client *caldav.Client, 
 		}
 	}
 	return true, nil
+}
+
+// putOrSettleMove sends the PUT of res and settles a refused create of a
+// moved resource. The normal push and the doctor push share it.
+//
+// A new resource can be the target half of a local move between two
+// calendars of this account. Only a server that keeps UIDs unique per
+// account refuses that create: iCloud with 412, an RFC 4791 server with
+// 403 and the CALDAV:no-uid-conflict precondition. The lookup of the move
+// sources runs after that refusal only, so a plain create never depends on
+// it (issue #828). See settleMovedSources.
+//
+// putErr is the result of the last PUT. moveErr reports a failed lookup of
+// the move sources or a failed settle. The caller then keeps the resource
+// dirty, records no conflict, and skips the PUT result.
+func (e *Engine) putOrSettleMove(ctx context.Context, client *caldav.Client, calendarID int64, putPath string, cal *ical.Calendar, res storage.SyncResource) (newEtag string, putErr, moveErr error) {
+	newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag)
+	refusedCreate := putErr != nil && res.RemoteUrl == "" && (caldav.IsConflict(putErr) || caldav.IsUIDConflict(putErr))
+	if !refusedCreate {
+		return newEtag, putErr, nil
+	}
+	movedFrom, err := e.movedSources(ctx, calendarID, res.Uid)
+	if err != nil {
+		// A failed lookup proves nothing. The next pass tries again.
+		return "", putErr, fmt.Errorf("%s: list moved sources: %w", res.Uid, err)
+	}
+	if len(movedFrom) == 0 {
+		return newEtag, putErr, nil
+	}
+	retryPut, err := e.settleMovedSources(ctx, client, putPath, res.Uid, movedFrom)
+	if err != nil {
+		return "", putErr, err
+	}
+	if retryPut {
+		newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag)
+	}
+	return newEtag, putErr, nil
 }
 
 // putResource sends one PUT with the sync retry policy. A PUT can reach the

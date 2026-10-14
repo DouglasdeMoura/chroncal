@@ -192,8 +192,14 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string, d
 		}
 	}
 
-	// putResource adopts a PUT that landed before a lost response. See #647.
-	newEtag, putErr := e.putResource(ctx, client, putPath, body, res.Etag)
+	// putResource adopts a PUT that landed before a lost response (#647).
+	// putOrSettleMove also settles a refused create of a moved resource,
+	// as the normal push does (issue #828).
+	newEtag, putErr, moveErr := e.putOrSettleMove(ctx, client, calendarID, putPath, body, *res)
+	if moveErr != nil {
+		e.recordPushFailure(ctx, calendarID, uid, moveErr)
+		return dropped, moveErr
+	}
 
 	if putErr != nil {
 		putErr = fmt.Errorf("put %s: %w", uid, putErr)

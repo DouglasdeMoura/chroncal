@@ -744,3 +744,21 @@ func TestMoveEventTreatsGoneTargetAsAbsent(t *testing.T) {
 		t.Fatalf("conflicts on B = %v, %v; want none", conflicts, err)
 	}
 }
+
+// TestDoctorPushSettlesAMove runs the doctor push on the target half of a
+// move on an iCloud-like server. The create gets 412 while the source
+// object exists. The doctor push must send the source DELETE and retry the
+// create, as the normal push does.
+func TestDoctorPushSettlesAMove(t *testing.T) {
+	t.Parallel()
+	engine, _, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+
+	if _, err := engine.DoctorPush(ctx, calB, evt.UID, nil); err != nil {
+		t.Fatalf("DoctorPush of the moved event = %v, want nil", err)
+	}
+	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
+}
