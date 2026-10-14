@@ -87,9 +87,11 @@ func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, 
 }
 
 // ErrMoveOpenConflict reports a move of a UID that has an open sync conflict
-// in the source calendar. The move would clear the source dirty flag, and a
-// later pass would resolve the conflict for the server. The recorded local
-// body would then be lost. Resolve the conflict first.
+// in the source calendar or in the target calendar. In the source, the move
+// would clear the dirty flag, and a later pass would resolve the conflict
+// for the server. In the target, the move would mark the UID dirty over
+// the conflict. Either way the recorded local body would be lost. Resolve
+// the conflict first.
 var ErrMoveOpenConflict = errors.New("the item has an open sync conflict; resolve the sync conflict first (chroncal sync conflicts, then chroncal sync resolve <id>)")
 
 // RecordResourceMove completes a local move of a resource from one calendar
@@ -102,9 +104,11 @@ var ErrMoveOpenConflict = errors.New("the item has an open sync conflict; resolv
 // queries into moveRows. The rows include the soft-deleted rows and the
 // delete-log rows, so a later restore finds them in the target calendar.
 //
-// A UID with an open sync conflict in the source calendar does not move.
-// RecordResourceMove then returns ErrMoveOpenConflict, and the caller rolls
-// the transaction back.
+// A UID with an open sync conflict in the source calendar or in the target
+// calendar does not move. RecordResourceMove then returns
+// ErrMoveOpenConflict, and the caller rolls the transaction back. A
+// conflict in the target holds a recorded local body, and the move would
+// mark the target dirty over it.
 //
 // On the target calendar it clears a pending tombstone for the UID. A move
 // back to a calendar then cannot delete the server object of that calendar.
@@ -120,12 +124,14 @@ func RecordResourceMove(ctx context.Context, q *Queries, fromCalendarID, toCalen
 	if fromCalendarID == toCalendarID || uid == "" {
 		return nil
 	}
-	open, err := q.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: fromCalendarID, Uid: uid})
-	if err != nil {
-		return fmt.Errorf("check open conflict: %w", err)
-	}
-	if open > 0 {
-		return fmt.Errorf("move %s: %w", uid, ErrMoveOpenConflict)
+	for _, calendarID := range []int64{fromCalendarID, toCalendarID} {
+		open, err := q.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: calendarID, Uid: uid})
+		if err != nil {
+			return fmt.Errorf("check open conflict: %w", err)
+		}
+		if open > 0 {
+			return fmt.Errorf("move %s: %w", uid, ErrMoveOpenConflict)
+		}
 	}
 	if err := moveRows(ctx); err != nil {
 		return fmt.Errorf("move rows: %w", err)

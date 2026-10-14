@@ -677,3 +677,47 @@ func TestMoveEventOnServerWithNoUIDConflict403(t *testing.T) {
 		t.Fatalf("tombstones on A = %v, %v; want none", ts, err)
 	}
 }
+
+// TestMoveEventIntoCalendarWithOpenConflictIsRefused moves an event into a
+// calendar that holds an open sync conflict for the same UID. The move
+// clears the tombstone of the target and marks the target dirty, so a
+// later pass would push over the recorded conflict. The move must be
+// refused with the same guidance as a conflict in the source.
+func TestMoveEventIntoCalendarWithOpenConflictIsRefused(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createPushedEvent(t, engine, calA)
+	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calB,
+		OwnerType:  "event",
+		OwnerID:    evt.ID,
+		Uid:        evt.UID,
+		LocalIcal:  "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+		ServerIcal: "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+		ServerEtag: `"server"`,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	_, err := engine.events.Update(ctx, evt.ID, event.UpdateParams{
+		Title:      evt.Title,
+		StartTime:  evt.StartTime,
+		EndTime:    evt.EndTime,
+		CalendarID: calB,
+		Status:     evt.Status,
+		Transp:     evt.Transp,
+		Class:      evt.Class,
+	})
+	if !errors.Is(err, storage.ErrMoveOpenConflict) {
+		t.Fatalf("move into a calendar with an open conflict = %v, want ErrMoveOpenConflict", err)
+	}
+	if !strings.Contains(err.Error(), "chroncal sync resolve") {
+		t.Fatalf("error = %q, want the resolve command", err)
+	}
+	got, err := engine.events.Get(ctx, evt.ID)
+	if err != nil || got.CalendarID != calA {
+		t.Fatalf("event after the refused move = %+v, %v; want it in A", got, err)
+	}
+}
