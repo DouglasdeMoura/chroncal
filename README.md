@@ -973,11 +973,11 @@ Write a key with its Bubble Tea name, for example `"x"`, `"ctrl+k"`, `"tab"`, `"
 | `sidebar` | Show or hide the sidebar | `\` |
 | `week_numbers` | Show or hide the week numbers | `#` |
 | `week_start` | Change the first day of the week | `W` |
-| `create` | Create an event | `c` |
+| `create` | Create an event. The key also works in the agenda and in the day dialog | `c` |
 | `switch_focus` | Move the focus from the main view into the sidebar. Only `shift+tab` enters at the last stop. Every other key enters at the first stop | `tab`, `shift+tab` |
 | `help` | Open the help dialog | `?` |
 | `palette` | Open the command palette | `/`, `ctrl+k` |
-| `calendars` | Open the calendar manager | `C` |
+| `calendars` | Open the calendar manager. The key also closes it | `C` |
 | `sync` | Sync all calendars | `s` |
 | `undo` | Undo the last delete | `u` |
 | `trash` | Open the recently deleted list | `D` |
