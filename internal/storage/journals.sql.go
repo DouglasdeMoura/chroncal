@@ -21,6 +21,34 @@ func (q *Queries) CountJournalIdentitiesByCalendar(ctx context.Context, calendar
 	return count, err
 }
 
+const countJournalUIDRowsInCalendar = `-- name: CountJournalUIDRowsInCalendar :one
+SELECT
+    CAST(COALESCE(SUM(recurrence_id = ''), 0) AS INTEGER) AS masters,
+    CAST(COALESCE(SUM(recurrence_id != ''), 0) AS INTEGER) AS overrides
+FROM journals
+WHERE calendar_id = ? AND uid = ?
+`
+
+type CountJournalUIDRowsInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+type CountJournalUIDRowsInCalendarRow struct {
+	Masters   int64
+	Overrides int64
+}
+
+// Count the master rows and the override rows (live or soft-deleted) of
+// one UID in one calendar. The dirty-mark rule for a legacy override reads
+// it. See storage.MarkResourceDirty.
+func (q *Queries) CountJournalUIDRowsInCalendar(ctx context.Context, arg CountJournalUIDRowsInCalendarParams) (CountJournalUIDRowsInCalendarRow, error) {
+	row := q.db.QueryRowContext(ctx, countJournalUIDRowsInCalendar, arg.CalendarID, arg.Uid)
+	var i CountJournalUIDRowsInCalendarRow
+	err := row.Scan(&i.Masters, &i.Overrides)
+	return i, err
+}
+
 const createJournal = `-- name: CreateJournal :one
 INSERT INTO journals (
     uid, calendar_id, summary, description,
@@ -302,6 +330,28 @@ func (q *Queries) GetJournalIncludingDeleted(ctx context.Context, id int64) (Jou
 		&i.UpdatedAt,
 		&i.DeletedAt,
 	)
+	return i, err
+}
+
+const journalUIDMasterCalendars = `-- name: JournalUIDMasterCalendars :one
+SELECT
+    COUNT(DISTINCT calendar_id) AS calendars,
+    CAST(COALESCE(MIN(calendar_id), 0) AS INTEGER) AS calendar_id
+FROM journals
+WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
+`
+
+type JournalUIDMasterCalendarsRow struct {
+	Calendars  int64
+	CalendarID int64
+}
+
+// Count the calendars with a live master row of one UID, and give the
+// lowest of them. With one calendar, that calendar is the only one.
+func (q *Queries) JournalUIDMasterCalendars(ctx context.Context, uid string) (JournalUIDMasterCalendarsRow, error) {
+	row := q.db.QueryRowContext(ctx, journalUIDMasterCalendars, uid)
+	var i JournalUIDMasterCalendarsRow
+	err := row.Scan(&i.Calendars, &i.CalendarID)
 	return i, err
 }
 

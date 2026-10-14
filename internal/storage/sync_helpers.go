@@ -13,12 +13,14 @@ import (
 // Called by service-layer mutations (Create, Update, ReplaceAlarms, etc.).
 //
 // The mark of a legacy override goes to the calendar of its master. See
-// DirtyCalendar for the rule.
+// dirtyCalendar for the rule. The rule runs before the account check: a
+// legacy override in a local calendar can have its master in a synced
+// calendar, and that calendar needs the mark.
 func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
 	if calendarID == 0 || uid == "" {
 		return nil
 	}
-	calendarID, err := DirtyCalendar(ctx, db, calendarID, uid, ownerType)
+	calendarID, err := dirtyCalendar(ctx, db, calendarID, uid, ownerType)
 	if err != nil {
 		return err
 	}
@@ -93,11 +95,7 @@ func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, 
 	return MarkResourceDirty(ctx, q.db, calendarID, uid, ownerType)
 }
 
-// ownerTables maps the owner type of a sync resource to the table of its
-// rows.
-var ownerTables = map[string]string{"event": "events", "todo": "todos", "journal": "journals"}
-
-// DirtyCalendar returns the calendar whose sync row a write of a row of uid
+// dirtyCalendar returns the calendar whose sync row a write of a row of uid
 // in calendarID must mark dirty.
 //
 // The export of a UID holds the master and every override, in all
@@ -105,53 +103,62 @@ var ownerTables = map[string]string{"event": "events", "todo": "todos", "journal
 // older version saved in a calendar with no master row of the UID. A dirty
 // mark on that calendar uploads the whole series into it a second time. So
 // when calendarID holds no master row (live or soft-deleted) but holds an
-// override row of uid, and exactly one other calendar holds a live master,
-// the mark goes to that calendar. Each other case marks calendarID.
+// override row of uid, and exactly one calendar holds a live master, the
+// mark goes to that calendar. Each other case marks calendarID.
 //
-// The common case (calendarID holds the master) costs one lookup on the
-// UNIQUE(calendar_id, uid, recurrence_id) key.
-func DirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) (int64, error) {
-	table, ok := ownerTables[ownerType]
-	if !ok {
-		return calendarID, nil
-	}
-	var rows int
-	// The own master and the own overrides, live or soft-deleted.
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM `+table+` WHERE calendar_id = ? AND uid = ? AND recurrence_id = ''`, calendarID, uid,
-	).Scan(&rows); err != nil {
-		return 0, fmt.Errorf("find own master: %w", err)
-	}
-	if rows > 0 {
-		return calendarID, nil
-	}
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM `+table+` WHERE calendar_id = ? AND uid = ? AND recurrence_id != ''`, calendarID, uid,
-	).Scan(&rows); err != nil {
-		return 0, fmt.Errorf("find own override: %w", err)
-	}
-	if rows == 0 {
-		return calendarID, nil
-	}
-	dbRows, err := db.QueryContext(ctx,
-		`SELECT DISTINCT calendar_id FROM `+table+` WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL`, uid)
-	if err != nil {
-		return 0, fmt.Errorf("find masters: %w", err)
-	}
-	defer dbRows.Close()
-	var masters []int64
-	for dbRows.Next() {
-		var id int64
-		if err := dbRows.Scan(&id); err != nil {
-			return 0, fmt.Errorf("find masters: %w", err)
+// The common case (calendarID holds the master) costs one aggregate lookup
+// on the UNIQUE(calendar_id, uid, recurrence_id) key. Only the legacy case
+// reads the masters of the UID.
+func dirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) (int64, error) {
+	q := New(db)
+	// own counts the master rows and the override rows of uid in
+	// calendarID. masterCalendars counts the calendars with a live master
+	// and gives the lowest of them.
+	var own, masterCalendars func() (int64, int64, error)
+	switch ownerType {
+	case "event":
+		own = func() (int64, int64, error) {
+			r, err := q.CountEventUIDRowsInCalendar(ctx, CountEventUIDRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
+			return r.Masters, r.Overrides, err
 		}
-		masters = append(masters, id)
+		masterCalendars = func() (int64, int64, error) {
+			r, err := q.EventUIDMasterCalendars(ctx, uid)
+			return r.Calendars, r.CalendarID, err
+		}
+	case "todo":
+		own = func() (int64, int64, error) {
+			r, err := q.CountTodoUIDRowsInCalendar(ctx, CountTodoUIDRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
+			return r.Masters, r.Overrides, err
+		}
+		masterCalendars = func() (int64, int64, error) {
+			r, err := q.TodoUIDMasterCalendars(ctx, uid)
+			return r.Calendars, r.CalendarID, err
+		}
+	case "journal":
+		own = func() (int64, int64, error) {
+			r, err := q.CountJournalUIDRowsInCalendar(ctx, CountJournalUIDRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
+			return r.Masters, r.Overrides, err
+		}
+		masterCalendars = func() (int64, int64, error) {
+			r, err := q.JournalUIDMasterCalendars(ctx, uid)
+			return r.Calendars, r.CalendarID, err
+		}
+	default:
+		return calendarID, nil
 	}
-	if err := dbRows.Err(); err != nil {
-		return 0, fmt.Errorf("find masters: %w", err)
+	ownMasters, ownOverrides, err := own()
+	if err != nil {
+		return 0, fmt.Errorf("count rows of the UID: %w", err)
 	}
-	if len(masters) == 1 {
-		return masters[0], nil
+	if ownMasters > 0 || ownOverrides == 0 {
+		return calendarID, nil
+	}
+	calendars, first, err := masterCalendars()
+	if err != nil {
+		return 0, fmt.Errorf("find master calendars: %w", err)
+	}
+	if calendars == 1 {
+		return first, nil
 	}
 	return calendarID, nil
 }

@@ -820,3 +820,32 @@ func TestRelationWriteOnLegacyOverrideMarksMasterCalendarDirty(t *testing.T) {
 		}
 	}
 }
+
+// TestLegacyOverrideInLocalCalendarMarksSyncedMaster holds a legacy
+// override in a local calendar, with its master in the synced calendar A.
+// A write on the override must mark A dirty. The local calendar has no
+// account, so a check of its account before the redirect skips the mark.
+func TestLegacyOverrideInLocalCalendarMarksSyncedMaster(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	local, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "local"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	master, override, _ := createSeriesWithOverride(t, engine, calA)
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("initial push = %+v, %v", res, err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, local.ID, override.ID); err != nil {
+		t.Fatalf("seed legacy override: %v", err)
+	}
+	if err := engine.events.ReplaceAlarms(ctx, override.ID, []model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT5M", Description: "soon"}}); err != nil {
+		t.Fatalf("ReplaceAlarms: %v", err)
+	}
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: master.UID})
+	if err != nil || sr.Dirty != 1 {
+		t.Fatalf("sync resource of A = %+v, %v; want dirty", sr, err)
+	}
+}

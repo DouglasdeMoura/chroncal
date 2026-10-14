@@ -65,6 +65,34 @@ func (q *Queries) CountTodoIdentitiesByCalendar(ctx context.Context, calendarID 
 	return count, err
 }
 
+const countTodoUIDRowsInCalendar = `-- name: CountTodoUIDRowsInCalendar :one
+SELECT
+    CAST(COALESCE(SUM(recurrence_id = ''), 0) AS INTEGER) AS masters,
+    CAST(COALESCE(SUM(recurrence_id != ''), 0) AS INTEGER) AS overrides
+FROM todos
+WHERE calendar_id = ? AND uid = ?
+`
+
+type CountTodoUIDRowsInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+type CountTodoUIDRowsInCalendarRow struct {
+	Masters   int64
+	Overrides int64
+}
+
+// Count the master rows and the override rows (live or soft-deleted) of
+// one UID in one calendar. The dirty-mark rule for a legacy override reads
+// it. See storage.MarkResourceDirty.
+func (q *Queries) CountTodoUIDRowsInCalendar(ctx context.Context, arg CountTodoUIDRowsInCalendarParams) (CountTodoUIDRowsInCalendarRow, error) {
+	row := q.db.QueryRowContext(ctx, countTodoUIDRowsInCalendar, arg.CalendarID, arg.Uid)
+	var i CountTodoUIDRowsInCalendarRow
+	err := row.Scan(&i.Masters, &i.Overrides)
+	return i, err
+}
+
 const createTodo = `-- name: CreateTodo :one
 INSERT INTO todos (
     uid, calendar_id, summary, description, location,
@@ -1074,6 +1102,28 @@ WHERE uid = ? AND deleted_at IS NULL
 func (q *Queries) SoftDeleteTodosByUID(ctx context.Context, uid string) error {
 	_, err := q.db.ExecContext(ctx, softDeleteTodosByUID, uid)
 	return err
+}
+
+const todoUIDMasterCalendars = `-- name: TodoUIDMasterCalendars :one
+SELECT
+    COUNT(DISTINCT calendar_id) AS calendars,
+    CAST(COALESCE(MIN(calendar_id), 0) AS INTEGER) AS calendar_id
+FROM todos
+WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
+`
+
+type TodoUIDMasterCalendarsRow struct {
+	Calendars  int64
+	CalendarID int64
+}
+
+// Count the calendars with a live master row of one UID, and give the
+// lowest of them. With one calendar, that calendar is the only one.
+func (q *Queries) TodoUIDMasterCalendars(ctx context.Context, uid string) (TodoUIDMasterCalendarsRow, error) {
+	row := q.db.QueryRowContext(ctx, todoUIDMasterCalendars, uid)
+	var i TodoUIDMasterCalendarsRow
+	err := row.Scan(&i.Calendars, &i.CalendarID)
+	return i, err
 }
 
 const updateTodo = `-- name: UpdateTodo :one

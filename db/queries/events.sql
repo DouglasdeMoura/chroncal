@@ -234,3 +234,22 @@ WHERE dst.calendar_id = sqlc.arg(to_calendar_id) AND dst.uid = sqlc.arg(uid)
 -- another. A local calendar move of a resource calls it. See issue #828.
 UPDATE events SET calendar_id = sqlc.arg(to_calendar_id)
 WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
+
+-- name: CountEventUIDRowsInCalendar :one
+-- Count the master rows and the override rows (live or soft-deleted) of
+-- one UID in one calendar. The dirty-mark rule for a legacy override reads
+-- it. See storage.MarkResourceDirty.
+SELECT
+    CAST(COALESCE(SUM(recurrence_id = ''), 0) AS INTEGER) AS masters,
+    CAST(COALESCE(SUM(recurrence_id != ''), 0) AS INTEGER) AS overrides
+FROM events
+WHERE calendar_id = ? AND uid = ?;
+
+-- name: EventUIDMasterCalendars :one
+-- Count the calendars with a live master row of one UID, and give the
+-- lowest of them. With one calendar, that calendar is the only one.
+SELECT
+    COUNT(DISTINCT calendar_id) AS calendars,
+    CAST(COALESCE(MIN(calendar_id), 0) AS INTEGER) AS calendar_id
+FROM events
+WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
