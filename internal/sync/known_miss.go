@@ -33,7 +33,7 @@ const (
 // Speak three verbs:
 //
 //	noteMiss: bump the miss count and mark the row given up after the budget
-//	resetIfChanged: the server lists a given-up href with a new ETag
+//	resetIfChanged: the server lists a known href with a new ETag
 //	forget: the body landed, or the href is gone
 type knownMisses struct {
 	hrefSet[knownMissState]
@@ -73,15 +73,22 @@ func loadKnownMisses(ctx context.Context, q *storage.Queries, logger *slog.Logge
 	return k, nil
 }
 
-// resetIfChanged deletes the given-up row of href when the change list
-// gives the href with another ETag. After the give-up the sync-token
-// advances, so the server lists the href again only for a new version of
-// the object. That version gets a new retry budget. A server that keeps
-// the same bad body lists the same ETag, so its row stays given up. An
-// empty ETag tells nothing, so the row stays.
+// resetIfChanged deletes the row of href when the change list gives the
+// href with another ETag. Another ETag names a new version of the object,
+// and that version gets a new retry budget.
+//
+// After a give-up the sync-token advances, so the server lists the href
+// again only for a new version. A given-up row with no stored ETag then
+// resets too. Inside the budget the server can list the same version again,
+// so a row with no stored ETag keeps its count. A server that keeps the
+// same bad body lists the same ETag, so its row stays. An empty listed
+// ETag tells nothing, so the row stays.
 func (k *knownMisses) resetIfChanged(ctx context.Context, href, etag string) {
 	state, ok := k.byHref[href]
-	if !ok || !state.gaveUp || etag == "" || state.etag == etag {
+	if !ok || etag == "" || state.etag == etag {
+		return
+	}
+	if !state.gaveUp && state.etag == "" {
 		return
 	}
 	k.forget(ctx, href)

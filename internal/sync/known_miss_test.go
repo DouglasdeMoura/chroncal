@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -402,5 +403,44 @@ func TestBumpSyncKnownMissKeepsKnownETag(t *testing.T) {
 	}
 	if row := bump(`"e2"`); row.Etag != `"e2"` {
 		t.Fatalf("etag after a miss with a new ETag = %q, want %q", row.Etag, `"e2"`)
+	}
+}
+
+// TestKnownMissInBudgetChangedETagGetsFreshBudget lists an href with a new
+// ETag while its known miss is still inside the retry budget. A new
+// version of the object must start a new budget, as it does after a
+// give-up. A row with no stored ETag, or the same ETag, keeps its count.
+func TestKnownMissInBudgetChangedETagGetsFreshBudget(t *testing.T) {
+	t.Parallel()
+	_, _, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := firstCalendarID(t, q)
+	const noETagHref = "/calendar/no-etag.ics"
+	for href, etag := range map[string]string{knownMissHref: `"v1"`, noETagHref: ""} {
+		if _, err := q.BumpSyncKnownMiss(ctx, storage.BumpSyncKnownMissParams{
+			CalendarID: calendarID, Href: href, Uid: "stuck", Reason: knownMissReasonMissing,
+			Etag: etag, FirstMissAt: "2026-01-01T00:00:00Z",
+		}); err != nil {
+			t.Fatalf("BumpSyncKnownMiss %s: %v", href, err)
+		}
+	}
+	local := map[string]storage.SyncResource{knownMissHref: {}, noETagHref: {}}
+	k, err := loadKnownMisses(ctx, q, slog.New(slog.DiscardHandler), calendarID, local, time.Now())
+	if err != nil {
+		t.Fatalf("loadKnownMisses: %v", err)
+	}
+
+	k.resetIfChanged(ctx, knownMissHref, `"v1"`)
+	k.resetIfChanged(ctx, noETagHref, `"v9"`)
+	if rows, _ := q.ListSyncKnownMissesByCalendar(ctx, calendarID); len(rows) != 2 {
+		t.Fatalf("rows after the same ETag and an unknown old ETag = %+v, want both kept", rows)
+	}
+	k.resetIfChanged(ctx, knownMissHref, `"v2"`)
+	rows, err := q.ListSyncKnownMissesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncKnownMissesByCalendar: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Href != noETagHref {
+		t.Fatalf("rows after a new ETag = %+v, want only %s", rows, noETagHref)
 	}
 }
