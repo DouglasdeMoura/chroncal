@@ -494,17 +494,39 @@ func TestUpdateInstanceFindsMasterInCalendarOfEdit(t *testing.T) {
 		t.Fatalf("event rows in A = %d, want 1 (master only)", n)
 	}
 
-	// An edit that names neither calendar of the UID cannot choose a
-	// master. It must refuse, not pick one.
+	// An edit that names a third calendar moves one occurrence out of its
+	// series, whichever master it has. It must get the move error, so the
+	// CLI shows its hint.
 	cal, err := engine.q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "c"})
 	if err != nil {
 		t.Fatalf("CreateCalendar: %v", err)
 	}
-	_, err = engine.events.UpdateInstance(ctx, masterA.UID, inst.Add(24*time.Hour), event.UpdateParams{
-		CalendarID: cal.ID, Title: "Where", StartTime: inst, EndTime: inst.Add(time.Hour),
+	next := inst.Add(24 * time.Hour)
+	_, err = engine.events.UpdateInstance(ctx, masterA.UID, next, event.UpdateParams{
+		CalendarID: cal.ID, Title: "Where", StartTime: next, EndTime: next.Add(time.Hour),
+	})
+	if !errors.Is(err, event.ErrInstanceCalendarMove) {
+		t.Fatalf("UpdateInstance in a third calendar = %v, want ErrInstanceCalendarMove", err)
+	}
+
+	// A legacy override of that occurrence in the third calendar can
+	// belong to either master. No rule can choose, so the edit is
+	// ambiguous.
+	legacy, err := engine.events.Create(ctx, event.CreateParams{
+		CalendarID: cal.ID, Title: "Legacy", StartTime: next, EndTime: next.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("Create legacy override: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET uid = ?, recurrence_id = ? WHERE id = ?`,
+		masterA.UID, next.Format(time.RFC3339), legacy.ID); err != nil {
+		t.Fatalf("seed legacy override: %v", err)
+	}
+	_, err = engine.events.UpdateInstance(ctx, masterA.UID, next, event.UpdateParams{
+		CalendarID: cal.ID, Title: "Where", StartTime: next, EndTime: next.Add(time.Hour),
 	})
 	if !errors.Is(err, event.ErrAmbiguousUID) {
-		t.Fatalf("UpdateInstance in a third calendar = %v, want ErrAmbiguousUID", err)
+		t.Fatalf("UpdateInstance of a legacy override in a third calendar = %v, want ErrAmbiguousUID", err)
 	}
 }
 

@@ -38,8 +38,9 @@ var ErrInstanceCalendarMove = errors.New("event: one occurrence cannot move to a
 var ErrMoveTargetHasUID = errors.New("event: the target calendar already holds this UID")
 
 // ErrAmbiguousUID reports an edit of one occurrence whose UID has a master
-// in more than one calendar, and the edit names none of those calendars.
-// The service refuses the edit, because it cannot choose the series.
+// in more than one calendar, and no rule can choose the series. The edit
+// names no calendar, or it names a calendar with a legacy override of the
+// occurrence and no master. The service refuses the edit.
 var ErrAmbiguousUID = errors.New("event: the UID has a series in more than one calendar; name the calendar of the series")
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
@@ -578,11 +579,17 @@ func hasMasterInCalendarTx(ctx context.Context, qtx *storage.Queries, calendarID
 	}
 }
 
-// findInstanceMasterTx finds the master of an occurrence edit. Two
-// calendars can hold the same UID. One master is the only choice. With
-// more masters, the master in calendarID wins. An edit that names no
-// calendar of the UID gets ErrAmbiguousUID. No master gives sql.ErrNoRows.
-func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, uid string, calendarID int64) (storage.Event, []storage.Event, error) {
+// findInstanceMasterTx finds the master of an occurrence edit. recID is the
+// recurrence ID of the occurrence. Two calendars can hold the same UID. One
+// master is the only choice. With more masters, the master in calendarID
+// wins. No master gives sql.ErrNoRows.
+//
+// An edit that names a calendar with no master of the UID moves the
+// occurrence out of its series, whichever master it has. It gets
+// ErrInstanceCalendarMove. The one exception is a legacy override of recID
+// in that calendar: it can belong to any master, so it gets
+// ErrAmbiguousUID. An edit that names no calendar gets ErrAmbiguousUID.
+func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, uid string, calendarID int64, recID string) (storage.Event, []storage.Event, error) {
 	masters, err := qtx.ListEventMastersByUID(ctx, uid)
 	if err != nil {
 		return storage.Event{}, nil, err
@@ -598,7 +605,20 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, uid string,
 			return m, masters, nil
 		}
 	}
-	return storage.Event{}, nil, ErrAmbiguousUID
+	if calendarID == 0 {
+		return storage.Event{}, nil, ErrAmbiguousUID
+	}
+	_, err = qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
+	})
+	switch {
+	case err == nil:
+		return storage.Event{}, nil, ErrAmbiguousUID
+	case errors.Is(err, sql.ErrNoRows):
+		return storage.Event{}, nil, ErrInstanceCalendarMove
+	default:
+		return storage.Event{}, nil, err
+	}
 }
 
 // findInstanceOverrideTx finds the stored override of recID for master. It
@@ -854,8 +874,9 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
 		return Event{}, 0, err
 	}
-	master, masters, err := findInstanceMasterTx(ctx, qtx, uid, p.CalendarID)
-	if errors.Is(err, ErrAmbiguousUID) {
+	recID := instanceTime.UTC().Format(time.RFC3339)
+	master, masters, err := findInstanceMasterTx(ctx, qtx, uid, p.CalendarID, recID)
+	if errors.Is(err, ErrAmbiguousUID) || errors.Is(err, ErrInstanceCalendarMove) {
 		return Event{}, 0, err
 	}
 	if err != nil {
@@ -864,7 +885,6 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
 		return Event{}, 0, err
 	}
-	recID := instanceTime.UTC().Format(time.RFC3339)
 	existing, existErr := findInstanceOverrideTx(ctx, qtx, master, masters, recID)
 	if existErr != nil && !errors.Is(existErr, sql.ErrNoRows) {
 		if errors.Is(existErr, ErrAmbiguousUID) {
