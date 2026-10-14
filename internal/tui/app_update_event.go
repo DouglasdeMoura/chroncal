@@ -152,7 +152,9 @@ func (m Model) handleEventEditLoaded(msg eventEditLoadedMsg) (tea.Model, tea.Cmd
 		m.err = msg.err
 		return m, nil
 	}
-	form, cmd := NewEventFormModelForEditInstance(msg.event, msg.instanceTime, eventFormCalendars(m.calendars), m.theme, m.formDefaultCalendarID())
+	// An edit keeps the calendar of the event unless the user picks another
+	// one, so the form always lists that calendar and needs no fallback.
+	form, cmd := NewEventFormModelForEditInstance(msg.event, msg.instanceTime, eventEditFormCalendars(m.calendars, msg.event.CalendarID), m.theme)
 	m.dialogOpen = false
 	if m.viewDialogOpen {
 		m.viewReturnEvent = msg.event

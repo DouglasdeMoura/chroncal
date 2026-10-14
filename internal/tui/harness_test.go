@@ -303,3 +303,54 @@ func TestHarness_EmptyConfirmResult_NoDelete(t *testing.T) {
 	require.Nil(t, cmd, "an empty confirm must not dispatch a delete")
 	require.NoError(t, m.err, "an empty confirm must not raise an error")
 }
+
+// TestHarness_EditSave_KeepsCalendarOutsideFormList edits an event whose
+// calendar leaves the event form list while the edit loads: a sync refresh
+// reports that the remote collection names only VTODO. A title-only save
+// must keep the calendar of the event. Before the fix, the form selected
+// the default calendar, and the save moved the series and queued a server
+// DELETE.
+func TestHarness_EditSave_KeepsCalendarOutsideFormList(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+
+	cal, err := a.Calendars.Create(ctx, "Tasks", "", "")
+	require.NoError(t, err)
+	seeded, err := a.Events.Create(ctx, event.CreateParams{
+		CalendarID: cal.ID,
+		Title:      "Stray event",
+		StartTime:  time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 1, 15, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+	// A pushed object: a move would leave a tombstone for it.
+	_, err = a.DB.ExecContext(ctx,
+		`UPDATE sync_resources SET remote_url = '/tasks/stray.ics', etag = 'e1', dirty = 0 WHERE calendar_id = ? AND uid = ?`,
+		cal.ID, seeded.UID)
+	require.NoError(t, err)
+	m, _ = step(t, m, m.loadCalendars()())
+
+	m, loaded := step(t, m, EventEditMsg{Event: seeded})
+	require.IsType(t, eventEditLoadedMsg{}, loaded)
+
+	// The refresh lands before the loaded event.
+	_, err = a.DB.ExecContext(ctx, `UPDATE calendars SET remote_components = 'VTODO' WHERE id = ?`, cal.ID)
+	require.NoError(t, err)
+	m, _ = step(t, m, m.loadCalendars()())
+	_, listed := eventFormCalendars(m.calendars)[cal.ID]
+	require.False(t, listed, "the test needs a calendar that the form filter drops")
+
+	m, _ = step(t, m, loaded)
+	require.True(t, m.formOpen, "the edit form did not open")
+	m.form.titleField.SetValue("Renamed stray event")
+	m, save := submitOpenForm(t, m)
+	require.Equal(t, cal.ID, save.CalendarID, "a title-only edit must keep the calendar")
+	_, _ = step(t, m, save)
+
+	fresh, err := a.Events.Get(ctx, seeded.ID)
+	require.NoError(t, err)
+	require.Equal(t, cal.ID, fresh.CalendarID)
+	tombstones, err := a.Queries.ListTombstonesByCalendar(ctx, cal.ID)
+	require.NoError(t, err)
+	require.Empty(t, tombstones, "a title-only edit must not queue a server DELETE")
+}
