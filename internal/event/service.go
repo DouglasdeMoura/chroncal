@@ -489,14 +489,20 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	// queues the delete of the source server object. Without it the source
 	// object stays on the server, and a server that keeps UIDs unique per
 	// account refuses the target create (issue #828).
-	move := storage.MoveEventUIDToCalendarParams{FromCalendarID: old.CalendarID, ToCalendarID: r.CalendarID, Uid: r.Uid}
-	if err := storage.RecordResourceMove(ctx, qtx, move.FromCalendarID, move.ToCalendarID, move.Uid, func(ctx context.Context) error {
-		return moveUIDRowsTx(ctx, qtx, move)
-	}); err != nil {
+	if err := recordUIDMoveTx(ctx, qtx, old.CalendarID, r.CalendarID, r.Uid); err != nil {
 		return Event{}, fmt.Errorf("record calendar move: %w", err)
 	}
 	e.Categories = p.Categories
 	return e, nil
+}
+
+// recordUIDMoveTx records the move of the event rows of one UID from one
+// calendar to another. It does nothing when the two calendars are the same.
+func recordUIDMoveTx(ctx context.Context, qtx *storage.Queries, fromCalendarID, toCalendarID int64, uid string) error {
+	move := storage.MoveEventUIDToCalendarParams{FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid}
+	return storage.RecordResourceMove(ctx, qtx, fromCalendarID, toCalendarID, uid, func(ctx context.Context) error {
+		return moveUIDRowsTx(ctx, qtx, move)
+	})
 }
 
 // moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
@@ -775,11 +781,8 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	// of the UID then move too, and the server object in the old calendar
 	// gets a tombstone. Without it that stale object keeps the UID, and
 	// iCloud refuses the later PUT (issue #828).
-	if fromCalendarID != 0 && fromCalendarID != r.CalendarID {
-		move := storage.MoveEventUIDToCalendarParams{FromCalendarID: fromCalendarID, ToCalendarID: r.CalendarID, Uid: uid}
-		if err := storage.RecordResourceMove(ctx, qtx, move.FromCalendarID, move.ToCalendarID, move.Uid, func(ctx context.Context) error {
-			return moveUIDRowsTx(ctx, qtx, move)
-		}); err != nil {
+	if fromCalendarID != 0 {
+		if err := recordUIDMoveTx(ctx, qtx, fromCalendarID, r.CalendarID, uid); err != nil {
 			return Event{}, 0, fmt.Errorf("record override calendar move: %w", err)
 		}
 	}
