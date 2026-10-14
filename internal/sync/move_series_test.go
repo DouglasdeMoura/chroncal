@@ -263,14 +263,22 @@ func TestMoveTodoAndJournalBetweenCalendarsOfOneICloudAccount(t *testing.T) {
 
 // TestEditLegacyOverrideInOtherCalendarKeepsCalendar proves that an edit
 // of an override that an older version moved to another calendar still
-// saves and marks the calendar of the override dirty. The edit form preselects the calendar of the override, so the
+// saves. The edit form preselects the calendar of the override, so the
 // check must not refuse that calendar.
+//
+// The export of a UID is not scoped to one calendar: it holds the master
+// and every override (issue #842). The dirty mark must therefore go to the
+// calendar of the master. A dirty mark on the calendar of the override
+// uploads the whole series into that calendar a second time.
 func TestEditLegacyOverrideInOtherCalendarKeepsCalendar(t *testing.T) {
 	t.Parallel()
-	engine, _, _, calA, calB := newICloudPairEngine(t)
+	engine, _, srv, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
 
 	master, override, inst := createSeriesWithOverride(t, engine, calA)
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("initial push = %+v, %v", res, err)
+	}
 	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, calB, override.ID); err != nil {
 		t.Fatalf("move override row: %v", err)
 	}
@@ -280,11 +288,19 @@ func TestEditLegacyOverrideInOtherCalendarKeepsCalendar(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateInstance on the legacy override = %v, want nil", err)
 	}
-	// The edit lives in calendar B, so B must be dirty. A dirty mark on the
-	// calendar of the master never pushes the edit.
-	sr, err := engine.q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: master.UID})
+	sr, err := engine.q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: master.UID})
 	if err != nil || sr.Dirty != 1 {
-		t.Fatalf("sync resource of B = %+v, %v; want dirty", sr, err)
+		t.Fatalf("sync resource of A = %+v, %v; want dirty", sr, err)
+	}
+
+	syncPairClean(t, engine, calA, calB)
+	pathA := "/cal/a/" + master.UID + ".ics"
+	wantOnlyServerObject(t, srv, pathA)
+	srv.mu.Lock()
+	body := srv.objects[pathA]
+	srv.mu.Unlock()
+	if !strings.Contains(body, "SUMMARY:Later") {
+		t.Fatalf("server body in A does not hold the edit:\n%s", body)
 	}
 }
 

@@ -821,9 +821,9 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 
 // updateInstanceTx creates or updates a per-occurrence override row and its
 // categories using a tx-bound Queries. It returns the event and the calendar
-// ID of the override row (for the dirty mark inside the caller's
-// transaction). It opens
-// no transaction, so callers can compose it with attendee/alarm writes.
+// ID of the master (for the dirty mark inside the caller's transaction). It
+// opens no transaction, so callers can compose it with attendee/alarm
+// writes.
 func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
@@ -924,10 +924,12 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 
 	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
-	// Return the calendar of the override row. A legacy override keeps its
-	// own calendar, and a dirty mark on the calendar of the master never
-	// pushes the edit.
-	return e, r.CalendarID, nil
+	// Return the calendar of the master. The export of a UID holds the
+	// master and every override, also a legacy override in another
+	// calendar. A push of the calendar of that override uploads the whole
+	// series there a second time. Issue #842 tracks an export scoped to one
+	// calendar.
+	return e, master.CalendarID, nil
 }
 
 // updateOverrideTx updates a stored override row. A span change clears the
