@@ -128,18 +128,25 @@ var (
 const allowPlaintextEnv = "CHRONCAL_SECURITY_ALLOW_PLAINTEXT"
 
 // checkAllowPlaintextEnv returns an error when allowPlaintextEnv holds a
-// value that Load reads as false. Load ignores an empty value. A value that
-// does not parse as a bool also reads as false.
+// value other than a true bool. Load ignores an empty value. A false value
+// overrides the config file, so the write has no effect. Load fails on a
+// value that does not parse as a bool. Both errors tell the user to unset
+// the variable.
 func checkAllowPlaintextEnv() error {
 	value, ok := os.LookupEnv(allowPlaintextEnv)
 	if !ok || value == "" {
 		return nil
 	}
-	if on, err := strconv.ParseBool(value); err == nil && on {
-		return nil
+	on, err := strconv.ParseBool(value)
+	switch {
+	case err != nil:
+		return fmt.Errorf("%s=%q in the environment is not a bool, and chroncal cannot load the config while it is set; unset %s, then try again",
+			allowPlaintextEnv, value, allowPlaintextEnv)
+	case !on:
+		return fmt.Errorf("%s=%q in the environment turns plaintext storage off and overrides the config file; unset %s, then try again",
+			allowPlaintextEnv, value, allowPlaintextEnv)
 	}
-	return fmt.Errorf("%s=%q in the environment turns plaintext storage off and overrides the config file; unset %s, then try again",
-		allowPlaintextEnv, value, allowPlaintextEnv)
+	return nil
 }
 
 // setSecurityAllowPlaintext returns content with security.allow_plaintext set

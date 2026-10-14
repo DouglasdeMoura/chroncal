@@ -142,8 +142,9 @@ func TestEnableAllowPlaintextRefusesAFileItCannotEditSafely(t *testing.T) {
 }
 
 // TestCheckAllowPlaintextEnv matches the bool rule of Load: an empty value
-// is ignored, a true value is accepted, and any other value turns
-// plaintext storage off.
+// is ignored, a true value is accepted, and a false value turns plaintext
+// storage off. Load fails on a value that does not parse as a bool, so the
+// error must say that the value is not a bool.
 func TestCheckAllowPlaintextEnv(t *testing.T) {
 	for _, tc := range []struct {
 		value  string
@@ -155,12 +156,28 @@ func TestCheckAllowPlaintextEnv(t *testing.T) {
 		{"false", true},
 		{"0", true},
 		{"no", true},
+		{"maybe", true},
 	} {
 		t.Run(tc.value, func(t *testing.T) {
 			t.Setenv(allowPlaintextEnv, tc.value)
-			if err := checkAllowPlaintextEnv(); (err != nil) != tc.refuse {
+			err := checkAllowPlaintextEnv()
+			if (err != nil) != tc.refuse {
 				t.Fatalf("checkAllowPlaintextEnv(%q) = %v, want refuse %v", tc.value, err, tc.refuse)
 			}
+			if err != nil && !strings.Contains(err.Error(), "unset "+allowPlaintextEnv) {
+				t.Fatalf("checkAllowPlaintextEnv(%q) = %v, want the remedy", tc.value, err)
+			}
 		})
+	}
+}
+
+// TestCheckAllowPlaintextEnvNamesABadBool sets a value that does not parse
+// as a bool. Load fails on that value, so the error must not claim that
+// the value turns plaintext storage off.
+func TestCheckAllowPlaintextEnvNamesABadBool(t *testing.T) {
+	t.Setenv(allowPlaintextEnv, "maybe")
+	err := checkAllowPlaintextEnv()
+	if err == nil || !strings.Contains(err.Error(), "is not a bool") || strings.Contains(err.Error(), "turns plaintext storage off") {
+		t.Fatalf("checkAllowPlaintextEnv = %v, want a not-a-bool refusal", err)
 	}
 }
