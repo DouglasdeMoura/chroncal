@@ -557,7 +557,11 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 
 			j, err := a.Journals.Update(ctx, existing.ID, p)
 			if errors.Is(err, journal.ErrInstanceCalendarMove) {
-				return fmt.Errorf("update journal: one occurrence cannot move to another calendar. To move the whole series, run: chroncal journal update %s --calendar NAME", existing.UID)
+				// A journal UID has one master in all calendars.
+				return errOccurrenceMove("journal", existing.ID, existing.RecurrenceID, existing.UID, func() (int64, error) {
+					m, err := a.Journals.GetByUID(ctx, existing.UID)
+					return m.ID, err
+				})
 			}
 			if err != nil {
 				return fmt.Errorf("update journal: %w", err)

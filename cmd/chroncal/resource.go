@@ -312,3 +312,23 @@ func newPurgeDeletedCmd(r resource, h verbHelp) *cobra.Command {
 	addConfirmFlag(cmd)
 	return cmd
 }
+
+// errOccurrenceMove returns the error for a refused calendar move of one
+// occurrence. The error names the command that moves the whole series.
+// kind is "event", "todo", or "journal". The hint names the numeric ID of
+// the master, because a UID can have a master in two calendars, and a
+// reference by UID then can name the wrong series.
+//
+// id, recurrenceID, and uid are the fields of the row that the user edits.
+// A master row names itself. For an override row, master returns the ID of
+// its master. When master fails, the hint names the UID.
+func errOccurrenceMove(kind string, id int64, recurrenceID, uid string, master func() (int64, error)) error {
+	ref := uid
+	if recurrenceID == "" {
+		ref = strconv.FormatInt(id, 10)
+	} else if masterID, err := master(); err == nil {
+		ref = strconv.FormatInt(masterID, 10)
+	}
+	return fmt.Errorf("update %s: one occurrence cannot move to another calendar. To move the whole series, run: chroncal %s update %s --calendar NAME",
+		kind, kind, ref)
+}

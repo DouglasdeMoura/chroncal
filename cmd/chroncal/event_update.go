@@ -342,7 +342,12 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				e, err = a.Events.Update(ctx, existing.ID, p)
 			}
 			if errors.Is(err, event.ErrInstanceCalendarMove) {
-				return fmt.Errorf("update event: one occurrence cannot move to another calendar. To move the whole series, run: chroncal event update %s --calendar NAME", existing.UID)
+				// The master of the occurrence is in the calendar of the
+				// edited row. Two calendars can hold the same UID.
+				return errOccurrenceMove("event", existing.ID, existing.RecurrenceID, existing.UID, func() (int64, error) {
+					m, err := a.Events.GetByCalendarUID(ctx, existing.CalendarID, existing.UID)
+					return m.ID, err
+				})
 			}
 			if err != nil {
 				return fmt.Errorf("update event: %w", err)

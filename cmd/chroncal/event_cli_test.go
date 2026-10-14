@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -878,7 +879,7 @@ func TestEventRestoreNotFoundIsTagged(t *testing.T) {
 
 // TestEventUpdate_OverrideCalendarMoveNamesTheSeries asks for another
 // calendar on one occurrence. The command refuses, and the error tells the
-// user to move the whole series with the master.
+// user to move the whole series with the numeric ID of the master.
 func TestEventUpdate_OverrideCalendarMoveNamesTheSeries(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -899,7 +900,7 @@ func TestEventUpdate_OverrideCalendarMoveNamesTheSeries(t *testing.T) {
 	if err == nil {
 		t.Fatal("event update of one occurrence with --calendar succeeded, want a refusal")
 	}
-	want := "event update " + master.UID + " --calendar"
+	want := "event update " + strconv.FormatInt(master.ID, 10) + " --calendar"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("error = %q, want it to name %q", err, want)
 	}
