@@ -586,20 +586,15 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 	return storage.Event{}, nil, ErrAmbiguousUID
 }
 
-// findInstanceOverrideTx finds the stored override of recID for master. It
-// looks in the calendar of the master first. Then it looks for a legacy
-// override: a row that an older version saved in a calendar with no master
-// of the UID. masters lists every master of the UID. More than one legacy
+// findInstanceOverrideTx finds the stored override of recID for master. A
+// row in the calendar of the master wins. Else it takes a legacy override:
+// a row that an older version saved in a calendar with no master of the
+// UID. masters lists every master of the UID. More than one legacy
 // row gives ErrAmbiguousUID. No row gives sql.ErrNoRows.
 func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, masters []storage.Event, recID string) (storage.Event, error) {
-	row, err := qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
-		CalendarID:   master.CalendarID,
-		Uid:          master.Uid,
-		RecurrenceID: recID,
-	})
-	if !errors.Is(err, sql.ErrNoRows) {
-		return row, err
-	}
+	// One query reads every live row of (uid, recID). The pick runs in Go,
+	// so the common edit (no row, or a row with the master) needs no second
+	// query.
 	rows, err := qtx.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
 		Uid:          master.Uid,
 		RecurrenceID: recID,
@@ -609,6 +604,9 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 	}
 	var legacy []storage.Event
 	for _, r := range rows {
+		if r.CalendarID == master.CalendarID {
+			return r, nil
+		}
 		if !slices.ContainsFunc(masters, func(m storage.Event) bool { return m.CalendarID == r.CalendarID }) {
 			legacy = append(legacy, r)
 		}
