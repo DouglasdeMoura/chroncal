@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 )
 
 // MarkResourceDirty marks a resource as dirty for sync. If the calendar is
@@ -76,4 +77,85 @@ func CreateTombstoneIfSynced(ctx context.Context, db DBTX, calendarID int64, uid
 		return false, err
 	}
 	return true, nil
+}
+
+// moveTables maps a sync owner type to the table that holds its rows. The
+// table name goes into SQL text, so only these fixed names are allowed.
+var moveTables = map[string]string{
+	"event":   "events",
+	"todo":    "todos",
+	"journal": "journals",
+}
+
+// RecordResourceMove updates the sync rows after a local move of a resource
+// from one calendar to another (issue #828). Call it in the transaction of
+// the move, after the row update.
+//
+// On the target calendar it clears a pending tombstone for the UID. A move
+// back to a calendar then cannot delete the server object of that calendar.
+//
+// On the source calendar it acts only when no live row with the UID stays
+// there:
+//   - A sync row with a server object gets a tombstone, so the sync engine
+//     deletes that object. The row also loses its dirty flag, so the source
+//     push does not upload the moved body again.
+//   - A sync row with no server object is deleted. Nothing on the server
+//     needs a delete, and a push of that row would create a copy in the
+//     source calendar.
+func RecordResourceMove(ctx context.Context, db DBTX, ownerType string, fromCalendarID, toCalendarID int64, uid string) error {
+	if fromCalendarID == toCalendarID || uid == "" {
+		return nil
+	}
+	table, ok := moveTables[ownerType]
+	if !ok {
+		return fmt.Errorf("record resource move: unknown owner type %q", ownerType)
+	}
+	if _, err := db.ExecContext(ctx,
+		`DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?`,
+		toCalendarID, uid,
+	); err != nil {
+		return fmt.Errorf("clear target tombstone: %w", err)
+	}
+
+	var remaining int64
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM `+table+` WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL`,
+		fromCalendarID, uid,
+	).Scan(&remaining); err != nil {
+		return fmt.Errorf("count source rows: %w", err)
+	}
+	if remaining > 0 {
+		return nil
+	}
+
+	var remoteURL string
+	err := db.QueryRowContext(ctx,
+		`SELECT remote_url FROM sync_resources WHERE calendar_id = ? AND uid = ?`,
+		fromCalendarID, uid,
+	).Scan(&remoteURL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get source sync resource: %w", err)
+	}
+	if remoteURL == "" {
+		if _, err := db.ExecContext(ctx,
+			`DELETE FROM sync_resources WHERE calendar_id = ? AND uid = ?`,
+			fromCalendarID, uid,
+		); err != nil {
+			return fmt.Errorf("delete unpushed source sync resource: %w", err)
+		}
+		return nil
+	}
+	if _, err := CreateTombstoneIfSynced(ctx, db, fromCalendarID, uid); err != nil {
+		return fmt.Errorf("create source tombstone: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE sync_resources SET dirty = 0 WHERE calendar_id = ? AND uid = ?`,
+		fromCalendarID, uid,
+	); err != nil {
+		return fmt.Errorf("clear source dirty flag: %w", err)
+	}
+	return nil
 }

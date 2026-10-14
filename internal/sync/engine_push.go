@@ -3,6 +3,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -42,6 +43,13 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 	}
 
 	result := &pushResult{}
+	// The pending source tombstones of local moves load once, at the first
+	// new resource. See deleteMovedSources.
+	var (
+		siblings       map[string][]movedSource
+		siblingsLoaded bool
+		siblingsErr    error
+	)
 	for _, res := range dirty {
 		// CalDAV's PUT contract (RFC 4791 §4.1) only lets the organizer
 		// modify a meeting resource. Attendees are supposed to round-trip
@@ -148,6 +156,29 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			putPath, err = client.CanonicalObjectRef(remoteURL, buildRemoteResourcePath(remoteURL, res.Uid))
 			if err != nil {
 				err = fmt.Errorf("build remote href for %s: %w", res.Uid, err)
+				result.errors = append(result.errors, err)
+				e.recordPushFailure(ctx, calendarID, res.Uid, err)
+				continue
+			}
+			// A new resource can be the target half of a local move
+			// between two calendars of this account. Delete the source
+			// object first, or a server that keeps UIDs unique per
+			// account refuses the create (issue #828).
+			if !siblingsLoaded {
+				siblings, err = e.siblingTombstones(ctx, calendarID)
+				if err != nil {
+					// A failed lookup proves nothing. Keep every new
+					// resource dirty and retry on the next pass.
+					err = fmt.Errorf("list moved sources: %w", err)
+				}
+				siblingsLoaded, siblingsErr = true, err
+			}
+			if siblingsErr != nil {
+				result.errors = append(result.errors, fmt.Errorf("%s: %w", res.Uid, siblingsErr))
+				e.recordPushFailure(ctx, calendarID, res.Uid, siblingsErr)
+				continue
+			}
+			if err := e.deleteMovedSources(ctx, client, siblings[res.Uid]); err != nil {
 				result.errors = append(result.errors, err)
 				e.recordPushFailure(ctx, calendarID, res.Uid, err)
 				continue
@@ -278,55 +309,145 @@ func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, c
 
 	result := &tombstoneResult{}
 	for _, ts := range tombstones {
-		deletePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
-		if hrefErr != nil {
-			result.errors = append(result.errors, fmt.Errorf("validate tombstone %s: %w", ts.Uid, hrefErr))
-			continue
+		switch outcome, err := e.deleteTombstone(ctx, client, calendarID, remoteURL, ts, etagByUID[ts.Uid]); outcome {
+		case tombstoneDeleted:
+			result.deleted++
+		case tombstoneRemoteKept:
+			result.autoResolved++
+		case tombstoneFailed:
+			result.errors = append(result.errors, err)
 		}
-		// Make the DELETE conditional on the ETag we last saw so the server
-		// rejects it (412) if the resource was edited remotely after our last
-		// sync. Without this, the tombstone push would silently destroy that
-		// concurrent edit. An untracked resource (never synced, or already
-		// cleaned up) has no ETag, which falls back to an unconditional DELETE.
-		etag := etagByUID[ts.Uid]
-		e.logger.Debug("deleting tombstone", "uid", ts.Uid, "remote_url", deletePath)
-		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
-			return struct{}{}, client.DeleteResource(ctx, deletePath, etag)
-		}); err != nil && !errors.Is(err, caldav.ErrResourceGone) {
-			// A 404/410 means the resource is already absent server-side —
-			// the desired end state — so fall through and clear the local
-			// rows instead of re-issuing the DELETE on every sync.
-			if caldav.IsConflict(err) {
-				// 412: the resource was edited remotely after we last saw it.
-				// Honoring the delete would discard that edit, so abandon it.
-				// Drop the tombstone (stop re-issuing the DELETE every sync)
-				// but keep the sync_resource so the next pull re-imports the
-				// remote version, resurrecting the item with its remote edit.
-				// A delete-vs-edit conflict always preserves the remote edit
-				// (the non-destructive choice), independent of ConflictStrategy.
-				e.logger.Warn("tombstone delete conflict: remote edited, preserving remote version", "uid", ts.Uid)
-				if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
-					e.logger.Warn("delete tombstone row after conflict failed", "uid", ts.Uid, "error", err)
-				}
-				result.autoResolved++
-				continue
-			}
-			e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)
-			result.errors = append(result.errors, fmt.Errorf("delete tombstone %s: %w", ts.Uid, err))
-			continue
-		}
-		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
-			CalendarID: calendarID,
-			Uid:        ts.Uid,
-		}); err != nil {
-			e.logger.Warn("delete sync resource after tombstone", "uid", ts.Uid, "error", err)
-		}
-		if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
-			e.logger.Warn("delete tombstone row failed", "uid", ts.Uid, "error", err)
-		}
-		result.deleted++
 	}
 	return result, nil
+}
+
+// tombstoneOutcome classifies how one tombstone DELETE was settled.
+type tombstoneOutcome int
+
+const (
+	// tombstoneFailed means the DELETE did not complete. The tombstone
+	// stays, so the next pass sends the DELETE again.
+	tombstoneFailed tombstoneOutcome = iota
+	// tombstoneDeleted means the server object is absent now. The tombstone
+	// and the sync row are gone.
+	tombstoneDeleted
+	// tombstoneRemoteKept means the server refused the DELETE with 412
+	// because of a remote edit. The tombstone is gone and the sync row stays.
+	tombstoneRemoteKept
+)
+
+// deleteTombstone sends the DELETE for one tombstone of calendarID and
+// clears the local rows that the result settles. etag is the last ETag
+// that the sync row saw. An empty etag sends an unconditional DELETE.
+func (e *Engine) deleteTombstone(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, ts storage.Tombstone, etag string) (tombstoneOutcome, error) {
+	deletePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
+	if hrefErr != nil {
+		return tombstoneFailed, fmt.Errorf("validate tombstone %s: %w", ts.Uid, hrefErr)
+	}
+	// Make the DELETE conditional on the ETag we last saw so the server
+	// rejects it (412) if the resource was edited remotely after our last
+	// sync. Without this, the tombstone push would silently destroy that
+	// concurrent edit. An untracked resource (never synced, or already
+	// cleaned up) has no ETag, which falls back to an unconditional DELETE.
+	e.logger.Debug("deleting tombstone", "uid", ts.Uid, "remote_url", deletePath)
+	if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, client.DeleteResource(ctx, deletePath, etag)
+	}); err != nil && !errors.Is(err, caldav.ErrResourceGone) {
+		// A 404/410 means the resource is already absent server-side —
+		// the desired end state — so fall through and clear the local
+		// rows instead of re-issuing the DELETE on every sync.
+		if caldav.IsConflict(err) {
+			// 412: the resource was edited remotely after we last saw it.
+			// Honoring the delete would discard that edit, so abandon it.
+			// Drop the tombstone (stop re-issuing the DELETE every sync)
+			// but keep the sync_resource so the next pull re-imports the
+			// remote version, resurrecting the item with its remote edit.
+			// A delete-vs-edit conflict always preserves the remote edit
+			// (the non-destructive choice), independent of ConflictStrategy.
+			e.logger.Warn("tombstone delete conflict: remote edited, preserving remote version", "uid", ts.Uid)
+			if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
+				e.logger.Warn("delete tombstone row after conflict failed", "uid", ts.Uid, "error", err)
+			}
+			return tombstoneRemoteKept, nil
+		}
+		e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)
+		return tombstoneFailed, fmt.Errorf("delete tombstone %s: %w", ts.Uid, err)
+	}
+	if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        ts.Uid,
+	}); err != nil {
+		e.logger.Warn("delete sync resource after tombstone", "uid", ts.Uid, "error", err)
+	}
+	if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
+		e.logger.Warn("delete tombstone row failed", "uid", ts.Uid, "error", err)
+	}
+	return tombstoneDeleted, nil
+}
+
+// movedSource is a pending tombstone of a sibling calendar: a calendar of
+// the same account as the calendar that the push serves.
+type movedSource struct {
+	calendarID int64
+	remoteURL  string
+	tombstone  storage.Tombstone
+}
+
+// siblingTombstones indexes the pending tombstones of the other writable
+// calendars of the account by UID. A local move between two calendars of
+// one account leaves a tombstone in the source calendar and a new resource
+// in the target calendar (issue #828).
+func (e *Engine) siblingTombstones(ctx context.Context, calendarID int64) (map[string][]movedSource, error) {
+	cal, err := e.q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		return nil, fmt.Errorf("get calendar: %w", err)
+	}
+	if cal.AccountID == nil || *cal.AccountID == 0 {
+		return nil, nil
+	}
+	siblings, err := e.q.ListCalendarsByAccount(ctx, cal.AccountID)
+	if err != nil {
+		return nil, fmt.Errorf("list account calendars: %w", err)
+	}
+	out := make(map[string][]movedSource)
+	for _, sib := range siblings {
+		sibURL := storage.NullableToString(sib.RemoteUrl)
+		if sib.ID == calendarID || sibURL == "" || remoteCalendarIsReadOnly(sib) {
+			continue
+		}
+		tombstones, err := e.q.ListTombstonesByCalendar(ctx, sib.ID)
+		if err != nil {
+			return nil, fmt.Errorf("list tombstones of calendar %d: %w", sib.ID, err)
+		}
+		for _, ts := range tombstones {
+			out[ts.Uid] = append(out[ts.Uid], movedSource{calendarID: sib.ID, remoteURL: sibURL, tombstone: ts})
+		}
+	}
+	return out, nil
+}
+
+// deleteMovedSources sends the pending source DELETEs for uid before the
+// create PUT of a moved resource. Some servers (iCloud) keep a UID unique
+// in the whole account. They refuse the create with 412 while the source
+// object still exists, and the new href then answers 404 (issue #828).
+// The calendars of one account share one sync lock, so the source DELETE
+// cannot race the source calendar's own pass. An error means a DELETE did
+// not complete. The caller then keeps the resource dirty and skips the PUT,
+// so the next pass tries the DELETE and the create again.
+func (e *Engine) deleteMovedSources(ctx context.Context, client *caldav.Client, sources []movedSource) error {
+	for _, src := range sources {
+		sr, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
+			CalendarID: src.calendarID,
+			Uid:        src.tombstone.Uid,
+		})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get source sync resource %s: %w", src.tombstone.Uid, err)
+		}
+		if _, err := e.deleteTombstone(ctx, client, src.calendarID, src.remoteURL, src.tombstone, sr.Etag); err != nil {
+			return fmt.Errorf("move %s: %w", src.tombstone.Uid, err)
+		}
+	}
+	return nil
 }
 
 // putConflictOutcome classifies how a 412 on one resource was settled.
