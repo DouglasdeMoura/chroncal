@@ -604,3 +604,39 @@ func TestMoveEventKeepsTargetDirtyWhenTargetCheckFails(t *testing.T) {
 	}
 	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
 }
+
+// TestPlainCreateDoesNotNeedSiblingTombstones pushes a new event while the
+// lookup of the sibling tombstones fails. Only a create that gets 412 needs
+// that lookup. A plain create must push, and the failed lookup must not
+// keep it dirty.
+func TestPlainCreateDoesNotNeedSiblingTombstones(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	start := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+	evt, err := engine.events.Create(ctx, event.CreateParams{
+		CalendarID: calA, Title: "Dentist", StartTime: start, EndTime: start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Make every read of the tombstones table fail.
+	if _, err := engine.db.ExecContext(ctx, `ALTER TABLE tombstones RENAME TO tombstones_gone`); err != nil {
+		t.Fatalf("rename tombstones: %v", err)
+	}
+	res, err := engine.PushLocalEdits(ctx, calA)
+	if err != nil {
+		t.Fatalf("PushLocalEdits: %v", err)
+	}
+	if res.Pushed != 1 {
+		t.Fatalf("push with a failed sibling lookup = %+v, want one push", res)
+	}
+	if !srv.has("/cal/a/" + evt.UID + ".ics") {
+		t.Fatal("the server has no object for the new event")
+	}
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
+	if err != nil || sr.Dirty != 0 {
+		t.Fatalf("sync resource = %+v, %v; want clean", sr, err)
+	}
+}

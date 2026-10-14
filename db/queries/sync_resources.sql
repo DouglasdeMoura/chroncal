@@ -103,8 +103,8 @@ DELETE FROM sync_resources
 WHERE calendar_id = ? AND uid = ? AND remote_url = '';
 
 -- name: ListSiblingTombstones :many
--- The pending tombstones of the other calendars of one account, with the
--- last known etag of each source object. A calendar without a remote_url
+-- The pending tombstones of one UID in the other calendars of one account,
+-- with the last known etag of each source object. A calendar without a remote_url
 -- has no server object to delete. The caller drops the read-only
 -- calendars. A local move between two calendars of one account leaves a
 -- tombstone in the source calendar. See issue #828.
@@ -120,4 +120,5 @@ WHERE c.account_id = (SELECT own.account_id FROM calendars own WHERE own.id = sq
   AND c.account_id != 0
   AND c.id != sqlc.arg(calendar_id)
   AND c.remote_url IS NOT NULL AND c.remote_url != ''
+  AND t.uid = sqlc.arg(uid)
 ORDER BY c.display_order, c.name, t.deleted_at;

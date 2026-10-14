@@ -283,8 +283,14 @@ WHERE c.account_id = (SELECT own.account_id FROM calendars own WHERE own.id = ?1
   AND c.account_id != 0
   AND c.id != ?1
   AND c.remote_url IS NOT NULL AND c.remote_url != ''
+  AND t.uid = ?2
 ORDER BY c.display_order, c.name, t.deleted_at
 `
+
+type ListSiblingTombstonesParams struct {
+	CalendarID int64
+	Uid        string
+}
 
 type ListSiblingTombstonesRow struct {
 	Tombstone            Tombstone
@@ -293,13 +299,13 @@ type ListSiblingTombstonesRow struct {
 	Etag                 string
 }
 
-// The pending tombstones of the other calendars of one account, with the
-// last known etag of each source object. A calendar without a remote_url
+// The pending tombstones of one UID in the other calendars of one account,
+// with the last known etag of each source object. A calendar without a remote_url
 // has no server object to delete. The caller drops the read-only
 // calendars. A local move between two calendars of one account leaves a
 // tombstone in the source calendar. See issue #828.
-func (q *Queries) ListSiblingTombstones(ctx context.Context, calendarID int64) ([]ListSiblingTombstonesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listSiblingTombstones, calendarID)
+func (q *Queries) ListSiblingTombstones(ctx context.Context, arg ListSiblingTombstonesParams) ([]ListSiblingTombstonesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSiblingTombstones, arg.CalendarID, arg.Uid)
 	if err != nil {
 		return nil, err
 	}

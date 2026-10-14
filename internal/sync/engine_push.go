@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	gosync "sync"
 
 	"github.com/emersion/go-ical"
 
@@ -43,11 +42,6 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 	}
 
 	result := &pushResult{}
-	// The pending source tombstones of local moves load once, at the first
-	// new resource. See settleMovedSources.
-	loadSiblings := gosync.OnceValues(func() (map[string][]movedSource, error) {
-		return e.siblingTombstones(ctx, calendarID)
-	})
 	for _, res := range dirty {
 		// CalDAV's PUT contract (RFC 4791 §4.1) only lets the organizer
 		// modify a meeting resource. Attendees are supposed to round-trip
@@ -142,7 +136,6 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 
 		// Determine PUT path
 		var putPath string
-		var movedFrom []movedSource
 		if res.RemoteUrl != "" {
 			putPath, err = client.CanonicalObjectRef(remoteURL, res.RemoteUrl)
 			if err != nil {
@@ -159,32 +152,35 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 				e.recordPushFailure(ctx, calendarID, res.Uid, err)
 				continue
 			}
-			// A new resource can be the target half of a local move
-			// between two calendars of this account. The create PUT goes
-			// first. Only a server that keeps UIDs unique per account
-			// needs the source DELETE (issue #828). See settleMovedSources.
-			siblings, siblingsErr := loadSiblings()
-			if siblingsErr != nil {
-				// A failed lookup proves nothing. Keep every new
-				// resource dirty and retry on the next pass.
-				siblingsErr = fmt.Errorf("list moved sources: %w", siblingsErr)
-				result.errors = append(result.errors, fmt.Errorf("%s: %w", res.Uid, siblingsErr))
-				e.recordPushFailure(ctx, calendarID, res.Uid, siblingsErr)
-				continue
-			}
-			movedFrom = siblings[res.Uid]
 		}
 
 		newEtag, putErr := e.putResource(ctx, client, putPath, cal, res.Etag)
-		if putErr != nil && len(movedFrom) > 0 && caldav.IsConflict(putErr) {
-			retryPut, moveErr := e.settleMovedSources(ctx, client, putPath, res.Uid, movedFrom)
-			if moveErr != nil {
-				result.errors = append(result.errors, moveErr)
-				e.recordPushFailure(ctx, calendarID, res.Uid, moveErr)
+		if putErr != nil && res.RemoteUrl == "" && caldav.IsConflict(putErr) {
+			// A new resource can be the target half of a local move
+			// between two calendars of this account. Only a server that
+			// keeps UIDs unique per account refuses that create, so the
+			// lookup of the move sources runs after the 412 only. A plain
+			// create then never depends on it (issue #828). See
+			// settleMovedSources.
+			movedFrom, siblingsErr := e.movedSources(ctx, calendarID, res.Uid)
+			if siblingsErr != nil {
+				// A failed lookup proves nothing. Keep this resource
+				// dirty and retry on the next pass.
+				siblingsErr = fmt.Errorf("%s: list moved sources: %w", res.Uid, siblingsErr)
+				result.errors = append(result.errors, siblingsErr)
+				e.recordPushFailure(ctx, calendarID, res.Uid, siblingsErr)
 				continue
 			}
-			if retryPut {
-				newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag)
+			if len(movedFrom) > 0 {
+				retryPut, moveErr := e.settleMovedSources(ctx, client, putPath, res.Uid, movedFrom)
+				if moveErr != nil {
+					result.errors = append(result.errors, moveErr)
+					e.recordPushFailure(ctx, calendarID, res.Uid, moveErr)
+					continue
+				}
+				if retryPut {
+					newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag)
+				}
 			}
 		}
 		if putErr != nil {
@@ -374,22 +370,22 @@ type movedSource struct {
 	etag       string
 }
 
-// siblingTombstones indexes the pending tombstones of the other writable
-// calendars of the account by UID. A local move between two calendars of
-// one account leaves a tombstone in the source calendar and a new resource
-// in the target calendar (issue #828).
-func (e *Engine) siblingTombstones(ctx context.Context, calendarID int64) (map[string][]movedSource, error) {
-	rows, err := e.q.ListSiblingTombstones(ctx, calendarID)
+// movedSources lists the pending tombstones of uid in the other writable
+// calendars of the account. A local move between two calendars of one
+// account leaves a tombstone in the source calendar and a new resource in
+// the target calendar (issue #828).
+func (e *Engine) movedSources(ctx context.Context, calendarID int64, uid string) ([]movedSource, error) {
+	rows, err := e.q.ListSiblingTombstones(ctx, storage.ListSiblingTombstonesParams{CalendarID: calendarID, Uid: uid})
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string][]movedSource)
+	var out []movedSource
 	for _, row := range rows {
 		if remoteAccessIsReadOnly(row.CalendarRemoteAccess) {
 			continue
 		}
 		ts := row.Tombstone
-		out[ts.Uid] = append(out[ts.Uid], movedSource{
+		out = append(out, movedSource{
 			calendarID: ts.CalendarID,
 			remoteURL:  storage.NullableToString(row.CalendarRemoteUrl),
 			tombstone:  ts,
