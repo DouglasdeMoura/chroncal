@@ -344,9 +344,9 @@ func (m *ListDialogModel) renderDetails(w, h int) string {
 
 	bodyH := h
 	var pinned string
-	if m.hasPinnedTitle() {
-		pinned = paneTitle(m.detailTitle, w)
-		bodyH = max(bodyH-2, 1)
+	if titleLines := m.pinnedTitleLines(w, h); titleLines != nil {
+		pinned = paneTitle(titleLines, w)
+		bodyH = max(bodyH-len(titleLines)-1, 1)
 	}
 
 	if len(m.actions) == 0 {

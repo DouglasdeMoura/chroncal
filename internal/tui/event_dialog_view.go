@@ -6,6 +6,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
 func (m EventDialogModel) View() string { return m.shell.View() }
@@ -87,7 +88,7 @@ func (m EventDialogModel) refresh() EventDialogModel {
 			rsvpLine = m.renderRSVPLine(att, rsvp, w)
 		}
 		lines, _ := eventDetailLines(ev, cal, w, m.labelWidth(), rsvpLine, rw)
-		m.shell = m.shell.SetDetailTitle(ev.Title).SetDetailLines(lines)
+		m.shell = m.shell.SetDetailTitle(textsafe.Display(ev.Title)).SetDetailLines(lines)
 	} else {
 		m.shell = m.shell.SetDetailTitle("").SetDetailLines(nil)
 	}

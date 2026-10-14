@@ -282,26 +282,13 @@ func (m *ListDialogModel) syncBody() {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	boxW, boxH := m.boxSize()
-	innerW := max(boxW-5, 10)
-	innerH := max(boxH-3, 6)
-	bodyH := max(innerH-4, 3)
-
-	var detailW, detailH int
-	if m.isNarrow() {
-		rowCount := max(len(m.rows), 1)
-		listH := min(max(rowCount+1, 3), max(bodyH/3, 3))
-		detailW = innerW
-		detailH = max(bodyH-listH-1, 3)
-	} else {
-		detailW = detailColumnWidth(innerW)
-		detailH = bodyH
-	}
+	detailW, detailH := m.detailPaneSize()
+	titleLines := m.pinnedTitleLines(detailW, detailH)
 	if len(m.actions) > 0 {
 		detailH = max(detailH-2, 1)
 	}
-	if m.hasPinnedTitle() {
-		detailH = max(detailH-2, 1)
+	if titleLines != nil {
+		detailH = max(detailH-len(titleLines)-1, 1)
 	}
 
 	lines := m.detailLines
@@ -313,8 +300,39 @@ func (m *ListDialogModel) syncBody() {
 	m.body.SetContentLines(lines)
 }
 
-// hasPinnedTitle reports whether the shell should reserve two lines at the
-// top of the detail pane for a pinned title row. The empty-state pane
+// detailPaneSize returns the width and the height of the full detail
+// pane. The height includes the pinned title, the body, and the action
+// bar. The values match the arguments that View gives to renderDetails.
+func (m ListDialogModel) detailPaneSize() (int, int) {
+	boxW, boxH := m.boxSize()
+	innerW := max(boxW-5, 10)
+	innerH := max(boxH-3, 6)
+	bodyH := max(innerH-4, 3)
+
+	if m.isNarrow() {
+		rowCount := max(len(m.rows), 1)
+		listH := min(max(rowCount+1, 3), max(bodyH/3, 3))
+		return innerW, max(bodyH-listH-1, 3)
+	}
+	return detailColumnWidth(innerW), bodyH
+}
+
+// pinnedTitleLines returns the wrapped rows of the pinned title for a
+// detail pane of w cells by h rows. It returns nil when the pane has no
+// pinned title. The title gets at most half of the rows that remain after
+// the action bar and the rule, so the body always keeps space to scroll.
+func (m ListDialogModel) pinnedTitleLines(w, h int) []string {
+	if !m.hasPinnedTitle() {
+		return nil
+	}
+	if len(m.actions) > 0 {
+		h -= 2
+	}
+	return wrapTitleLines(m.detailTitle, w, max((h-1)/2, 1))
+}
+
+// hasPinnedTitle reports whether the shell should reserve lines at the
+// top of the detail pane for a pinned title and its rule. The empty-state pane
 // (no rows) intentionally skips the title since emptyDetails carries its
 // own message.
 func (m ListDialogModel) hasPinnedTitle() bool {

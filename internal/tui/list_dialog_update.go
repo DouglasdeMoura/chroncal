@@ -237,13 +237,13 @@ func (m ListDialogModel) DetailsOrigin() (int, int) {
 }
 
 // BodyRowScreenY translates a content-row index inside the scrollable
-// detail body to its screen-space Y. It includes the pinned title row
-// (+2 lines when present) and the current scroll offset. Returns false
+// detail body to its screen-space Y. It includes the pinned title rows
+// and their rule (when present) and the current scroll offset. Returns false
 // when the row is scrolled out of view.
 func (m ListDialogModel) BodyRowScreenY(idx int) (int, bool) {
 	_, oy := m.DetailsOrigin()
-	if m.hasPinnedTitle() {
-		oy += 2
+	if titleLines := m.pinnedTitleLines(m.detailPaneSize()); titleLines != nil {
+		oy += len(titleLines) + 1
 	}
 	visible := idx - m.body.YOffset()
 	if visible < 0 || visible >= m.body.Height() {

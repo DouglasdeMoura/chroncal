@@ -12,6 +12,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
 // EventViewRequestedMsg requests the read-only event view dialog.
@@ -129,28 +130,26 @@ func (m EventViewDialogModel) SetSize(w, h int) EventViewDialogModel {
 	m.body.SetWidth(cw)
 	if cw > 0 {
 		bodyLines := m.buildBodyLines(cw)
-		m.body.SetHeight(min(len(bodyLines), m.viewportHeight()))
+		m.body.SetHeight(min(len(bodyLines), m.viewportHeight(len(m.titleLines(cw)))))
 		m.body.SetContentLines(bodyLines)
 	} else {
-		m.body.SetHeight(m.viewportHeight())
+		m.body.SetHeight(m.viewportHeight(1))
 	}
 	return m
 }
 
+// eventViewChromeLines is the count of fixed lines around the body and
+// the title: the top and bottom border, the top padding (PaddingY), the
+// faint rule below the title, the action separator, the action row, and
+// the help footer with its blank line at the start.
+const eventViewChromeLines = 2 + 1 + 1 + 1 + 1 + 2
+
 // viewportHeight returns the height available for the scrollable body.
-// It subtracts the dialog's chrome (border, top padding). It also
-// subtracts the pinned title row + rule and the action separator +
-// button row. It also subtracts the help footer with its blank line at
-// the start. Clamped to a minimum of 1 so a too-small terminal still
-// renders something.
-func (m EventViewDialogModel) viewportHeight() int {
-	const chromeLines = 2 + // top + bottom border
-		1 + // top padding (PaddingY)
-		2 + // pinned title + faint rule
-		1 + // action separator
-		1 + // action row
-		2 // blank line + footer
-	return max(m.height-chromeLines, 1)
+// It subtracts the dialog chrome and titleH, the count of title lines.
+// Clamped to a minimum of 1 so a too-small terminal still renders
+// something.
+func (m EventViewDialogModel) viewportHeight(titleH int) int {
+	return max(m.height-eventViewChromeLines-titleH, 1)
 }
 
 func (m EventViewDialogModel) BoxSize() (int, int) {
@@ -476,14 +475,24 @@ func (m EventViewDialogModel) renderActions(w int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
+// titleLines returns the event title wrapped to lines of at most w cells
+// (issue #825). The title gets at most half of the rows that remain after
+// the chrome, so the body always keeps space to scroll.
+func (m EventViewDialogModel) titleLines(w int) []string {
+	avail := m.height - eventViewChromeLines
+	return wrapTitleLines(textsafe.Display(m.event.Title), w, max(avail/2, 1))
+}
+
 // titleRow renders the bold event title above a faint divider rule.
 // Destructive actions are deliberately absent here. They live in the
 // bottom action bar, away from the dialog's visual anchor.
-func (m EventViewDialogModel) titleRow(w int) []string {
-	faint := lipgloss.NewStyle().Faint(true)
-	title := lipgloss.NewStyle().Bold(true).Render(truncateTo(m.event.Title, w))
-	rule := faint.Render(strings.Repeat("─", w))
-	return []string{title, rule}
+func (m EventViewDialogModel) titleRow(lines []string, w int) []string {
+	bold := lipgloss.NewStyle().Bold(true)
+	out := make([]string, 0, len(lines)+1)
+	for _, line := range lines {
+		out = append(out, bold.Render(line))
+	}
+	return append(out, lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", w)))
 }
 
 // actionsSeparator renders the faint rule that sits between the body
@@ -610,12 +619,13 @@ func (m EventViewDialogModel) View() string {
 		return ""
 	}
 
-	titleLines := m.titleRow(cw)
+	title := m.titleLines(cw)
+	titleLines := m.titleRow(title, cw)
 	bodyLines := m.buildBodyLines(cw)
 	actionsRow := m.renderActions(cw)
 
 	m.body.SetWidth(cw)
-	m.body.SetHeight(min(len(bodyLines), m.viewportHeight()))
+	m.body.SetHeight(min(len(bodyLines), m.viewportHeight(len(title))))
 	m.body.SetContentLines(bodyLines)
 
 	sep := m.actionsSeparator(cw)

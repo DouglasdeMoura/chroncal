@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
@@ -283,7 +284,7 @@ func (m TrashModel) refresh() TrashModel {
 	if e, ok := m.selectedEntry(); ok {
 		cal := m.calendars[e.CalendarID]
 		rw := eventMetaURLRewriter(cal)
-		title := e.Title
+		title := textsafe.Display(e.Title)
 		if title == "" {
 			title = "(untitled)"
 		}
