@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	gosync "sync"
 	"testing"
 	"time"
@@ -29,8 +30,13 @@ type icloudFakeServer struct {
 	// failDelete makes every DELETE answer 403 while it is true. A 403 is
 	// not transient, so the test does not wait for a retry backoff.
 	failDelete bool
-	deletes    int
-	puts       int
+	// generic turns off the account-wide UID rule. The server then acts
+	// like a server that keeps a UID unique per collection only.
+	generic bool
+	// putStatus maps a collection prefix to a forced PUT status.
+	putStatus map[string]int
+	deletes   int
+	puts      int
 }
 
 var icloudUIDPattern = regexp.MustCompile(`(?m)^UID:(.+?)\r?$`)
@@ -75,7 +81,16 @@ func (f *icloudFakeServer) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		uid := m[1]
+		for prefix, code := range f.putStatus {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				w.WriteHeader(code)
+				return
+			}
+		}
 		for p, b := range f.objects {
+			if f.generic {
+				break
+			}
 			if p == r.URL.Path {
 				continue
 			}
@@ -141,6 +156,36 @@ func (f *icloudFakeServer) setFailDelete(v bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failDelete = v
+}
+
+func (f *icloudFakeServer) setGeneric(v bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.generic = v
+}
+
+func (f *icloudFakeServer) setPutStatus(prefix string, code int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.putStatus == nil {
+		f.putStatus = map[string]int{}
+	}
+	f.putStatus[prefix] = code
+}
+
+// editRemote gives the object at path a new ETag, as a remote edit does.
+func (f *icloudFakeServer) editRemote(path string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextTag++
+	f.etags[path] = fmt.Sprintf(`"e%d"`, f.nextTag)
+}
+
+func (f *icloudFakeServer) has(path string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.objects[path]
+	return ok
 }
 
 func (f *icloudFakeServer) counts() (puts, deletes int) {
@@ -262,9 +307,9 @@ func TestMoveEventBetweenCalendarsOfOneICloudAccount(t *testing.T) {
 }
 
 // TestMoveEventKeepsTargetDirtyWhenSourceDeleteFails proves that the local
-// copy stays the truth. When the source DELETE fails, the push sends no PUT
-// to the target, records no conflict, and keeps the target dirty. The next
-// sync then completes the move.
+// copy stays the truth. When the source DELETE fails, the push sends no
+// second PUT to the target, records no conflict, and keeps the target
+// dirty. The next sync then completes the move.
 func TestMoveEventKeepsTargetDirtyWhenSourceDeleteFails(t *testing.T) {
 	t.Parallel()
 	engine, q, srv, calA, calB := newICloudPairEngine(t)
@@ -282,8 +327,8 @@ func TestMoveEventKeepsTargetDirtyWhenSourceDeleteFails(t *testing.T) {
 	if len(res.Errors) == 0 || res.Pushed != 0 || res.Conflicts != 0 {
 		t.Fatalf("push with failed source DELETE = %+v, want one error and no push", res)
 	}
-	if puts, _ := srv.counts(); puts != putsBefore {
-		t.Fatalf("PUTs = %d, want %d: the target create must wait for the source DELETE", puts, putsBefore)
+	if puts, _ := srv.counts(); puts != putsBefore+1 {
+		t.Fatalf("PUTs = %d, want %d: no PUT retry after a failed source DELETE", puts, putsBefore+1)
 	}
 	srB, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: evt.UID})
 	if err != nil || srB.Dirty != 1 {
@@ -319,4 +364,110 @@ func TestMoveEventBackBeforeSyncKeepsSource(t *testing.T) {
 
 	syncPairClean(t, engine, calA, calB)
 	wantOnlyServerObject(t, srv, "/cal/a/"+evt.UID+".ics")
+}
+
+// TestMoveEventKeepsSourceWhenTargetPutFailsOnGenericServer moves an event
+// on a server that keeps a UID unique per collection only. The create PUT
+// in B fails with 507. The source object in A must stay on the server, and
+// the tombstone in A must stay for the normal tombstone pass.
+func TestMoveEventKeepsSourceWhenTargetPutFailsOnGenericServer(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	srv.setGeneric(true)
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+
+	srv.setPutStatus("/cal/b/", http.StatusInsufficientStorage)
+	res, err := engine.PushLocalEdits(ctx, calB)
+	if err != nil {
+		t.Fatalf("PushLocalEdits B: %v", err)
+	}
+	if len(res.Errors) == 0 || res.Pushed != 0 {
+		t.Fatalf("push with failed PUT = %+v, want one error and no push", res)
+	}
+	if !srv.has("/cal/a/" + evt.UID + ".ics") {
+		t.Fatal("source object in A is gone after a failed target PUT")
+	}
+	if ts, err := q.ListTombstonesByCalendar(ctx, calA); err != nil || len(ts) != 1 {
+		t.Fatalf("tombstones on A = %v, %v; want one", ts, err)
+	}
+	srB, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: evt.UID})
+	if err != nil || srB.Dirty != 1 {
+		t.Fatalf("sync resource B = %+v, %v; want dirty", srB, err)
+	}
+}
+
+// TestMoveEventWaitsWhenSourceChangedOnServer moves an event on an
+// iCloud-like server after a remote edit of the source object. The source
+// DELETE gets 412. The push must not retry the PUT, must keep B dirty,
+// must record a clear error, and must record no conflict.
+func TestMoveEventWaitsWhenSourceChangedOnServer(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+	srv.editRemote("/cal/a/" + evt.UID + ".ics")
+
+	putsBefore, _ := srv.counts()
+	res, err := engine.PushLocalEdits(ctx, calB)
+	if err != nil {
+		t.Fatalf("PushLocalEdits B: %v", err)
+	}
+	if res.Pushed != 0 || res.Conflicts != 0 || len(res.Errors) != 1 {
+		t.Fatalf("push = %+v, want one error, no push, no conflict", res)
+	}
+	msg := res.Errors[0].Error()
+	if !strings.Contains(msg, evt.UID) || !strings.Contains(msg, "changed on the server") {
+		t.Fatalf("error = %q, want the UID and a source-changed reason", msg)
+	}
+	if puts, _ := srv.counts(); puts != putsBefore+1 {
+		t.Fatalf("PUTs = %d, want %d: no PUT retry after a refused source DELETE", puts, putsBefore+1)
+	}
+	if !srv.has("/cal/a/" + evt.UID + ".ics") {
+		t.Fatal("source object in A is gone")
+	}
+	srB, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: evt.UID})
+	if err != nil || srB.Dirty != 1 {
+		t.Fatalf("sync resource B = %+v, %v; want dirty", srB, err)
+	}
+	if !strings.Contains(srB.LastPushError, "changed on the server") {
+		t.Fatalf("last push error = %q, want the source-changed reason", srB.LastPushError)
+	}
+	for _, cal := range []int64{calA, calB} {
+		if conflicts, err := q.ListSyncConflictsByCalendar(ctx, cal); err != nil || len(conflicts) != 0 {
+			t.Fatalf("conflicts on %d = %v, %v; want none", cal, conflicts, err)
+		}
+	}
+}
+
+// TestMoveEventOnGenericServerLeavesSourceToTombstonePass moves an event on
+// a server that accepts the create PUT at once. The push of B sends no
+// source DELETE. The tombstone pass of A then deletes the source object.
+func TestMoveEventOnGenericServerLeavesSourceToTombstonePass(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	srv.setGeneric(true)
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+
+	_, deletesBefore := srv.counts()
+	res, err := engine.PushLocalEdits(ctx, calB)
+	if err != nil || len(res.Errors) != 0 || res.Pushed != 1 {
+		t.Fatalf("push B = %+v, %v; want one clean push", res, err)
+	}
+	if _, deletes := srv.counts(); deletes != deletesBefore {
+		t.Fatalf("DELETEs = %d, want %d: the push of B must not delete the source", deletes, deletesBefore)
+	}
+	if ts, err := q.ListTombstonesByCalendar(ctx, calA); err != nil || len(ts) != 1 {
+		t.Fatalf("tombstones on A = %v, %v; want one", ts, err)
+	}
+
+	syncPairClean(t, engine, calA, calB)
+	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
 }
