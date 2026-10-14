@@ -93,7 +93,8 @@ type EventViewDialogModel struct {
 	focusedAction int
 	focusedRSVP   int
 	// title holds the event title wrapped to the content width. SetSize
-	// computes it once, so View does not wrap the title again.
+	// computes it once, so View does not wrap the title again. A nil value
+	// means no SetSize with a content width ran, and View computes it.
 	title []string
 }
 
@@ -612,6 +613,11 @@ func (m EventViewDialogModel) View() string {
 		return ""
 	}
 
+	// SetSize computes the title. A model that gets its size another way
+	// has no title yet, so View computes it here.
+	if m.title == nil {
+		m.title = m.titleLines(cw)
+	}
 	bodyLines := m.buildBodyLines(cw)
 	actionsRow := m.renderActions(cw)
 
