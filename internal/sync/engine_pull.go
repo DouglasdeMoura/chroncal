@@ -133,6 +133,16 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 		}
 	}
 
+	// A full snapshot lists every href of the collection with its body. A
+	// known miss ends when its body imports, or when the server no longer
+	// lists its href. Without that, a given-up href stays in sync status
+	// forever (issue #816).
+	known, err := loadKnownMisses(ctx, e.q, e.logger, calendarID, localByPath, e.clock())
+	if err != nil {
+		return nil, err
+	}
+	listedPaths := make(map[string]bool, len(resources))
+
 	// Track which UIDs the server still reports. Deletion detection is keyed
 	// by UID rather than path because some CalDAV servers (GMX/Cosmo) rewrite
 	// object hrefs after PUT — the server-returned href can differ from the
@@ -149,14 +159,18 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			e.logger.Warn("skip out-of-scope remote href", "calendar_id", calendarID, "path", res.Path, "error", hrefErr)
 			continue
 		}
+		listedPaths[resPath] = true
 		if tombstonedPaths[resPath] {
 			e.logger.Debug("skip tombstoned remote resource by path", "path", resPath)
+			known.forget(ctx, resPath)
 			continue
 		}
 
 		if local, exists := localByPath[resPath]; exists {
 			remoteUIDs[local.Uid] = true
 			if local.Etag == res.ETag {
+				// The local copy holds the current server version.
+				known.forget(ctx, resPath)
 				continue
 			}
 		}
@@ -179,8 +193,18 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			persistFailures++
 			continue
 		}
+		// A body with a UID went through the import, so the miss is over.
+		// A body that does not import gives no UID and keeps its row.
+		if uid != "" {
+			known.forget(ctx, resPath)
+		}
 		if imported {
 			result.pulled++
+		}
+	}
+	for href := range known.byHref {
+		if !listedPaths[href] {
+			known.forget(ctx, href)
 		}
 	}
 

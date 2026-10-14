@@ -29,7 +29,8 @@ const (
 // knownMisses is the retry budget for known multiget misses. A known miss
 // is an href with a local row whose server body the pull cannot import.
 // Without a budget, a server that keeps a bad body blocks the sync-token
-// on each run. Load once per applySyncCollection. Speak three verbs:
+// on each run. Load once per pull (applySyncCollection or pullFullSnapshot).
+// Speak three verbs:
 //
 //	noteMiss: bump the miss count and mark the row given up after the budget
 //	resetIfChanged: the server lists a given-up href with a new ETag
