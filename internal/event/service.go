@@ -238,11 +238,18 @@ func (s *Service) ensureEventWritable(ctx context.Context, eventID, destCalID in
 	if err != nil {
 		return err
 	}
-	if err := calendaraccess.EnsureWritable(ctx, s.q, r.CalendarID, "VEVENT"); err != nil {
+	return ensureRowWritable(ctx, s.q, r.CalendarID, destCalID)
+}
+
+// ensureRowWritable enforces the remote access policy on the calendar of
+// an event row and, on a move, on the destination calendar. q can be bound
+// to a transaction, so the check sees the same state as the write.
+func ensureRowWritable(ctx context.Context, q *storage.Queries, calendarID, destCalID int64) error {
+	if err := calendaraccess.EnsureWritable(ctx, q, calendarID, "VEVENT"); err != nil {
 		return err
 	}
-	if destCalID != 0 && destCalID != r.CalendarID {
-		if err := calendaraccess.EnsureWritable(ctx, s.q, destCalID, "VEVENT"); err != nil {
+	if destCalID != 0 && destCalID != calendarID {
+		if err := calendaraccess.EnsureWritable(ctx, q, destCalID, "VEVENT"); err != nil {
 			return err
 		}
 	}
@@ -376,9 +383,6 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, error) {
 	p.applyDefaults()
 
-	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
-		return Event{}, err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Event{}, fmt.Errorf("begin tx: %w", err)
@@ -410,9 +414,6 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
-	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
-		return Event{}, err
-	}
 	// Reject a bad attendee or alarm before the transaction opens. See
 	// model.PrepareAttendeesForWrite and model.PrepareAlarmsForWrite.
 	attendees, err := model.PrepareAttendeesForWrite(model.EventAttendee, attendees)
@@ -461,6 +462,12 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	}
 	old, err := qtx.GetEvent(ctx, id)
 	if err != nil {
+		return Event{}, err
+	}
+	// The access check reads the calendars inside the transaction of the
+	// write, so no other write can change them between the check and the
+	// update.
+	if err := ensureRowWritable(ctx, qtx, old.CalendarID, p.CalendarID); err != nil {
 		return Event{}, err
 	}
 	move := uidMoveRows(qtx, old.Uid)
