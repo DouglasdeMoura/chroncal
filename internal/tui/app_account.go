@@ -348,7 +348,11 @@ func (m Model) updateAccountCredentials(configured account.Account, secret, secr
 		fingerprint := configured.CredentialFingerprint()
 		if secret != "" {
 			if err := auth.EnsureCanStoreSecret(credStore, configured.ID, fingerprint); err != nil {
-				return storedMsg(err)
+				refused := storedMsg(err)
+				refused.plaintextRetry = &AccountCredentialsUpdateSubmittedMsg{
+					AccountID: configured.ID, Secret: secret, SecretCommand: secretCommand,
+				}
+				return refused
 			}
 		}
 		cred, err := credentialForRotation(credStore.Get(configured.ID, fingerprint))
@@ -387,6 +391,20 @@ func (m Model) finishAccountCredentialStore(msg accountCredentialStoredMsg) (Mod
 			"Couldn't update credentials: %s — the previous sign-in is unchanged",
 			msg.err,
 		)
+		// A refused secret returns the user to the form that holds the
+		// typed secret, and the prompt offers the plaintext opt-in. A
+		// confirm saves the same secret again, so the user does not type
+		// it a second time.
+		if msg.plaintextRetry != nil && errors.Is(msg.err, auth.ErrPlaintextRequired) &&
+			m.accountCredentials.accountID == msg.accountID {
+			m.accountCredentials = m.accountCredentials.SetSecretError(plaintextRefusalFieldError)
+			m.accountCredentialsOpen = true
+			m = m.offerPlaintextOptIn(plaintextRetry{
+				credentials: msg.plaintextRetry,
+				bearer:      accountAuthIsBearer(m.accountCredentials.authType),
+			})
+			return m, m.expireStatusAfter(10*time.Second, m.statusToken)
+		}
 		m = m.reopenAccountSettings(msg.accountID)
 		return m, m.expireStatusAfter(10*time.Second, m.statusToken)
 	}
@@ -476,7 +494,7 @@ func (m Model) connectAndDiscoverCalendar(parent context.Context, req CalendarDi
 		}
 		if existing, ok := existingCalendarDiscoveryAccount(configured, req); ok {
 			if err := ensureDiscoveryCanStoreSecret(store, cred, existing.ID, existing.CredentialFingerprint()); err != nil {
-				return accountDiscoveryReadyMsg{err: err}
+				return discoveryRefusal(req, err)
 			}
 			discovery, err := m.app.Accounts.DiscoverWithCredential(ctx, existing.ID, cred, store)
 			if err != nil {
@@ -490,7 +508,7 @@ func (m Model) connectAndDiscoverCalendar(parent context.Context, req CalendarDi
 		// cannot keep the secret reports the remedy instead of a store
 		// error from deep inside Create (issue #777).
 		if err := ensureDiscoveryCanStoreSecret(store, cred, 0, discoveryFingerprint(req)); err != nil {
-			return accountDiscoveryReadyMsg{err: err}
+			return discoveryRefusal(req, err)
 		}
 		created, err := m.app.Accounts.Create(ctx, account.CreateParams{
 			Name:          calendarDiscoveryAccountName(configured, req.Username),
@@ -529,6 +547,20 @@ func ensureDiscoveryCanStoreSecret(
 		return nil
 	}
 	return auth.EnsureCanStoreSecret(store, accountID, fingerprint)
+}
+
+// discoveryRefusal returns the message for an Add Account request that the
+// credential store refused. A password or a token can go to the plaintext
+// store after an opt-in, so the message keeps the request for a retry. An
+// OAuth request does not get a retry: the retry would open the browser again,
+// and the OAuth preflight already refuses before the consent.
+func discoveryRefusal(req CalendarDiscoveryRequestedMsg, err error) accountDiscoveryReadyMsg {
+	msg := accountDiscoveryReadyMsg{err: err}
+	if !calendarAuthIsOAuth(req.AuthType) {
+		retry := req
+		msg.plaintextRetry = &retry
+	}
+	return msg
 }
 
 // discoveryFingerprint returns the credential identity of one Add Account

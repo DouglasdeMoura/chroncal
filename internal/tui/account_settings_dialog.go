@@ -474,6 +474,13 @@ func NewAccountCredentialsDialogModel(
 	}
 }
 
+// SetSecretError shows text as the error of the password or token row. The
+// typed values stay in the form.
+func (m AccountCredentialsDialogModel) SetSecretError(text string) AccountCredentialsDialogModel {
+	m.form.SetError(credentialsIdxSecret, text)
+	return m
+}
+
 func (m AccountCredentialsDialogModel) SetSize(w, h int) AccountCredentialsDialogModel {
 	const maxWidth = 56
 	m.dialog = m.dialog.Update(tea.WindowSizeMsg{Width: w, Height: h})

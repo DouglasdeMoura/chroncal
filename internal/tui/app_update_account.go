@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -373,6 +374,12 @@ func (m Model) handleAccountDiscoveryReady(msg accountDiscoveryReadyMsg) (tea.Mo
 		m.statusToken++
 		m.syncStatus = "Couldn’t add account: " + msg.err.Error()
 		m.calendarManager = m.calendarManager.WithTestStatus(lipgloss.NewStyle().Foreground(m.theme.Error), "✗ "+msg.err.Error())
+		if msg.plaintextRetry != nil && errors.Is(msg.err, auth.ErrPlaintextRequired) {
+			m = m.offerPlaintextOptIn(plaintextRetry{
+				discovery: msg.plaintextRetry,
+				bearer:    accountAuthIsBearer(msg.plaintextRetry.AuthType),
+			})
+		}
 		return m, m.expireStatusAfter(10*time.Second, m.statusToken)
 	}
 	m.pendingDiscoveryAccountID = msg.discovery.Account.ID
