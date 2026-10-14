@@ -17,6 +17,13 @@ func IsConflict(err error) bool { return retry.IsConflict(err) }
 // IsNotFound reports whether err carries the HTTP status 404.
 func IsNotFound(err error) bool { return retry.StatusCode(err) == 404 }
 
+// IsAbsent reports whether err says that the resource does not exist: the
+// HTTP status 404 Not Found or 410 Gone.
+func IsAbsent(err error) bool {
+	code := retry.StatusCode(err)
+	return code == 404 || code == 410
+}
+
 // errUIDConflict marks a PUT that the server refused with the
 // CALDAV:no-uid-conflict precondition. See IsUIDConflict.
 var errUIDConflict = errors.New("caldav: the server holds another object with this UID")

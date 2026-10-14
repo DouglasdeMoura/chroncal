@@ -410,7 +410,7 @@ var errMoveSourceChanged = errors.New("the source object changed on the server a
 // Some servers keep a UID unique in the whole account. They refuse the
 // create while the source object still exists: iCloud with 412, an RFC
 // 4791 server with 403 and the CALDAV:no-uid-conflict precondition. The new
-// href then answers 404 (issue #828). Only that case sends the pending
+// href then answers 404 or 410 (issue #828). Only that case sends the pending
 // source DELETEs. retryPut reports that the caller must send the PUT once
 // more. A refusal with a target object is a real conflict: retryPut is
 // false, the error is nil, and the caller handles the PUT error as usual.
@@ -421,7 +421,7 @@ var errMoveSourceChanged = errors.New("the source object changed on the server a
 //
 // The calendars of one account share one sync lock, so the source DELETE
 // cannot race the source calendar's own pass. An error means that the GET
-// of the target href failed with a status other than 404, that a DELETE
+// of the target href failed with a status other than 404 or 410, that a DELETE
 // did not complete, or that the server kept a remotely edited source
 // object (errMoveSourceChanged). The caller then keeps the resource dirty
 // and records no conflict. A failed GET proves nothing about the target
@@ -431,7 +431,7 @@ func (e *Engine) settleMovedSources(ctx context.Context, client *caldav.Client, 
 	if getErr == nil {
 		return false, nil
 	}
-	if !caldav.IsNotFound(getErr) {
+	if !caldav.IsAbsent(getErr) {
 		return false, fmt.Errorf("move %s: check the move target: %w", uid, getErr)
 	}
 	for _, src := range sources {

@@ -721,3 +721,26 @@ func TestMoveEventIntoCalendarWithOpenConflictIsRefused(t *testing.T) {
 		t.Fatalf("event after the refused move = %+v, %v; want it in A", got, err)
 	}
 }
+
+// TestMoveEventTreatsGoneTargetAsAbsent moves an event on an iCloud-like
+// server whose new href answers 410 Gone, not 404. 410 also says that the
+// target object is absent, so the push must send the source DELETE and
+// retry the create, as it does after a 404.
+func TestMoveEventTreatsGoneTargetAsAbsent(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+	srv.setGetStatus("/cal/b/", http.StatusGone)
+
+	res, err := engine.PushLocalEdits(ctx, calB)
+	if err != nil || len(res.Errors) != 0 || res.Pushed != 1 {
+		t.Fatalf("push of the moved event = %+v, %v; want one clean push", res, err)
+	}
+	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
+	if conflicts, err := q.ListSyncConflictsByCalendar(ctx, calB); err != nil || len(conflicts) != 0 {
+		t.Fatalf("conflicts on B = %v, %v; want none", conflicts, err)
+	}
+}
