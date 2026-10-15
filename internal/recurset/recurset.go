@@ -46,8 +46,8 @@ type Set struct {
 // and applies exDates and rDates, for an expansion of the occurrences. ok is
 // false only when there is truly nothing to expand (rule is empty AND no
 // rDates). Callers fall back to a single instance in that case. The
-// occurrence test of an override ignores the EXDATEs; NewChecker builds
-// its set for that.
+// occurrence test of an override ignores the EXDATEs, so NewChecker passes
+// no exDates.
 //
 // RFC 5545 §3.8.5.2 permits RDATE-only recurrence with no RRULE. When rule
 // is empty but rDates is non-empty, an empty rrule.Set is built and DTSTART
@@ -55,12 +55,6 @@ type Set struct {
 // of the recurrence set even without an RRULE. DTSTART is intentionally
 // excluded from RDates so it is not mislabelled IsOverride.
 func New(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates []time.Time) (Set, bool) {
-	return newSet(rule, tz, dtstart, dur, exDates, rDates, true)
-}
-
-// newSet is New with a choice: includeExDates false leaves out the EXDATEs
-// for the occurrence test (see OccursAt).
-func newSet(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates []time.Time, includeExDates bool) (Set, bool) {
 	// Nothing to expand: no RRULE and no explicit RDATEs.
 	if rule == "" && len(rDates) == 0 {
 		return Set{}, false
@@ -81,35 +75,33 @@ func newSet(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDat
 		dtstart = dtstart.In(loc)
 	}
 	set.DTStart(dtstart)
-	if includeExDates {
-		for _, ex := range exDates {
-			if loc != nil {
-				ex = ex.In(loc)
-			}
-			set.ExDate(ex)
-		}
-		// Zone-skew safety net: EXDATEs written by older importers (TZID
-		// ignored, pre-v0.5.1) or from transiently TZID-less server bodies
-		// carry the zone-local wall clock mis-tagged as UTC, so they miss the
-		// occurrence they were meant to exclude and a server-cancelled
-		// instance shows forever — etag-gated sync never re-imports
-		// an unchanged resource to repair them. Also exclude each EXDATE's
-		// UTC wall clock reinterpreted in the expansion zone; for a healthy
-		// EXDATE the reinterpreted instant matches no occurrence and is a
-		// no-op. Date-only (all-day) EXDATEs are exact by construction and
-		// midnight-UTC-tagged, so a reinterpretation would shift the day —
-		// skip them.
+	for _, ex := range exDates {
 		if loc != nil {
-			for _, ex := range exDates {
-				if timeutil.IsDateOnlyTime(ex) {
-					continue
-				}
-				u := ex.UTC()
-				reinterp := time.Date(u.Year(), u.Month(), u.Day(),
-					u.Hour(), u.Minute(), u.Second(), u.Nanosecond(), loc)
-				if !reinterp.Equal(ex) {
-					set.ExDate(reinterp)
-				}
+			ex = ex.In(loc)
+		}
+		set.ExDate(ex)
+	}
+	// Zone-skew safety net: EXDATEs written by older importers (TZID
+	// ignored, pre-v0.5.1) or from transiently TZID-less server bodies
+	// carry the zone-local wall clock mis-tagged as UTC, so they miss the
+	// occurrence they were meant to exclude and a server-cancelled
+	// instance shows forever — etag-gated sync never re-imports
+	// an unchanged resource to repair them. Also exclude each EXDATE's
+	// UTC wall clock reinterpreted in the expansion zone; for a healthy
+	// EXDATE the reinterpreted instant matches no occurrence and is a
+	// no-op. Date-only (all-day) EXDATEs are exact by construction and
+	// midnight-UTC-tagged, so a reinterpretation would shift the day —
+	// skip them.
+	if loc != nil {
+		for _, ex := range exDates {
+			if timeutil.IsDateOnlyTime(ex) {
+				continue
+			}
+			u := ex.UTC()
+			reinterp := time.Date(u.Year(), u.Month(), u.Day(),
+				u.Hour(), u.Minute(), u.Second(), u.Nanosecond(), loc)
+			if !reinterp.Equal(ex) {
+				set.ExDate(reinterp)
 			}
 		}
 	}
@@ -229,7 +221,7 @@ type Checker struct {
 // NewChecker builds the Checker of a master: its RRULE and RDATEs anchored
 // at dtstart in timezone tz, with the EXDATEs ignored.
 func NewChecker(rule, tz string, dtstart time.Time, rDates []time.Time) Checker {
-	s, _ := newSet(rule, tz, dtstart, 0, nil, rDates, false)
+	s, _ := New(rule, tz, dtstart, 0, nil, rDates)
 	return Checker{Set: s, Anchor: dtstart}
 }
 

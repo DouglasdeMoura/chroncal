@@ -131,7 +131,7 @@ func overrideMoveAllowed(ownMaster, targetLiveMaster bool) bool {
 
 // HasMasterIn reports whether calendarID holds a master row of the UID,
 // live or in the trash. An override row in a calendar without one is a
-// legacy override. storage.LegacyOverride holds the definition.
+// legacy override (see storage.LegacyOverride).
 func HasMasterIn(masters []Master, calendarID int64) bool {
 	for _, m := range masters {
 		if m.CalendarID == calendarID {
