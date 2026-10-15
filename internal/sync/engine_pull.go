@@ -218,7 +218,7 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 	deletions.inferFromAbsence(calendarID, localResources, remoteUIDs, true, "complete (QueryAll)")
 	// The full-snapshot path stores no sync-token, so a failed deletion here is
 	// self-healing: the next snapshot re-infers the absence and retries.
-	deleted, _ := deletions.apply(ctx, e, calendarID, tombstonedUIDs)
+	deleted, _ := deletions.apply(ctx, e, calendarID)
 	result.deleted += deleted
 
 	return result, nil
@@ -309,16 +309,17 @@ func (p *pendingDeletions) inferFromAbsence(calendarID int64, locals []storage.S
 }
 
 // apply executes the accumulated deletions. It soft-deletes the local rows
-// of each UID in calendarID only and drops its sync_resource.
-// tombstonedUIDs holds the UIDs with a tombstone in calendarID; the pull
-// loaded them before. It returns the count actually deleted and
+// of each UID in calendarID only and drops its sync_resource. It reads the
+// tombstones of each UID when it runs, not from the list that the pull
+// loaded: a local delete, restore, or move can change them during the
+// pull. It returns the count actually deleted and
 // the count that failed. A failed soft-delete (for example a transient
 // SQLITE_BUSY) leaves the local row orphaned. The server dropped it, but we
 // did not. The caller must treat failed > 0 as an incomplete pull and
 // withhold the sync-token. Otherwise the server, now past the old token,
 // never re-reports the deletion. The orphan then survives forever with no
 // retry.
-func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int64, tombstonedUIDs map[string]bool) (deleted, failed int) {
+func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int64) (deleted, failed int) {
 	for uid, ownerType := range p.owner {
 		// A tombstone of the UID in this calendar marks a local delete or
 		// a local move out of the calendar that is not sent yet. The local
@@ -328,7 +329,13 @@ func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int6
 		// the tombstone go. An absence-inferred UID keeps both: the pull
 		// skips a tombstoned href, so its absence proves nothing, and the
 		// tombstone pass sends the DELETE (a 404 then clears both rows).
-		if tombstonedUIDs[uid] {
+		tombstones, err := e.q.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+		if err != nil {
+			e.logger.Error("count tombstones", "uid", uid, "error", err)
+			failed++
+			continue
+		}
+		if tombstones > 0 {
 			if !p.explicit[uid] {
 				continue
 			}
