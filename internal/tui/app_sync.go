@@ -222,11 +222,18 @@ func (m Model) runMovePush(fromCalendarID, toCalendarID int64, uid string) tea.C
 	if fromCalendarID == 0 || fromCalendarID == toCalendarID {
 		return m.runOpportunisticPush(toCalendarID)
 	}
+	// Build both pushes here, on the Update goroutine. The command runs on
+	// another goroutine, so it must not read the maps of the model (an
+	// Update handler writes m.calendars in place).
+	pushes := map[int64]tea.Cmd{
+		toCalendarID:   m.runOpportunisticPush(toCalendarID),
+		fromCalendarID: m.runOpportunisticPush(fromCalendarID),
+	}
 	q := m.app.Queries
 	return func() tea.Msg {
 		var results tea.BatchMsg
 		syncpkg.PushMove(context.Background(), q, fromCalendarID, toCalendarID, uid, func(calendarID int64) {
-			if push := m.runOpportunisticPush(calendarID); push != nil {
+			if push := pushes[calendarID]; push != nil {
 				msg := push()
 				results = append(results, func() tea.Msg { return msg })
 			}

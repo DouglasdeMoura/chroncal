@@ -228,3 +228,24 @@ func TestOccurrenceMoveScopePromptFocusesCancel(t *testing.T) {
 	require.True(t, ok, "enter at the scope prompt gave no choice result")
 	require.Equal(t, -1, result.Choice, "enter must cancel the scope prompt")
 }
+
+// TestMovePushCommandReadsNoModelMap runs the move push command while the
+// Update goroutine writes the calendar map, as a calendars reload does. The
+// command runs on another goroutine, so it must not read the maps of the
+// model. Run the test with -race to see a read of the map.
+func TestMovePushCommandReadsNoModelMap(t *testing.T) {
+	f := newTUIMoveFixture(t)
+	_, msg := f.moveWithForm(t)
+	cmd := f.m.runMovePush(msg.fromCalendarID, msg.calendarID, msg.uid)
+	require.NotNil(t, cmd)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cmd()
+	}()
+	for i := 0; i < 1000; i++ {
+		f.m.calendars[int64(100000+i)] = CalendarInfo{Name: "reload"}
+	}
+	<-done
+}
