@@ -563,7 +563,7 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 // same UID. One live master is the only choice. With more live masters, the
 // one in calendarID wins. No live master gives sql.ErrNoRows. The second
 // result lists every master row of the UID, live and in the trash, for the
-// legacy-override rule (see uidmove).
+// legacy-override rule (see storage.LegacyOverride).
 //
 // An edit that names a calendar with no live master of the UID cannot
 // choose a master. A legacy override of recID in that calendar can belong to any
@@ -571,14 +571,15 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 // occurrence lives in the calendar of a master, and the shared rule
 // (uidmove.Rows.CheckOverrideMove) refuses the move for each master. An
 // edit that names no calendar gets ErrAmbiguousUID.
-func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmove.Rows, calendarID int64, recID string) (storage.Event, []storage.Event, error) {
+func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmove.Rows, calendarID int64, recID string) (storage.Event, []uidmove.Master, error) {
 	uid := move.UID
-	all, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
+	rows, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
 	if err != nil {
 		return storage.Event{}, nil, err
 	}
+	masters := uidMasters(rows)
 	var live []storage.Event
-	for _, m := range all {
+	for _, m := range rows {
 		if m.DeletedAt == nil {
 			live = append(live, m)
 		}
@@ -587,17 +588,16 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 	case 0:
 		return storage.Event{}, nil, sql.ErrNoRows
 	case 1:
-		return live[0], all, nil
+		return live[0], masters, nil
 	}
 	for _, m := range live {
 		if m.CalendarID == calendarID {
-			return m, all, nil
+			return m, masters, nil
 		}
 	}
 	if calendarID == 0 {
 		return storage.Event{}, nil, ErrAmbiguousUID
 	}
-	masters := uidMasters(all)
 	_, err = qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
 		CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
 	})
@@ -619,11 +619,11 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 
 // findInstanceOverrideTx finds the stored override of recID for master. A
 // row in the calendar of the master wins. Else it takes a legacy override
-// (see uidmove): a row in a calendar with no master row of the UID, live
-// or in the trash. masters lists every master row of the UID, live and in
-// the trash. More than one legacy row gives ErrAmbiguousUID. No row gives
-// sql.ErrNoRows.
-func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, masters []storage.Event, recID string) (storage.Event, error) {
+// (see storage.LegacyOverride): a row in a calendar with no master row of
+// the UID, live or in the trash. masters lists every master row of the
+// UID, live and in the trash. More than one legacy row gives
+// ErrAmbiguousUID. No row gives sql.ErrNoRows.
+func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, masters []uidmove.Master, recID string) (storage.Event, error) {
 	// One query reads every live row of (uid, recID). The pick runs in Go,
 	// so the common edit (no row, or a row with the master) needs no second
 	// query.
@@ -639,7 +639,7 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 		if r.CalendarID == master.CalendarID {
 			return r, nil
 		}
-		if !uidmove.HasMasterIn(uidMasters(masters), r.CalendarID) {
+		if !uidmove.HasMasterIn(masters, r.CalendarID) {
 			legacy = append(legacy, r)
 		}
 	}
@@ -898,7 +898,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 			return Event{}, err
 		}
 	}
-	if err := move.CheckOf(ctx, recID, fromCalendarID, p.CalendarID, uidMasters(masters)); err != nil {
+	if err := move.CheckOf(ctx, recID, fromCalendarID, p.CalendarID, masters); err != nil {
 		return Event{}, err
 	}
 	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {

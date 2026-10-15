@@ -27,12 +27,9 @@ SELECT * FROM events WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
 -- name: GetEventByCalendarUID :one
 SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
 
--- name: ListEventMastersByUID :many
-SELECT * FROM events WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL ORDER BY id;
-
 -- name: ListEventMastersByUIDIncludingDeleted :many
 -- Every master row of one UID, live or soft-deleted, in all calendars. The
--- legacy-override rule reads it (see uidmove).
+-- legacy-override rule reads it (see storage.LegacyOverride).
 SELECT * FROM events WHERE uid = ? AND recurrence_id = '' ORDER BY id;
 
 -- name: ListEventsByUIDAndRecurrenceID :many

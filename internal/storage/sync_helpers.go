@@ -95,22 +95,33 @@ func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, 
 	return MarkResourceDirty(ctx, q.db, calendarID, uid, ownerType)
 }
 
+// LegacyOverride reports whether an override row is a legacy override.
+// ownMasterRows is the count of the master rows of its UID, live or in the
+// trash, in the calendar of the row.
+//
+// A legacy override is an override row in a calendar that holds no master
+// row of its UID, live or in the trash. An older version saved such a row
+// on a calendar change (issue #828). A master in the trash still owns the
+// overrides of its calendar: a delete of a series soft-deletes the master
+// and the overrides together, and a restore brings them back together.
+//
+// This is the one definition of the term. dirtyCalendar, uidmove (the move
+// rule), and the override lookup of the event service use it.
+func LegacyOverride(ownMasterRows int64) bool {
+	return ownMasterRows == 0
+}
+
 // dirtyCalendar returns the calendar whose sync row a write of a row of uid
 // in calendarID must mark dirty.
 //
 // The export of a UID holds the master and every override, in all
-// calendars (issue #842). A legacy override is an override row in a
-// calendar that holds no master row of its UID, live or in the trash. The
-// uidmove package holds that definition; this package cannot import it, so
-// the queries here state the same rule. A dirty mark on the calendar of a
-// legacy override uploads the whole series into it a second time. So when
-// calendarID holds no master row (live or in the trash) but holds an
-// override row of uid (live or in the trash), and exactly one calendar
-// holds a live master, the mark goes to that calendar. Each other case
-// marks calendarID.
-//
-// A master in the trash keeps the mark in its calendar: a delete of a
-// series in A must not send its mark to a live copy of the UID in B.
+// calendars (issue #842). A dirty mark on the calendar of a legacy override
+// (see LegacyOverride) uploads the whole series into it a second time. So
+// when calendarID holds an override row of uid (live or in the trash) that
+// is a legacy override, and exactly one calendar holds a live master, the
+// mark goes to that calendar. Each other case marks calendarID. A master in
+// the trash keeps the mark in its calendar: a delete of a series in A must
+// not send its mark to a live copy of the UID in B.
 //
 // The common case (calendarID holds the master) costs one aggregate lookup
 // on the UNIQUE(calendar_id, uid, recurrence_id) key. Only the legacy case
@@ -156,7 +167,7 @@ func dirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerTyp
 	if err != nil {
 		return 0, fmt.Errorf("count rows of the UID: %w", err)
 	}
-	if ownMasters > 0 || ownOverrides == 0 {
+	if ownOverrides == 0 || !LegacyOverride(ownMasters) {
 		return calendarID, nil
 	}
 	calendars, first, err := masterCalendars()

@@ -53,17 +53,6 @@ type Master struct {
 	Trashed bool
 }
 
-// A legacy override is an override row in a calendar that holds no master
-// row of its UID, live or in the trash. An older version saved such a row
-// on a calendar change (issue #828). A master in the trash still owns the
-// overrides of its calendar: a delete of a series soft-deletes the master
-// and the overrides together, and a restore brings them back together.
-//
-// This is the one definition of the term. CheckOverrideMove, the override
-// lookup of the event service (findInstanceOverrideTx), and the dirty-mark
-// rule of storage.MarkResourceDirty use it. storage cannot import this
-// package, so its SQL states the same rule.
-
 // OccurrenceMoveError reports a refused calendar move of one override row.
 // It wraps the domain error (Rows.ErrInstanceMove), so errors.Is still
 // matches that error. Masters lists the masters that the row can belong
@@ -140,14 +129,15 @@ func overrideMoveAllowed(ownMaster, targetLiveMaster bool) bool {
 
 // HasMasterIn reports whether calendarID holds a master row of the UID,
 // live or in the trash. An override row in a calendar without one is a
-// legacy override.
+// legacy override. storage.LegacyOverride holds the definition.
 func HasMasterIn(masters []Master, calendarID int64) bool {
+	var n int64
 	for _, m := range masters {
 		if m.CalendarID == calendarID {
-			return true
+			n++
 		}
 	}
-	return false
+	return !storage.LegacyOverride(n)
 }
 
 func hasLiveMasterIn(masters []Master, calendarID int64) bool {

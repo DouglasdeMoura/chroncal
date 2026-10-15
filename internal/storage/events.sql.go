@@ -637,67 +637,12 @@ func (q *Queries) ListDeletedOverrideRecurrenceIDs(ctx context.Context, uid stri
 	return items, nil
 }
 
-const listEventMastersByUID = `-- name: ListEventMastersByUID :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL ORDER BY id
-`
-
-func (q *Queries) ListEventMastersByUID(ctx context.Context, uid string) ([]Event, error) {
-	rows, err := q.db.QueryContext(ctx, listEventMastersByUID, uid)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Event
-	for rows.Next() {
-		var i Event
-		if err := rows.Scan(
-			&i.ID,
-			&i.Uid,
-			&i.CalendarID,
-			&i.Title,
-			&i.Description,
-			&i.Location,
-			&i.StartTime,
-			&i.EndTime,
-			&i.AllDay,
-			&i.RecurrenceRule,
-			&i.Timezone,
-			&i.Status,
-			&i.Transp,
-			&i.Sequence,
-			&i.Priority,
-			&i.Class,
-			&i.Url,
-			&i.Exdates,
-			&i.Rdates,
-			&i.RecurrenceID,
-			&i.Geo,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.Duration,
-			&i.Dtstamp,
-			&i.ConferenceUri,
-			&i.DeletedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listEventMastersByUIDIncludingDeleted = `-- name: ListEventMastersByUIDIncludingDeleted :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE uid = ? AND recurrence_id = '' ORDER BY id
 `
 
 // Every master row of one UID, live or soft-deleted, in all calendars. The
-// legacy-override rule reads it (see uidmove).
+// legacy-override rule reads it (see storage.LegacyOverride).
 func (q *Queries) ListEventMastersByUIDIncludingDeleted(ctx context.Context, uid string) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listEventMastersByUIDIncludingDeleted, uid)
 	if err != nil {
