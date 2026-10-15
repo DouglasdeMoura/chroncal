@@ -3,12 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"strings"
-	gosync "sync"
 	"testing"
 	"time"
 
@@ -18,47 +14,8 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
-
-// genericCalDAV is a CalDAV stub that keeps a UID unique per collection
-// only. A PUT stores the object, and a DELETE removes it.
-type genericCalDAV struct {
-	mu      gosync.Mutex
-	objects map[string]string
-	tag     int
-}
-
-func (g *genericCalDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	switch r.Method {
-	case http.MethodPut:
-		body, _ := io.ReadAll(r.Body)
-		g.objects[r.URL.Path] = string(body)
-		g.tag++
-		w.Header().Set("ETag", fmt.Sprintf(`"e%d"`, g.tag))
-		w.WriteHeader(http.StatusCreated)
-	case http.MethodDelete:
-		if _, ok := g.objects[r.URL.Path]; !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		delete(g.objects, r.URL.Path)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-func (g *genericCalDAV) paths() []string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	out := make([]string, 0, len(g.objects))
-	for p := range g.objects {
-		out = append(out, p)
-	}
-	return out
-}
 
 // TestMoveWritePathPushDeletesSourceObject moves a synced event from Work
 // to Personal on a server that keeps a UID unique per collection. The
@@ -67,7 +24,7 @@ func (g *genericCalDAV) paths() []string {
 // showed in both calendars.
 func TestMoveWritePathPushDeletesSourceObject(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
-	stub := &genericCalDAV{objects: map[string]string{}}
+	stub := testutil.NewGenericCalDAV()
 	srv := httptest.NewServer(stub)
 	t.Cleanup(srv.Close)
 
@@ -115,7 +72,7 @@ func TestMoveWritePathPushDeletesSourceObject(t *testing.T) {
 	}
 	var out, warn bytes.Buffer
 	pushCalendarAfterWrite(a, workID, &out, &warn)
-	if got := stub.paths(); len(got) != 1 || !strings.HasPrefix(got[0], "/calendars/work/") {
+	if got := stub.Paths(); len(got) != 1 || !strings.HasPrefix(got[0], "/calendars/work/") {
 		t.Fatalf("server objects after the first push = %v, want one in work", got)
 	}
 
@@ -131,7 +88,7 @@ func TestMoveWritePathPushDeletesSourceObject(t *testing.T) {
 	cmd.SetErr(&warn)
 	opportunisticPushMove(a, workID, moved.CalendarID, cmd)
 
-	got := stub.paths()
+	got := stub.Paths()
 	if len(got) != 1 || !strings.HasPrefix(got[0], "/calendars/personal/") {
 		t.Fatalf("server objects after the move push = %v, want only one in personal (out %q, warn %q)", got, out.String(), warn.String())
 	}
