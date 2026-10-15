@@ -235,31 +235,15 @@ func (s *Service) markDirtyByID(ctx context.Context, eventID int64) error {
 }
 
 // ensureEventWritable resolves an event by ID and enforces remote
-// access/component policy for a user-originated edit. For a cross-calendar
-// move (destCalID set and different from the event's current calendar) the
-// destination calendar is validated too. A move into a read-only or
-// VEVENT-less collection then fails before any row is written.
-func (s *Service) ensureEventWritable(ctx context.Context, eventID, destCalID int64) error {
+// access/component policy on its calendar for a user-originated edit of
+// its child rows. An update of the row runs the same check in
+// uidmove.Rows.Update, for the target calendar of a move too.
+func (s *Service) ensureEventWritable(ctx context.Context, eventID int64) error {
 	r, err := s.q.GetEvent(ctx, eventID)
 	if err != nil {
 		return err
 	}
-	return ensureRowWritable(ctx, s.q, r.CalendarID, destCalID)
-}
-
-// ensureRowWritable enforces the remote access policy on the calendar of
-// an event row and, on a move, on the destination calendar. q can be bound
-// to a transaction, so the check sees the same state as the write.
-func ensureRowWritable(ctx context.Context, q *storage.Queries, calendarID, destCalID int64) error {
-	if err := calendaraccess.EnsureWritable(ctx, q, calendarID, "VEVENT"); err != nil {
-		return err
-	}
-	if destCalID != 0 && destCalID != calendarID {
-		if err := calendaraccess.EnsureWritable(ctx, q, destCalID, "VEVENT"); err != nil {
-			return err
-		}
-	}
-	return nil
+	return calendaraccess.EnsureWritable(ctx, s.q, r.CalendarID, "VEVENT")
 }
 
 // distinctCalendarIDsByUID returns every calendar that any event row with the
@@ -396,15 +380,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateEventTx(ctx, qtx, id, p)
+	e, err := updateEventTx(ctx, qtx, id, p, nil)
 	if err != nil {
 		return Event{}, err
-	}
-	// Mark dirty inside the transaction so a failed sync-tracking write rolls
-	// the edit back rather than committing a change that is never pushed
-	// (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
-		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit update event: %w", err)
@@ -437,18 +415,11 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateEventTx(ctx, qtx, id, p)
+	e, err := updateEventTx(ctx, qtx, id, p, func(ctx context.Context, eventID int64) error {
+		return replaceRelationsTx(ctx, qtx, eventID, attendees, alarms)
+	})
 	if err != nil {
 		return Event{}, err
-	}
-	if err := replaceRelationsTx(ctx, qtx, e.ID, attendees, alarms); err != nil {
-		return Event{}, err
-	}
-	// Mark dirty inside the transaction so a failed sync-tracking write rolls
-	// the edit back rather than committing a change that is never pushed
-	// (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
-		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit update event: %w", err)
@@ -456,11 +427,12 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	return e, nil
 }
 
-// updateEventTx writes the event row and its categories using a tx-bound
-// Queries. It opens no transaction and does not commit or mark the resource
-// dirty, so callers can compose it with attendee/alarm writes inside one
-// transaction.
-func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p UpdateParams) (Event, error) {
+// updateEventTx writes the event row, its categories, and the child rows
+// of children (nil for none) using a tx-bound Queries. It runs the steps of
+// uidmove.Rows.Update, so it also records a calendar move and marks the
+// resource dirty inside the transaction (issue #107). It opens no
+// transaction and does not commit.
+func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p UpdateParams, children func(ctx context.Context, eventID int64) error) (Event, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
@@ -470,57 +442,52 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	if err != nil {
 		return Event{}, err
 	}
-	// The access check reads the calendars inside the transaction of the
-	// write, so no other write can change them between the check and the
-	// update.
-	if err := ensureRowWritable(ctx, qtx, old.CalendarID, p.CalendarID); err != nil {
-		return Event{}, err
-	}
-	move := uidMoveRows(qtx, old.Uid)
-	if err := move.Check(ctx, old.RecurrenceID, old.CalendarID, p.CalendarID); err != nil {
-		return Event{}, err
-	}
-	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
-		ID:             id,
-		Title:          p.Title,
-		Description:    storage.StringToNullable(p.Description),
-		Location:       storage.StringToNullable(p.Location),
-		StartTime:      p.StartTime.Format(time.RFC3339),
-		EndTime:        p.EndTime.Format(time.RFC3339),
-		AllDay:         storage.BoolToInt(p.AllDay),
-		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
-		CalendarID:     p.CalendarID,
-		Timezone:       storage.StringToNullable(p.Timezone),
-		Status:         p.Status,
-		Transp:         p.Transp,
-		Priority:       p.Priority,
-		Class:          p.Class,
-		Url:            storage.StringToNullable(p.URL),
-		Exdates:        storage.StringToNullable(p.ExDates),
-		Rdates:         storage.StringToNullable(p.RDates),
-		Geo:            storage.StringToNullable(p.Geo),
-		Duration:       storage.StringToNullable(p.DurationValue),
-		Dtstamp:        storage.StringToNullable(p.DtStamp),
-		ConferenceUri:  p.ConferenceURI,
+	// The access checks, the move rules, the move record, and the dirty
+	// mark run in the transaction, in the order of uidmove.Rows.Update.
+	var e Event
+	err = uidMoveRows(qtx, old.Uid).Update(ctx, "VEVENT", "event", old.RecurrenceID, old.CalendarID, p.CalendarID, func(ctx context.Context) error {
+		r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
+			ID:             id,
+			Title:          p.Title,
+			Description:    storage.StringToNullable(p.Description),
+			Location:       storage.StringToNullable(p.Location),
+			StartTime:      p.StartTime.Format(time.RFC3339),
+			EndTime:        p.EndTime.Format(time.RFC3339),
+			AllDay:         storage.BoolToInt(p.AllDay),
+			RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
+			CalendarID:     p.CalendarID,
+			Timezone:       storage.StringToNullable(p.Timezone),
+			Status:         p.Status,
+			Transp:         p.Transp,
+			Priority:       p.Priority,
+			Class:          p.Class,
+			Url:            storage.StringToNullable(p.URL),
+			Exdates:        storage.StringToNullable(p.ExDates),
+			Rdates:         storage.StringToNullable(p.RDates),
+			Geo:            storage.StringToNullable(p.Geo),
+			Duration:       storage.StringToNullable(p.DurationValue),
+			Dtstamp:        storage.StringToNullable(p.DtStamp),
+			ConferenceUri:  p.ConferenceURI,
+		})
+		if err != nil {
+			return err
+		}
+		e = FromStorage(r)
+		if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
+			return fmt.Errorf("replace categories: %w", err)
+		}
+		if localSpanEdit(old, p) {
+			if err := clearPreservedDTENDTx(ctx, qtx, e.ID); err != nil {
+				return err
+			}
+		}
+		if children != nil {
+			return children(ctx, e.ID)
+		}
+		return nil
 	})
 	if err != nil {
 		return Event{}, err
-	}
-	e := FromStorage(r)
-	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
-		return Event{}, fmt.Errorf("replace categories: %w", err)
-	}
-	if localSpanEdit(old, p) {
-		if err := clearPreservedDTENDTx(ctx, qtx, e.ID); err != nil {
-			return Event{}, err
-		}
-	}
-	// A move to another calendar takes the other rows of the UID along and
-	// queues the delete of the source server object. Without it the source
-	// object stays on the server, and a server that keeps UIDs unique per
-	// account refuses the target create (issue #828).
-	if err := move.Record(ctx, old.CalendarID, r.CalendarID); err != nil {
-		return Event{}, fmt.Errorf("record calendar move: %w", err)
 	}
 	e.Categories = p.Categories
 	return e, nil

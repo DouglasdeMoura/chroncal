@@ -24,7 +24,7 @@ func (s *Service) ListAttendees(ctx context.Context, eventID int64) ([]model.Att
 }
 
 func (s *Service) ReplaceAttendees(ctx context.Context, eventID int64, attendees []model.Attendee) error {
-	if err := s.ensureEventWritable(ctx, eventID, 0); err != nil {
+	if err := s.ensureEventWritable(ctx, eventID); err != nil {
 		return err
 	}
 	return s.ReplaceAttendeesForSync(ctx, eventID, attendees)

@@ -507,64 +507,43 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	if err != nil {
 		return Todo{}, err
 	}
-	// Reject writes the linked remote collection cannot accept before any
-	// side effect. Guard the source calendar (where the todo lives). On a
-	// move, guard the destination calendar too.
-	if err := calendaraccess.EnsureWritable(ctx, qtx, existing.CalendarID, todoComponent); err != nil {
-		return Todo{}, err
-	}
-	if p.CalendarID != existing.CalendarID {
-		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, todoComponent); err != nil {
-			return Todo{}, err
+	// The access checks, the move rules, the move record, and the dirty
+	// mark run in the transaction, in the order of uidmove.Rows.Update.
+	var t Todo
+	err = uidMoveRows(qtx, existing.Uid).Update(ctx, todoComponent, "todo", existing.RecurrenceID, existing.CalendarID, p.CalendarID, func(ctx context.Context) error {
+		r, err := qtx.UpdateTodo(ctx, storage.UpdateTodoParams{
+			ID:              id,
+			Summary:         p.Summary,
+			Description:     storage.StringToNullable(p.Description),
+			Location:        storage.StringToNullable(p.Location),
+			DueDate:         storage.StringToNullable(p.DueDate),
+			StartDate:       storage.StringToNullable(p.StartDate),
+			Duration:        storage.StringToNullable(p.Duration),
+			CompletedAt:     storage.StringToNullable(p.CompletedAt),
+			PercentComplete: p.PercentComplete,
+			Status:          p.Status,
+			CalendarID:      p.CalendarID,
+			Priority:        p.Priority,
+			Class:           p.Class,
+			Url:             storage.StringToNullable(p.URL),
+			RecurrenceRule:  storage.StringToNullable(p.RecurrenceRule),
+			Timezone:        storage.StringToNullable(p.Timezone),
+			Exdates:         storage.StringToNullable(p.ExDates),
+			Rdates:          storage.StringToNullable(p.RDates),
+			Geo:             storage.StringToNullable(p.Geo),
+			Dtstamp:         storage.StringToNullable(p.DtStamp),
+		})
+		if err != nil {
+			return err
 		}
-	}
-
-	// The move rules run inside the transaction, so no other write can
-	// change the rows of the UID between the check and the move.
-	move := uidMoveRows(qtx, existing.Uid)
-	if err := move.Check(ctx, existing.RecurrenceID, existing.CalendarID, p.CalendarID); err != nil {
-		return Todo{}, err
-	}
-
-	r, err := qtx.UpdateTodo(ctx, storage.UpdateTodoParams{
-		ID:              id,
-		Summary:         p.Summary,
-		Description:     storage.StringToNullable(p.Description),
-		Location:        storage.StringToNullable(p.Location),
-		DueDate:         storage.StringToNullable(p.DueDate),
-		StartDate:       storage.StringToNullable(p.StartDate),
-		Duration:        storage.StringToNullable(p.Duration),
-		CompletedAt:     storage.StringToNullable(p.CompletedAt),
-		PercentComplete: p.PercentComplete,
-		Status:          p.Status,
-		CalendarID:      p.CalendarID,
-		Priority:        p.Priority,
-		Class:           p.Class,
-		Url:             storage.StringToNullable(p.URL),
-		RecurrenceRule:  storage.StringToNullable(p.RecurrenceRule),
-		Timezone:        storage.StringToNullable(p.Timezone),
-		Exdates:         storage.StringToNullable(p.ExDates),
-		Rdates:          storage.StringToNullable(p.RDates),
-		Geo:             storage.StringToNullable(p.Geo),
-		Dtstamp:         storage.StringToNullable(p.DtStamp),
+		t = fromStorage(r)
+		if err := replaceCategoriesTx(ctx, qtx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
+			return fmt.Errorf("replace categories: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
 		return Todo{}, err
-	}
-	t := fromStorage(r)
-	if err := replaceCategoriesTx(ctx, qtx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
-		return Todo{}, fmt.Errorf("replace categories: %w", err)
-	}
-	// A move to another calendar takes the other rows of the UID along and
-	// queues the delete of the source server object (issue #828).
-	if err := move.Record(ctx, existing.CalendarID, r.CalendarID); err != nil {
-		return Todo{}, fmt.Errorf("record calendar move: %w", err)
-	}
-	// Mark the target dirty in the same transaction. A move commits the
-	// source tombstone, so a dirty mark after the commit that fails would
-	// delete the server object and never create the target object.
-	if err := qtx.MarkResourceDirty(ctx, t.CalendarID, t.UID, "todo"); err != nil {
-		return Todo{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := commit(); err != nil {
 		return Todo{}, fmt.Errorf("commit update todo: %w", err)

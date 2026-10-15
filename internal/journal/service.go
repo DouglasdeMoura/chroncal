@@ -353,54 +353,36 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 	if err != nil {
 		return Journal{}, err
 	}
-	if err := calendaraccess.EnsureWritable(ctx, qtx, existing.CalendarID, "VJOURNAL"); err != nil {
-		return Journal{}, err
-	}
-	if p.CalendarID != existing.CalendarID {
-		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VJOURNAL"); err != nil {
-			return Journal{}, err
+	// The access checks, the move rules, the move record, and the dirty
+	// mark run in the transaction, in the order of uidmove.Rows.Update.
+	var j Journal
+	err = uidMoveRows(qtx, existing.Uid).Update(ctx, "VJOURNAL", "journal", existing.RecurrenceID, existing.CalendarID, p.CalendarID, func(ctx context.Context) error {
+		r, err := qtx.UpdateJournal(ctx, storage.UpdateJournalParams{
+			ID:             id,
+			Summary:        p.Summary,
+			Description:    storage.StringToNullable(p.Description),
+			StartDate:      storage.StringToNullable(p.StartDate),
+			Status:         p.Status,
+			CalendarID:     p.CalendarID,
+			Class:          p.Class,
+			Url:            storage.StringToNullable(p.URL),
+			RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
+			Timezone:       storage.StringToNullable(p.Timezone),
+			Exdates:        storage.StringToNullable(p.ExDates),
+			Rdates:         storage.StringToNullable(p.RDates),
+			Dtstamp:        storage.StringToNullable(p.DtStamp),
+		})
+		if err != nil {
+			return err
 		}
-	}
-
-	// The move rules run inside the transaction, so no other write can
-	// change the rows of the UID between the check and the move.
-	move := uidMoveRows(qtx, existing.Uid)
-	if err := move.Check(ctx, existing.RecurrenceID, existing.CalendarID, p.CalendarID); err != nil {
-		return Journal{}, err
-	}
-
-	r, err := qtx.UpdateJournal(ctx, storage.UpdateJournalParams{
-		ID:             id,
-		Summary:        p.Summary,
-		Description:    storage.StringToNullable(p.Description),
-		StartDate:      storage.StringToNullable(p.StartDate),
-		Status:         p.Status,
-		CalendarID:     p.CalendarID,
-		Class:          p.Class,
-		Url:            storage.StringToNullable(p.URL),
-		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
-		Timezone:       storage.StringToNullable(p.Timezone),
-		Exdates:        storage.StringToNullable(p.ExDates),
-		Rdates:         storage.StringToNullable(p.RDates),
-		Dtstamp:        storage.StringToNullable(p.DtStamp),
+		j = fromStorage(r)
+		if err := replaceCategoriesTx(ctx, qtx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
+			return fmt.Errorf("replace categories: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
 		return Journal{}, err
-	}
-	j := fromStorage(r)
-	if err := replaceCategoriesTx(ctx, qtx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
-		return Journal{}, fmt.Errorf("replace categories: %w", err)
-	}
-	// A move to another calendar takes the other rows of the UID along and
-	// queues the delete of the source server object (issue #828).
-	if err := move.Record(ctx, existing.CalendarID, r.CalendarID); err != nil {
-		return Journal{}, fmt.Errorf("record calendar move: %w", err)
-	}
-	// Mark the target dirty in the same transaction. A move commits the
-	// source tombstone, so a dirty mark after the commit that fails would
-	// delete the server object and never create the target object.
-	if err := qtx.MarkResourceDirty(ctx, j.CalendarID, j.UID, "journal"); err != nil {
-		return Journal{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := commit(); err != nil {
 		return Journal{}, fmt.Errorf("commit update journal: %w", err)

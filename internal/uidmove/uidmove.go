@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -242,6 +243,52 @@ func SingleMasterRows(q *storage.Queries, uid string, errInstanceMove error, mas
 			return nil
 		},
 	}
+}
+
+// Update runs the update of one row of the UID by its ID, in the
+// transaction of r.Q, in one fixed order:
+//
+//  1. calendaraccess.EnsureWritable on the calendar of the row, and on
+//     the target calendar of a move (component names the iCalendar
+//     component)
+//  2. Check: the override rule and the target collision
+//  3. write: the row update and its child rows
+//  4. Record: the move of the other rows of the UID and the source
+//     tombstone
+//  5. the dirty mark of the target calendar (storage.MarkResourceDirty
+//     sends the mark of a legacy override to the calendar of its master)
+//
+// The dirty mark runs in the same transaction. A move commits the source
+// tombstone, so a dirty mark after the commit that fails would delete the
+// server object and never create the target object. toCalendarID 0 keeps
+// the calendar of the row.
+func (r Rows) Update(ctx context.Context, component, ownerType, recurrenceID string, fromCalendarID, toCalendarID int64, write func(ctx context.Context) error) error {
+	if toCalendarID == 0 {
+		toCalendarID = fromCalendarID
+	}
+	if err := calendaraccess.EnsureWritable(ctx, r.Q, fromCalendarID, component); err != nil {
+		return err
+	}
+	if toCalendarID != fromCalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, r.Q, toCalendarID, component); err != nil {
+			return err
+		}
+	}
+	if err := r.Check(ctx, recurrenceID, fromCalendarID, toCalendarID); err != nil {
+		return err
+	}
+	if err := write(ctx); err != nil {
+		return err
+	}
+	// A move to another calendar takes the other rows of the UID along and
+	// queues the delete of the source server object (issue #828).
+	if err := r.Record(ctx, fromCalendarID, toCalendarID); err != nil {
+		return fmt.Errorf("record calendar move: %w", err)
+	}
+	if err := r.Q.MarkResourceDirty(ctx, toCalendarID, r.UID, ownerType); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
+	}
+	return nil
 }
 
 // Record records the move of the rows of the UID from one calendar to
