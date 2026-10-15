@@ -261,8 +261,9 @@ func SingleMasterRows(q *storage.Queries, uid string, errInstanceMove error, mas
 // The dirty mark runs in the same transaction. A move commits the source
 // tombstone, so a dirty mark after the commit that fails would delete the
 // server object and never create the target object. toCalendarID 0 keeps
-// the calendar of the row.
-func (r Rows) Update(ctx context.Context, component, ownerType, recurrenceID string, fromCalendarID, toCalendarID int64, write func(ctx context.Context) error) error {
+// the calendar of the row. write gets the resolved target calendar and
+// must write the row with it, not with the 0.
+func (r Rows) Update(ctx context.Context, component, ownerType, recurrenceID string, fromCalendarID, toCalendarID int64, write func(ctx context.Context, calendarID int64) error) error {
 	if toCalendarID == 0 {
 		toCalendarID = fromCalendarID
 	}
@@ -277,7 +278,7 @@ func (r Rows) Update(ctx context.Context, component, ownerType, recurrenceID str
 	if err := r.Check(ctx, recurrenceID, fromCalendarID, toCalendarID); err != nil {
 		return err
 	}
-	if err := write(ctx); err != nil {
+	if err := write(ctx, toCalendarID); err != nil {
 		return err
 	}
 	// A move to another calendar takes the other rows of the UID along and

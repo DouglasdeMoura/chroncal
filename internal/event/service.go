@@ -465,7 +465,7 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	// The access checks, the move rules, the move record, and the dirty
 	// mark run in the transaction, in the order of uidmove.Rows.Update.
 	var e Event
-	err = uidMoveRows(qtx, old.Uid).Update(ctx, "VEVENT", "event", old.RecurrenceID, old.CalendarID, p.CalendarID, func(ctx context.Context) error {
+	err = uidMoveRows(qtx, old.Uid).Update(ctx, "VEVENT", "event", old.RecurrenceID, old.CalendarID, p.CalendarID, func(ctx context.Context, calendarID int64) error {
 		r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
 			ID:             id,
 			Title:          p.Title,
@@ -475,7 +475,7 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 			EndTime:        p.EndTime.Format(time.RFC3339),
 			AllDay:         storage.BoolToInt(p.AllDay),
 			RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
-			CalendarID:     p.CalendarID,
+			CalendarID:     calendarID,
 			Timezone:       storage.StringToNullable(p.Timezone),
 			Status:         p.Status,
 			Transp:         p.Transp,

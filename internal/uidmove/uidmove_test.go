@@ -228,3 +228,29 @@ func TestSingleMasterRows(t *testing.T) {
 		t.Fatal("CountCollisions is set, want nil")
 	}
 }
+
+// TestUpdateKeepsCalendarForZeroTarget runs Rows.Update with target
+// calendar 0, which keeps the calendar of the row. The write must get the
+// calendar of the row, not 0.
+func TestUpdateKeepsCalendarForZeroTarget(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, q := testutil.NewTestDB(t)
+	cal, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Work"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	r := fakeRows(nil, 0)
+	r.Q = q
+	r.MoveRows = func(context.Context, int64, int64) error { return nil }
+	var got int64 = -1
+	if err := r.Update(ctx, "VEVENT", "event", "", cal.ID, 0, func(_ context.Context, calendarID int64) error {
+		got = calendarID
+		return nil
+	}); err != nil {
+		t.Fatalf("Update = %v", err)
+	}
+	if got != cal.ID {
+		t.Fatalf("write got calendar %d, want the calendar of the row %d", got, cal.ID)
+	}
+}

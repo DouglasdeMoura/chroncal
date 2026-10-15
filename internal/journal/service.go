@@ -356,14 +356,14 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal
 	// The access checks, the move rules, the move record, and the dirty
 	// mark run in the transaction, in the order of uidmove.Rows.Update.
 	var j Journal
-	err = uidMoveRows(qtx, existing.Uid).Update(ctx, "VJOURNAL", "journal", existing.RecurrenceID, existing.CalendarID, p.CalendarID, func(ctx context.Context) error {
+	err = uidMoveRows(qtx, existing.Uid).Update(ctx, "VJOURNAL", "journal", existing.RecurrenceID, existing.CalendarID, p.CalendarID, func(ctx context.Context, calendarID int64) error {
 		r, err := qtx.UpdateJournal(ctx, storage.UpdateJournalParams{
 			ID:             id,
 			Summary:        p.Summary,
 			Description:    storage.StringToNullable(p.Description),
 			StartDate:      storage.StringToNullable(p.StartDate),
 			Status:         p.Status,
-			CalendarID:     p.CalendarID,
+			CalendarID:     calendarID,
 			Class:          p.Class,
 			Url:            storage.StringToNullable(p.URL),
 			RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),

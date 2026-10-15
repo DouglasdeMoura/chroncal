@@ -510,7 +510,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 	// The access checks, the move rules, the move record, and the dirty
 	// mark run in the transaction, in the order of uidmove.Rows.Update.
 	var t Todo
-	err = uidMoveRows(qtx, existing.Uid).Update(ctx, todoComponent, "todo", existing.RecurrenceID, existing.CalendarID, p.CalendarID, func(ctx context.Context) error {
+	err = uidMoveRows(qtx, existing.Uid).Update(ctx, todoComponent, "todo", existing.RecurrenceID, existing.CalendarID, p.CalendarID, func(ctx context.Context, calendarID int64) error {
 		r, err := qtx.UpdateTodo(ctx, storage.UpdateTodoParams{
 			ID:              id,
 			Summary:         p.Summary,
@@ -522,7 +522,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 			CompletedAt:     storage.StringToNullable(p.CompletedAt),
 			PercentComplete: p.PercentComplete,
 			Status:          p.Status,
-			CalendarID:      p.CalendarID,
+			CalendarID:      calendarID,
 			Priority:        p.Priority,
 			Class:           p.Class,
 			Url:             storage.StringToNullable(p.URL),
