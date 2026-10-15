@@ -892,10 +892,15 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 			return Event{}, err
 		}
 	}
+	// CalendarID 0 keeps the calendar of the occurrence, as in an update by
+	// row ID (uidmove.Rows.Update).
+	if p.CalendarID == 0 {
+		p.CalendarID = fromCalendarID
+	}
 	if err := move.CheckOf(ctx, recID, fromCalendarID, p.CalendarID, masters); err != nil {
 		return Event{}, err
 	}
-	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
+	if p.CalendarID != master.CalendarID {
 		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
 			return Event{}, err
 		}
@@ -1209,7 +1214,12 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
 		return Event{}, 0, err
 	}
-	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
+	// CalendarID 0 keeps the calendar of the series, as in an update by row
+	// ID (uidmove.Rows.Update).
+	if p.CalendarID == 0 {
+		p.CalendarID = master.CalendarID
+	}
+	if p.CalendarID != master.CalendarID {
 		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
 			return Event{}, 0, err
 		}
