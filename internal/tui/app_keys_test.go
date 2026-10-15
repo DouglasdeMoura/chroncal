@@ -242,3 +242,76 @@ func TestSidebarFooterShowsRemappedSwitchFocusKey(t *testing.T) {
 		t.Fatalf("sidebar footer = %q, want the F back hint", footer)
 	}
 }
+
+// sidebarFocusModel returns a model with the sidebar shown, the focus on
+// the main view, and the given switch_focus keys.
+func sidebarFocusModel(switchFocus ...string) Model {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.viewMode = viewMonth
+	m.showSidebar = true
+	m.focus = focusCalendar
+	if len(switchFocus) > 0 {
+		m = m.withKeys(newAppKeys(map[string][]string{"switch_focus": switchFocus}))
+	}
+	return m
+}
+
+func pressKey(t *testing.T, m Model, k string) Model {
+	t.Helper()
+	updated, cmd := m.Update(keyPressMsg(k))
+	m = updated.(Model)
+	// The sidebar answers the way out with SidebarFocusEscapedMsg.
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			if _, ok := msg.(SidebarFocusEscapedMsg); ok {
+				updated, _ = m.Update(msg)
+				m = updated.(Model)
+			}
+		}
+	}
+	return m
+}
+
+// TestRemappedSwitchFocusLeavesSidebar remaps switch_focus to "ctrl+o".
+// The key enters the sidebar, and the same key goes back to the main
+// view, as the footer hint says. Tab still moves between the sidebar
+// stops and does not leave on the first press.
+func TestRemappedSwitchFocusLeavesSidebar(t *testing.T) {
+	m := pressKey(t, sidebarFocusModel("ctrl+o"), "ctrl+o")
+	if m.focus != focusSidebar {
+		t.Fatalf("focus after ctrl+o = %v, want the sidebar", m.focus)
+	}
+	m = pressKey(t, m, "tab")
+	if m.focus != focusSidebar {
+		t.Fatalf("focus after tab in the sidebar = %v, want the sidebar (tab moves between stops)", m.focus)
+	}
+	m = pressKey(t, m, "ctrl+o")
+	if m.focus != focusCalendar || m.sidebar.Focused() {
+		t.Fatalf("focus after ctrl+o in the sidebar = %v (sidebar focused %v), want the main view", m.focus, m.sidebar.Focused())
+	}
+}
+
+// TestSwitchFocusShiftedKeyEntersAtEnd checks the enter direction. A
+// shifted switch_focus key enters at the last sidebar stop, as shift+tab
+// does. Any other key enters at the first stop.
+func TestSwitchFocusShiftedKeyEntersAtEnd(t *testing.T) {
+	for _, tc := range []struct {
+		keys  []string
+		press string
+		want  sidebarChild
+	}{
+		{nil, "tab", sidebarFocusMiniMonth},
+		{nil, "shift+tab", sidebarFocusList},
+		{[]string{"ctrl+o", "shift+f2"}, "shift+f2", sidebarFocusList},
+		{[]string{"ctrl+o", "shift+f2"}, "ctrl+o", sidebarFocusMiniMonth},
+	} {
+		m := pressKey(t, sidebarFocusModel(tc.keys...), tc.press)
+		if m.focus != focusSidebar {
+			t.Fatalf("%s: focus = %v, want the sidebar", tc.press, m.focus)
+		}
+		if m.sidebar.focus != tc.want {
+			t.Fatalf("%s: sidebar stop = %v, want %v", tc.press, m.sidebar.focus, tc.want)
+		}
+	}
+}

@@ -143,3 +143,16 @@ func keysLabel(b key.Binding) string {
 	}
 	return strings.Join(parts, " · ")
 }
+
+// isShiftedKey reports whether a key name holds the shift modifier:
+// "shift+..." or an uppercase letter (the shifted form of a letter key).
+func isShiftedKey(k string) bool {
+	canon := config.CanonicalKey(k)
+	return strings.HasPrefix(canon, "shift+") || (len(canon) == 1 && canon[0] >= 'A' && canon[0] <= 'Z')
+}
+
+// isSidebarStepKey reports whether the sidebar uses a key to move between
+// its stops: tab and shift+tab.
+func isSidebarStepKey(k string) bool {
+	return k == "tab" || k == "shift+tab"
+}
