@@ -227,17 +227,23 @@ func (m Model) handleEventFormSave(msg EventFormSaveMsg) (tea.Model, tea.Cmd) {
 	if editID > 0 && !msg.InstanceTime.IsZero() {
 		// One occurrence cannot move to another calendar (issue #828). A
 		// save with a new calendar then gets no "This event" choice.
+		// Each remaining choice then moves the series, so Cancel gets the
+		// focus and a quick Enter cancels.
 		options := []string{"This event", "This and following", "All events"}
 		offset := 0
 		if fromCalendarID != 0 && msg.CalendarID != fromCalendarID {
 			options, offset = options[1:], 1
+		}
+		prompt := NewChoiceDialogModel(fmt.Sprintf("Update %q?", msg.Title), m.theme, options...)
+		if offset > 0 {
+			prompt = prompt.FocusCancel()
 		}
 		return m.armChoice(
 			pendingAction{
 				kind:   pendingActionEditScope,
 				target: pendingTarget{save: msg, scopeOffset: offset},
 			},
-			NewChoiceDialogModel(fmt.Sprintf("Update %q?", msg.Title), m.theme, options...),
+			prompt,
 		), nil
 	}
 	if editID > 0 {

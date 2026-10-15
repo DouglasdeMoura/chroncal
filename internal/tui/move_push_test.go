@@ -209,3 +209,22 @@ func TestMoveConflictRefusalKeepsTheForm(t *testing.T) {
 		require.True(t, m.formOpen, "the form closed after %T", msg)
 	}
 }
+
+// TestOccurrenceMoveScopePromptFocusesCancel changes the calendar of one
+// occurrence. The scope prompt then offers "This and following" first,
+// which splits and moves the series. A quick Enter must cancel, not run
+// that choice.
+func TestOccurrenceMoveScopePromptFocusesCancel(t *testing.T) {
+	f := newTUIMoveFixture(t)
+	m := f.openOccurrenceEdit(t)
+	m, save := submitOpenForm(t, m)
+	updated, _ := m.Update(save)
+	m = updated.(Model)
+	require.True(t, m.choiceOpen)
+
+	_, cmd := m.Update(keyPressMsg("enter"))
+	require.NotNil(t, cmd)
+	result, ok := cmd().(ChoiceDialogResultMsg)
+	require.True(t, ok, "enter at the scope prompt gave no choice result")
+	require.Equal(t, -1, result.Choice, "enter must cancel the scope prompt")
+}

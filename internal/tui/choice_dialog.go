@@ -24,6 +24,13 @@ type ChoiceDialogModel struct {
 
 const choiceDialogMaxWidth = 72
 
+// FocusCancel moves the focus to Cancel, so a quick Enter cancels. Use it
+// when no choice is a safe default.
+func (m ChoiceDialogModel) FocusCancel() ChoiceDialogModel {
+	m.form = m.form.FocusCancel()
+	return m
+}
+
 func NewChoiceDialogModel(message string, theme Theme, options ...string) ChoiceDialogModel {
 	styles := DefaultDialogStyles()
 	dialog := NewDialog("", styles)
