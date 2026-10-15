@@ -31,8 +31,8 @@ type Rows struct {
 	// ErrTargetHasUID is the domain error for a move into a calendar that
 	// holds a row of the UID with the same recurrence ID.
 	ErrTargetHasUID error
-	// Masters returns the live master rows of the UID in all calendars.
-	// Check reads it.
+	// Masters returns the master rows of the UID in all calendars, live
+	// and in the trash (Master.Trashed). Check reads it.
 	Masters func(ctx context.Context) ([]Master, error)
 	// CountCollisions counts the live rows and the soft-deleted rows in
 	// toCalendarID that share the UID and a recurrence ID with a row in
@@ -45,11 +45,24 @@ type Rows struct {
 	MoveRows func(ctx context.Context, fromCalendarID, toCalendarID int64) error
 }
 
-// Master names one live master row of the UID.
+// Master names one master row of the UID.
 type Master struct {
 	ID         int64
 	CalendarID int64
+	// Trashed is true for a soft-deleted master row.
+	Trashed bool
 }
+
+// A legacy override is an override row in a calendar that holds no master
+// row of its UID, live or in the trash. An older version saved such a row
+// on a calendar change (issue #828). A master in the trash still owns the
+// overrides of its calendar: a delete of a series soft-deletes the master
+// and the overrides together, and a restore brings them back together.
+//
+// This is the one definition of the term. CheckOverrideMove, the override
+// lookup of the event service (findInstanceOverrideTx), and the dirty-mark
+// rule of storage.MarkResourceDirty use it. storage cannot import this
+// package, so its SQL states the same rule.
 
 // OccurrenceMoveError reports a refused calendar move of one override row.
 // It wraps the domain error (Rows.ErrInstanceMove), so errors.Is still
@@ -97,7 +110,7 @@ func (r Rows) CheckOverrideMove(recurrenceID string, fromCalendarID, toCalendarI
 	if !moveNeedsCheck(recurrenceID, fromCalendarID, toCalendarID) {
 		return nil
 	}
-	if overrideMoveAllowed(hasMasterIn(masters, fromCalendarID), hasMasterIn(masters, toCalendarID)) {
+	if overrideMoveAllowed(HasMasterIn(masters, fromCalendarID), hasLiveMasterIn(masters, toCalendarID)) {
 		return nil
 	}
 	return r.occurrenceMoveError(fromCalendarID, masters)
@@ -118,13 +131,17 @@ func moveNeedsCheck(recurrenceID string, fromCalendarID, toCalendarID int64) boo
 	return recurrenceID != "" && fromCalendarID != toCalendarID && toCalendarID != 0
 }
 
-// overrideMoveAllowed is the override rule. A row beside its master cannot
-// leave it. A legacy row can go only to a calendar with a master.
-func overrideMoveAllowed(ownMaster, targetMaster bool) bool {
-	return !ownMaster && targetMaster
+// overrideMoveAllowed is the override rule. A row beside its master (live
+// or in the trash) cannot leave it. A legacy row can go only to a calendar
+// with a live master.
+func overrideMoveAllowed(ownMaster, targetLiveMaster bool) bool {
+	return !ownMaster && targetLiveMaster
 }
 
-func hasMasterIn(masters []Master, calendarID int64) bool {
+// HasMasterIn reports whether calendarID holds a master row of the UID,
+// live or in the trash. An override row in a calendar without one is a
+// legacy override.
+func HasMasterIn(masters []Master, calendarID int64) bool {
 	for _, m := range masters {
 		if m.CalendarID == calendarID {
 			return true
@@ -133,19 +150,33 @@ func hasMasterIn(masters []Master, calendarID int64) bool {
 	return false
 }
 
-// occurrenceMoveError builds the refusal of a move of an override row in
-// calendarID. It names the master in that calendar, or else every master.
-func (r Rows) occurrenceMoveError(calendarID int64, masters []Master) error {
-	var own []Master
+func hasLiveMasterIn(masters []Master, calendarID int64) bool {
 	for _, m := range masters {
+		if m.CalendarID == calendarID && !m.Trashed {
+			return true
+		}
+	}
+	return false
+}
+
+// occurrenceMoveError builds the refusal of a move of an override row in
+// calendarID. It names the live master in that calendar, or else every
+// live master. A master in the trash is not a series that a move can take.
+func (r Rows) occurrenceMoveError(calendarID int64, masters []Master) error {
+	var own, live []Master
+	for _, m := range masters {
+		if m.Trashed {
+			continue
+		}
+		live = append(live, m)
 		if m.CalendarID == calendarID {
 			own = append(own, m)
 		}
 	}
 	if len(own) > 0 {
-		masters = own
+		live = own
 	}
-	return &OccurrenceMoveError{Err: r.ErrInstanceMove, Masters: masters}
+	return &OccurrenceMoveError{Err: r.ErrInstanceMove, Masters: live}
 }
 
 // CheckTarget refuses a calendar move of the rows of the UID when the

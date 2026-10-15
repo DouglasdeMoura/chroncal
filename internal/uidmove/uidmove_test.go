@@ -162,3 +162,36 @@ func TestCheckPropagatesMastersError(t *testing.T) {
 		t.Fatalf("Check of a master row = %v, want nil", err)
 	}
 }
+
+// TestLegacyOverrideCountsTrashedMaster checks the definition of a legacy
+// override: an override row in a calendar that holds no master row of the
+// UID, live or in the trash. A calendar with a master in the trash still
+// owns its overrides, so they cannot move away. A move target needs a
+// live master. A refusal names live masters only.
+func TestLegacyOverrideCountsTrashedMaster(t *testing.T) {
+	t.Parallel()
+	const a, b, c = int64(1), int64(2), int64(3)
+	rows := fakeRows(nil, 0)
+	rows.Masters = func(context.Context) ([]Master, error) {
+		return []Master{{ID: 10, CalendarID: a, Trashed: true}, {ID: 20, CalendarID: b}}, nil
+	}
+	ctx := context.Background()
+
+	// The override in A belongs to the trashed series of A.
+	err := rows.Check(ctx, "r", a, b)
+	var moveErr *OccurrenceMoveError
+	if !errors.As(err, &moveErr) {
+		t.Fatalf("move out of a calendar with a trashed master = %v, want a refusal", err)
+	}
+	if len(moveErr.Masters) != 1 || moveErr.Masters[0].ID != 20 {
+		t.Fatalf("masters of the refusal = %+v, want the live master 20 only", moveErr.Masters)
+	}
+	// A legacy override in C cannot go to A, whose master is in the trash.
+	if err := rows.Check(ctx, "r", c, a); !errors.Is(err, errInstance) {
+		t.Fatalf("move to a calendar with a trashed master = %v, want a refusal", err)
+	}
+	// It can go to B, whose master is live.
+	if err := rows.Check(ctx, "r", c, b); err != nil {
+		t.Fatalf("move to a calendar with a live master = %v, want nil", err)
+	}
+}

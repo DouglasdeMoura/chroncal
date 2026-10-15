@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -524,7 +523,7 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 func uidMasters(rows []storage.Event) []uidmove.Master {
 	out := make([]uidmove.Master, len(rows))
 	for i, m := range rows {
-		out[i] = uidmove.Master{ID: m.ID, CalendarID: m.CalendarID}
+		out[i] = uidmove.Master{ID: m.ID, CalendarID: m.CalendarID, Trashed: m.DeletedAt != nil}
 	}
 	return out
 }
@@ -539,7 +538,7 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 		ErrInstanceMove: ErrInstanceCalendarMove,
 		ErrTargetHasUID: ErrMoveTargetHasUID,
 		Masters: func(ctx context.Context) ([]uidmove.Master, error) {
-			masters, err := qtx.ListEventMastersByUID(ctx, uid)
+			masters, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
 			if err != nil {
 				return nil, err
 			}
@@ -561,47 +560,57 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 
 // findInstanceMasterTx finds the master of an occurrence edit of move.UID.
 // recID is the recurrence ID of the occurrence. Two calendars can hold the
-// same UID. One master is the only choice. With more masters, the master in
-// calendarID wins. No master gives sql.ErrNoRows.
+// same UID. One live master is the only choice. With more live masters, the
+// one in calendarID wins. No live master gives sql.ErrNoRows. The second
+// result lists every master row of the UID, live and in the trash, for the
+// legacy-override rule (see uidmove).
 //
-// An edit that names a calendar with no master of the UID cannot choose a
-// master. A legacy override of recID in that calendar can belong to any
+// An edit that names a calendar with no live master of the UID cannot
+// choose a master. A legacy override of recID in that calendar can belong to any
 // master, so it gets ErrAmbiguousUID. With no such override, the
 // occurrence lives in the calendar of a master, and the shared rule
 // (uidmove.Rows.CheckOverrideMove) refuses the move for each master. An
 // edit that names no calendar gets ErrAmbiguousUID.
 func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmove.Rows, calendarID int64, recID string) (storage.Event, []storage.Event, error) {
 	uid := move.UID
-	masters, err := qtx.ListEventMastersByUID(ctx, uid)
+	all, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
 	if err != nil {
 		return storage.Event{}, nil, err
 	}
-	switch len(masters) {
+	var live []storage.Event
+	for _, m := range all {
+		if m.DeletedAt == nil {
+			live = append(live, m)
+		}
+	}
+	switch len(live) {
 	case 0:
 		return storage.Event{}, nil, sql.ErrNoRows
 	case 1:
-		return masters[0], masters, nil
+		return live[0], all, nil
 	}
-	for _, m := range masters {
+	for _, m := range live {
 		if m.CalendarID == calendarID {
-			return m, masters, nil
+			return m, all, nil
 		}
 	}
 	if calendarID == 0 {
 		return storage.Event{}, nil, ErrAmbiguousUID
 	}
+	masters := uidMasters(all)
 	_, err = qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
 		CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
 	})
-	legacy, err := storage.Found(err)
+	found, err := storage.Found(err)
 	if err != nil {
 		return storage.Event{}, nil, err
 	}
-	if !legacy {
-		// The occurrence can belong to each master, so its calendar is
-		// not known. Calendar 0 holds no master, so the shared rule
-		// refuses the move and names every master.
-		if err := move.CheckOverrideMove(recID, 0, calendarID, uidMasters(masters)); err != nil {
+	if !found || uidmove.HasMasterIn(masters, calendarID) {
+		// The occurrence has no legacy override in calendarID, so it can
+		// belong to each master, and its calendar is not known. Calendar 0
+		// holds no master, so the shared rule refuses the move and names
+		// every live master.
+		if err := move.CheckOverrideMove(recID, 0, calendarID, masters); err != nil {
 			return storage.Event{}, nil, err
 		}
 	}
@@ -609,10 +618,11 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 }
 
 // findInstanceOverrideTx finds the stored override of recID for master. A
-// row in the calendar of the master wins. Else it takes a legacy override:
-// a row that an older version saved in a calendar with no master of the
-// UID. masters lists every master of the UID. More than one legacy
-// row gives ErrAmbiguousUID. No row gives sql.ErrNoRows.
+// row in the calendar of the master wins. Else it takes a legacy override
+// (see uidmove): a row in a calendar with no master row of the UID, live
+// or in the trash. masters lists every master row of the UID, live and in
+// the trash. More than one legacy row gives ErrAmbiguousUID. No row gives
+// sql.ErrNoRows.
 func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, masters []storage.Event, recID string) (storage.Event, error) {
 	// One query reads every live row of (uid, recID). The pick runs in Go,
 	// so the common edit (no row, or a row with the master) needs no second
@@ -629,7 +639,7 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 		if r.CalendarID == master.CalendarID {
 			return r, nil
 		}
-		if !slices.ContainsFunc(masters, func(m storage.Event) bool { return m.CalendarID == r.CalendarID }) {
+		if !uidmove.HasMasterIn(uidMasters(masters), r.CalendarID) {
 			legacy = append(legacy, r)
 		}
 	}

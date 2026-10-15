@@ -901,3 +901,36 @@ func TestMoveEventIntoCalendarWithLiveCopyIsRefused(t *testing.T) {
 		t.Fatalf("error = %q, want the live-copy guidance", msg)
 	}
 }
+
+// TestOverrideBesideTrashedMasterIsNotLegacy holds one UID in A and B. The
+// master of A is in the trash, and A still holds a live override of the
+// second occurrence. B holds a live master. An edit of that occurrence in
+// B must make a new override in B. The override of A belongs to the
+// trashed series of A, so it is not a legacy override of the series in B.
+// Before the fix, the edit took the override of A and tried to move the
+// rows of A, with the trashed master, into B.
+func TestOverrideBesideTrashedMasterIsNotLegacy(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	masterA, overrideA, inst := createSeriesWithOverride(t, engine, calA)
+	masterB := createSeries(t, engine, calB)
+	sameUID(t, engine, masterB.ID, masterA.UID)
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE id = ?`, masterA.ID); err != nil {
+		t.Fatalf("trash the master of A: %v", err)
+	}
+
+	edited, err := engine.events.UpdateInstance(ctx, masterA.UID, inst, event.UpdateParams{
+		CalendarID: calB, Title: "Late in B", StartTime: inst, EndTime: inst.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("UpdateInstance in B = %v, want nil", err)
+	}
+	if edited.ID == overrideA.ID || edited.CalendarID != calB {
+		t.Fatalf("edited row = %+v, want a new override in B", edited)
+	}
+	if n := countRows(t, engine, "events", calA, masterA.UID); n != 2 {
+		t.Fatalf("event rows in A = %d, want 2 (the trashed master and its override)", n)
+	}
+}

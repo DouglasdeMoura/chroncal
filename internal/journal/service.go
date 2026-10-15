@@ -751,11 +751,11 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 		UID:             uid,
 		ErrInstanceMove: ErrInstanceCalendarMove,
 		Masters: func(ctx context.Context) ([]uidmove.Master, error) {
-			m, err := qtx.GetJournalByUID(ctx, uid)
+			m, err := qtx.GetJournalByUIDIncludingDeleted(ctx, uid)
 			if found, err := storage.Found(err); !found {
 				return nil, err
 			}
-			return []uidmove.Master{{ID: m.ID, CalendarID: m.CalendarID}}, nil
+			return []uidmove.Master{{ID: m.ID, CalendarID: m.CalendarID, Trashed: m.DeletedAt != nil}}, nil
 		},
 		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
 			return moveUIDRowsTx(ctx, qtx, storage.MoveJournalUIDToCalendarParams{

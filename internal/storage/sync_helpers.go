@@ -99,12 +99,18 @@ func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, 
 // in calendarID must mark dirty.
 //
 // The export of a UID holds the master and every override, in all
-// calendars (issue #842). A legacy override is an override row that an
-// older version saved in a calendar with no master row of the UID. A dirty
-// mark on that calendar uploads the whole series into it a second time. So
-// when calendarID holds no master row (live or soft-deleted) but holds an
-// override row of uid, and exactly one calendar holds a live master, the
-// mark goes to that calendar. Each other case marks calendarID.
+// calendars (issue #842). A legacy override is an override row in a
+// calendar that holds no master row of its UID, live or in the trash. The
+// uidmove package holds that definition; this package cannot import it, so
+// the queries here state the same rule. A dirty mark on the calendar of a
+// legacy override uploads the whole series into it a second time. So when
+// calendarID holds no master row (live or in the trash) but holds an
+// override row of uid (live or in the trash), and exactly one calendar
+// holds a live master, the mark goes to that calendar. Each other case
+// marks calendarID.
+//
+// A master in the trash keeps the mark in its calendar: a delete of a
+// series in A must not send its mark to a live copy of the UID in B.
 //
 // The common case (calendarID holds the master) costs one aggregate lookup
 // on the UNIQUE(calendar_id, uid, recurrence_id) key. Only the legacy case
