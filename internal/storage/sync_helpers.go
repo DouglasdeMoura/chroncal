@@ -251,6 +251,37 @@ func RecordResourceMove(ctx context.Context, q *Queries, fromCalendarID, toCalen
 	return nil
 }
 
+// MoveSourceDeleteSafe reports whether a push of fromCalendarID may send
+// the source delete of a move of uid to toCalendarID. The delete removes
+// the source server object, so it must wait until the target holds the
+// item. It is safe when:
+//   - fromCalendarID holds no tombstone of uid (the push deletes nothing of
+//     the move)
+//   - toCalendarID is local (no server copy is expected there)
+//   - the sync row of uid in toCalendarID has a server object and no
+//     unpushed edit
+func MoveSourceDeleteSafe(ctx context.Context, q *Queries, fromCalendarID, toCalendarID int64, uid string) (bool, error) {
+	n, err := q.CountTombstonesByCalendarAndUID(ctx, CountTombstonesByCalendarAndUIDParams{CalendarID: fromCalendarID, Uid: uid})
+	if err != nil {
+		return false, fmt.Errorf("count source tombstones: %w", err)
+	}
+	if n == 0 {
+		return true, nil
+	}
+	cal, err := q.GetCalendar(ctx, toCalendarID)
+	if err != nil {
+		return false, fmt.Errorf("get target calendar: %w", err)
+	}
+	if cal.AccountID == nil || *cal.AccountID == 0 {
+		return true, nil
+	}
+	sr, err := q.GetSyncResource(ctx, GetSyncResourceParams{CalendarID: toCalendarID, Uid: uid})
+	if found, err := Found(err); !found {
+		return false, err
+	}
+	return sr.Dirty == 0 && sr.RemoteUrl != "", nil
+}
+
 // DeleteSyncHrefRetriesByCalendar deletes the two per-href retry tables of
 // one calendar: sync_pending_hrefs and sync_known_misses. A calendar reset
 // and a remote unlink call it, so a new server state starts with no old

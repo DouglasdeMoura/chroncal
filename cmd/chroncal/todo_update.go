@@ -343,11 +343,11 @@ a --progress value other than 100.`,
 				if err := printOutput(w, toJSONTodo(t)); err != nil {
 					return err
 				}
-				opportunisticPushMove(a, existing.CalendarID, t.CalendarID, cmd)
+				opportunisticPushMove(a, existing.CalendarID, t.CalendarID, t.UID, cmd)
 				return nil
 			}
 			printTodo(w, t)
-			opportunisticPushMove(a, existing.CalendarID, t.CalendarID, cmd)
+			opportunisticPushMove(a, existing.CalendarID, t.CalendarID, t.UID, cmd)
 			return nil
 		},
 	}

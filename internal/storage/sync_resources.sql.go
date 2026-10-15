@@ -59,6 +59,22 @@ func (q *Queries) ClearSyncResourcePushFailure(ctx context.Context, arg ClearSyn
 	return err
 }
 
+const countTombstonesByCalendarAndUID = `-- name: CountTombstonesByCalendarAndUID :one
+SELECT COUNT(*) FROM tombstones WHERE calendar_id = ? AND uid = ?
+`
+
+type CountTombstonesByCalendarAndUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) CountTombstonesByCalendarAndUID(ctx context.Context, arg CountTombstonesByCalendarAndUIDParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTombstonesByCalendarAndUID, arg.CalendarID, arg.Uid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createTombstone = `-- name: CreateTombstone :exec
 INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET

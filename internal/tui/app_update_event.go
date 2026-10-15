@@ -216,6 +216,7 @@ func (m Model) handleEventFormSave(msg EventFormSaveMsg) (tea.Model, tea.Cmd) {
 	// assigns editID, so EventFormSaveMsg cannot carry that value
 	// reliably — see event_form.go:EventFormSaveMsg for the rationale.
 	editID := m.form.editID
+	fromCalendarID, uid := m.form.editCalendarID, m.form.editUID
 	m.formOpen = false
 	attendees := msg.Attendees
 	alarms := msg.Alarms
@@ -241,11 +242,6 @@ func (m Model) handleEventFormSave(msg EventFormSaveMsg) (tea.Model, tea.Cmd) {
 		calID := msg.CalendarID
 		return m, func() tea.Msg {
 			ctx := context.Background()
-			// The calendar before the edit. A move leaves a tombstone there.
-			var fromCalendarID int64
-			if old, err := m.app.Events.Get(ctx, eventID); err == nil {
-				fromCalendarID = old.CalendarID
-			}
 			// Update the row and its attendees/alarms in one transaction so a
 			// failed child write rolls the whole edit back (issue #87).
 			_, err := m.app.Events.UpdateWithRelations(ctx, eventID, event.UpdateParams{
@@ -263,7 +259,7 @@ func (m Model) handleEventFormSave(msg EventFormSaveMsg) (tea.Model, tea.Cmd) {
 				Class:          msg.Class,
 				Categories:     msg.Categories,
 			}, attendees, alarms)
-			return eventUpdatedMsg{calendarID: calID, fromCalendarID: fromCalendarID, err: err}
+			return eventUpdatedMsg{calendarID: calID, fromCalendarID: fromCalendarID, uid: uid, err: err}
 		}
 	}
 	calID := msg.CalendarID
@@ -325,7 +321,7 @@ func (m Model) handleEventUpdateAfterScope(msg eventUpdateAfterScopeMsg) (tea.Mo
 		return m, nil
 	}
 	cmds := []tea.Cmd{m.loadEvents()}
-	if push := m.runMovePush(msg.fromCalendarID, msg.calendarID); push != nil {
+	if push := m.runMovePush(msg.fromCalendarID, msg.calendarID, msg.uid); push != nil {
 		cmds = append(cmds, push)
 	}
 	// On scope-dispatched edits we don't return to the prior view dialog;
@@ -360,7 +356,7 @@ func (m Model) handleEventUpdated(msg eventUpdatedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	cmds := []tea.Cmd{m.loadEvents()}
-	if push := m.runMovePush(msg.fromCalendarID, msg.calendarID); push != nil {
+	if push := m.runMovePush(msg.fromCalendarID, msg.calendarID, msg.uid); push != nil {
 		cmds = append(cmds, push)
 	}
 	if m.viewReturnEvent.ID != 0 {

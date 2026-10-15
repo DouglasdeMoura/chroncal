@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -15,6 +16,8 @@ type GenericCalDAV struct {
 	mu      sync.Mutex
 	objects map[string]bool
 	tag     int
+	// putStatus maps a path prefix to a forced PUT status.
+	putStatus map[string]int
 }
 
 // NewGenericCalDAV returns an empty GenericCalDAV.
@@ -28,6 +31,12 @@ func (g *GenericCalDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		_, _ = io.ReadAll(r.Body)
+		for prefix, code := range g.putStatus {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				w.WriteHeader(code)
+				return
+			}
+		}
 		g.objects[r.URL.Path] = true
 		g.tag++
 		w.Header().Set("ETag", fmt.Sprintf(`"e%d"`, g.tag))
@@ -42,6 +51,16 @@ func (g *GenericCalDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// SetPutStatus makes every PUT under the path prefix answer code.
+func (g *GenericCalDAV) SetPutStatus(prefix string, code int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.putStatus == nil {
+		g.putStatus = map[string]int{}
+	}
+	g.putStatus[prefix] = code
 }
 
 // Paths returns the paths of the stored objects, in no fixed order.

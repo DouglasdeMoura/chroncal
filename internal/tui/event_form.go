@@ -114,10 +114,15 @@ const (
 
 // EventFormModel is the Bubble Tea model for the event creation/edit form.
 type EventFormModel struct {
-	editID      int64 // 0 = create mode, >0 = editing this event ID
-	day         time.Time
-	calendars   []calendarOption
-	calendarIdx int
+	editID int64 // 0 = create mode, >0 = editing this event ID
+	// editCalendarID and editUID are the calendar and the UID of the
+	// edited event before the edit. A save that moves the event pushes
+	// that calendar too (Model.runMovePush).
+	editCalendarID int64
+	editUID        string
+	day            time.Time
+	calendars      []calendarOption
+	calendarIdx    int
 
 	// instanceTime is the un-edited occurrence start when the form is editing
 	// one instance of a recurring series. Zero for fresh creates, non-recurring

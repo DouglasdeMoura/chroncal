@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -23,12 +25,18 @@ func runPush(t *testing.T, cmd tea.Cmd) {
 	cmd()
 }
 
-// TestEditMovePushesSourceCalendar moves a synced event from Work to
-// Personal in the TUI on a server that keeps a UID unique per collection.
-// The update message must carry the source calendar, and the push after
-// the edit must delete the Work object at once. Before the fix only
-// Personal was pushed, and the Work copy stayed until the next full sync.
-func TestEditMovePushesSourceCalendar(t *testing.T) {
+// tuiMoveFixture is a DB-backed model with two calendars of one account on
+// a generic CalDAV stub, and one event in Work that the stub holds.
+type tuiMoveFixture struct {
+	m              Model
+	a              *app.App
+	stub           *testutil.GenericCalDAV
+	work, personal int64
+	evt            event.Event
+}
+
+func newTUIMoveFixture(t *testing.T) tuiMoveFixture {
+	t.Helper()
 	t.Setenv("CHRONCAL_SECURITY_DISABLE_KEYRING", "1")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	stub := testutil.NewGenericCalDAV()
@@ -63,13 +71,18 @@ func TestEditMovePushesSourceCalendar(t *testing.T) {
 	require.NoError(t, err)
 	runPush(t, m.runOpportunisticPush(work))
 	require.Len(t, stub.Paths(), 1)
+	return tuiMoveFixture{m: m, a: a, stub: stub, work: work, personal: personal, evt: evt}
+}
 
-	// Move the event with the edit form, as the user does.
-	m, next := step(t, m, EventEditMsg{Event: evt})
+// moveWithForm moves the event to Personal with the edit form, as the
+// user does, and returns the update message.
+func (f tuiMoveFixture) moveWithForm(t *testing.T) (Model, eventUpdatedMsg) {
+	t.Helper()
+	m, next := step(t, f.m, EventEditMsg{Event: f.evt})
 	m, _ = step(t, m, next)
 	require.True(t, m.formOpen)
 	for i, c := range m.form.calendars {
-		if c.ID == personal {
+		if c.ID == f.personal {
 			m.form.calendarField.SetSelected(i)
 		}
 	}
@@ -80,14 +93,46 @@ func TestEditMovePushesSourceCalendar(t *testing.T) {
 	msg, ok := cmd().(eventUpdatedMsg)
 	require.True(t, ok, "expected eventUpdatedMsg")
 	require.NoError(t, msg.err)
-	require.Equal(t, personal, msg.calendarID)
-	require.Equal(t, work, msg.fromCalendarID, "the update message must carry the source calendar")
+	return m, msg
+}
+
+// TestEditMovePushesSourceCalendar moves a synced event from Work to
+// Personal in the TUI on a server that keeps a UID unique per collection.
+// The update message must carry the source calendar, and the push after
+// the edit must delete the Work object at once. Before the fix only
+// Personal was pushed, and the Work copy stayed until the next full sync.
+func TestEditMovePushesSourceCalendar(t *testing.T) {
+	f := newTUIMoveFixture(t)
+	m, msg := f.moveWithForm(t)
+	require.Equal(t, f.personal, msg.calendarID)
+	require.Equal(t, f.work, msg.fromCalendarID, "the update message must carry the source calendar")
+	require.Equal(t, f.evt.UID, msg.uid)
 
 	// runMovePush runs these two pushes in sequence: the target, then
 	// the source.
 	runPush(t, m.runOpportunisticPush(msg.calendarID))
-	runPush(t, m.runOpportunisticPush(msg.fromCalendarID))
-	got := stub.Paths()
+	runPush(t, m.runMoveSourcePush(msg.fromCalendarID, msg.calendarID, msg.uid))
+	got := f.stub.Paths()
 	require.Len(t, got, 1, "server objects = %v", got)
 	require.True(t, strings.HasPrefix(got[0], "/calendars/personal/"), "server objects = %v", got)
+}
+
+// TestEditMovePushKeepsSourceWhenTargetFails moves a synced event, and the
+// PUT to the target calendar fails. The source push must not run: the
+// source object is then the only server copy. Its tombstone stays, so a
+// later push completes the move.
+func TestEditMovePushKeepsSourceWhenTargetFails(t *testing.T) {
+	f := newTUIMoveFixture(t)
+	// 507 is not transient, so the push does not wait for a retry backoff.
+	f.stub.SetPutStatus("/calendars/personal/", http.StatusInsufficientStorage)
+	m, msg := f.moveWithForm(t)
+
+	runPush(t, m.runOpportunisticPush(msg.calendarID))
+	runPush(t, m.runMoveSourcePush(msg.fromCalendarID, msg.calendarID, msg.uid))
+	got := f.stub.Paths()
+	require.Len(t, got, 1, "server objects = %v", got)
+	require.True(t, strings.HasPrefix(got[0], "/calendars/work/"), "server objects = %v", got)
+	ts, err := f.a.Queries.ListTombstonesByCalendar(context.Background(), f.work)
+	require.NoError(t, err)
+	require.Len(t, ts, 1, "the source tombstone must stay")
 }

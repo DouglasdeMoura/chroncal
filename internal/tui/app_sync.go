@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/config"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	syncpkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
@@ -213,20 +214,40 @@ func syncProgressLabel(name string) string {
 	return string(runes[:maxLen-1]) + "…"
 }
 
-// runMovePush is runOpportunisticPush for an edit that can move an item
-// from fromCalendarID to toCalendarID. A move leaves a tombstone in the
+// runMovePush is runOpportunisticPush for an edit that can move the item
+// uid from fromCalendarID to toCalendarID. A move leaves a tombstone in the
 // source calendar (storage.RecordResourceMove). The push of the target
 // alone leaves that delete for the next full sync, and a server that keeps
 // a UID unique per collection shows a copy in both calendars until then.
 // So after a move it pushes the target and then the source, in sequence.
 // The target goes first: on a server that keeps a UID unique per account,
 // its push sends the source delete itself (issue #828).
-func (m Model) runMovePush(fromCalendarID, toCalendarID int64) tea.Cmd {
+func (m Model) runMovePush(fromCalendarID, toCalendarID int64, uid string) tea.Cmd {
 	target := m.runOpportunisticPush(toCalendarID)
 	if fromCalendarID == 0 || fromCalendarID == toCalendarID {
 		return target
 	}
-	return tea.Sequence(target, m.runOpportunisticPush(fromCalendarID))
+	return tea.Sequence(target, m.runMoveSourcePush(fromCalendarID, toCalendarID, uid))
+}
+
+// runMoveSourcePush pushes the source calendar of a move of uid, but only
+// when the target holds the item (storage.MoveSourceDeleteSafe). After a
+// failed target push the source object is the only server copy, so its
+// delete waits with its tombstone. The check runs when the command runs,
+// after the target push.
+func (m Model) runMoveSourcePush(fromCalendarID, toCalendarID int64, uid string) tea.Cmd {
+	source := m.runOpportunisticPush(fromCalendarID)
+	if source == nil {
+		return nil
+	}
+	q := m.app.Queries
+	return func() tea.Msg {
+		safe, err := storage.MoveSourceDeleteSafe(context.Background(), q, fromCalendarID, toCalendarID, uid)
+		if err != nil || !safe {
+			return nil
+		}
+		return source()
+	}
 }
 
 // runOpportunisticPush pushes unpushed changes for a single calendar with no

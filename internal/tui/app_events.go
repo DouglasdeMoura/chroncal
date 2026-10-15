@@ -103,7 +103,7 @@ func (m Model) dispatchEditScope(editID int64, choice int, save EventFormSaveMsg
 	if err != nil {
 		return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
 	}
-	return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, fromCalendarID: fromCalendarID}
+	return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, fromCalendarID: fromCalendarID, uid: master.UID}
 }
 
 func (m Model) loadEvents() tea.Cmd {

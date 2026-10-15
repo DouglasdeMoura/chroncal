@@ -171,7 +171,10 @@ type eventUpdatedMsg struct {
 	// fromCalendarID is the calendar of the event before the edit. A move
 	// leaves a tombstone there, so the push after the edit pushes it too.
 	fromCalendarID int64
-	err            error
+	// uid is the UID of the edited event. The source push of a move checks
+	// the target state of that UID first.
+	uid string
+	err error
 }
 
 // eventUpdateAfterScopeMsg is fired by dispatchEditScope after a scope-routed
@@ -185,7 +188,9 @@ type eventUpdateAfterScopeMsg struct {
 	// fromCalendarID is the calendar of the master before the edit. A move
 	// or a split into another calendar leaves a change there too.
 	fromCalendarID int64
-	err            error
+	// uid is the UID of the master.
+	uid string
+	err error
 }
 
 type eventDeletedMsg struct {

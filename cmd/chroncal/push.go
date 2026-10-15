@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
@@ -35,18 +36,27 @@ func opportunisticPush(a *app.App, calendarID int64, cmd *cobra.Command) {
 }
 
 // opportunisticPushMove is opportunisticPush for an update that can move
-// the item from fromCalendarID to toCalendarID. A move leaves a tombstone
-// in the source calendar (storage.RecordResourceMove). The push of the
-// target alone leaves that delete for the next full sync, and a server
-// that keeps a UID unique per collection shows a copy in both calendars
-// until then. So after a move it pushes the target and then the source.
-// The target goes first: on a server that keeps a UID unique per account,
-// its push sends the source delete itself (issue #828).
-func opportunisticPushMove(a *app.App, fromCalendarID, toCalendarID int64, cmd *cobra.Command) {
+// the item uid from fromCalendarID to toCalendarID. A move leaves a
+// tombstone in the source calendar (storage.RecordResourceMove). The push
+// of the target alone leaves that delete for the next full sync, and a
+// server that keeps a UID unique per collection shows a copy in both
+// calendars until then. So after a move it pushes the target and then the
+// source. The target goes first: on a server that keeps a UID unique per
+// account, its push sends the source delete itself (issue #828).
+//
+// The source push runs only when the target holds the item
+// (storage.MoveSourceDeleteSafe). After a failed target push the source
+// object is the only server copy, so its delete waits with its tombstone.
+func opportunisticPushMove(a *app.App, fromCalendarID, toCalendarID int64, uid string, cmd *cobra.Command) {
 	opportunisticPush(a, toCalendarID, cmd)
-	if fromCalendarID != 0 && fromCalendarID != toCalendarID {
-		opportunisticPush(a, fromCalendarID, cmd)
+	if fromCalendarID == 0 || fromCalendarID == toCalendarID {
+		return
 	}
+	safe, err := storage.MoveSourceDeleteSafe(context.Background(), a.Queries, fromCalendarID, toCalendarID, uid)
+	if err != nil || !safe {
+		return
+	}
+	opportunisticPush(a, fromCalendarID, cmd)
 }
 
 // pushCalendarAfterWrite opportunistically pushes unpushed changes for one

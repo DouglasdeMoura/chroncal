@@ -209,6 +209,8 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, calendars map[int64]CalendarInfo, theme Theme, fallback ...int64) (EventFormModel, tea.Cmd) {
 	m, cmd := NewEventFormModel(ev.StartTime, calendars, theme, append([]int64{ev.CalendarID}, fallback...)...)
 	m.editID = ev.ID
+	m.editCalendarID = ev.CalendarID
+	m.editUID = ev.UID
 	m.instanceTime = instanceTime
 	m.titleField.SetValue(ev.Title)
 	m.locationField.SetValue(ev.Location)
