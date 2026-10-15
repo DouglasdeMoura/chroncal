@@ -86,12 +86,12 @@ func New(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates 
 		// ignored, pre-v0.5.1) or from transiently TZID-less server bodies
 		// carry the zone-local wall clock mis-tagged as UTC, so they miss the
 		// occurrence they were meant to exclude and a server-cancelled
-		// instance keeps rendering forever — etag-gated sync never re-imports
+		// instance shows forever — etag-gated sync never re-imports
 		// an unchanged resource to repair them. Also exclude each EXDATE's
 		// UTC wall clock reinterpreted in the expansion zone; for a healthy
 		// EXDATE the reinterpreted instant matches no occurrence and is a
 		// no-op. Date-only (all-day) EXDATEs are exact by construction and
-		// midnight-UTC-tagged, so reinterpreting them would shift the day —
+		// midnight-UTC-tagged, so a reinterpretation would shift the day —
 		// skip them.
 		if loc != nil {
 			for _, ex := range exDates {

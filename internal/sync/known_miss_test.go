@@ -51,7 +51,7 @@ func seedKnownMissCalendar(t *testing.T, db *sql.DB, q *storage.Queries) int64 {
 // TestEngineKnownHrefStopsBlockingAfterBudget is the regression test for
 // issue #816. The server keeps a bad answer for an href that has a local
 // row: an unparseable body or a 404. Before the fix, each sync withheld the
-// sync-token and the calendar stayed failing forever. After the retry
+// sync-token and the calendar kept a sync error forever. After the retry
 // budget, the token must advance, the calendar must be healthy, the local
 // row must stay, and sync status must name the href.
 func TestEngineKnownHrefStopsBlockingAfterBudget(t *testing.T) {

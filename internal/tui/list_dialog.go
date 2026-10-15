@@ -281,12 +281,12 @@ func (m ListDialogModel) firstEnabledAction() int {
 	return -1
 }
 
-// SyncLayout runs the pending detail-pane layout work. SetRows,
+// SyncLayout runs the detail-pane layout work that waits. SetRows,
 // SetDetailTitle, SetDetailLines, SetEmptyList, and SetActions only mark
 // the layout dirty. Call SyncLayout once at the end of a refresh, so
 // that the title wrap and the viewport update run once per refresh.
 // View, BodyRowScreenY, and the scroll methods also sync a dirty layout,
-// so a missing call costs time but does not change the output.
+// so a skipped call costs time but does not change the output.
 func (m ListDialogModel) SyncLayout() ListDialogModel {
 	m.ensureLayout()
 	return m

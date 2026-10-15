@@ -315,7 +315,7 @@ type ListSiblingTombstonesRow struct {
 	Etag                 string
 }
 
-// The pending tombstones of one UID in the other calendars of one account,
+// The unsent tombstones of one UID in the other calendars of one account,
 // with the last known etag of each source object. A calendar without a remote_url
 // has no server object to delete. The caller drops the read-only
 // calendars. A local move between two calendars of one account leaves a

@@ -84,7 +84,7 @@ func TestValidateKeys_Errors(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			// Load accepts the table, so the CLI, sync, and the alarm
-			// daemon keep working. The TUI checks it with ValidateKeys.
+			// daemon continue to work. The TUI checks it with ValidateKeys.
 			cfg, err := loadWithConfigFile(t, c.body)
 			if err != nil {
 				t.Fatalf("Load() error = %v, want nil", err)

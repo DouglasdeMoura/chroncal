@@ -348,7 +348,7 @@ func (m *ListDialogModel) renderDetails(w int) string {
 	if len(m.actions) > 0 {
 		// renderActions returns ≤ w cells (truncateTo); pad it so the whole
 		// detail column is width-correct and viewColumns can trustedSplit it
-		// without re-measuring every body line.
+		// with no new measurement of every body line.
 		parts = append(parts, m.actionsSeparator(w), padTrailing(m.renderActions(w), w))
 	}
 	return strings.Join(parts, "\n")

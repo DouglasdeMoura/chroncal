@@ -308,13 +308,13 @@ func (e *Engine) deleteTombstone(ctx context.Context, client *caldav.Client, cal
 	}); err != nil && !errors.Is(err, caldav.ErrResourceGone) {
 		// A 404/410 means the resource is already absent server-side —
 		// the desired end state — so fall through and clear the local
-		// rows instead of re-issuing the DELETE on every sync.
+		// rows. Do not send the DELETE again on every sync.
 		if caldav.IsConflict(err) {
-			// 412: the resource was edited remotely after we last saw it.
-			// Honoring the delete would discard that edit, so abandon it.
-			// Drop the tombstone (stop re-issuing the DELETE every sync)
-			// but keep the sync_resource so the next pull re-imports the
-			// remote version, resurrecting the item with its remote edit.
+			// 412: a remote edit changed the resource after the last sync.
+			// The delete would discard that edit, so abandon it. Drop the
+			// tombstone (do not send the DELETE again on every sync), but
+			// keep the sync_resource. The next pull then imports the remote
+			// version again and brings back the item with its remote edit.
 			// A delete-vs-edit conflict always preserves the remote edit
 			// (the non-destructive choice), independent of ConflictStrategy.
 			e.logger.Warn("tombstone delete conflict: remote edited, preserving remote version", "uid", ts.Uid)
@@ -338,7 +338,7 @@ func (e *Engine) deleteTombstone(ctx context.Context, client *caldav.Client, cal
 	return tombstoneDeleted, nil
 }
 
-// movedSource is a pending tombstone of a sibling calendar: a calendar of
+// movedSource is an unsent tombstone of a sibling calendar: a calendar of
 // the same account as the calendar that the push serves. etag is the last
 // known etag of the source object, or empty.
 type movedSource struct {
@@ -348,7 +348,7 @@ type movedSource struct {
 	etag       string
 }
 
-// movedSources lists the pending tombstones of uid in the other writable
+// movedSources lists the unsent tombstones of uid in the other writable
 // calendars of the account. A local move between two calendars of one
 // account leaves a tombstone in the source calendar and a new resource in
 // the target calendar (issue #828).
@@ -387,8 +387,8 @@ var errMoveSourceChanged = errors.New("the source object changed on the server a
 // Some servers keep a UID unique in the whole account. They refuse the
 // create while the source object still exists: iCloud with 412, an RFC
 // 4791 server with 403 and the CALDAV:no-uid-conflict precondition. The new
-// href then answers 404 or 410 (issue #828). Only that case sends the pending
-// source DELETEs. retryPut reports that the caller must send the PUT once
+// href then answers 404 or 410 (issue #828). Only that case sends the
+// source DELETEs that wait. retryPut reports that the caller must send the PUT once
 // more. A refusal with a target object is a real conflict: retryPut is
 // false, the error is nil, and the caller handles the PUT error as usual.
 //

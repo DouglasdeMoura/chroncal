@@ -448,7 +448,7 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 }
 
 // updateEventTx writes the event row, its categories, and the child rows
-// of children (nil for none) using a tx-bound Queries. It runs the steps of
+// of children (nil for none) with a tx-bound Queries. It runs the steps of
 // uidmove.Rows.Update, so it also records a calendar move and marks the
 // resource dirty inside the transaction (issue #107). It opens no
 // transaction and does not commit.
@@ -844,7 +844,7 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 }
 
 // updateInstanceTx creates or updates a per-occurrence override row and its
-// categories using a tx-bound Queries. The caller marks the calendar of the
+// categories with a tx-bound Queries. The caller marks the calendar of the
 // returned event dirty inside its transaction. storage.MarkResourceDirty
 // sends the mark of a legacy override to the calendar of its master. It
 // opens no transaction, so callers can compose it with attendee/alarm

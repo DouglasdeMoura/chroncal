@@ -132,7 +132,7 @@ func TestWriteSyncStatusLine_SanitizesControlSequences(t *testing.T) {
 }
 
 // TestWriteSyncStatusLine_NamesStuckHrefs verifies that sync status names
-// each href that the pull stopped retrying (issue #816). The href comes
+// each href whose retries the pull stopped (issue #816). The href comes
 // from the server, so the line must also remove control sequences.
 func TestWriteSyncStatusLine_NamesStuckHrefs(t *testing.T) {
 	t.Parallel()

@@ -204,7 +204,7 @@ var ErrMoveOpenConflict = errors.New("the item has an open sync conflict; resolv
 // conflict in the target holds a recorded local body, and the move would
 // mark the target dirty over it.
 //
-// On the target calendar it clears a pending tombstone for the UID. A move
+// On the target calendar it clears an unsent tombstone of the UID. A move
 // back to a calendar then cannot delete the server object of that calendar.
 //
 // On the source calendar it then updates the sync row:
