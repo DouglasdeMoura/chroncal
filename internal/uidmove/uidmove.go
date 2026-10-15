@@ -83,7 +83,8 @@ func (r Rows) Check(ctx context.Context, recurrenceID string, fromCalendarID, to
 }
 
 // CheckOverrideMove refuses the calendar move of one override row.
-// masters holds the live masters of the UID. One CalDAV object holds the
+// masters holds every master row of the UID, live and in the trash. The
+// legacy rule needs the masters in the trash too. One CalDAV object holds the
 // whole series, so an override cannot move alone. An older version saved
 // an override in another calendar on a calendar change. Such a legacy
 // override has no master in its own calendar, and it can move back to a
@@ -105,8 +106,8 @@ func (r Rows) CheckOverrideMove(recurrenceID string, fromCalendarID, toCalendarI
 	return r.occurrenceMoveError(fromCalendarID, masters)
 }
 
-// CheckOf is Check for a caller that already holds the live masters of
-// the UID. It reads the target calendar only (CheckTarget).
+// CheckOf is Check for a caller that already holds every master row of
+// the UID, live and in the trash. It reads the target calendar only (CheckTarget).
 func (r Rows) CheckOf(ctx context.Context, recurrenceID string, fromCalendarID, toCalendarID int64, masters []Master) error {
 	if err := r.CheckOverrideMove(recurrenceID, fromCalendarID, toCalendarID, masters); err != nil {
 		return err
