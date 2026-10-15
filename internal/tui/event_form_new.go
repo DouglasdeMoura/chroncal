@@ -15,7 +15,11 @@ import (
 )
 
 // NewEventFormModel creates a new event form for the given day.
-func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
+//
+// preselect lists calendar IDs in priority order. The form selects the
+// first ID that calendars holds. When no ID matches, the form selects the
+// first calendar by name.
+func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Theme, preselect ...int64) (EventFormModel, tea.Cmd) {
 	calOpts := make([]calendarOption, 0, len(calendars))
 	for id, info := range calendars {
 		calOpts = append(calOpts, calendarOption{ID: id, Name: info.Name, Color: info.Color, OwnerEmail: info.OwnerEmail})
@@ -118,6 +122,7 @@ func NewEventFormModel(day time.Time, calendars map[int64]CalendarInfo, theme Th
 			}
 			return dot + " " + name
 		})
+		m.preselectCalendar(preselect)
 	}
 
 	m.peopleField = NewTextField("Comma-separated emails")
@@ -191,16 +196,18 @@ func multiDayEndDate(ev event.Event) (time.Time, bool) {
 }
 
 // NewEventFormModelForEdit creates a form pre-filled with an event's stored data.
-func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
-	return NewEventFormModelForEditInstance(ev, time.Time{}, calendars, theme)
+// fallback lists the calendar IDs that the form selects, in priority
+// order, when calendars does not hold the calendar of the event.
+func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, theme Theme, fallback ...int64) (EventFormModel, tea.Cmd) {
+	return NewEventFormModelForEditInstance(ev, time.Time{}, calendars, theme, fallback...)
 }
 
 // NewEventFormModelForEditInstance is like NewEventFormModelForEdit but also
 // records the instance time the user clicked on for a recurring event. The
 // instance time travels with the form so the parent can prompt for scope
 // (this event / this and following / all events) on save.
-func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
-	m, cmd := NewEventFormModel(ev.StartTime, calendars, theme)
+func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, calendars map[int64]CalendarInfo, theme Theme, fallback ...int64) (EventFormModel, tea.Cmd) {
+	m, cmd := NewEventFormModel(ev.StartTime, calendars, theme, append([]int64{ev.CalendarID}, fallback...)...)
 	m.editID = ev.ID
 	m.editCalendarID = ev.CalendarID
 	m.editUID = ev.UID
@@ -266,17 +273,6 @@ func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, ca
 		m.dateField.SetRangeEnd(endDate)
 	}
 
-	// Select the correct calendar.
-	if m.calendarField != nil {
-		for i, c := range m.calendars {
-			if c.ID == ev.CalendarID {
-				m.calendarField.SetSelected(i)
-				m.calendarIdx = i
-				break
-			}
-		}
-	}
-
 	// Pre-fill attendees.
 	if len(ev.Attendees) > 0 {
 		m.origAttendees = append([]model.Attendee(nil), ev.Attendees...)
@@ -314,8 +310,8 @@ func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, ca
 
 // NewEventFormModelForDuplicate creates a form pre-filled with a stored
 // event's data but in create mode (editID = 0).
-func NewEventFormModelForDuplicate(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
-	m, cmd := NewEventFormModelForEdit(ev, calendars, theme)
+func NewEventFormModelForDuplicate(ev event.Event, calendars map[int64]CalendarInfo, theme Theme, fallback ...int64) (EventFormModel, tea.Cmd) {
+	m, cmd := NewEventFormModelForEdit(ev, calendars, theme, fallback...)
 	// A duplicate is not a move of the source event, so it keeps no
 	// edit identity.
 	m.editID, m.editCalendarID, m.editUID = 0, 0, ""
@@ -331,4 +327,18 @@ func NewEventFormModelForDuplicate(ev event.Event, calendars map[int64]CalendarI
 	m.alarms = kept
 	m.rebuildDialog()
 	return m, cmd
+}
+
+// preselectCalendar selects the first calendar in ids that the form lists.
+// It keeps the current selection when the form lists no calendar in ids.
+func (m *EventFormModel) preselectCalendar(ids []int64) {
+	for _, id := range ids {
+		for i, c := range m.calendars {
+			if c.ID == id {
+				m.calendarField.SetSelected(i)
+				m.calendarIdx = i
+				return
+			}
+		}
+	}
 }

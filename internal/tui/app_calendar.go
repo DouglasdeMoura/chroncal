@@ -193,6 +193,41 @@ func eventFormCalendars(calendars map[int64]CalendarInfo) map[int64]CalendarInfo
 	return filtered
 }
 
+// eventEditFormCalendars returns the calendars of an edit form for an event
+// in calendarID. It is eventFormCalendars plus the calendar of the event.
+// The filter can drop that calendar, for example after a sync refresh that
+// changes its components. The form then selects another calendar, and a
+// save that the user did not mean as a move moves the series. The save
+// path refuses a write to a calendar that cannot take events, so the own
+// calendar is safe as an option.
+func eventEditFormCalendars(calendars map[int64]CalendarInfo, calendarID int64) map[int64]CalendarInfo {
+	filtered := eventFormCalendars(calendars)
+	if _, ok := filtered[calendarID]; ok {
+		return filtered
+	}
+	info, ok := calendars[calendarID]
+	if !ok {
+		info = CalendarInfo{Name: fmt.Sprintf("Calendar %d", calendarID)}
+	}
+	filtered[calendarID] = info
+	return filtered
+}
+
+// formDefaultCalendarID returns the calendar that a new event form selects
+// first: the default calendar, as `event add` without --calendar uses
+// (issue #829). It returns 0 when the default calendar is hidden, because
+// the new event would not show in the view. It also returns 0 when the
+// default calendar cannot take a new event. The form then selects the
+// first calendar by name.
+func (m Model) formDefaultCalendarID() int64 {
+	for id, info := range eventFormCalendars(m.calendars) {
+		if info.IsDefault && !m.hiddenCalendars[id] {
+			return id
+		}
+	}
+	return 0
+}
+
 // syncHealthFor derives the sidebar health marker state from a calendar's
 // persisted sync fields. Local-only calendars (not Synced) get no marker.
 // A recorded last_sync_error is the only loud (SyncHealthError) state.
