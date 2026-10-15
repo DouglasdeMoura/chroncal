@@ -2,9 +2,13 @@ package event
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 func newRecurringMaster(t *testing.T, svc *Service, uid string, rule string) Event {
@@ -358,5 +362,254 @@ func TestUpdate_AllEventsRewritesMaster(t *testing.T) {
 	}
 	if fresh.Title != "Standup (renamed)" {
 		t.Errorf("master.Title = %q, want %q", fresh.Title, "Standup (renamed)")
+	}
+}
+
+// TestUpdateInstance_RevivesDeletedOverride edits one occurrence, deletes
+// that occurrence, and edits it again. The delete soft-deletes the
+// override row, and the row keeps its UNIQUE key. The second edit must
+// revive and update that row, not fail on the key. The delete-recorded
+// EXDATE goes away, so the occurrence shows again. An imported EXDATE of
+// another occurrence stays (issue #86).
+func TestUpdateInstance_RevivesDeletedOverride(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-1", "FREQ=DAILY;COUNT=5")
+	inst := master.StartTime.Add(24 * time.Hour)
+	imported := master.StartTime.Add(72 * time.Hour)
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET exdates = ? WHERE id = ?`, imported.Format(time.RFC3339), master.ID); err != nil {
+		t.Fatalf("seed imported EXDATE: %v", err)
+	}
+
+	edit := func(title string) (Event, error) {
+		return svc.UpdateInstance(ctx, master.UID, inst, UpdateParams{
+			CalendarID: master.CalendarID, Title: title, StartTime: inst, EndTime: inst.Add(time.Hour),
+		})
+	}
+	first, err := edit("First edit")
+	if err != nil {
+		t.Fatalf("first UpdateInstance: %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, master.UID, inst); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	second, err := edit("Second edit")
+	if err != nil {
+		t.Fatalf("UpdateInstance of a deleted occurrence = %v, want nil", err)
+	}
+	if second.ID != first.ID || second.Title != "Second edit" {
+		t.Fatalf("second edit = %+v, want row %d revived with the new title", second, first.ID)
+	}
+	fresh, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master: %v", err)
+	}
+	if strings.Contains(fresh.ExDates, inst.Format("2006-01-02T15")) {
+		t.Fatalf("master EXDATEs = %q, want the delete-recorded EXDATE gone", fresh.ExDates)
+	}
+	if !strings.Contains(fresh.ExDates, imported.Format("2006-01-02T15")) {
+		t.Fatalf("master EXDATEs = %q, want the imported EXDATE kept", fresh.ExDates)
+	}
+}
+
+// TestUpdateInstance_RevivedOverrideStartsWithoutOldRelations edits one
+// occurrence and gives the override an alarm, an attendee, and an
+// attachment. A delete of the occurrence and a new plain edit revive the
+// row. The new edit is a fresh override, so the old relations must not
+// come back.
+func TestUpdateInstance_RevivedOverrideStartsWithoutOldRelations(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-2", "FREQ=DAILY;COUNT=5")
+	inst := master.StartTime.Add(24 * time.Hour)
+	params := UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: inst, EndTime: inst.Add(time.Hour)}
+
+	first, err := svc.UpdateInstanceWithRelations(ctx, master.UID, inst, params,
+		[]model.Attendee{{Email: "a@example.com"}},
+		[]model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT5M", Description: "soon"}})
+	if err != nil {
+		t.Fatalf("first UpdateInstanceWithRelations: %v", err)
+	}
+	if err := svc.ReplaceAttachments(ctx, first.ID, []model.Attachment{{URI: "https://example.com/a.pdf"}}); err != nil {
+		t.Fatalf("ReplaceAttachments: %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, master.UID, inst); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	second, err := svc.UpdateInstance(ctx, master.UID, inst, params)
+	if err != nil {
+		t.Fatalf("second UpdateInstance: %v", err)
+	}
+	if alarms, err := svc.ListAlarms(ctx, second.ID); err != nil || len(alarms) != 0 {
+		t.Fatalf("alarms of the revived override = %+v, %v; want none", alarms, err)
+	}
+	if att, err := svc.ListAttendees(ctx, second.ID); err != nil || len(att) != 0 {
+		t.Fatalf("attendees of the revived override = %+v, %v; want none", att, err)
+	}
+	if files, err := svc.ListAttachments(ctx, second.ID); err != nil || len(files) != 0 {
+		t.Fatalf("attachments of the revived override = %+v, %v; want none", files, err)
+	}
+}
+
+// TestUpdateInstance_RevivesOverrideOfItsOwnSeries holds one UID in two
+// calendars, Work and Home. Each master has the same deleted occurrence.
+// A new edit of that occurrence in Home revives the Home override. Only
+// the EXDATE of the Home master may go; the Work master keeps its EXDATE.
+func TestUpdateInstance_RevivesOverrideOfItsOwnSeries(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	home, err := svc.q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Home"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	work := newRecurringMaster(t, svc, "revive-uid-3", "FREQ=DAILY;COUNT=5")
+	inst := work.StartTime.Add(24 * time.Hour)
+	homeMaster, err := svc.Create(ctx, CreateParams{CalendarID: home.ID, Title: "Standup", StartTime: work.StartTime, EndTime: work.EndTime, RecurrenceRule: "FREQ=DAILY;COUNT=5"})
+	if err != nil {
+		t.Fatalf("Create Home master: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET uid = ? WHERE id = ?`, work.UID, homeMaster.ID); err != nil {
+		t.Fatalf("seed the Home copy: %v", err)
+	}
+	exdate := inst.Format(time.RFC3339)
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET exdates = ? WHERE id IN (?, ?)`, exdate, work.ID, homeMaster.ID); err != nil {
+		t.Fatalf("seed EXDATEs: %v", err)
+	}
+	// The deleted override of Home and the delete log of that EXDATE.
+	if _, err := svc.db.ExecContext(ctx,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at) VALUES (?, ?, 'Old', ?, ?, ?, '2026-05-01T00:00:00Z')`,
+		work.UID, home.ID, exdate, inst.Add(time.Hour).Format(time.RFC3339), exdate); err != nil {
+		t.Fatalf("seed deleted override: %v", err)
+	}
+	if err := svc.q.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{CalendarID: home.ID, Uid: work.UID, RecurrenceID: exdate}); err != nil {
+		t.Fatalf("seed delete log: %v", err)
+	}
+
+	if _, err := svc.UpdateInstance(ctx, work.UID, inst, UpdateParams{
+		CalendarID: home.ID, Title: "Back", StartTime: inst, EndTime: inst.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpdateInstance in Home: %v", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		id      int64
+		wantHas bool
+	}{{"Work", work.ID, true}, {"Home", homeMaster.ID, false}} {
+		m, err := svc.Get(ctx, tc.id)
+		if err != nil {
+			t.Fatalf("Get %s master: %v", tc.name, err)
+		}
+		if got := strings.Contains(m.ExDates, inst.Format("2006-01-02T15")); got != tc.wantHas {
+			t.Fatalf("%s master EXDATEs = %q, want the EXDATE kept = %v", tc.name, m.ExDates, tc.wantHas)
+		}
+	}
+}
+
+// TestUpdateInstance_DoesNotReviveOverrideHiddenBySplit edits an occurrence
+// after a "this and following" split. The split soft-deleted the override
+// of that occurrence, because the occurrence is past the UNTIL of the
+// master. An edit of it must not revive that row: the result would be a
+// live override outside the series. The edit must fail with a clear error.
+func TestUpdateInstance_DoesNotReviveOverrideHiddenBySplit(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-4", "FREQ=WEEKLY")
+	cut := master.StartTime.Add(7 * 24 * time.Hour)
+	later := cut.Add(7 * 24 * time.Hour)
+	params := func(at time.Time) UpdateParams {
+		return UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: at, EndTime: at.Add(time.Hour)}
+	}
+	if _, err := svc.UpdateInstance(ctx, master.UID, later, params(later)); err != nil {
+		t.Fatalf("UpdateInstance before the split: %v", err)
+	}
+	split := params(cut)
+	split.RecurrenceRule = "FREQ=WEEKLY"
+	if _, err := svc.UpdateFromInstance(ctx, master.UID, cut, split); err != nil {
+		t.Fatalf("UpdateFromInstance: %v", err)
+	}
+
+	_, err := svc.UpdateInstance(ctx, master.UID, later, params(later))
+	if !errors.Is(err, ErrOccurrenceOutsideSeries) {
+		t.Fatalf("UpdateInstance past the split = %v, want ErrOccurrenceOutsideSeries", err)
+	}
+	overrides, err := svc.ListOverridesByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID: %v", err)
+	}
+	if len(overrides) != 0 {
+		t.Fatalf("live overrides after the refused edit = %+v, want none", overrides)
+	}
+}
+
+// TestUpdateInstance_RevivesOverrideAfterMasterRestore deletes a series
+// with an override, and then restores the master only. The override stays
+// in the trash, with no occurrence-delete log row. Its occurrence is still
+// part of the series, so a new edit of it must revive the row.
+func TestUpdateInstance_RevivesOverrideAfterMasterRestore(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-5", "FREQ=DAILY;COUNT=5")
+	inst := master.StartTime.Add(24 * time.Hour)
+	params := UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: inst, EndTime: inst.Add(time.Hour)}
+	first, err := svc.UpdateInstance(ctx, master.UID, inst, params)
+	if err != nil {
+		t.Fatalf("first UpdateInstance: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID master: %v", err)
+	}
+
+	params.Title = "Again"
+	second, err := svc.UpdateInstance(ctx, master.UID, inst, params)
+	if err != nil {
+		t.Fatalf("UpdateInstance after the master restore = %v, want nil", err)
+	}
+	if second.ID != first.ID || second.Title != "Again" {
+		t.Fatalf("second edit = %+v, want row %d revived", second, first.ID)
+	}
+}
+
+// TestUpdateInstance_RevivesOverrideAfterUntilRemoved splits a series at a
+// cut, which hides the override of a later occurrence. Then the user
+// removes the UNTIL of the master. The later occurrence is part of the
+// series again, so a new edit of it must revive the row.
+func TestUpdateInstance_RevivesOverrideAfterUntilRemoved(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-6", "FREQ=WEEKLY")
+	cut := master.StartTime.Add(7 * 24 * time.Hour)
+	later := cut.Add(7 * 24 * time.Hour)
+	params := func(at time.Time) UpdateParams {
+		return UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: at, EndTime: at.Add(time.Hour)}
+	}
+	first, err := svc.UpdateInstance(ctx, master.UID, later, params(later))
+	if err != nil {
+		t.Fatalf("UpdateInstance before the split: %v", err)
+	}
+	split := params(cut)
+	split.RecurrenceRule = "FREQ=WEEKLY"
+	if _, err := svc.UpdateFromInstance(ctx, master.UID, cut, split); err != nil {
+		t.Fatalf("UpdateFromInstance: %v", err)
+	}
+	fresh, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master: %v", err)
+	}
+	if _, err := svc.Update(ctx, master.ID, UpdateParams{
+		CalendarID: fresh.CalendarID, Title: fresh.Title, StartTime: fresh.StartTime, EndTime: fresh.EndTime,
+		RecurrenceRule: "FREQ=WEEKLY", Status: fresh.Status, Transp: fresh.Transp, Class: fresh.Class,
+	}); err != nil {
+		t.Fatalf("remove UNTIL: %v", err)
+	}
+
+	second, err := svc.UpdateInstance(ctx, master.UID, later, params(later))
+	if err != nil {
+		t.Fatalf("UpdateInstance after the UNTIL removal = %v, want nil", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second edit = %+v, want row %d revived", second, first.ID)
 	}
 }

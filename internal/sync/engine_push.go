@@ -9,6 +9,7 @@ import (
 	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -154,29 +155,12 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			}
 		}
 
-		// PUT to server. A PUT can reach the server and mutate the resource
-		// even when its response is lost (e.g. connection reset while reading
-		// the body), which Retry classifies as transient. The retried PUT then
-		// re-sends the stale pre-PUT If-Match and the server — whose ETag has
-		// already advanced — answers 412, masquerading as a conflict. When an
-		// earlier attempt failed transiently, treat a 412 whose server body
-		// equals what we PUT as the success that actually happened. See #294.
-		priorAttemptMayHaveLanded := false
-		newEtag, putErr := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
-			etag, err := client.PutResource(ctx, putPath, cal, res.Etag)
-			if err == nil {
-				return etag, nil
-			}
-			// A 412 is never transient, so these branches are exclusive.
-			if caldav.IsTransient(err) {
-				priorAttemptMayHaveLanded = true
-			} else if priorAttemptMayHaveLanded && caldav.IsConflict(err) {
-				if landedEtag, ok := e.putAlreadyLanded(ctx, client, putPath, cal); ok {
-					return landedEtag, nil
-				}
-			}
-			return etag, err
-		})
+		newEtag, putErr, moveErr := e.putOrSettleMove(ctx, client, calendarID, putPath, cal, res)
+		if moveErr != nil {
+			result.errors = append(result.errors, moveErr)
+			e.recordPushFailure(ctx, calendarID, res.Uid, moveErr)
+			continue
+		}
 		if putErr != nil {
 			// Check for 412 Precondition Failed (ETag conflict)
 			if caldav.IsConflict(putErr) {
@@ -278,55 +262,230 @@ func (e *Engine) processTombstones(ctx context.Context, client *caldav.Client, c
 
 	result := &tombstoneResult{}
 	for _, ts := range tombstones {
-		deletePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
-		if hrefErr != nil {
-			result.errors = append(result.errors, fmt.Errorf("validate tombstone %s: %w", ts.Uid, hrefErr))
-			continue
+		switch outcome, err := e.deleteTombstone(ctx, client, calendarID, remoteURL, ts, etagByUID[ts.Uid]); outcome {
+		case tombstoneDeleted:
+			result.deleted++
+		case tombstoneRemoteKept:
+			result.autoResolved++
+		case tombstoneFailed:
+			result.errors = append(result.errors, err)
 		}
-		// Make the DELETE conditional on the ETag we last saw so the server
-		// rejects it (412) if the resource was edited remotely after our last
-		// sync. Without this, the tombstone push would silently destroy that
-		// concurrent edit. An untracked resource (never synced, or already
-		// cleaned up) has no ETag, which falls back to an unconditional DELETE.
-		etag := etagByUID[ts.Uid]
-		e.logger.Debug("deleting tombstone", "uid", ts.Uid, "remote_url", deletePath)
-		if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
-			return struct{}{}, client.DeleteResource(ctx, deletePath, etag)
-		}); err != nil && !errors.Is(err, caldav.ErrResourceGone) {
-			// A 404/410 means the resource is already absent server-side —
-			// the desired end state — so fall through and clear the local
-			// rows instead of re-issuing the DELETE on every sync.
-			if caldav.IsConflict(err) {
-				// 412: the resource was edited remotely after we last saw it.
-				// Honoring the delete would discard that edit, so abandon it.
-				// Drop the tombstone (stop re-issuing the DELETE every sync)
-				// but keep the sync_resource so the next pull re-imports the
-				// remote version, resurrecting the item with its remote edit.
-				// A delete-vs-edit conflict always preserves the remote edit
-				// (the non-destructive choice), independent of ConflictStrategy.
-				e.logger.Warn("tombstone delete conflict: remote edited, preserving remote version", "uid", ts.Uid)
-				if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
-					e.logger.Warn("delete tombstone row after conflict failed", "uid", ts.Uid, "error", err)
-				}
-				result.autoResolved++
-				continue
-			}
-			e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)
-			result.errors = append(result.errors, fmt.Errorf("delete tombstone %s: %w", ts.Uid, err))
-			continue
-		}
-		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
-			CalendarID: calendarID,
-			Uid:        ts.Uid,
-		}); err != nil {
-			e.logger.Warn("delete sync resource after tombstone", "uid", ts.Uid, "error", err)
-		}
-		if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
-			e.logger.Warn("delete tombstone row failed", "uid", ts.Uid, "error", err)
-		}
-		result.deleted++
 	}
 	return result, nil
+}
+
+// tombstoneOutcome classifies how one tombstone DELETE was settled.
+type tombstoneOutcome int
+
+const (
+	// tombstoneFailed means the DELETE did not complete. The tombstone
+	// stays, so the next pass sends the DELETE again.
+	tombstoneFailed tombstoneOutcome = iota
+	// tombstoneDeleted means the server object is absent now. The tombstone
+	// and the sync row are gone.
+	tombstoneDeleted
+	// tombstoneRemoteKept means the server refused the DELETE with 412
+	// because of a remote edit. The tombstone is gone and the sync row stays.
+	tombstoneRemoteKept
+)
+
+// deleteTombstone sends the DELETE for one tombstone of calendarID and
+// clears the local rows that the result settles. etag is the last ETag
+// that the sync row saw. An empty etag sends an unconditional DELETE.
+func (e *Engine) deleteTombstone(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, ts storage.Tombstone, etag string) (tombstoneOutcome, error) {
+	deletePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
+	if hrefErr != nil {
+		return tombstoneFailed, fmt.Errorf("validate tombstone %s: %w", ts.Uid, hrefErr)
+	}
+	// Make the DELETE conditional on the ETag we last saw so the server
+	// rejects it (412) if the resource was edited remotely after our last
+	// sync. Without this, the tombstone push would silently destroy that
+	// concurrent edit. An untracked resource (never synced, or already
+	// cleaned up) has no ETag, which falls back to an unconditional DELETE.
+	e.logger.Debug("deleting tombstone", "uid", ts.Uid, "remote_url", deletePath)
+	if _, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, client.DeleteResource(ctx, deletePath, etag)
+	}); err != nil && !errors.Is(err, caldav.ErrResourceGone) {
+		// A 404/410 means the resource is already absent server-side —
+		// the desired end state — so fall through and clear the local
+		// rows. Do not send the DELETE again on every sync.
+		if caldav.IsConflict(err) {
+			// 412: a remote edit changed the resource after the last sync.
+			// The delete would discard that edit, so abandon it. Drop the
+			// tombstone (do not send the DELETE again on every sync), but
+			// keep the sync_resource. The next pull then imports the remote
+			// version again and brings back the item with its remote edit.
+			// A delete-vs-edit conflict always preserves the remote edit
+			// (the non-destructive choice), independent of ConflictStrategy.
+			e.logger.Warn("tombstone delete conflict: remote edited, preserving remote version", "uid", ts.Uid)
+			if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
+				e.logger.Warn("delete tombstone row after conflict failed", "uid", ts.Uid, "error", err)
+			}
+			return tombstoneRemoteKept, nil
+		}
+		e.logger.Warn("delete remote resource failed", "uid", ts.Uid, "error", err)
+		return tombstoneFailed, fmt.Errorf("delete tombstone %s: %w", ts.Uid, err)
+	}
+	if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
+		CalendarID: calendarID,
+		Uid:        ts.Uid,
+	}); err != nil {
+		e.logger.Warn("delete sync resource after tombstone", "uid", ts.Uid, "error", err)
+	}
+	if err := e.q.DeleteTombstone(ctx, ts.ID); err != nil {
+		e.logger.Warn("delete tombstone row failed", "uid", ts.Uid, "error", err)
+	}
+	return tombstoneDeleted, nil
+}
+
+// movedSource is an unsent tombstone of a sibling calendar: a calendar of
+// the same account as the calendar that the push serves. etag is the last
+// known etag of the source object, or empty.
+type movedSource struct {
+	calendarID int64
+	remoteURL  string
+	tombstone  storage.Tombstone
+	etag       string
+}
+
+// movedSources lists the unsent tombstones of uid in the other writable
+// calendars of the account. A local move between two calendars of one
+// account leaves a tombstone in the source calendar and a new resource in
+// the target calendar (issue #828).
+func (e *Engine) movedSources(ctx context.Context, calendarID int64, uid string) ([]movedSource, error) {
+	rows, err := e.q.ListSiblingTombstones(ctx, storage.ListSiblingTombstonesParams{CalendarID: calendarID, Uid: uid})
+	if err != nil {
+		return nil, err
+	}
+	var out []movedSource
+	for _, row := range rows {
+		if calendaraccess.IsReadOnly(row.CalendarRemoteAccess) {
+			continue
+		}
+		ts := row.Tombstone
+		out = append(out, movedSource{
+			calendarID: ts.CalendarID,
+			remoteURL:  storage.NullableToString(row.CalendarRemoteUrl),
+			tombstone:  ts,
+			etag:       row.Etag,
+		})
+	}
+	return out, nil
+}
+
+// errMoveSourceChanged reports that the source object of a local move
+// changed on the server after the move. The source DELETE got 412, so the
+// server kept the remote edit in the source calendar. deleteTombstone then
+// dropped the tombstone, so the move does not resume. The next pull of the
+// source calendar brings the item back there. The user must delete one
+// copy or move the item again.
+var errMoveSourceChanged = errors.New("the source object changed on the server after the move; " +
+	"the server kept the remote edit in the source calendar, and the next sync brings it back there; " +
+	"delete one copy or move the item again")
+
+// settleMovedSources handles a refused create PUT of a moved resource.
+// Some servers keep a UID unique in the whole account. They refuse the
+// create while the source object still exists: iCloud with 412, an RFC
+// 4791 server with 403 and the CALDAV:no-uid-conflict precondition. The new
+// href then answers 404 or 410 (issue #828). Only that case sends the
+// source DELETEs that wait. retryPut reports that the caller must send the PUT once
+// more. A refusal with a target object is a real conflict: retryPut is
+// false, the error is nil, and the caller handles the PUT error as usual.
+//
+// The source DELETE is reactive. A server that accepts the create keeps the
+// source object until the source calendar's own tombstone pass. A failed
+// create then cannot lose the object on the server.
+//
+// The calendars of one account share one sync lock, so the source DELETE
+// cannot race the source calendar's own pass. An error means that the GET
+// of the target href failed with a status other than 404 or 410, that a DELETE
+// did not complete, or that the server kept a remotely edited source
+// object (errMoveSourceChanged). The caller then keeps the resource dirty
+// and records no conflict. A failed GET proves nothing about the target
+// object, so the next pass checks again.
+func (e *Engine) settleMovedSources(ctx context.Context, client *caldav.Client, putPath, uid string, sources []movedSource) (retryPut bool, err error) {
+	_, getErr := client.GetResource(ctx, putPath)
+	if getErr == nil {
+		return false, nil
+	}
+	if !caldav.IsAbsent(getErr) {
+		return false, fmt.Errorf("move %s: check the move target: %w", uid, getErr)
+	}
+	for _, src := range sources {
+		outcome, delErr := e.deleteTombstone(ctx, client, src.calendarID, src.remoteURL, src.tombstone, src.etag)
+		switch outcome {
+		case tombstoneFailed:
+			return false, fmt.Errorf("move %s: %w", uid, delErr)
+		case tombstoneRemoteKept:
+			return false, fmt.Errorf("move %s: %w", uid, errMoveSourceChanged)
+		case tombstoneDeleted:
+		}
+	}
+	return true, nil
+}
+
+// putOrSettleMove sends the PUT of res and settles a refused create of a
+// moved resource. The normal push and the doctor push share it.
+//
+// A new resource can be the target half of a local move between two
+// calendars of this account. Only a server that keeps UIDs unique per
+// account refuses that create: iCloud with 412, an RFC 4791 server with
+// 403 and the CALDAV:no-uid-conflict precondition. The lookup of the move
+// sources runs after that refusal only, so a plain create never depends on
+// it (issue #828). See settleMovedSources.
+//
+// putErr is the result of the last PUT. moveErr reports a failed lookup of
+// the move sources or a failed settle. The caller then keeps the resource
+// dirty, records no conflict, and skips the PUT result.
+func (e *Engine) putOrSettleMove(ctx context.Context, client *caldav.Client, calendarID int64, putPath string, cal *ical.Calendar, res storage.SyncResource) (newEtag string, putErr, moveErr error) {
+	newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag)
+	refusedCreate := putErr != nil && res.RemoteUrl == "" && (caldav.IsConflict(putErr) || caldav.IsUIDConflict(putErr))
+	if !refusedCreate {
+		return newEtag, putErr, nil
+	}
+	movedFrom, err := e.movedSources(ctx, calendarID, res.Uid)
+	if err != nil {
+		// A failed lookup proves nothing. The next pass tries again.
+		return "", putErr, fmt.Errorf("%s: list moved sources: %w", res.Uid, err)
+	}
+	if len(movedFrom) == 0 {
+		return newEtag, putErr, nil
+	}
+	retryPut, err := e.settleMovedSources(ctx, client, putPath, res.Uid, movedFrom)
+	if err != nil {
+		return "", putErr, err
+	}
+	if retryPut {
+		newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag)
+	}
+	return newEtag, putErr, nil
+}
+
+// putResource sends one PUT with the sync retry policy. A PUT can reach the
+// server and change the resource, and the client can still lose the
+// response (for example, a connection reset while the client reads the
+// body). Retry classifies that loss as transient. The retried PUT then
+// sends the old If-Match again. The server already advanced the ETag, so it
+// answers 412, a false conflict. After a transient failure, putResource
+// counts a 412 as the success that happened when the server body equals
+// the sent body. See issue #294.
+func (e *Engine) putResource(ctx context.Context, client *caldav.Client, putPath string, cal *ical.Calendar, etag string) (string, error) {
+	priorAttemptMayHaveLanded := false
+	return caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
+		newEtag, err := client.PutResource(ctx, putPath, cal, etag)
+		if err == nil {
+			return newEtag, nil
+		}
+		// A 412 is never transient, so these branches are exclusive.
+		if caldav.IsTransient(err) {
+			priorAttemptMayHaveLanded = true
+		} else if priorAttemptMayHaveLanded && caldav.IsConflict(err) {
+			if landedEtag, ok := e.putAlreadyLanded(ctx, client, putPath, cal); ok {
+				return landedEtag, nil
+			}
+		}
+		return newEtag, err
+	})
 }
 
 // putConflictOutcome classifies how a 412 on one resource was settled.

@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,8 +13,10 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/recurset"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 type Service struct {
@@ -25,6 +28,47 @@ type Service struct {
 	// their own. A multi-step sequence then commits or rolls back atomically.
 	tx *sql.Tx
 }
+
+// ErrInstanceCalendarMove reports an edit of one occurrence that asks for
+// another calendar. Move the whole series instead.
+var ErrInstanceCalendarMove = errors.New("event: one occurrence cannot move to another calendar; move the whole series")
+
+// ErrMoveTargetHasUID reports a calendar move to a calendar that already
+// holds a row of the UID with the same recurrence ID. The row can be in
+// the trash. Purge or restore that row first.
+var ErrMoveTargetHasUID = errors.New("event: the target calendar already holds this UID")
+
+// ErrAmbiguousUID reports an edit of one occurrence whose UID has a master
+// in more than one calendar, and no rule can choose the series. The edit
+// names no calendar, or it names a calendar with a legacy override of the
+// occurrence and no master. The service refuses the edit.
+var ErrAmbiguousUID = errors.New("event: the UID has a series in more than one calendar; name the calendar of the series")
+
+// IsMoveRefusal reports whether err is a refusal of an edit that the user
+// can fix in the edit form: a refused calendar move or a refused
+// occurrence edit. A caller that shows a form keeps it open with the error,
+// so the edits are not lost.
+func IsMoveRefusal(err error) bool {
+	for _, refusal := range []error{
+		ErrInstanceCalendarMove,
+		ErrMoveTargetHasUID,
+		ErrAmbiguousUID,
+		ErrOccurrenceOutsideSeries,
+		storage.ErrMoveOpenConflict,
+	} {
+		if errors.Is(err, refusal) {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrOccurrenceOutsideSeries reports an edit of an occurrence whose stored
+// override is in the trash, and the occurrence is not part of the series
+// any more, for example after a "this and following" split that ended the
+// series before it. A revive of that row would leave a live override
+// outside the series. Restore the series tail from the trash first.
+var ErrOccurrenceOutsideSeries = errors.New("event: the occurrence is outside the series; restore the series tail from the trash first")
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
 	return &Service{db: db, q: q}
@@ -211,24 +255,15 @@ func (s *Service) markDirtyByID(ctx context.Context, eventID int64) error {
 }
 
 // ensureEventWritable resolves an event by ID and enforces remote
-// access/component policy for a user-originated edit. For a cross-calendar
-// move (destCalID set and different from the event's current calendar) the
-// destination calendar is validated too. A move into a read-only or
-// VEVENT-less collection then fails before any row is written.
-func (s *Service) ensureEventWritable(ctx context.Context, eventID, destCalID int64) error {
+// access/component policy on its calendar for a user-originated edit of
+// its child rows. An update of the row runs the same check in
+// uidmove.Rows.Update, for the target calendar of a move too.
+func (s *Service) ensureEventWritable(ctx context.Context, eventID int64) error {
 	r, err := s.q.GetEvent(ctx, eventID)
 	if err != nil {
 		return err
 	}
-	if err := calendaraccess.EnsureWritable(ctx, s.q, r.CalendarID, "VEVENT"); err != nil {
-		return err
-	}
-	if destCalID != 0 && destCalID != r.CalendarID {
-		if err := calendaraccess.EnsureWritable(ctx, s.q, destCalID, "VEVENT"); err != nil {
-			return err
-		}
-	}
-	return nil
+	return calendaraccess.EnsureWritable(ctx, s.q, r.CalendarID, "VEVENT")
 }
 
 // distinctCalendarIDsByUID returns every calendar that any event row with the
@@ -358,9 +393,6 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, error) {
 	p.applyDefaults()
 
-	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
-		return Event{}, err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Event{}, fmt.Errorf("begin tx: %w", err)
@@ -368,15 +400,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateEventTx(ctx, qtx, id, p)
+	e, err := updateEventTx(ctx, qtx, id, p, nil)
 	if err != nil {
 		return Event{}, err
-	}
-	// Mark dirty inside the transaction so a failed sync-tracking write rolls
-	// the edit back rather than committing a change that is never pushed
-	// (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
-		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit update event: %w", err)
@@ -392,9 +418,6 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Event, 
 func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
-	if err := s.ensureEventWritable(ctx, id, p.CalendarID); err != nil {
-		return Event{}, err
-	}
 	// Reject a bad attendee or alarm before the transaction opens. See
 	// model.PrepareAttendeesForWrite and model.PrepareAlarmsForWrite.
 	attendees, err := model.PrepareAttendeesForWrite(model.EventAttendee, attendees)
@@ -412,18 +435,11 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateEventTx(ctx, qtx, id, p)
+	e, err := updateEventTx(ctx, qtx, id, p, func(ctx context.Context, eventID int64) error {
+		return replaceRelationsTx(ctx, qtx, eventID, attendees, alarms)
+	})
 	if err != nil {
 		return Event{}, err
-	}
-	if err := replaceRelationsTx(ctx, qtx, e.ID, attendees, alarms); err != nil {
-		return Event{}, err
-	}
-	// Mark dirty inside the transaction so a failed sync-tracking write rolls
-	// the edit back rather than committing a change that is never pushed
-	// (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
-		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, fmt.Errorf("commit update event: %w", err)
@@ -431,11 +447,12 @@ func (s *Service) UpdateWithRelations(ctx context.Context, id int64, p UpdatePar
 	return e, nil
 }
 
-// updateEventTx writes the event row and its categories using a tx-bound
-// Queries. It opens no transaction and does not commit or mark the resource
-// dirty, so callers can compose it with attendee/alarm writes inside one
-// transaction.
-func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p UpdateParams) (Event, error) {
+// updateEventTx writes the event row, its categories, and the child rows
+// of children (nil for none) with a tx-bound Queries. It runs the steps of
+// uidmove.Rows.Update, so it also records a calendar move and marks the
+// resource dirty inside the transaction (issue #107). It opens no
+// transaction and does not commit.
+func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p UpdateParams, children func(ctx context.Context, eventID int64) error) (Event, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
@@ -445,43 +462,204 @@ func updateEventTx(ctx context.Context, qtx *storage.Queries, id int64, p Update
 	if err != nil {
 		return Event{}, err
 	}
-	r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
-		ID:             id,
-		Title:          p.Title,
-		Description:    storage.StringToNullable(p.Description),
-		Location:       storage.StringToNullable(p.Location),
-		StartTime:      p.StartTime.Format(time.RFC3339),
-		EndTime:        p.EndTime.Format(time.RFC3339),
-		AllDay:         storage.BoolToInt(p.AllDay),
-		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
-		CalendarID:     p.CalendarID,
-		Timezone:       storage.StringToNullable(p.Timezone),
-		Status:         p.Status,
-		Transp:         p.Transp,
-		Priority:       p.Priority,
-		Class:          p.Class,
-		Url:            storage.StringToNullable(p.URL),
-		Exdates:        storage.StringToNullable(p.ExDates),
-		Rdates:         storage.StringToNullable(p.RDates),
-		Geo:            storage.StringToNullable(p.Geo),
-		Duration:       storage.StringToNullable(p.DurationValue),
-		Dtstamp:        storage.StringToNullable(p.DtStamp),
-		ConferenceUri:  p.ConferenceURI,
+	// The access checks, the move rules, the move record, and the dirty
+	// mark run in the transaction, in the order of uidmove.Rows.Update.
+	var e Event
+	err = uidMoveRows(qtx, old.Uid).Update(ctx, "VEVENT", "event", old.RecurrenceID, old.CalendarID, p.CalendarID, func(ctx context.Context, calendarID int64) error {
+		r, err := qtx.UpdateEvent(ctx, storage.UpdateEventParams{
+			ID:             id,
+			Title:          p.Title,
+			Description:    storage.StringToNullable(p.Description),
+			Location:       storage.StringToNullable(p.Location),
+			StartTime:      p.StartTime.Format(time.RFC3339),
+			EndTime:        p.EndTime.Format(time.RFC3339),
+			AllDay:         storage.BoolToInt(p.AllDay),
+			RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
+			CalendarID:     calendarID,
+			Timezone:       storage.StringToNullable(p.Timezone),
+			Status:         p.Status,
+			Transp:         p.Transp,
+			Priority:       p.Priority,
+			Class:          p.Class,
+			Url:            storage.StringToNullable(p.URL),
+			Exdates:        storage.StringToNullable(p.ExDates),
+			Rdates:         storage.StringToNullable(p.RDates),
+			Geo:            storage.StringToNullable(p.Geo),
+			Duration:       storage.StringToNullable(p.DurationValue),
+			Dtstamp:        storage.StringToNullable(p.DtStamp),
+			ConferenceUri:  p.ConferenceURI,
+		})
+		if err != nil {
+			return err
+		}
+		e = FromStorage(r)
+		if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
+			return fmt.Errorf("replace categories: %w", err)
+		}
+		if localSpanEdit(old, p) {
+			if err := clearPreservedDTENDTx(ctx, qtx, e.ID); err != nil {
+				return err
+			}
+		}
+		if children != nil {
+			return children(ctx, e.ID)
+		}
+		return nil
 	})
 	if err != nil {
 		return Event{}, err
 	}
-	e := FromStorage(r)
-	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
-		return Event{}, fmt.Errorf("replace categories: %w", err)
-	}
-	if localSpanEdit(old, p) {
-		if err := clearPreservedDTENDTx(ctx, qtx, e.ID); err != nil {
-			return Event{}, err
-		}
-	}
 	e.Categories = p.Categories
 	return e, nil
+}
+
+// uidMasters converts master rows to the form of the uidmove package.
+func uidMasters(rows []storage.Event) []uidmove.Master {
+	out := make([]uidmove.Master, len(rows))
+	for i, m := range rows {
+		out[i] = uidmove.Master{ID: m.ID, CalendarID: m.CalendarID, Trashed: m.DeletedAt != nil}
+	}
+	return out
+}
+
+// uidMoveRows binds the event queries of the transaction to the shared
+// calendar-move rules for uid. Two calendars can hold the same UID, so each
+// lookup stays inside one calendar.
+func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
+	return uidmove.Rows{
+		Q:               qtx,
+		UID:             uid,
+		ErrInstanceMove: ErrInstanceCalendarMove,
+		ErrTargetHasUID: ErrMoveTargetHasUID,
+		Masters: func(ctx context.Context) ([]uidmove.Master, error) {
+			masters, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
+			if err != nil {
+				return nil, err
+			}
+			return uidMasters(masters), nil
+		},
+		CountCollisions: func(ctx context.Context, fromCalendarID, toCalendarID int64) (int64, int64, error) {
+			n, err := qtx.CountEventUIDMoveCollisions(ctx, storage.CountEventUIDMoveCollisionsParams{
+				ToCalendarID: toCalendarID, Uid: uid, FromCalendarID: fromCalendarID,
+			})
+			return n.Live, n.Trashed, err
+		},
+		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
+			return moveUIDRowsTx(ctx, qtx, storage.MoveEventUIDToCalendarParams{
+				FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid,
+			})
+		},
+	}
+}
+
+// findInstanceMasterTx finds the master of an occurrence edit of move.UID.
+// recID is the recurrence ID of the occurrence. Two calendars can hold the
+// same UID. One live master is the only choice. With more live masters, the
+// one in calendarID wins. No live master gives sql.ErrNoRows. The second
+// result lists every master row of the UID, live and in the trash, for the
+// legacy-override rule (see storage.LegacyOverride).
+//
+// An edit that names a calendar with no live master of the UID cannot
+// choose a master. A legacy override of recID in that calendar can belong to any
+// master, so it gets ErrAmbiguousUID. With no such override, the
+// occurrence lives in the calendar of a master, and the shared rule
+// (uidmove.Rows.CheckOverrideMove) refuses the move for each master. An
+// edit that names no calendar gets ErrAmbiguousUID.
+func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmove.Rows, calendarID int64, recID string) (storage.Event, []uidmove.Master, error) {
+	uid := move.UID
+	rows, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
+	if err != nil {
+		return storage.Event{}, nil, err
+	}
+	masters := uidMasters(rows)
+	var live []storage.Event
+	for _, m := range rows {
+		if m.DeletedAt == nil {
+			live = append(live, m)
+		}
+	}
+	switch len(live) {
+	case 0:
+		return storage.Event{}, nil, sql.ErrNoRows
+	case 1:
+		return live[0], masters, nil
+	}
+	for _, m := range live {
+		if m.CalendarID == calendarID {
+			return m, masters, nil
+		}
+	}
+	if calendarID == 0 {
+		return storage.Event{}, nil, ErrAmbiguousUID
+	}
+	_, err = qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
+	})
+	found, err := storage.Found(err)
+	if err != nil {
+		return storage.Event{}, nil, err
+	}
+	if !found || uidmove.HasMasterIn(masters, calendarID) {
+		// The occurrence has no legacy override in calendarID, so it can
+		// belong to each master, and its calendar is not known. Calendar 0
+		// holds no master, so the shared rule refuses the move and names
+		// every live master.
+		if err := move.CheckOverrideMove(recID, 0, calendarID, masters); err != nil {
+			return storage.Event{}, nil, err
+		}
+	}
+	return storage.Event{}, nil, ErrAmbiguousUID
+}
+
+// findInstanceOverrideTx finds the stored override of recID for master. A
+// row in the calendar of the master wins. Else it takes a legacy override
+// (see storage.LegacyOverride): a row in a calendar with no master row of
+// the UID, live or in the trash. masters lists every master row of the
+// UID, live and in the trash. More than one legacy row gives
+// ErrAmbiguousUID. No row gives sql.ErrNoRows.
+func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, masters []uidmove.Master, recID string) (storage.Event, error) {
+	// One query reads every live row of (uid, recID). The pick runs in Go,
+	// so the common edit (no row, or a row with the master) needs no second
+	// query.
+	rows, err := qtx.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
+		Uid:          master.Uid,
+		RecurrenceID: recID,
+	})
+	if err != nil {
+		return storage.Event{}, err
+	}
+	var legacy []storage.Event
+	for _, r := range rows {
+		if r.CalendarID == master.CalendarID {
+			return r, nil
+		}
+		if !uidmove.HasMasterIn(masters, r.CalendarID) {
+			legacy = append(legacy, r)
+		}
+	}
+	switch len(legacy) {
+	case 0:
+		return storage.Event{}, sql.ErrNoRows
+	case 1:
+		return legacy[0], nil
+	default:
+		return storage.Event{}, ErrAmbiguousUID
+	}
+}
+
+// moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
+// another calendar. uidmove.Rows.Record calls it.
+func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams) error {
+	if err := qtx.MoveEventUIDToCalendar(ctx, arg); err != nil {
+		return fmt.Errorf("move events: %w", err)
+	}
+	if err := qtx.MoveEventExdateDeletesUIDToCalendar(ctx, storage.MoveEventExdateDeletesUIDToCalendarParams(arg)); err != nil {
+		return fmt.Errorf("move event_exdate_deletes: %w", err)
+	}
+	if err := qtx.MoveEventTruncateDeletesUIDToCalendar(ctx, storage.MoveEventTruncateDeletesUIDToCalendarParams(arg)); err != nil {
+		return fmt.Errorf("move event_truncate_deletes: %w", err)
+	}
+	return nil
 }
 
 // localSpanEdit reports whether an update replaces the stored end time or
@@ -607,14 +785,14 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, calendarID, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
+	e, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
 	if err != nil {
 		return Event{}, err
 	}
 	// Mark the override dirty inside the transaction so a failed sync-tracking
 	// write rolls the override back rather than committing a change that is
 	// never pushed (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, calendarID, uid, "event"); err != nil {
+	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, uid, "event"); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -646,7 +824,7 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, calendarID, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
+	e, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
 	if err != nil {
 		return Event{}, err
 	}
@@ -656,7 +834,7 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 	// Mark the override dirty inside the transaction so a failed sync-tracking
 	// write rolls the override and its children back rather than committing a
 	// change that is never pushed (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, calendarID, uid, "event"); err != nil {
+	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, uid, "event"); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -666,72 +844,180 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 }
 
 // updateInstanceTx creates or updates a per-occurrence override row and its
-// categories using a tx-bound Queries. It returns the event and the master's
-// calendar ID (for the dirty mark inside the caller's transaction). It opens
-// no transaction, so callers can compose it with attendee/alarm writes.
-func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
+// categories with a tx-bound Queries. The caller marks the calendar of the
+// returned event dirty inside its transaction. storage.MarkResourceDirty
+// sends the mark of a legacy override to the calendar of its master. It
+// opens no transaction, so callers can compose it with attendee/alarm
+// writes.
+func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
-		return Event{}, 0, err
-	}
-	master, err := qtx.GetEventByUID(ctx, uid)
-	if err != nil {
-		return Event{}, 0, fmt.Errorf("get master: %w", err)
-	}
-	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
-		return Event{}, 0, err
-	}
-	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
-		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
-			return Event{}, 0, err
-		}
+		return Event{}, err
 	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
+	move := uidMoveRows(qtx, uid)
+	master, masters, err := findInstanceMasterTx(ctx, qtx, move, p.CalendarID, recID)
+	if errors.Is(err, ErrAmbiguousUID) || errors.Is(err, ErrInstanceCalendarMove) {
+		return Event{}, err
+	}
+	if err != nil {
+		return Event{}, fmt.Errorf("get master: %w", err)
+	}
+	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
+		return Event{}, err
+	}
+	existing, existErr := findInstanceOverrideTx(ctx, qtx, master, masters, recID)
+	if existErr != nil && !errors.Is(existErr, sql.ErrNoRows) {
+		if errors.Is(existErr, ErrAmbiguousUID) {
+			return Event{}, existErr
+		}
+		return Event{}, fmt.Errorf("get override: %w", existErr)
+	}
+	// The occurrence lives in the calendar of its stored override, or in
+	// the calendar of the master when no override exists. The shared rule
+	// refuses a move of one occurrence (issue #828). It permits a legacy
+	// override to stay in its calendar or to go back to a master. A move
+	// back takes the rows of the UID along, so the rule also refuses a
+	// target that already holds one of those rows.
+	fromCalendarID := master.CalendarID
+	if existErr == nil {
+		fromCalendarID = existing.CalendarID
+	}
+	// A legacy override lives in another calendar than its master. The
+	// edit writes that calendar (an update in place, or a move out of it),
+	// so that calendar must take the write too, as in an update by row ID.
+	if fromCalendarID != master.CalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, qtx, fromCalendarID, "VEVENT"); err != nil {
+			return Event{}, err
+		}
+	}
+	// CalendarID 0 keeps the calendar of the occurrence, as in an update by
+	// row ID (uidmove.Rows.Update).
+	if p.CalendarID == 0 {
+		p.CalendarID = fromCalendarID
+	}
+	if err := move.CheckOf(ctx, recID, fromCalendarID, p.CalendarID, masters); err != nil {
+		return Event{}, err
+	}
+	if p.CalendarID != master.CalendarID && p.CalendarID != fromCalendarID {
+		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
+			return Event{}, err
+		}
+	}
 
 	// Caller is the source of truth for categories. An empty p.Categories
 	// means the user explicitly cleared the tags on this override.
 	carriedCats := ParseCategoryList(p.Categories)
 
 	var r storage.Event
-	if existing, gErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
-		Uid:          uid,
-		RecurrenceID: recID,
-	}); gErr == nil {
+	// storedCalendarID is the calendar of a stored override before the
+	// edit, or 0 for a new override.
+	var storedCalendarID int64
+	if existErr == nil {
+		storedCalendarID = existing.CalendarID
 		r, err = updateOverrideTx(ctx, qtx, existing, p)
 		if err != nil {
-			return Event{}, 0, fmt.Errorf("update override: %w", err)
+			return Event{}, fmt.Errorf("update override: %w", err)
 		}
 	} else {
 		r, err = qtx.CreateEvent(ctx, overrideCreateParams(uid, recID, master.Sequence+1, p))
 		if err != nil {
-			// Concurrent override creation race: the UNIQUE(uid, recurrence_id)
-			// constraint protects against duplicate rows, so retry as update.
+			// The UNIQUE(calendar_id, uid, recurrence_id) key holds a row:
+			// a concurrent create, or an override that a delete of this
+			// occurrence soft-deleted. Retry as an update of that row.
 			if isUniqueViolationOnRecurrenceID(err) {
-				existing, eErr := qtx.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+				existing, eErr := qtx.GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams{
+					CalendarID:   p.CalendarID,
 					Uid:          uid,
 					RecurrenceID: recID,
 				})
 				if eErr != nil {
-					return Event{}, 0, fmt.Errorf("retry get override: %w", eErr)
+					return Event{}, fmt.Errorf("retry get override: %w", eErr)
 				}
+				if existing.DeletedAt != nil && *existing.DeletedAt != "" {
+					if err := reviveOverrideTx(ctx, qtx, master, existing); err != nil {
+						return Event{}, err
+					}
+				}
+				storedCalendarID = existing.CalendarID
 				r, err = updateOverrideTx(ctx, qtx, existing, p)
 				if err != nil {
-					return Event{}, 0, fmt.Errorf("retry update override: %w", err)
+					return Event{}, fmt.Errorf("retry update override: %w", err)
 				}
 			} else {
-				return Event{}, 0, fmt.Errorf("create override: %w", err)
+				return Event{}, fmt.Errorf("create override: %w", err)
 			}
 		}
 	}
 
+	// An override that an older version saved in another calendar can move
+	// back to the calendar of the master. Record that move. The other rows
+	// of the UID then move too, and the server object in the old calendar
+	// gets a tombstone. Without it that stale object keeps the UID, and
+	// iCloud refuses the later PUT (issue #828).
+	if storedCalendarID != 0 {
+		if err := move.Record(ctx, storedCalendarID, r.CalendarID); err != nil {
+			return Event{}, fmt.Errorf("record override calendar move: %w", err)
+		}
+	}
+
 	if err := replaceCategoriesTx(ctx, qtx, r.ID, carriedCats); err != nil {
-		return Event{}, 0, err
+		return Event{}, err
 	}
 
 	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
-	return e, master.CalendarID, nil
+	return e, nil
+}
+
+// reviveOverrideTx un-hides a soft-deleted override row that an edit of the
+// same occurrence takes again. It revives the row only when its recurrence
+// ID is an occurrence of the current recurrence set of master (RRULE and
+// RDATE, with the EXDATEs ignored, see recurset.Checker). A split or a
+// truncation that ended the series before the occurrence gives
+// ErrOccurrenceOutsideSeries. A row that a series delete hid, or that an
+// UNTIL hid until the user removed it, is an occurrence again, so it
+// revives. masterCalendarID is the calendar of the
+// master of the edit. Two calendars can hold the same UID, so the EXDATE
+// rule reads that calendar only. It uses the restore rule of the trash:
+// the master loses the EXDATE that the delete recorded, and an imported
+// EXDATE stays (issue #86, see softdelete.ClearMasterEXDATE).
+//
+// The edit makes a fresh override, so the old child rows of the row go:
+// the attendees, the alarms, the attachments, the comments, the contacts,
+// the resources, the relations, and the x-properties. A *WithRelations
+// caller then writes its own attendees and alarms.
+func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, row storage.Event) error {
+	m := FromStorage(master)
+	if !recurset.NewChecker(m.RecurrenceRule, m.Timezone, m.StartTime, m.ParseRDates()).OccursAt(row.RecurrenceID) {
+		return ErrOccurrenceOutsideSeries
+	}
+	masterCalendarID := master.CalendarID
+	if err := qtx.RestoreEvent(ctx, row.ID); err != nil {
+		return fmt.Errorf("revive override: %w", err)
+	}
+	if err := clearMasterEXDATE(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID); err != nil {
+		return err
+	}
+	if err := replaceRelationsTx(ctx, qtx, row.ID, nil, nil); err != nil {
+		return err
+	}
+	for _, del := range []func(context.Context, int64) error{
+		qtx.DeleteEventAttachmentsByEventID,
+		qtx.DeleteEventCommentsByEventID,
+		qtx.DeleteEventContactsByEventID,
+		qtx.DeleteEventResourcesByEventID,
+		qtx.DeleteEventRelationsByEventID,
+	} {
+		if err := del(ctx, row.ID); err != nil {
+			return fmt.Errorf("clear revived override: %w", err)
+		}
+	}
+	if err := qtx.DeleteXPropertiesByOwner(ctx, storage.DeleteXPropertiesByOwnerParams{OwnerType: "event", OwnerID: row.ID}); err != nil {
+		return fmt.Errorf("clear revived override: %w", err)
+	}
+	return nil
 }
 
 // updateOverrideTx updates a stored override row. A span change clears the
@@ -928,7 +1214,12 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
 		return Event{}, 0, err
 	}
-	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
+	// CalendarID 0 keeps the calendar of the series, as in an update by row
+	// ID (uidmove.Rows.Update).
+	if p.CalendarID == 0 {
+		p.CalendarID = master.CalendarID
+	}
+	if p.CalendarID != master.CalendarID {
 		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
 			return Event{}, 0, err
 		}
@@ -993,6 +1284,9 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string,
 
 	e := FromStorage(r)
 	e.Categories = timeutil.JoinCategoryList(carriedCats)
+	// Return the calendar of the master. The truncation lives there. The
+	// new series can live in another calendar, and the caller marks it
+	// dirty by its own calendar.
 	return e, master.CalendarID, nil
 }
 

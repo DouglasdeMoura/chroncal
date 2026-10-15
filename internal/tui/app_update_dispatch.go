@@ -84,9 +84,6 @@ func (m Model) dispatchAppMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case GoToTodayMsg:
 		return m.goToToday()
 
-	case eventUpdateAfterScopeMsg:
-		return m.handleEventUpdateAfterScope(msg)
-
 	case ToggleSidebarMsg:
 		return m.toggleSidebar()
 

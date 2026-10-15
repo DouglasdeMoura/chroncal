@@ -14,6 +14,12 @@ var (
 	ErrUnsupportedComponent = errors.New("calendar does not support this component")
 )
 
+// IsReadOnly reports whether a calendars.remote_access value marks a
+// read-only server collection.
+func IsReadOnly(remoteAccess string) bool {
+	return strings.EqualFold(strings.TrimSpace(remoteAccess), "read")
+}
+
 // EnsureWritable rejects user-originated mutations that the linked remote
 // collection cannot accept. Empty component metadata keeps legacy and direct
 // links writable because those rows predate capability discovery.
@@ -22,7 +28,7 @@ func EnsureWritable(ctx context.Context, q *storage.Queries, calendarID int64, c
 	if err != nil {
 		return err
 	}
-	if strings.EqualFold(strings.TrimSpace(cal.RemoteAccess), "read") {
+	if IsReadOnly(cal.RemoteAccess) {
 		return fmt.Errorf("%w: %s", ErrReadOnly, cal.Name)
 	}
 	components := strings.TrimSpace(cal.RemoteComponents)

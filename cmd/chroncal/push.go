@@ -34,6 +34,16 @@ func opportunisticPush(a *app.App, calendarID int64, cmd *cobra.Command) {
 	pushCalendarAfterWrite(a, calendarID, outW, cmd.ErrOrStderr())
 }
 
+// opportunisticPushMove is opportunisticPush for an update that can move
+// the item uid from fromCalendarID to toCalendarID. syncPkg.PushMove holds
+// the order: the target, and then the source when the target holds the
+// item.
+func opportunisticPushMove(a *app.App, fromCalendarID, toCalendarID int64, uid string, cmd *cobra.Command) {
+	syncPkg.PushMove(context.Background(), a.Queries, fromCalendarID, toCalendarID, uid, func(calendarID int64) {
+		opportunisticPush(a, calendarID, cmd)
+	})
+}
+
 // pushCalendarAfterWrite opportunistically pushes unpushed changes for one
 // calendar upstream after a CLI write. It is best-effort. Failures are
 // reported to outW but do not affect the command's exit status. The dirty

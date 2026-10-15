@@ -8,6 +8,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/recurset"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -36,23 +37,23 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 	return byUID, nil
 }
 
-// newEventRRuleSet parses evt's RRULE into a reusable rruleSet. See newRRuleSet
-// for includeExDates.
-func newEventRRuleSet(evt event.Event, includeExDates bool) (rruleSet, bool) {
-	return newRRuleSet(evt.RecurrenceRule, evt.Timezone, evt.StartTime,
-		evt.EndTime.Sub(evt.StartTime), evt.ParseExDates(), evt.ParseRDates(), includeExDates)
+// newEventRRuleSet parses evt's RRULE into a reusable recurset.Set for
+// expansion, with the EXDATEs applied. The occurrence test of an override
+// ignores the EXDATEs and uses recurset.NewChecker instead.
+func newEventRRuleSet(evt event.Event) (recurset.Set, bool) {
+	return recurset.New(evt.RecurrenceRule, evt.Timezone, evt.StartTime,
+		evt.EndTime.Sub(evt.StartTime), evt.ParseExDates(), evt.ParseRDates())
 }
 
 // newEventOccChecker builds a reusable orphan-detection checker for a recurring
 // event master (EXDATEs ignored, so an EXDATE never hides a legitimate override).
 // A cancelled series has no occurrences, so its checker matches nothing — this is
 // what drops a still-CONFIRMED override along with the cancelled series.
-func newEventOccChecker(evt event.Event) occChecker {
+func newEventOccChecker(evt event.Event) recurset.Checker {
 	if cancelledRecurringMaster(evt.RecurrenceRule, evt.Status) {
-		return occChecker{}
+		return recurset.Checker{}
 	}
-	rs, _ := newEventRRuleSet(evt, false)
-	return occChecker{rs: rs, anchor: evt.StartTime}
+	return recurset.NewChecker(evt.RecurrenceRule, evt.Timezone, evt.StartTime, evt.ParseRDates())
 }
 
 // singleEventInstance returns evt as a lone occurrence when it is non-recurring
@@ -70,14 +71,14 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 	if cancelledRecurringMaster(evt.RecurrenceRule, evt.Status) {
 		return nil
 	}
-	rs, ok := newEventRRuleSet(evt, true)
+	rs, ok := newEventRRuleSet(evt)
 	if !ok {
 		return singleEventInstance(evt, from, to)
 	}
 
 	var instances []ExpandedEvent
-	for _, occ := range rs.between(from, to) {
-		_, isRDate := rs.rdateSet[rdateKey(occ)]
+	for _, occ := range rs.Between(from, to) {
+		_, isRDate := rs.RDates[recurset.RDateKey(occ)]
 		instances = append(instances, ExpandedEvent{
 			Event:        evt,
 			InstanceTime: occ.UTC(),
@@ -250,10 +251,10 @@ func expandedEventKind(s *Service) recurringKind[storage.Event, ExpandedEvent, E
 		status:         func(r storage.Event) string { return r.Status },
 		recurrenceID:   func(r storage.Event) string { return r.RecurrenceID },
 		overridesByUID: s.eventOverridesByUID,
-		newOccChecker:  func(m ExpandedEvent) occChecker { return newEventOccChecker(m.Event) },
+		newOccChecker:  func(m ExpandedEvent) recurset.Checker { return newEventOccChecker(m.Event) },
 		emitOverride: func(o storage.Event, from, to time.Time) (ExpandedEvent, bool) {
 			oe := event.FromStorage(o)
-			return ExpandedEvent{Event: oe, InstanceTime: oe.StartTime}, overlapsWindow(oe.StartTime, oe.EndTime, from, to)
+			return ExpandedEvent{Event: oe, InstanceTime: oe.StartTime}, recurset.OverlapsWindow(oe.StartTime, oe.EndTime, from, to)
 		},
 	}
 }
@@ -280,7 +281,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 		newOccChecker:  newEventOccChecker,
 		emitOverride: func(o storage.Event, from, to time.Time) (event.Event, bool) {
 			oe := event.FromStorage(o)
-			return oe, overlapsWindow(oe.StartTime, oe.EndTime, from, to)
+			return oe, recurset.OverlapsWindow(oe.StartTime, oe.EndTime, from, to)
 		},
 	}
 	return expandRecurringRowsBy(ctx, k, rows, from, to)

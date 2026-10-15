@@ -3,6 +3,7 @@ package journal
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 type Service struct {
@@ -60,6 +62,11 @@ func (s *Service) dirtyExec() storage.DBTX {
 	}
 	return s.db
 }
+
+// ErrInstanceCalendarMove reports an edit of one occurrence that asks for
+// another calendar. One CalDAV object holds the whole series, so move the
+// master instead (issue #828).
+var ErrInstanceCalendarMove = errors.New("journal: one occurrence cannot move to another calendar; move the whole series")
 
 type CreateParams struct {
 	CalendarID     int64
@@ -332,55 +339,55 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Journal, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Journal, error) {
-	existing, err := s.q.GetJournal(ctx, id)
-	if err != nil {
-		return Journal{}, err
-	}
-	if err := s.ensureWritable(ctx, existing.CalendarID); err != nil {
-		return Journal{}, err
-	}
-	if p.CalendarID != existing.CalendarID {
-		if err := s.ensureWritable(ctx, p.CalendarID); err != nil {
-			return Journal{}, err
-		}
-	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 
+	// The read of the stored row runs in the transaction, because the move
+	// rules below use its calendar.
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return Journal{}, err
 	}
 	defer rollback()
 
-	r, err := qtx.UpdateJournal(ctx, storage.UpdateJournalParams{
-		ID:             id,
-		Summary:        p.Summary,
-		Description:    storage.StringToNullable(p.Description),
-		StartDate:      storage.StringToNullable(p.StartDate),
-		Status:         p.Status,
-		CalendarID:     p.CalendarID,
-		Class:          p.Class,
-		Url:            storage.StringToNullable(p.URL),
-		RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
-		Timezone:       storage.StringToNullable(p.Timezone),
-		Exdates:        storage.StringToNullable(p.ExDates),
-		Rdates:         storage.StringToNullable(p.RDates),
-		Dtstamp:        storage.StringToNullable(p.DtStamp),
-	})
+	existing, err := qtx.GetJournal(ctx, id)
 	if err != nil {
 		return Journal{}, err
 	}
-	j := fromStorage(r)
-	if err := replaceCategoriesTx(ctx, qtx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
-		return Journal{}, fmt.Errorf("replace categories: %w", err)
+	// The access checks, the move rules, the move record, and the dirty
+	// mark run in the transaction, in the order of uidmove.Rows.Update.
+	var j Journal
+	err = uidMoveRows(qtx, existing.Uid).Update(ctx, "VJOURNAL", "journal", existing.RecurrenceID, existing.CalendarID, p.CalendarID, func(ctx context.Context, calendarID int64) error {
+		r, err := qtx.UpdateJournal(ctx, storage.UpdateJournalParams{
+			ID:             id,
+			Summary:        p.Summary,
+			Description:    storage.StringToNullable(p.Description),
+			StartDate:      storage.StringToNullable(p.StartDate),
+			Status:         p.Status,
+			CalendarID:     calendarID,
+			Class:          p.Class,
+			Url:            storage.StringToNullable(p.URL),
+			RecurrenceRule: storage.StringToNullable(p.RecurrenceRule),
+			Timezone:       storage.StringToNullable(p.Timezone),
+			Exdates:        storage.StringToNullable(p.ExDates),
+			Rdates:         storage.StringToNullable(p.RDates),
+			Dtstamp:        storage.StringToNullable(p.DtStamp),
+		})
+		if err != nil {
+			return err
+		}
+		j = fromStorage(r)
+		if err := replaceCategoriesTx(ctx, qtx, j.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
+			return fmt.Errorf("replace categories: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Journal{}, err
 	}
 	if err := commit(); err != nil {
 		return Journal{}, fmt.Errorf("commit update journal: %w", err)
 	}
 	j.Categories = p.Categories
-	if err := storage.MarkResourceDirty(ctx, s.dirtyExec(), j.CalendarID, j.UID, "journal"); err != nil {
-		return Journal{}, fmt.Errorf("mark resource dirty: %w", err)
-	}
 	return j, nil
 }
 
@@ -714,4 +721,23 @@ func fromStorageSlice(rows []storage.Journal) []Journal {
 		journals[i] = fromStorage(r)
 	}
 	return journals
+}
+
+// uidMoveRows binds the journal queries of the transaction to the shared
+// calendar-move rules for uid (see uidmove.SingleMasterRows). The journals
+// table keeps the key UNIQUE(uid, recurrence_id) across all calendars.
+func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
+	return uidmove.SingleMasterRows(qtx, uid, ErrInstanceCalendarMove,
+		func(ctx context.Context) (uidmove.Master, bool, error) {
+			m, err := qtx.GetJournalByUIDIncludingDeleted(ctx, uid)
+			found, err := storage.Found(err)
+			return uidmove.Master{ID: m.ID, CalendarID: m.CalendarID, Trashed: m.DeletedAt != nil}, found, err
+		},
+		uidmove.MoveStep{Name: "journals", Move: func(ctx context.Context, from, to int64) error {
+			return qtx.MoveJournalUIDToCalendar(ctx, storage.MoveJournalUIDToCalendarParams{FromCalendarID: from, ToCalendarID: to, Uid: uid})
+		}},
+		uidmove.MoveStep{Name: "journal_exdate_deletes", Move: func(ctx context.Context, from, to int64) error {
+			return qtx.MoveJournalExdateDeletesUIDToCalendar(ctx, storage.MoveJournalExdateDeletesUIDToCalendarParams{FromCalendarID: from, ToCalendarID: to, Uid: uid})
+		}},
+	)
 }

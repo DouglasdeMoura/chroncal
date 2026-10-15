@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -340,6 +341,9 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			} else {
 				e, err = a.Events.Update(ctx, existing.ID, p)
 			}
+			if errors.Is(err, event.ErrInstanceCalendarMove) {
+				return errOccurrenceMove(ctx, a, "event", existing.UID, existing.RecurrenceID, existing.CalendarID, err)
+			}
 			if err != nil {
 				return fmt.Errorf("update event: %w", err)
 			}
@@ -414,11 +418,11 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				if err := printOutput(w, toJSONEvent(e)); err != nil {
 					return err
 				}
-				opportunisticPush(a, e.CalendarID, cmd)
+				opportunisticPushMove(a, existing.CalendarID, e.CalendarID, e.UID, cmd)
 				return nil
 			}
 			printEvent(w, e)
-			opportunisticPush(a, e.CalendarID, cmd)
+			opportunisticPushMove(a, existing.CalendarID, e.CalendarID, e.UID, cmd)
 			return nil
 		},
 	}

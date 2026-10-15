@@ -372,6 +372,8 @@ Event flags: `--date`, `--time`, `--end-time`, `--duration`, `--timezone`, `--lo
 
 `event list --verbose` shows each event on a time rail, with its time, title, location, and description. A `|` starts each line of the description. The colors match the `--compact` table. Chroncal shows colors only on a terminal. Set `NO_COLOR` to turn them off.
 
+`event update --calendar NAME` moves an event to another calendar. A recurring series moves as one unit: the master and all its overrides go together. Chroncal refuses `--calendar` together with `--recurrence-id`, because one occurrence cannot leave its series. The error names the ID of the series to move instead. Chroncal also refuses a move when the target calendar holds a copy of the same UID, live or in the trash. On a remote calendar, sync creates the object in the target calendar first. Then it deletes the object in the source calendar. `todo update` and `journal update` use the same rules.
+
 `event delete` supports three scopes for a recurring series. Pass the series by ID or UID:
 
 - `--recurrence-id <RFC3339>` deletes one occurrence. chroncal writes an EXDATE on the master and deletes any override at that time.

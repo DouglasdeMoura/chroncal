@@ -213,6 +213,35 @@ func syncProgressLabel(name string) string {
 	return string(runes[:maxLen-1]) + "…"
 }
 
+// runMovePush is runOpportunisticPush for an edit that can move the item
+// uid from fromCalendarID to toCalendarID. syncpkg.PushMove holds the
+// order: the target, and then the source when the target holds the item.
+// The pushes run one after the other in one command, and the command
+// returns their results as a batch.
+func (m Model) runMovePush(fromCalendarID, toCalendarID int64, uid string) tea.Cmd {
+	if fromCalendarID == 0 || fromCalendarID == toCalendarID {
+		return m.runOpportunisticPush(toCalendarID)
+	}
+	// Build both pushes here, on the Update goroutine. The command runs on
+	// another goroutine, so it must not read the maps of the model (an
+	// Update handler writes m.calendars in place).
+	pushes := map[int64]tea.Cmd{
+		toCalendarID:   m.runOpportunisticPush(toCalendarID),
+		fromCalendarID: m.runOpportunisticPush(fromCalendarID),
+	}
+	q := m.app.Queries
+	return func() tea.Msg {
+		var results tea.BatchMsg
+		syncpkg.PushMove(context.Background(), q, fromCalendarID, toCalendarID, uid, func(calendarID int64) {
+			if push := pushes[calendarID]; push != nil {
+				msg := push()
+				results = append(results, func() tea.Msg { return msg })
+			}
+		})
+		return results
+	}
+}
+
 // runOpportunisticPush pushes unpushed changes for a single calendar with no
 // pull. Best-effort: failures do not surface as errors. The dirty flag
 // survives and the background tick will retry. A 412 records a conflict and

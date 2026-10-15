@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 // row is the neutral view of one event, todo, or journal row. It carries
@@ -311,4 +313,51 @@ func newPurgeDeletedCmd(r resource, h verbHelp) *cobra.Command {
 	cmd.Flags().StringVar(&olderThanStr, "older-than", "720h", "age threshold (Go duration, e.g. 30d=720h, 168h=7 days)")
 	addConfirmFlag(cmd)
 	return cmd
+}
+
+// errOccurrenceMove returns the CLI error for a refused calendar move of
+// one occurrence. err is the service error. A uidmove.OccurrenceMoveError
+// in it names the masters that the edited row can belong to. kind is
+// "event", "todo", or "journal". uid, recurrenceID, and calendarID are the
+// fields of the edited row.
+//
+// One master gives a hint with the numeric ID of the master, because a UID
+// can have a master in two calendars. No live master gives no move hint,
+// because a move of the series fails the same way. The error says to
+// restore the master or to edit without --calendar.
+// More masters give an error that names each master and its calendar,
+// because the CLI cannot choose the series.
+func errOccurrenceMove(ctx context.Context, a *app.App, kind, uid, recurrenceID string, calendarID int64, err error) error {
+	var moveErr *uidmove.OccurrenceMoveError
+	var masters []uidmove.Master
+	if errors.As(err, &moveErr) {
+		masters = moveErr.Masters
+	}
+	const reason = "one occurrence cannot move to another calendar"
+	switch len(masters) {
+	case 0:
+		return fmt.Errorf("update %s: %s. The UID %s has no live series to move: its master is in the trash or gone. "+
+			"Restore the master from the trash first, or edit the occurrence without --calendar", kind, reason, uid)
+	case 1:
+		return fmt.Errorf("update %s: %s. To move the whole series, run: chroncal %s update %d --calendar NAME", kind, reason, kind, masters[0].ID)
+	}
+	parts := make([]string, len(masters))
+	for i, m := range masters {
+		parts[i] = fmt.Sprintf("%d (calendar %q)", m.ID, calendarName(ctx, a, m.CalendarID))
+	}
+	what := "This occurrence can belong to a series"
+	if recurrenceID != "" {
+		what = fmt.Sprintf("This row is an old split override in calendar %q, and the UID has a series", calendarName(ctx, a, calendarID))
+	}
+	return fmt.Errorf("update %s: %s. %s in more than one calendar: %s. To move one series, run: chroncal %s update ID --calendar NAME",
+		kind, reason, what, strings.Join(parts, ", "), kind)
+}
+
+// calendarName returns the name of a calendar, or its ID when the lookup
+// fails.
+func calendarName(ctx context.Context, a *app.App, calendarID int64) string {
+	if c, err := a.Calendars.Get(ctx, calendarID); err == nil {
+		return c.Name
+	}
+	return fmt.Sprint(calendarID)
 }

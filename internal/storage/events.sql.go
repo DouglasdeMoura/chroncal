@@ -23,6 +23,68 @@ func (q *Queries) CountEventIdentitiesByCalendar(ctx context.Context, calendarID
 	return count, err
 }
 
+const countEventUIDMoveCollisions = `-- name: CountEventUIDMoveCollisions :one
+SELECT
+    CAST(COALESCE(SUM(dst.deleted_at IS NULL), 0) AS INTEGER) AS live,
+    CAST(COALESCE(SUM(dst.deleted_at IS NOT NULL), 0) AS INTEGER) AS trashed
+FROM events AS dst
+WHERE dst.calendar_id = ?1 AND dst.uid = ?2
+  AND dst.recurrence_id IN (
+    SELECT src.recurrence_id FROM events AS src
+    WHERE src.calendar_id = ?3 AND src.uid = ?2
+  )
+`
+
+type CountEventUIDMoveCollisionsParams struct {
+	ToCalendarID   int64
+	Uid            string
+	FromCalendarID int64
+}
+
+type CountEventUIDMoveCollisionsRow struct {
+	Live    int64
+	Trashed int64
+}
+
+// Count the live rows and the soft-deleted rows in the target calendar
+// that share the UID and the recurrence ID of a row that
+// MoveEventUIDToCalendar moves. A nonzero count means the move breaks the
+// UNIQUE key.
+func (q *Queries) CountEventUIDMoveCollisions(ctx context.Context, arg CountEventUIDMoveCollisionsParams) (CountEventUIDMoveCollisionsRow, error) {
+	row := q.db.QueryRowContext(ctx, countEventUIDMoveCollisions, arg.ToCalendarID, arg.Uid, arg.FromCalendarID)
+	var i CountEventUIDMoveCollisionsRow
+	err := row.Scan(&i.Live, &i.Trashed)
+	return i, err
+}
+
+const countEventUIDRowsInCalendar = `-- name: CountEventUIDRowsInCalendar :one
+SELECT
+    CAST(COALESCE(SUM(recurrence_id = ''), 0) AS INTEGER) AS masters,
+    CAST(COALESCE(SUM(recurrence_id != ''), 0) AS INTEGER) AS overrides
+FROM events
+WHERE calendar_id = ? AND uid = ?
+`
+
+type CountEventUIDRowsInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+type CountEventUIDRowsInCalendarRow struct {
+	Masters   int64
+	Overrides int64
+}
+
+// Count the master rows and the override rows (live or soft-deleted) of
+// one UID in one calendar. The dirty-mark rule for a legacy override reads
+// it. See storage.MarkResourceDirty.
+func (q *Queries) CountEventUIDRowsInCalendar(ctx context.Context, arg CountEventUIDRowsInCalendarParams) (CountEventUIDRowsInCalendarRow, error) {
+	row := q.db.QueryRowContext(ctx, countEventUIDRowsInCalendar, arg.CalendarID, arg.Uid)
+	var i CountEventUIDRowsInCalendarRow
+	err := row.Scan(&i.Masters, &i.Overrides)
+	return i, err
+}
+
 const countEventsByCalendar = `-- name: CountEventsByCalendar :one
 SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL
 `
@@ -130,6 +192,28 @@ func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event
 	return i, err
 }
 
+const eventUIDMasterCalendars = `-- name: EventUIDMasterCalendars :one
+SELECT
+    COUNT(DISTINCT calendar_id) AS calendars,
+    CAST(COALESCE(MIN(calendar_id), 0) AS INTEGER) AS calendar_id
+FROM events
+WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
+`
+
+type EventUIDMasterCalendarsRow struct {
+	Calendars  int64
+	CalendarID int64
+}
+
+// Count the calendars with a live master row of one UID, and give the
+// lowest of them. With one calendar, that calendar is the only one.
+func (q *Queries) EventUIDMasterCalendars(ctx context.Context, uid string) (EventUIDMasterCalendarsRow, error) {
+	row := q.db.QueryRowContext(ctx, eventUIDMasterCalendars, uid)
+	var i EventUIDMasterCalendarsRow
+	err := row.Scan(&i.Calendars, &i.CalendarID)
+	return i, err
+}
+
 const getEvent = `-- name: GetEvent :one
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE id = ? AND deleted_at IS NULL
 `
@@ -225,6 +309,54 @@ type GetEventByCalendarUIDAndRecurrenceIDParams struct {
 
 func (q *Queries) GetEventByCalendarUIDAndRecurrenceID(ctx context.Context, arg GetEventByCalendarUIDAndRecurrenceIDParams) (Event, error) {
 	row := q.db.QueryRowContext(ctx, getEventByCalendarUIDAndRecurrenceID, arg.CalendarID, arg.Uid, arg.RecurrenceID)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.Uid,
+		&i.CalendarID,
+		&i.Title,
+		&i.Description,
+		&i.Location,
+		&i.StartTime,
+		&i.EndTime,
+		&i.AllDay,
+		&i.RecurrenceRule,
+		&i.Timezone,
+		&i.Status,
+		&i.Transp,
+		&i.Sequence,
+		&i.Priority,
+		&i.Class,
+		&i.Url,
+		&i.Exdates,
+		&i.Rdates,
+		&i.RecurrenceID,
+		&i.Geo,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Duration,
+		&i.Dtstamp,
+		&i.ConferenceUri,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getEventByCalendarUIDAndRecurrenceIDIncludingDeleted = `-- name: GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted :one
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?
+`
+
+type GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams struct {
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+}
+
+// The row of one (calendar, UID, recurrence ID) key, live or soft-deleted.
+// A soft-deleted override keeps its UNIQUE key, so a new override of the
+// same occurrence must revive it.
+func (q *Queries) GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx context.Context, arg GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams) (Event, error) {
+	row := q.db.QueryRowContext(ctx, getEventByCalendarUIDAndRecurrenceIDIncludingDeleted, arg.CalendarID, arg.Uid, arg.RecurrenceID)
 	var i Event
 	err := row.Scan(
 		&i.ID,
@@ -505,6 +637,63 @@ func (q *Queries) ListDeletedOverrideRecurrenceIDs(ctx context.Context, uid stri
 	return items, nil
 }
 
+const listEventMastersByUIDIncludingDeleted = `-- name: ListEventMastersByUIDIncludingDeleted :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE uid = ? AND recurrence_id = '' ORDER BY id
+`
+
+// Every master row of one UID, live or soft-deleted, in all calendars. The
+// legacy-override rule reads it (see storage.LegacyOverride).
+func (q *Queries) ListEventMastersByUIDIncludingDeleted(ctx context.Context, uid string) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listEventMastersByUIDIncludingDeleted, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.Geo,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Duration,
+			&i.Dtstamp,
+			&i.ConferenceUri,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventsByCalendarAndDateRange = `-- name: ListEventsByCalendarAndDateRange :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
 WHERE calendar_id = ? AND start_time < ? AND end_time > ? AND deleted_at IS NULL
@@ -581,6 +770,66 @@ type ListEventsByDateRangeParams struct {
 
 func (q *Queries) ListEventsByDateRange(ctx context.Context, arg ListEventsByDateRangeParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listEventsByDateRange, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.Geo,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Duration,
+			&i.Dtstamp,
+			&i.ConferenceUri,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventsByUIDAndRecurrenceID = `-- name: ListEventsByUIDAndRecurrenceID :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL ORDER BY id
+`
+
+type ListEventsByUIDAndRecurrenceIDParams struct {
+	Uid          string
+	RecurrenceID string
+}
+
+func (q *Queries) ListEventsByUIDAndRecurrenceID(ctx context.Context, arg ListEventsByUIDAndRecurrenceIDParams) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listEventsByUIDAndRecurrenceID, arg.Uid, arg.RecurrenceID)
 	if err != nil {
 		return nil, err
 	}
@@ -803,6 +1052,24 @@ func (q *Queries) MarkEventIdentitiesDirtyForMigration(ctx context.Context, arg 
 	return err
 }
 
+const moveEventUIDToCalendar = `-- name: MoveEventUIDToCalendar :exec
+UPDATE events SET calendar_id = ?1
+WHERE calendar_id = ?2 AND uid = ?3
+`
+
+type MoveEventUIDToCalendarParams struct {
+	ToCalendarID   int64
+	FromCalendarID int64
+	Uid            string
+}
+
+// Move every row of one UID (live or soft-deleted) from one calendar to
+// another. A local calendar move of a resource calls it. See issue #828.
+func (q *Queries) MoveEventUIDToCalendar(ctx context.Context, arg MoveEventUIDToCalendarParams) error {
+	_, err := q.db.ExecContext(ctx, moveEventUIDToCalendar, arg.ToCalendarID, arg.FromCalendarID, arg.Uid)
+	return err
+}
+
 const purgeEventByID = `-- name: PurgeEventByID :execrows
 DELETE FROM events WHERE id = ? AND deleted_at IS NOT NULL
 `
@@ -926,6 +1193,27 @@ WHERE id = ? AND deleted_at IS NULL
 
 func (q *Queries) SoftDeleteEvent(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, softDeleteEvent, id)
+	return err
+}
+
+const softDeleteEventsByCalendarUID = `-- name: SoftDeleteEventsByCalendarUID :exec
+UPDATE events SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
+`
+
+type SoftDeleteEventsByCalendarUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Soft-delete every live row of one UID in one calendar. A pull that sees
+// the server object of the UID gone in that calendar uses it. Another
+// calendar can hold the same UID (a move, or a copy), so the delete stays
+// in the pulled calendar.
+func (q *Queries) SoftDeleteEventsByCalendarUID(ctx context.Context, arg SoftDeleteEventsByCalendarUIDParams) error {
+	_, err := q.db.ExecContext(ctx, softDeleteEventsByCalendarUID, arg.CalendarID, arg.Uid)
 	return err
 }
 
@@ -1150,11 +1438,12 @@ type UpsertEventByUIDParams struct {
 	ConferenceUri  string
 }
 
-// NOTE: ON CONFLICT UPDATE clears deleted_at. This query resurrects
-// soft-deleted rows. Callers outside the pull path in the sync engine
-// must know this. The pull path is safe. The engine excludes
-// tombstoned UIDs before this query runs (engine.go loads tombstones
-// first and skips them during pull).
+// NOTE: ON CONFLICT matches (calendar_id, uid, recurrence_id). The same
+// UID on a second calendar inserts a new row (issue #756). ON CONFLICT
+// UPDATE clears deleted_at. This query resurrects soft-deleted rows.
+// Callers outside the pull path in the sync engine must know this. The
+// pull path is safe. The engine excludes tombstoned UIDs before this
+// query runs (engine.go loads tombstones first and skips them during pull).
 func (q *Queries) UpsertEventByUID(ctx context.Context, arg UpsertEventByUIDParams) (Event, error) {
 	row := q.db.QueryRowContext(ctx, upsertEventByUID,
 		arg.Uid,

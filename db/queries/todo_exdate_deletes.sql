@@ -13,3 +13,9 @@ DELETE FROM todo_exdate_deletes WHERE id = ?;
 
 -- name: PurgeOldTodoExdateDeletes :execrows
 DELETE FROM todo_exdate_deletes WHERE deleted_at < ?;
+
+-- name: MoveTodoExdateDeletesUIDToCalendar :exec
+-- Move every row of one UID (live or soft-deleted) from one calendar to
+-- another. A local calendar move of a resource calls it. See issue #828.
+UPDATE todo_exdate_deletes SET calendar_id = sqlc.arg(to_calendar_id)
+WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);

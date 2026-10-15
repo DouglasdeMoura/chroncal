@@ -365,7 +365,7 @@ func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) erro
 	if err := qtx.RestoreEvent(ctx, r.ID); err != nil {
 		return fmt.Errorf("restore event: %w", err)
 	}
-	if err := clearMasterEXDATE(ctx, qtx, r.Uid, r.RecurrenceID); err != nil {
+	if err := clearMasterEXDATE(ctx, qtx, 0, r.Uid, r.RecurrenceID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -389,7 +389,7 @@ func (s *Service) restoreEXDATEOnly(ctx context.Context, uid, recurrenceID strin
 	}); err != nil {
 		return fmt.Errorf("restore override: %w", err)
 	}
-	if err := clearMasterEXDATE(ctx, qtx, uid, recurrenceID); err != nil {
+	if err := clearMasterEXDATE(ctx, qtx, 0, uid, recurrenceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -419,7 +419,7 @@ func (s *Service) restoreEventsByUIDClearingExdates(ctx context.Context, uid str
 		return 0, fmt.Errorf("restore by uid: %w", err)
 	}
 	for _, recurrenceID := range recurrenceIDs {
-		if err := clearMasterEXDATE(ctx, qtx, uid, recurrenceID); err != nil {
+		if err := clearMasterEXDATE(ctx, qtx, 0, uid, recurrenceID); err != nil {
 			return 0, err
 		}
 	}
@@ -433,30 +433,36 @@ func (s *Service) restoreEventsByUIDClearingExdates(ctx context.Context, uid str
 // recurrenceID on the master event with uid. The provenance contract lives in
 // softdelete.ClearMasterEXDATE; this wrapper only binds the event queries to
 // the active transaction so the override is never visible-but-excluded.
-func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenceID string) error {
+// calendarID 0 reads the delete log and the master by UID in all
+// calendars. Another value reads them in that calendar only: two calendars
+// can hold the same UID, so a caller that knows the master gives it.
+func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string) error {
+	getLog := func(ctx context.Context) (storage.EventExdateDelete, error) {
+		if calendarID == 0 {
+			return qtx.GetEventExdateDeleteByUIDRecurrence(ctx, storage.GetEventExdateDeleteByUIDRecurrenceParams{
+				Uid: uid, RecurrenceID: recurrenceID,
+			})
+		}
+		return qtx.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
+			CalendarID: calendarID, Uid: uid, RecurrenceID: recurrenceID,
+		})
+	}
+	getMaster := func(ctx context.Context) (storage.Event, error) {
+		if calendarID == 0 {
+			return qtx.GetEventByUID(ctx, uid)
+		}
+		return qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+	}
 	return softdelete.ClearMasterEXDATE(ctx, softdelete.ExdateProvenance{
 		GetDeleteLog: func(ctx context.Context) (int64, bool, error) {
-			log, err := qtx.GetEventExdateDeleteByUIDRecurrence(ctx, storage.GetEventExdateDeleteByUIDRecurrenceParams{
-				Uid:          uid,
-				RecurrenceID: recurrenceID,
-			})
-			if errors.Is(err, sql.ErrNoRows) {
-				return 0, false, nil
-			}
-			if err != nil {
-				return 0, false, err
-			}
-			return log.ID, true, nil
+			log, err := getLog(ctx)
+			found, err := storage.Found(err)
+			return log.ID, found, err
 		},
 		GetMaster: func(ctx context.Context) (int64, string, bool, error) {
-			master, err := qtx.GetEventByUID(ctx, uid)
-			if errors.Is(err, sql.ErrNoRows) {
-				return 0, "", false, nil
-			}
-			if err != nil {
-				return 0, "", false, err
-			}
-			return master.ID, storage.NullableToString(master.Exdates), true, nil
+			master, err := getMaster(ctx)
+			found, err := storage.Found(err)
+			return master.ID, storage.NullableToString(master.Exdates), found, err
 		},
 		UpdateExdates: func(ctx context.Context, masterID int64, exdates string) error {
 			return qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
@@ -464,9 +470,7 @@ func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, uid, recurrenc
 				ID:      masterID,
 			})
 		},
-		DeleteDeleteLog: func(ctx context.Context, logID int64) error {
-			return qtx.DeleteEventExdateDelete(ctx, logID)
-		},
+		DeleteDeleteLog: qtx.DeleteEventExdateDelete,
 	}, recurrenceID)
 }
 

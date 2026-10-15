@@ -125,6 +125,16 @@ UPDATE todos SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NULL;
 
+-- name: SoftDeleteTodosByCalendarUID :exec
+-- Soft-delete every live row of one UID in one calendar. A pull that sees
+-- the server object of the UID gone in that calendar uses it. Another
+-- calendar can hold the same UID (a move, or a copy), so the delete stays
+-- in the pulled calendar.
+UPDATE todos SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
+
 -- name: SoftDeleteTodosByUID :exec
 UPDATE todos SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
@@ -176,3 +186,28 @@ FROM todos AS src
 WHERE src.calendar_id = ? AND src.deleted_at IS NULL AND src.uid != ''
 GROUP BY uid
 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
+
+-- name: MoveTodoUIDToCalendar :exec
+-- Move every row of one UID (live or soft-deleted) from one calendar to
+-- another. A local calendar move of a resource calls it. See issue #828.
+UPDATE todos SET calendar_id = sqlc.arg(to_calendar_id)
+WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
+
+-- name: CountTodoUIDRowsInCalendar :one
+-- Count the master rows and the override rows (live or soft-deleted) of
+-- one UID in one calendar. The dirty-mark rule for a legacy override reads
+-- it. See storage.MarkResourceDirty.
+SELECT
+    CAST(COALESCE(SUM(recurrence_id = ''), 0) AS INTEGER) AS masters,
+    CAST(COALESCE(SUM(recurrence_id != ''), 0) AS INTEGER) AS overrides
+FROM todos
+WHERE calendar_id = ? AND uid = ?;
+
+-- name: TodoUIDMasterCalendars :one
+-- Count the calendars with a live master row of one UID, and give the
+-- lowest of them. With one calendar, that calendar is the only one.
+SELECT
+    COUNT(DISTINCT calendar_id) AS calendars,
+    CAST(COALESCE(MIN(calendar_id), 0) AS INTEGER) AS calendar_id
+FROM todos
+WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;

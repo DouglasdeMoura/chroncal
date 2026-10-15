@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/douglasdemoura/chroncal/internal/account"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 )
 
 func (m Model) loadCalendars() tea.Cmd {
@@ -154,7 +155,7 @@ func (m *Model) blockReadOnlyCalendarMutation(calendarID int64) (tea.Cmd, bool) 
 	if name == "" {
 		name = "This calendar"
 	}
-	if strings.EqualFold(strings.TrimSpace(info.RemoteAccess), "read") {
+	if calendaraccess.IsReadOnly(info.RemoteAccess) {
 		return m.toast.Failed(fmt.Sprintf("%s is read-only", name)), true
 	}
 	if info.RemoteComponents != "" && !supportsVEVENT(info.RemoteComponents) {
@@ -181,7 +182,7 @@ func supportsVEVENT(remoteComponents string) bool {
 func eventFormCalendars(calendars map[int64]CalendarInfo) map[int64]CalendarInfo {
 	filtered := make(map[int64]CalendarInfo, len(calendars))
 	for id, info := range calendars {
-		if strings.EqualFold(strings.TrimSpace(info.RemoteAccess), "read") {
+		if calendaraccess.IsReadOnly(info.RemoteAccess) {
 			continue
 		}
 		if info.RemoteComponents != "" && !supportsVEVENT(info.RemoteComponents) {
