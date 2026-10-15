@@ -91,25 +91,26 @@ func todoDuration(td todo.Todo) time.Duration {
 	return 0
 }
 
-// newTodoRRuleSet parses td's RRULE into a reusable rruleSet. ok is false when
-// the todo has no anchor (so it cannot be expanded).
-func newTodoRRuleSet(td todo.Todo, includeExDates bool) (rruleSet, bool) {
+// newTodoRRuleSet parses td's RRULE into a reusable recurset.Set for
+// expansion, with the EXDATEs applied. ok is false when the todo has no
+// anchor (so it cannot be expanded).
+func newTodoRRuleSet(td todo.Todo) (recurset.Set, bool) {
 	anchor := todoAnchor(td)
 	if anchor.IsZero() {
-		return rruleSet{}, false
+		return recurset.Set{}, false
 	}
-	return newRRuleSet(td.RecurrenceRule, td.Timezone, anchor,
-		todoDuration(td), td.ParseExDates(), td.ParseRDates(), includeExDates)
+	return recurset.New(td.RecurrenceRule, td.Timezone, anchor,
+		todoDuration(td), td.ParseExDates(), td.ParseRDates(), true)
 }
 
 // newTodoOccChecker builds a reusable orphan-detection checker for a recurring
 // todo master. A cancelled series matches nothing (see newEventOccChecker).
-func newTodoOccChecker(td todo.Todo) occChecker {
-	if cancelledRecurringMaster(td.RecurrenceRule, td.Status) {
-		return occChecker{}
+func newTodoOccChecker(td todo.Todo) recurset.Checker {
+	anchor := todoAnchor(td)
+	if anchor.IsZero() || cancelledRecurringMaster(td.RecurrenceRule, td.Status) {
+		return recurset.Checker{}
 	}
-	rs, _ := newTodoRRuleSet(td, false)
-	return occChecker{Set: rs, Anchor: todoAnchor(td)}
+	return recurset.NewChecker(td.RecurrenceRule, td.Timezone, anchor, td.ParseRDates())
 }
 
 // singleTodoInstance returns td as a lone occurrence (non-recurring or
@@ -130,13 +131,13 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 	if cancelledRecurringMaster(td.RecurrenceRule, td.Status) {
 		return nil
 	}
-	rs, ok := newTodoRRuleSet(td, true)
+	rs, ok := newTodoRRuleSet(td)
 	if !ok {
 		return singleTodoInstance(td, from, to)
 	}
 
 	var instances []ExpandedTodo
-	for _, occ := range between(rs, from, to) {
+	for _, occ := range rs.Between(from, to) {
 		_, isRDate := rs.RDates[recurset.RDateKey(occ)]
 		instances = append(instances, ExpandedTodo{
 			Todo:         td,
@@ -190,7 +191,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 			// multi-day override whose START precedes the window but whose DUE
 			// falls inside it is not dropped -- matching the master-occurrence
 			// path (keepOccurrence/between) and the event override path.
-			return ot, keepOccurrence(anchor, todoDuration(ot), from, to)
+			return ot, recurset.KeepOccurrence(anchor, todoDuration(ot), from, to)
 		},
 	}
 	return expandRecurringRowsBy(ctx, k, rows, from, to)

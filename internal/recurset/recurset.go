@@ -156,6 +156,60 @@ func (s Set) OccursAt(recurrenceID string) bool {
 	return false
 }
 
+// Between returns the occurrences in [from, to) whose [occ, occ+dur) interval
+// overlaps the window, expanded once in the set's timezone. A multi-day instance
+// whose start precedes 'from' can still overlap the window via its duration.
+// Generation then begins one instance-duration early. Occurrences are kept by
+// [start, end) overlap rather than start alone. Returned times are in the set's
+// expansion zone. Callers normalize to UTC.
+func (s Set) Between(from, to time.Time) []time.Time {
+	localFrom, localTo := from, to
+	if s.Loc != nil {
+		localFrom = from.In(s.Loc)
+		localTo = to.In(s.Loc)
+	}
+	occurrences := s.Rule.Between(localFrom.Add(-s.Dur), localTo, true)
+	kept := occurrences[:0]
+	for _, occ := range occurrences {
+		if KeepOccurrence(occ, s.Dur, localFrom, localTo) {
+			kept = append(kept, occ)
+		}
+	}
+	return kept
+}
+
+// InWindow reports whether an occurrence at t falls within the half-open
+// window [from, to). Recurrence ranges are half-open everywhere in chroncal.
+func InWindow(t, from, to time.Time) bool {
+	return !t.Before(from) && t.Before(to)
+}
+
+// OverlapsWindow reports whether the half-open interval [start, end) intersects
+// [from, to). This matches the SQL range predicate (start_time < to AND
+// end_time > from) used for non-recurring events. A multi-day instance or
+// override that spans into the window is then not dropped just because its
+// start precedes it. Regular RRULE instances are filtered by this same overlap
+// in ExpandEvent/ExpandTodo. Generation starts from from-duration so a
+// occurrence that spans the window edge is produced before it is kept.
+//
+// A zero end (for example an override persisted with a blank end_time) is
+// treated as instantaneous and matched by its start alone. The occurrence is
+// then not dropped in silence together with the master slot it replaces.
+func OverlapsWindow(start, end, from, to time.Time) bool {
+	if end.IsZero() {
+		return InWindow(start, from, to)
+	}
+	return start.Before(to) && end.After(from)
+}
+
+// KeepOccurrence reports whether an expanded occurrence at occ with instance
+// duration dur belongs in the half-open window [from, to). Its [occ, occ+dur)
+// interval overlaps the window. For a zero-duration occurrence whose open
+// end boundary OverlapsWindow would reject, occ itself falls inside it.
+func KeepOccurrence(occ time.Time, dur time.Duration, from, to time.Time) bool {
+	return OverlapsWindow(occ, occ.Add(dur), from, to) || InWindow(occ, from, to)
+}
+
 // Checker tests whether a RECURRENCE-ID names a genuine occurrence of its
 // master. The master's RRULE is parsed once (EXDATEs ignored) and reused
 // for all of the master's overrides. Anchor is the master's own occurrence

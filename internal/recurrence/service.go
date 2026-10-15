@@ -28,38 +28,6 @@ func seriesKey(calendarID int64, uid string) string {
 	return strconv.FormatInt(calendarID, 10) + "\x00" + uid
 }
 
-// inWindow reports whether an occurrence at t falls within the half-open
-// window [from, to). Recurrence ranges are half-open everywhere in chroncal.
-func inWindow(t, from, to time.Time) bool {
-	return !t.Before(from) && t.Before(to)
-}
-
-// overlapsWindow reports whether the half-open interval [start, end) intersects
-// [from, to). This matches the SQL range predicate (start_time < to AND
-// end_time > from) used for non-recurring events. A multi-day instance or
-// override that spans into the window is then not dropped just because its
-// start precedes it. Regular RRULE instances are filtered by this same overlap
-// in ExpandEvent/ExpandTodo. Generation starts from from-duration so a
-// occurrence that spans the window edge is produced before it is kept.
-//
-// A zero end (for example an override persisted with a blank end_time) is
-// treated as instantaneous and matched by its start alone. The occurrence is
-// then not dropped in silence together with the master slot it replaces.
-func overlapsWindow(start, end, from, to time.Time) bool {
-	if end.IsZero() {
-		return inWindow(start, from, to)
-	}
-	return start.Before(to) && end.After(from)
-}
-
-// keepOccurrence reports whether an expanded occurrence at occ with instance
-// duration dur belongs in the half-open window [from, to). Its [occ, occ+dur)
-// interval overlaps the window. For a zero-duration occurrence whose open
-// end boundary overlapsWindow would reject, occ itself falls inside it.
-func keepOccurrence(occ time.Time, dur time.Duration, from, to time.Time) bool {
-	return overlapsWindow(occ, occ.Add(dur), from, to) || inWindow(occ, from, to)
-}
-
 // canonicalRecurrenceID normalizes a stored recurrence_id to the same UTC
 // RFC 3339 form used for expanded instance keys. A date-only or zoned id then
 // compares equal to the occurrence it identifies. Suppression and orphan
@@ -70,19 +38,6 @@ func canonicalRecurrenceID(rid string) string {
 		return t.UTC().Format(time.RFC3339)
 	}
 	return rid
-}
-
-// rruleSet is a master's parsed recurrence set. recurset holds the parse
-// rule, so the domain services share it (see recurset.Set).
-type rruleSet = recurset.Set
-
-// occChecker tests whether an override's RECURRENCE-ID names a genuine
-// occurrence of its master (see recurset.Checker).
-type occChecker = recurset.Checker
-
-// newRRuleSet parses the recurrence set of a master (see recurset.New).
-func newRRuleSet(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates []time.Time, includeExDates bool) (rruleSet, bool) {
-	return recurset.New(rule, tz, dtstart, dur, exDates, rDates, includeExDates)
 }
 
 // cancelledRecurringMaster reports whether the row is a recurring master that
@@ -110,28 +65,6 @@ func isRDateOnlyMaster(rdates *string) bool {
 	return rdates != nil && *rdates != ""
 }
 
-// between returns the occurrences in [from, to) whose [occ, occ+dur) interval
-// overlaps the window, expanded once in the set's timezone. A multi-day instance
-// whose start precedes 'from' can still overlap the window via its duration.
-// Generation then begins one instance-duration early. Occurrences are kept by
-// [start, end) overlap rather than start alone. Returned times are in the set's
-// expansion zone. Callers normalize to UTC.
-func between(rs rruleSet, from, to time.Time) []time.Time {
-	localFrom, localTo := from, to
-	if rs.Loc != nil {
-		localFrom = from.In(rs.Loc)
-		localTo = to.In(rs.Loc)
-	}
-	occurrences := rs.Rule.Between(localFrom.Add(-rs.Dur), localTo, true)
-	kept := occurrences[:0]
-	for _, occ := range occurrences {
-		if keepOccurrence(occ, rs.Dur, localFrom, localTo) {
-			kept = append(kept, occ)
-		}
-	}
-	return kept
-}
-
 // recurringKind bundles the entity-specific operations expandRecurringRowsBy
 // needs to merge a recurring master with its overrides. Row is the storage row,
 // Model the domain model, and Inst the Expand* result (which carries the model
@@ -149,7 +82,7 @@ type recurringKind[Row any, Model any, Inst any] struct {
 	overridesByUID func(context.Context, []Row) (map[string][]Row, error)
 	// newOccChecker builds an orphan-detection checker for a master, parsing
 	// its RRULE once for reuse across all of its overrides.
-	newOccChecker func(master Model) occChecker
+	newOccChecker func(master Model) recurset.Checker
 	// emitOverride builds an override's model and reports whether its own
 	// occurrence falls within [from, to).
 	emitOverride func(o Row, from, to time.Time) (Model, bool)
