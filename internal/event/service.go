@@ -545,10 +545,11 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 			}
 			return uidMasters(masters), nil
 		},
-		CountCollisions: func(ctx context.Context, fromCalendarID, toCalendarID int64) (int64, error) {
-			return qtx.CountEventUIDMoveCollisions(ctx, storage.CountEventUIDMoveCollisionsParams{
+		CountCollisions: func(ctx context.Context, fromCalendarID, toCalendarID int64) (int64, int64, error) {
+			n, err := qtx.CountEventUIDMoveCollisions(ctx, storage.CountEventUIDMoveCollisionsParams{
 				ToCalendarID: toCalendarID, Uid: uid, FromCalendarID: fromCalendarID,
 			})
+			return n.Live, n.Trashed, err
 		},
 		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
 			return moveUIDRowsTx(ctx, qtx, storage.MoveEventUIDToCalendarParams{

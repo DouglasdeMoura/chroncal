@@ -34,12 +34,12 @@ type Rows struct {
 	// Masters returns the live master rows of the UID in all calendars.
 	// Check reads it.
 	Masters func(ctx context.Context) ([]Master, error)
-	// CountCollisions counts the rows (live or soft-deleted) in
+	// CountCollisions counts the live rows and the soft-deleted rows in
 	// toCalendarID that share the UID and a recurrence ID with a row in
 	// fromCalendarID. Leave it nil when the schema of the domain keeps a
 	// UID and a recurrence ID unique across all calendars. A collision then
 	// cannot occur.
-	CountCollisions func(ctx context.Context, fromCalendarID, toCalendarID int64) (int64, error)
+	CountCollisions func(ctx context.Context, fromCalendarID, toCalendarID int64) (live, trashed int64, err error)
 	// MoveRows moves every row of the UID and its delete-log rows from one
 	// calendar to another.
 	MoveRows func(ctx context.Context, fromCalendarID, toCalendarID int64) error
@@ -157,11 +157,11 @@ func (r Rows) CheckTarget(ctx context.Context, fromCalendarID, toCalendarID int6
 	if fromCalendarID == toCalendarID || toCalendarID == 0 || r.CountCollisions == nil {
 		return nil
 	}
-	n, err := r.CountCollisions(ctx, fromCalendarID, toCalendarID)
+	live, trashed, err := r.CountCollisions(ctx, fromCalendarID, toCalendarID)
 	if err != nil {
 		return fmt.Errorf("check move target: %w", err)
 	}
-	if n == 0 {
+	if live == 0 && trashed == 0 {
 		return nil
 	}
 	name := fmt.Sprint(toCalendarID)
@@ -170,8 +170,17 @@ func (r Rows) CheckTarget(ctx context.Context, fromCalendarID, toCalendarID int6
 			name = cal.Name
 		}
 	}
-	return fmt.Errorf("%w: calendar %q already holds a row of UID %s; the row can be in the trash, so purge or restore it first",
-		r.ErrTargetHasUID, name, r.UID)
+	switch {
+	case live > 0 && trashed > 0:
+		return fmt.Errorf("%w: calendar %q holds a live copy of UID %s and a copy in the trash; delete or move the live copy, and purge or restore the trashed copy first",
+			r.ErrTargetHasUID, name, r.UID)
+	case live > 0:
+		return fmt.Errorf("%w: calendar %q holds a live copy of UID %s; delete or move that copy first",
+			r.ErrTargetHasUID, name, r.UID)
+	default:
+		return fmt.Errorf("%w: calendar %q holds UID %s in the trash; purge or restore the trashed copy first",
+			r.ErrTargetHasUID, name, r.UID)
+	}
 }
 
 // Record records the move of the rows of the UID from one calendar to

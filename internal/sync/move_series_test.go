@@ -877,3 +877,27 @@ func TestEditLegacyOverrideInReadOnlyCalendarIsRefused(t *testing.T) {
 		t.Fatalf("event rows in B = %d, want 1 (the override stays)", n)
 	}
 }
+
+// TestMoveEventIntoCalendarWithLiveCopyIsRefused moves an event to a
+// calendar that holds a live copy of the same UID. The error must say that
+// the copy is live, not that it can be in the trash.
+func TestMoveEventIntoCalendarWithLiveCopyIsRefused(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createSeries(t, engine, calA)
+	copyB := createSeries(t, engine, calB)
+	sameUID(t, engine, copyB.ID, evt.UID)
+
+	_, err := engine.events.Update(ctx, evt.ID, event.UpdateParams{
+		Title: evt.Title, StartTime: evt.StartTime, EndTime: evt.EndTime, RecurrenceRule: evt.RecurrenceRule,
+		CalendarID: calB, Status: evt.Status, Transp: evt.Transp, Class: evt.Class,
+	})
+	if !errors.Is(err, event.ErrMoveTargetHasUID) {
+		t.Fatalf("move into a calendar with a live copy = %v, want ErrMoveTargetHasUID", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "live copy") || strings.Contains(msg, "trash") {
+		t.Fatalf("error = %q, want the live-copy guidance", msg)
+	}
+}

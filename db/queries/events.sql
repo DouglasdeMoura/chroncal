@@ -219,10 +219,14 @@ GROUP BY uid
 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
 
 -- name: CountEventUIDMoveCollisions :one
--- Count the rows (live or soft-deleted) in the target calendar that share
--- the UID and the recurrence ID of a row that MoveEventUIDToCalendar moves.
--- A nonzero count means the move breaks the UNIQUE key.
-SELECT COUNT(*) FROM events AS dst
+-- Count the live rows and the soft-deleted rows in the target calendar
+-- that share the UID and the recurrence ID of a row that
+-- MoveEventUIDToCalendar moves. A nonzero count means the move breaks the
+-- UNIQUE key.
+SELECT
+    CAST(COALESCE(SUM(dst.deleted_at IS NULL), 0) AS INTEGER) AS live,
+    CAST(COALESCE(SUM(dst.deleted_at IS NOT NULL), 0) AS INTEGER) AS trashed
+FROM events AS dst
 WHERE dst.calendar_id = sqlc.arg(to_calendar_id) AND dst.uid = sqlc.arg(uid)
   AND dst.recurrence_id IN (
     SELECT src.recurrence_id FROM events AS src

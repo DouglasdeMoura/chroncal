@@ -17,14 +17,14 @@ var (
 )
 
 // fakeRows returns Rows with masters in the calendars of masters and
-// collisions rows in each target calendar.
+// collisions rows in the trash of each target calendar.
 func fakeRows(masters map[int64]bool, collisions int64) Rows {
 	return Rows{
 		UID:             "u1",
 		ErrInstanceMove: errInstance,
 		ErrTargetHasUID: errTarget,
-		CountCollisions: func(context.Context, int64, int64) (int64, error) {
-			return collisions, nil
+		CountCollisions: func(context.Context, int64, int64) (int64, int64, error) {
+			return 0, collisions, nil
 		},
 		Masters: func(context.Context) ([]Master, error) {
 			var out []Master
@@ -92,12 +92,24 @@ func TestCheckTarget(t *testing.T) {
 	if err := r.CheckTarget(ctx, cal.ID, cal.ID); err != nil {
 		t.Fatalf("CheckTarget in one calendar = %v, want nil", err)
 	}
-	err = r.CheckTarget(ctx, 99, cal.ID)
-	if !errors.Is(err, errTarget) {
-		t.Fatalf("CheckTarget with a collision = %v, want the target error", err)
-	}
-	if msg := err.Error(); !strings.Contains(msg, `"Work"`) || !strings.Contains(msg, "u1") || !strings.Contains(msg, "purge or restore it first") {
-		t.Fatalf("error = %q, want the calendar, the UID, and the guidance", msg)
+	for _, tc := range []struct {
+		name          string
+		live, trashed int64
+		want, notWant string
+	}{
+		{"copy in the trash", 0, 1, "holds UID u1 in the trash; purge or restore the trashed copy first", "live copy"},
+		{"live copy", 1, 0, "holds a live copy of UID u1; delete or move that copy first", "trash"},
+		{"live copy and trashed copy", 1, 1, "holds a live copy of UID u1 and a copy in the trash", ""},
+	} {
+		r.CountCollisions = func(context.Context, int64, int64) (int64, int64, error) { return tc.live, tc.trashed, nil }
+		err := r.CheckTarget(ctx, 99, cal.ID)
+		if !errors.Is(err, errTarget) {
+			t.Fatalf("%s: CheckTarget = %v, want the target error", tc.name, err)
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, `"Work"`) || !strings.Contains(msg, tc.want) || (tc.notWant != "" && strings.Contains(msg, tc.notWant)) {
+			t.Fatalf("%s: error = %q, want %q", tc.name, msg, tc.want)
+		}
 	}
 
 	// A domain whose schema forbids a collision gives no count.

@@ -24,7 +24,10 @@ func (q *Queries) CountEventIdentitiesByCalendar(ctx context.Context, calendarID
 }
 
 const countEventUIDMoveCollisions = `-- name: CountEventUIDMoveCollisions :one
-SELECT COUNT(*) FROM events AS dst
+SELECT
+    CAST(COALESCE(SUM(dst.deleted_at IS NULL), 0) AS INTEGER) AS live,
+    CAST(COALESCE(SUM(dst.deleted_at IS NOT NULL), 0) AS INTEGER) AS trashed
+FROM events AS dst
 WHERE dst.calendar_id = ?1 AND dst.uid = ?2
   AND dst.recurrence_id IN (
     SELECT src.recurrence_id FROM events AS src
@@ -38,14 +41,20 @@ type CountEventUIDMoveCollisionsParams struct {
 	FromCalendarID int64
 }
 
-// Count the rows (live or soft-deleted) in the target calendar that share
-// the UID and the recurrence ID of a row that MoveEventUIDToCalendar moves.
-// A nonzero count means the move breaks the UNIQUE key.
-func (q *Queries) CountEventUIDMoveCollisions(ctx context.Context, arg CountEventUIDMoveCollisionsParams) (int64, error) {
+type CountEventUIDMoveCollisionsRow struct {
+	Live    int64
+	Trashed int64
+}
+
+// Count the live rows and the soft-deleted rows in the target calendar
+// that share the UID and the recurrence ID of a row that
+// MoveEventUIDToCalendar moves. A nonzero count means the move breaks the
+// UNIQUE key.
+func (q *Queries) CountEventUIDMoveCollisions(ctx context.Context, arg CountEventUIDMoveCollisionsParams) (CountEventUIDMoveCollisionsRow, error) {
 	row := q.db.QueryRowContext(ctx, countEventUIDMoveCollisions, arg.ToCalendarID, arg.Uid, arg.FromCalendarID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var i CountEventUIDMoveCollisionsRow
+	err := row.Scan(&i.Live, &i.Trashed)
+	return i, err
 }
 
 const countEventUIDRowsInCalendar = `-- name: CountEventUIDRowsInCalendar :one
