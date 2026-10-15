@@ -33,9 +33,6 @@ SELECT * FROM journals WHERE id = ?;
 -- name: GetJournalByUID :one
 SELECT * FROM journals WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
 
--- name: GetJournalByCalendarUID :one
-SELECT * FROM journals WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
-
 -- name: GetJournalByUIDIncludingDeleted :one
 SELECT * FROM journals WHERE uid = ? AND recurrence_id = '';
 
