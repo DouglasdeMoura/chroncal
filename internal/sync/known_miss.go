@@ -33,7 +33,7 @@ const (
 // Speak three verbs:
 //
 //	noteMiss: bump the miss count and mark the row given up after the budget
-//	resetIfChanged: the server lists a given-up href with a new ETag
+//	recordNewVersion: the server lists a given-up href with a new ETag
 //	forget: the body landed, or the href is gone
 type knownMisses struct {
 	hrefSet[knownMissState]
@@ -73,22 +73,29 @@ func loadKnownMisses(ctx context.Context, q *storage.Queries, logger *slog.Logge
 	return k, nil
 }
 
-// resetIfChanged deletes the given-up row of href when the change list
-// gives the href with another ETag. After the give-up the sync-token
-// advances, so the server lists the href again only for a new version of
-// the object. That version gets a new retry budget. A server that keeps
-// the same bad body lists the same ETag, so its row stays given up. An
-// empty ETag tells nothing, so the row stays.
+// recordNewVersion records the ETag that the change list gives for a
+// given-up href. After the give-up the sync-token advances, so the server
+// lists the href again only for a change of the object. The pull then
+// fetches the href once more. A good fetch deletes the row (forget). A
+// miss finds the row given up, so it does not withhold the token and does
+// not warn again. A broken object that gets a new ETag on each request
+// then costs one attempt per change, not a new budget.
 //
-// A row inside the budget keeps its count on a new ETag. A server can give
-// a broken object a new ETag on each request, and a reset on each new ETag
-// would never spend the budget.
-func (k *knownMisses) resetIfChanged(ctx context.Context, href, etag string) {
+// A row inside the budget keeps its count on a new ETag for the same
+// reason. An empty ETag tells nothing, so nothing changes.
+func (k *knownMisses) recordNewVersion(ctx context.Context, href, etag string) {
 	state, ok := k.byHref[href]
 	if !ok || !state.gaveUp || etag == "" || state.etag == etag {
 		return
 	}
-	k.forget(ctx, href)
+	if err := k.q.SetSyncKnownMissEtag(ctx, storage.SetSyncKnownMissEtagParams{
+		Etag: etag, CalendarID: k.calendarID, Href: href,
+	}); err != nil {
+		k.logger.Warn("record known miss etag", "calendar_id", k.calendarID, "href", href, "error", err)
+		return
+	}
+	state.etag = etag
+	k.byHref[href] = state
 }
 
 // noteMiss bumps the miss count for the href. etag is the ETag that the

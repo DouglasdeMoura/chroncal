@@ -168,3 +168,18 @@ func (q *Queries) MarkSyncKnownMissGaveUp(ctx context.Context, arg MarkSyncKnown
 	_, err := q.db.ExecContext(ctx, markSyncKnownMissGaveUp, arg.GaveUpAt, arg.CalendarID, arg.Href)
 	return err
 }
+
+const setSyncKnownMissEtag = `-- name: SetSyncKnownMissEtag :exec
+UPDATE sync_known_misses SET etag = ? WHERE calendar_id = ? AND href = ?
+`
+
+type SetSyncKnownMissEtagParams struct {
+	Etag       string
+	CalendarID int64
+	Href       string
+}
+
+func (q *Queries) SetSyncKnownMissEtag(ctx context.Context, arg SetSyncKnownMissEtagParams) error {
+	_, err := q.db.ExecContext(ctx, setSyncKnownMissEtag, arg.Etag, arg.CalendarID, arg.Href)
+	return err
+}

@@ -249,11 +249,13 @@ func listKnownMisses(t *testing.T, q *storage.Queries, calendarID int64) []stora
 	return rows
 }
 
-// TestEngineKnownMissChangedAfterGiveUpGetsFreshBudget gives up on an href,
-// and then the server changes the object. The new version must get a new
-// retry budget: one temporary 404 on it withholds the sync-token. Without
-// the reset, the given-up row drops that miss at once.
-func TestEngineKnownMissChangedAfterGiveUpGetsFreshBudget(t *testing.T) {
+// TestEngineKnownMissChangedAfterGiveUpGetsOneAttempt gives up on an
+// href, and then the server lists it again with a new ETag. A broken object
+// can get a new ETag on each request, so the new version gets one attempt,
+// not a new budget. When that attempt fails, the row stays given up: the
+// sync-token advances and no new warning repeats. A version that fetches
+// clears the row.
+func TestEngineKnownMissChangedAfterGiveUpGetsOneAttempt(t *testing.T) {
 	t.Parallel()
 
 	engine, db, q := newTestEngine(t)
@@ -261,21 +263,17 @@ func TestEngineKnownMissChangedAfterGiveUpGetsFreshBudget(t *testing.T) {
 	ctx := context.Background()
 	calendarID := seedKnownMissCalendar(t, db, q)
 
-	const firstToken, secondToken = "https://example.com/sync/t1", "https://example.com/sync/t2"
-	changed, good := false, false
+	const firstToken = "https://example.com/sync/t1"
+	token, etag, good := firstToken, "etag", false
 	client := newScriptedClient(t,
 		func(string) string {
-			if !changed {
-				return syncCollectionXML(firstToken, knownMissHref)
-			}
-			// The server lists the href again with a new etag.
-			return strings.ReplaceAll(syncCollectionXML(secondToken, knownMissHref), "&quot;etag&quot;", "&quot;etag2&quot;")
+			return strings.ReplaceAll(syncCollectionXML(token, knownMissHref), "&quot;etag&quot;", "&quot;"+etag+"&quot;")
 		},
 		func(int, string) string {
 			if good {
 				return multigetXML(map[string]string{knownMissHref: testEventICS("stuck", "fixed")}, nil)
 			}
-			return multigetXML(nil, []string{knownMissHref})
+			return multigetXML(map[string]string{knownMissHref: "this is not an ical body"}, nil)
 		},
 	)
 	pullOnce := func(label string) *pullResult {
@@ -297,24 +295,30 @@ func TestEngineKnownMissChangedAfterGiveUpGetsFreshBudget(t *testing.T) {
 		t.Fatalf("sync_token after the give-up = %q, want %q", tok, firstToken)
 	}
 
-	changed = true
-	if result := pullOnce("changed, 404"); len(result.errors) == 0 {
-		t.Fatal("a 404 on the changed object gave no incomplete-pull error, want a fresh budget")
+	// The broken object churns its ETag.
+	token, etag = "https://example.com/sync/t2", "etag2"
+	result := pullOnce("churn")
+	if len(result.errors) != 0 {
+		t.Fatalf("churn after the give-up gave errors %v, want none", result.errors)
 	}
-	if tok := calendarToken(t, q, calendarID); tok != firstToken {
-		t.Fatalf("sync_token after a 404 on the changed object = %q, want it withheld at %q", tok, firstToken)
+	if len(result.warnings) != 0 {
+		t.Fatalf("churn after the give-up gave warnings %v, want none", result.warnings)
+	}
+	if tok := calendarToken(t, q, calendarID); tok != token {
+		t.Fatalf("sync_token after the churn = %q, want it advanced to %q", tok, token)
 	}
 	rows := listKnownMisses(t, q, calendarID)
-	if len(rows) != 1 || rows[0].MissCount != 1 || rows[0].GaveUpAt != nil {
-		t.Fatalf("known misses = %+v, want one row with miss_count 1 and no give-up", rows)
+	if len(rows) != 1 || rows[0].GaveUpAt == nil || rows[0].Etag != "etag2" {
+		t.Fatalf("known misses = %+v, want one given-up row with the new ETag", rows)
 	}
 
-	good = true
-	if result := pullOnce("changed, good"); result.pulled != 1 {
+	// A real new version fetches fine.
+	token, etag, good = "https://example.com/sync/t3", "etag3", true
+	if result := pullOnce("good"); result.pulled != 1 {
 		t.Fatalf("good pull: pulled = %d, want 1", result.pulled)
 	}
-	if tok := calendarToken(t, q, calendarID); tok != secondToken {
-		t.Fatalf("sync_token after the good fetch = %q, want %q", tok, secondToken)
+	if rows := listKnownMisses(t, q, calendarID); len(rows) != 0 {
+		t.Fatalf("known misses after a good fetch = %+v, want none", rows)
 	}
 }
 
@@ -409,9 +413,9 @@ func TestBumpSyncKnownMissKeepsKnownETag(t *testing.T) {
 // TestKnownMissETagChurnInsideBudgetSpendsIt lists a known-miss href with
 // a new ETag while its row is inside the retry budget. A server can give a
 // broken object a new ETag on each request. A reset on each new ETag would
-// never spend the budget, so the row must keep its count. After the
-// give-up the token advances, and the server lists the href again only for
-// a real change, so a given-up row with a new ETag gets a new budget.
+// never spend the budget, so the row must keep its count and its ETag. A
+// given-up row stays given up and records the new ETag (one attempt per
+// change, see recordNewVersion).
 func TestKnownMissETagChurnInsideBudgetSpendsIt(t *testing.T) {
 	t.Parallel()
 	_, _, q := newTestEngine(t)
@@ -438,14 +442,26 @@ func TestKnownMissETagChurnInsideBudgetSpendsIt(t *testing.T) {
 		t.Fatalf("loadKnownMisses: %v", err)
 	}
 
-	k.resetIfChanged(ctx, knownMissHref, `"v2"`)
-	k.resetIfChanged(ctx, gaveUpHref, `"v2"`)
+	k.recordNewVersion(ctx, knownMissHref, `"v2"`)
+	k.recordNewVersion(ctx, gaveUpHref, `"v2"`)
 	rows, err := q.ListSyncKnownMissesByCalendar(ctx, calendarID)
 	if err != nil {
 		t.Fatalf("ListSyncKnownMissesByCalendar: %v", err)
 	}
-	if len(rows) != 1 || rows[0].Href != knownMissHref {
-		t.Fatalf("rows after a new ETag = %+v, want only the in-budget row %s", rows, knownMissHref)
+	if len(rows) != 2 {
+		t.Fatalf("rows after a new ETag = %+v, want both kept", rows)
+	}
+	for _, r := range rows {
+		switch r.Href {
+		case knownMissHref:
+			if r.Etag != `"v1"` || r.GaveUpAt != nil {
+				t.Fatalf("in-budget row = %+v, want its count and ETag kept", r)
+			}
+		case gaveUpHref:
+			if r.Etag != `"v2"` || r.GaveUpAt == nil {
+				t.Fatalf("given-up row = %+v, want it given up with the new ETag", r)
+			}
+		}
 	}
 }
 

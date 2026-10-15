@@ -8,8 +8,9 @@
 -- gave_up_at value. A good fetch of the href deletes the row. See issue #816.
 -- etag is the ETag that the sync-collection REPORT listed for the href at
 -- the last miss. A given-up row whose href comes back with another ETag
--- names a new version of the object. The pull then deletes the row, so
--- the new version gets a new retry budget. An empty value names no ETag.
+-- names a new version of the object. The pull records the new ETag and
+-- fetches the href once more. A good fetch deletes the row; a miss keeps
+-- the row given up. An empty value names no ETag.
 -- first_miss_at is the RFC 3339 UTC time of the first miss. The give-up
 -- needs the miss count and a minimum time from first_miss_at, so a frequent
 -- background sync cannot spend the budget on one transient miss.

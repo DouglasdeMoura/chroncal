@@ -13,6 +13,9 @@ RETURNING *;
 UPDATE sync_known_misses SET gave_up_at = ?
 WHERE calendar_id = ? AND href = ? AND gave_up_at IS NULL;
 
+-- name: SetSyncKnownMissEtag :exec
+UPDATE sync_known_misses SET etag = ? WHERE calendar_id = ? AND href = ?;
+
 -- name: ListSyncKnownMissesByCalendar :many
 SELECT * FROM sync_known_misses WHERE calendar_id = ? ORDER BY id;
 

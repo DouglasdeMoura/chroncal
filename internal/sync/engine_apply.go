@@ -100,7 +100,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	known.forgetSet(ctx, tombstonedPaths)
 	known.forgetSet(ctx, currentPaths)
 	for href, etag := range listedETags {
-		known.resetIfChanged(ctx, href, etag)
+		known.recordNewVersion(ctx, href, etag)
 	}
 
 	// Per-resource 404s from the multiget are NOT deletions. Google can list
@@ -154,6 +154,9 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			case gaveUp:
 				msg := fmt.Sprintf("%s; gave up after %d or more attempts, local copy kept (see sync status)", cause, knownMissLimit)
 				noteWarning(ImportWarning{Path: miss, UID: local.Uid, Message: msg})
+			case exhausted:
+				// The href gave up before, and sync status names it. A
+				// new version that fails again does not warn again.
 			case unparseable:
 				noteWarning(ImportWarning{
 					Path:    miss,
