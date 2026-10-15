@@ -507,3 +507,31 @@ func TestEngineKnownMissForgottenWhenListedETagMatchesLocal(t *testing.T) {
 		t.Fatalf("known misses = %+v, want none", rows)
 	}
 }
+
+// TestEngineKnownMissKeptWhenFetchedBodyHasNoUID fetches a known-miss href
+// whose body parses but does not import (a VEVENT with no UID). The body
+// did not land, so the known miss must stay, as on the full-snapshot path.
+func TestEngineKnownMissKeptWhenFetchedBodyHasNoUID(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	calendarID := seedKnownMissCalendar(t, db, q)
+	if _, err := q.BumpSyncKnownMiss(ctx, storage.BumpSyncKnownMissParams{
+		CalendarID: calendarID, Href: knownMissHref, Uid: "stuck", Reason: knownMissReasonMissing,
+		Etag: "etag", FirstMissAt: "2026-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("BumpSyncKnownMiss: %v", err)
+	}
+	noUID := "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//chroncal//tests//EN\nBEGIN:VEVENT\nDTSTAMP:20260403T120000Z\nDTSTART:20260403T120000Z\nDTEND:20260403T130000Z\nSUMMARY:No UID\nEND:VEVENT\nEND:VCALENDAR\n"
+	client := newScriptedClient(t,
+		func(string) string { return syncCollectionXML("https://example.com/sync/t1", knownMissHref) },
+		func(int, string) string { return multigetXML(map[string]string{knownMissHref: noUID}, nil) },
+	)
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if rows := listKnownMisses(t, q, calendarID); len(rows) != 1 {
+		t.Fatalf("known misses after a body with no UID = %+v, want the row kept", rows)
+	}
+}

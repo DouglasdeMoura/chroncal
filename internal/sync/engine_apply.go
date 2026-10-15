@@ -247,9 +247,12 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				view.persistFailures++
 				continue
 			}
-			// The body arrived and the pull handled it. A known miss for
-			// the href is over, so its retry budget starts again.
-			known.forget(ctx, resPath)
+			// A body with a UID went through the import, so a known miss
+			// for the href is over. A body that does not import gives no
+			// UID and keeps its row, as on the full-snapshot path.
+			if uid != "" {
+				known.forget(ctx, resPath)
+			}
 			if !imported {
 				// A tombstoned UID never comes back; drop its retry
 				// obligation. Any other skip keeps it for the next pull.
