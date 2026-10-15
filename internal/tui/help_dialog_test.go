@@ -20,8 +20,8 @@ func TestHelpDialog_EventsSectionDocumentsEditAndDuplicate(t *testing.T) {
 }
 
 func TestHelpDialog_WindowsSectionDocumentsRecentlyDeleted(t *testing.T) {
-	if got := findHelpEntry(t, "Windows", "recently deleted"); got != "D · shift+d" {
-		t.Fatalf("recently-deleted key = %q, want %q", got, "D · shift+d")
+	if got := findHelpEntry(t, "Windows", "recently deleted"); got != "D" {
+		t.Fatalf("recently-deleted key = %q, want %q", got, "D")
 	}
 }
 

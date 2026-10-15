@@ -182,7 +182,7 @@ func TestPaletteWeekStartTitleFollowsState(t *testing.T) {
 		t.Errorf("Monday title = %q", got)
 	}
 
-	cmd := paletteCommandByID(t, buildPaletteCommands(Model{weekStart: time.Monday}), "ui.week_start")
+	cmd := paletteCommandByID(t, buildPaletteCommands(Model{keys: defaultAppKeys(), weekStart: time.Monday}), "ui.week_start")
 	if cmd.Title != "Start Week on Sunday" || cmd.Shortcut != "W" {
 		t.Fatalf("palette command = %+v", cmd)
 	}

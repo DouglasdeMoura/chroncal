@@ -32,6 +32,14 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 	}
 }
 
+// WithAppKeys replaces the create binding with the keys of the app create
+// action. The help text stays "create". A remap of the create action in
+// config.toml then also applies in the day dialog.
+func (m EventDialogModel) WithAppKeys(keys appKeyMap) EventDialogModel {
+	m.keys.Create = key.NewBinding(key.WithKeys(keys.Create.Keys()...), key.WithHelp(keyLabel(keys.Create), "create"))
+	return m
+}
+
 func (m EventDialogModel) shortHelp() []key.Binding {
 	sk := m.shell.Keys()
 	nav := key.NewBinding(

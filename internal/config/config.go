@@ -111,6 +111,12 @@ type Config struct {
 	Alarms     AlarmsConfig     `mapstructure:"alarms"`
 	SoftDelete SoftDeleteConfig `mapstructure:"soft_delete"`
 	UI         UIConfig         `mapstructure:"ui"`
+	// Keys is the raw [keys] table. It maps a TUI action name to the keys
+	// that trigger it (issue #797). An entry replaces the default keys of
+	// that action. KeyActions lists the action names. Load keeps the raw
+	// value, so a value of the wrong type does not stop the CLI, sync, or
+	// the alarm daemon. tui.Run reads it with ParseKeys and ValidateKeys.
+	Keys any `mapstructure:"keys"`
 }
 
 // DefaultSoftDeletePurgeDays is applied by Load when the purge_days key is
@@ -196,6 +202,9 @@ func Load() (Config, error) {
 	if err := cfg.SMTP.Validate(); err != nil {
 		return Config{}, err
 	}
+	// Load does not validate the [keys] table. Only the TUI reads it, so a
+	// bad remap must not stop the CLI, sync, or the alarm daemon. The TUI
+	// calls ValidateKeys when it starts (see tui.Run).
 	return cfg, nil
 }
 

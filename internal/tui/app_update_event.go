@@ -96,9 +96,7 @@ func (m Model) handleCalendarDaySelected(msg CalendarDaySelectedMsg) (tea.Model,
 			}
 		}
 	}
-	m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
-		SetSelectedColor(m.theme.Selected).
-		SetSize(m.width, m.height)
+	m.dialog = m.newDayDialog(msg.Day, dayEvents)
 	m.dialogOpen = true
 	return m, nil
 }
@@ -409,44 +407,32 @@ func (m Model) handleDialogDayChanged(msg DialogDayChangedMsg) (tea.Model, tea.C
 		prevDay := m.day.cursor.Format("2006-01-02")
 		m.day.cursor = msg.Day
 		if m.day.cursor.Format("2006-01-02") != prevDay {
-			m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars, newThemedHelp(m.theme)).
-				SetSelectedColor(m.theme.Selected).
-				SetSize(m.width, m.height)
+			m.dialog = m.newDayDialog(msg.Day, nil)
 			return m, m.loadEvents()
 		}
 		dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), msg.Day)
-		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
-			SetSelectedColor(m.theme.Selected).
-			SetSize(m.width, m.height)
+		m.dialog = m.newDayDialog(msg.Day, dayEvents)
 		return m, nil
 	}
 	if m.viewMode == viewWeek {
 		prevWeek := m.week.WeekStartDate()
 		m.week.cursor = msg.Day
 		if m.week.WeekStartDate() != prevWeek {
-			m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars, newThemedHelp(m.theme)).
-				SetSelectedColor(m.theme.Selected).
-				SetSize(m.width, m.height)
+			m.dialog = m.newDayDialog(msg.Day, nil)
 			return m, m.loadEvents()
 		}
 		dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), msg.Day)
-		m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
-			SetSelectedColor(m.theme.Selected).
-			SetSize(m.width, m.height)
+		m.dialog = m.newDayDialog(msg.Day, dayEvents)
 		return m, nil
 	}
 	m.calendar.cursor = msg.Day
 	if msg.Day.Year() != m.calendar.month.Year() || msg.Day.Month() != m.calendar.month.Month() {
 		m.calendar.month = time.Date(msg.Day.Year(), msg.Day.Month(), 1, 0, 0, 0, 0, msg.Day.Location())
-		m.dialog = NewEventDialogModel(msg.Day, nil, m.calendars, newThemedHelp(m.theme)).
-			SetSelectedColor(m.theme.Selected).
-			SetSize(m.width, m.height)
+		m.dialog = m.newDayDialog(msg.Day, nil)
 		return m, m.loadEvents()
 	}
 	dayEvents := eventsOn(filterVisibleEvents(m.events, m.hiddenCalendars), msg.Day)
-	m.dialog = NewEventDialogModel(msg.Day, dayEvents, m.calendars, newThemedHelp(m.theme)).
-		SetSelectedColor(m.theme.Selected).
-		SetSize(m.width, m.height)
+	m.dialog = m.newDayDialog(msg.Day, dayEvents)
 	return m, nil
 }
 

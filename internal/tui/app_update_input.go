@@ -148,21 +148,26 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Sync):
 		return m, func() tea.Msg { return SyncAllRequestedMsg{} }
 	case key.Matches(msg, m.keys.SwitchFocus):
-		// Only handle Tab/Shift+Tab at the app level when the user
-		// enters the sidebar from the main view. Forward Tab lands on
-		// the first sidebar tab stop (the prev-month chevron). Backward
-		// Shift+Tab lands on the last (the bottom calendar list row).
-		// Once focus is inside the sidebar, the key falls through to
-		// m.sidebar.Update. That cycles between its internal stops and
-		// emits SidebarFocusEscapedMsg to hand focus back to the main
-		// view.
+		// The switch_focus key enters the sidebar from the main view. A
+		// shifted key (shift+tab by default) lands on the last sidebar
+		// stop (the bottom calendar list row). Any other key lands on the
+		// first stop (the prev-month chevron).
 		if m.showSidebar && m.focus != focusSidebar {
 			m.focus = focusSidebar
-			if msg.String() == "shift+tab" {
+			if isShiftedKey(msg.String()) {
 				m.sidebar = m.sidebar.FocusAtEnd()
 			} else {
 				m.sidebar = m.sidebar.FocusAtStart()
 			}
+			return m, nil
+		}
+		// Inside the sidebar, tab and shift+tab move between the sidebar
+		// stops and leave at either end (m.sidebar.Update emits
+		// SidebarFocusEscapedMsg). Another switch_focus key goes back to
+		// the main view at once, as the footer hint says.
+		if m.focus == focusSidebar && !isSidebarStepKey(msg.String()) {
+			m.sidebar = m.sidebar.Blur()
+			m.focus = focusCalendar
 			return m, nil
 		}
 		// Fall through to the sidebar routing below.

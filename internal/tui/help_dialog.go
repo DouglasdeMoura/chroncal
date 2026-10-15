@@ -18,6 +18,9 @@ type HelpDialogClosedMsg struct{}
 type HelpDialogModel struct {
 	dialog Dialog
 	theme  Theme
+	// keys is the app keymap. The sections show its keys, so a remap in
+	// the [keys] table of config.toml shows in the help text.
+	keys   appKeyMap
 	width  int
 	height int
 	scroll int
@@ -35,7 +38,13 @@ const helpDialogChrome = 7
 
 func NewHelpDialogModel(theme Theme) HelpDialogModel {
 	dialog := NewDialog("Keyboard Shortcuts", DefaultDialogStyles())
-	return HelpDialogModel{dialog: dialog, theme: theme}
+	return HelpDialogModel{dialog: dialog, theme: theme, keys: defaultAppKeys()}
+}
+
+// SetKeys sets the app keymap that the sections show.
+func (m HelpDialogModel) SetKeys(keys appKeyMap) HelpDialogModel {
+	m.keys = keys
+	return m
 }
 
 func (m HelpDialogModel) footerHint(scrollable bool) string {
@@ -85,21 +94,22 @@ func (m HelpDialogModel) Update(msg tea.Msg) (HelpDialogModel, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if key.Matches(msg, key.NewBinding(key.WithKeys("esc", "q", "?"))) {
+		hk := helpDialogKeyMap
+		if key.Matches(msg, hk.Close, m.keys.Help) {
 			return m, func() tea.Msg { return HelpDialogClosedMsg{} }
 		}
-		switch msg.String() {
-		case "up", "k":
+		switch {
+		case key.Matches(msg, hk.Up):
 			m.scroll--
-		case "down", "j":
+		case key.Matches(msg, hk.Down):
 			m.scroll++
-		case "pgup":
+		case key.Matches(msg, hk.PageUp):
 			m.scroll -= vp
-		case "pgdown", " ":
+		case key.Matches(msg, hk.PageDown):
 			m.scroll += vp
-		case "home", "g":
+		case key.Matches(msg, hk.Top):
 			m.scroll = 0
-		case "end", "G":
+		case key.Matches(msg, hk.Bottom):
 			m.scroll = maxScroll
 		}
 	case tea.MouseWheelMsg:
@@ -112,6 +122,34 @@ func (m HelpDialogModel) Update(msg tea.Msg) (HelpDialogModel, tea.Cmd) {
 	}
 	m.scroll = max(min(m.scroll, maxScroll), 0)
 	return m, nil
+}
+
+// helpDialogKeys holds the keys of the help dialog. The dialog checks the
+// help key with Close, before the scroll keys, so config reserves these
+// keys for the help action (see TestReservedKeysMatchTUIKeymaps).
+type helpDialogKeys struct {
+	Close    key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
+	Top      key.Binding
+	Bottom   key.Binding
+}
+
+// helpDialogKeyMap is the keymap that HelpDialogModel.Update reads.
+var helpDialogKeyMap = defaultHelpDialogKeys()
+
+func defaultHelpDialogKeys() helpDialogKeys {
+	return helpDialogKeys{
+		Close:    key.NewBinding(key.WithKeys("esc", "q")),
+		Up:       key.NewBinding(key.WithKeys("up", "k")),
+		Down:     key.NewBinding(key.WithKeys("down", "j")),
+		PageUp:   key.NewBinding(key.WithKeys("pgup")),
+		PageDown: key.NewBinding(key.WithKeys("pgdown", "space")),
+		Top:      key.NewBinding(key.WithKeys("home", "g")),
+		Bottom:   key.NewBinding(key.WithKeys("end", "G")),
+	}
 }
 
 func (m HelpDialogModel) viewportHeight() int {
@@ -137,6 +175,8 @@ type helpSection struct {
 // near its sibling actions. Context tags in parens disambiguate
 // the few keys whose meaning depends on focus (e.g. "enter (sidebar)").
 func (m HelpDialogModel) sections() []helpSection {
+	k := m.keys
+	views := strings.Join([]string{keyLabel(k.MonthView), keyLabel(k.WeekView), keyLabel(k.DayView), keyLabel(k.AgendaView)}, " · ")
 	return []helpSection{
 		{
 			title: "Getting Around",
@@ -145,19 +185,19 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"[ · pgup", "previous week / month"},
 				{"] · pgdn", "next week / month"},
 				{"t", "today"},
-				{"m · w · d · a", "month / week / day / agenda view"},
+				{views, "month / week / day / agenda view"},
 				{"enter (mini calendar)", "jump main view to selected day"},
 			},
 		},
 		{
 			title: "Events",
 			entries: []helpEntry{
-				{"c", "new event"},
+				{keysLabel(k.Create), "new event"},
 				{"enter", "open / select day"},
 				{"e", "edit"},
 				{"ctrl+d", "duplicate"},
 				{"x · delete", "delete"},
-				{"u", "undo last delete"},
+				{keysLabel(k.Undo), "undo last delete"},
 				{"o", "toggle empty days (agenda)"},
 				{"←→ · hl", "previous / next event (popup)"},
 				{"p", "copy event details"},
@@ -181,8 +221,8 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Calendars",
 			entries: []helpEntry{
-				{"C · shift+c", "calendars"},
-				{"s", "sync all"},
+				{keysLabel(k.CalendarList), "calendars"},
+				{keysLabel(k.Sync), "sync all"},
 				{"enter (sidebar)", "open calendar"},
 				{"space (sidebar)", "toggle visibility"},
 				{"shift+↑/↓ · K/J", "reorder calendar (sidebar or manage dialog)"},
@@ -192,7 +232,7 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Command Palette",
 			entries: []helpEntry{
-				{"/ · ctrl+k", "open"},
+				{keysLabel(k.Palette), "open"},
 				{"↑↓ · ctrl+k/j", "move selection"},
 				{"pgup · pgdn", "jump by page"},
 				{"enter", "run command"},
@@ -202,22 +242,22 @@ func (m HelpDialogModel) sections() []helpSection {
 		{
 			title: "Windows",
 			entries: []helpEntry{
-				{"D · shift+d", "recently deleted"},
+				{keysLabel(k.TrashView), "recently deleted"},
 				{"r (trash)", "restore"},
 				{"x · delete (trash)", "purge"},
 				{"X · shift+x (trash)", "purge all"},
 				{"space (trash)", "select / deselect"},
 				{"A · shift+a (trash)", "select all / clear selection"},
-				{"?", "this help"},
-				{"\\", "toggle sidebar"},
-				{"#", "toggle week numbers"},
-				{"W", "toggle week start"},
-				{"tab · shift+tab", "move focus"},
+				{keysLabel(k.Help), "this help"},
+				{keysLabel(k.Sidebar), "toggle sidebar"},
+				{keysLabel(k.WeekNumbers), "toggle week numbers"},
+				{keysLabel(k.WeekStart), "toggle week start"},
+				{keysLabel(k.SwitchFocus), "move focus"},
 				{"esc · q", "close (read-only dialogs)"},
 				{"esc", "close (forms)"},
 				{"ctrl+s", "save form"},
 				{"ctrl+c", "force quit"},
-				{"q (main view)", "quit"},
+				{keysLabel(k.Quit) + " (main view)", "quit"},
 			},
 		},
 	}

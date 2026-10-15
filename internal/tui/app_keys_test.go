@@ -1,0 +1,354 @@
+package tui
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"charm.land/bubbles/v2/key"
+
+	"github.com/douglasdemoura/chroncal/internal/config"
+)
+
+// remappedKeysModel returns a model with a [keys] table that moves the
+// week view to "v", the help dialog to "H", the quit action to "x", the
+// create action to "n", and the calendars action to "L" (issue #797).
+func remappedKeysModel() Model {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.viewMode = viewMonth
+	return m.withKeys(newAppKeys(map[string][]string{
+		"week_view": {"v"},
+		"help":      {"H"},
+		"quit":      {"x"},
+		"create":    {"n"},
+		"calendars": {"L"},
+	}))
+}
+
+func TestDefaultAppKeysMatchBuiltInKeys(t *testing.T) {
+	k := defaultAppKeys()
+	for _, c := range []struct {
+		name string
+		b    key.Binding
+		keys []string
+	}{
+		{"quit", k.Quit, []string{"q"}},
+		{"week_start", k.WeekStart, []string{"W", "shift+w"}},
+		{"palette", k.Palette, []string{"/", "ctrl+k"}},
+		{"calendars", k.CalendarList, []string{"C", "shift+c"}},
+		{"switch_focus", k.SwitchFocus, []string{"tab", "shift+tab"}},
+		{"trash", k.TrashView, []string{"D", "shift+d"}},
+	} {
+		if got := c.b.Keys(); strings.Join(got, ",") != strings.Join(c.keys, ",") {
+			t.Errorf("%s keys = %v, want %v", c.name, got, c.keys)
+		}
+		if got := c.b.Help().Key; got != c.keys[0] {
+			t.Errorf("%s help key = %q, want %q", c.name, got, c.keys[0])
+		}
+	}
+}
+
+func TestRemappedKeyTriggersActionAndOldKeyDoesNot(t *testing.T) {
+	m := remappedKeysModel()
+
+	updated, _ := m.Update(keyPress("w"))
+	if got := updated.(Model).viewMode; got != viewMonth {
+		t.Fatalf("old key w switched the view to %v; want month", got)
+	}
+
+	updated, _ = m.Update(keyPress("v"))
+	if got := updated.(Model).viewMode; got != viewWeek {
+		t.Fatalf("remapped key v left the view at %v; want week", got)
+	}
+}
+
+func TestRemappedQuitAndHelpKeys(t *testing.T) {
+	m := remappedKeysModel()
+
+	if _, _, handled := m.interceptGlobalKeys(keyPress("q")); handled {
+		t.Fatal("old quit key q still opens the quit prompt")
+	}
+	if _, _, handled := m.interceptGlobalKeys(keyPress("x")); !handled {
+		t.Fatal("remapped quit key x does not open the quit prompt")
+	}
+	if _, cmd, handled := m.interceptGlobalKeys(keyPress("?")); handled || cmd != nil {
+		t.Fatal("old help key ? still opens the help dialog")
+	}
+	_, cmd, handled := m.interceptGlobalKeys(keyPress("H"))
+	if !handled || cmd == nil {
+		t.Fatal("remapped help key H does not open the help dialog")
+	}
+	if _, ok := cmd().(HelpDialogRequestedMsg); !ok {
+		t.Fatalf("help key emitted %T, want HelpDialogRequestedMsg", cmd())
+	}
+}
+
+func TestRemappedCreateKeyAppliesInAgenda(t *testing.T) {
+	m := remappedKeysModel()
+	if _, cmd := m.agenda.Update(keyPress("c")); cmd != nil {
+		t.Fatalf("old create key c still emits %T in the agenda", cmd())
+	}
+	_, cmd := m.agenda.Update(keyPress("n"))
+	if cmd == nil {
+		t.Fatal("remapped create key n emits no command in the agenda")
+	}
+	if _, ok := cmd().(EventCreateMsg); !ok {
+		t.Fatalf("create key emitted %T, want EventCreateMsg", cmd())
+	}
+}
+
+// TestAppKeyMapCoversKeyActions makes sure that each config key action has
+// a field in the app keymap and that each field gets a binding.
+func TestAppKeyMapCoversKeyActions(t *testing.T) {
+	var k appKeyMap
+	fields := k.bindings()
+	actions := config.KeyActions()
+	if len(fields) != len(actions) {
+		t.Fatalf("the app keymap maps %d actions, config has %d", len(fields), len(actions))
+	}
+	for _, a := range actions {
+		if _, ok := fields[a.Name]; !ok {
+			t.Errorf("the app keymap has no field for action %q", a.Name)
+		}
+	}
+	keys := reflect.ValueOf(defaultAppKeys())
+	for i := range keys.NumField() {
+		b := keys.Field(i).Interface().(key.Binding)
+		if len(b.Keys()) == 0 || b.Help().Desc == "" {
+			t.Errorf("field %s has no keys or no help text", keys.Type().Field(i).Name)
+		}
+	}
+}
+
+func TestRemappedCreateKeyAppliesInDayDialog(t *testing.T) {
+	m := remappedKeysModel()
+	updated, _ := m.Update(CalendarDaySelectedMsg{Day: time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)})
+	dialog := updated.(Model).dialog
+	if _, cmd := dialog.Update(keyPress("c")); cmd != nil {
+		t.Fatalf("old create key c still emits %T in the day dialog", cmd())
+	}
+	_, cmd := dialog.Update(keyPress("n"))
+	if cmd == nil {
+		t.Fatal("remapped create key n emits no command in the day dialog")
+	}
+	if _, ok := cmd().(EventCreateMsg); !ok {
+		t.Fatalf("create key emitted %T, want EventCreateMsg", cmd())
+	}
+}
+
+func TestRemappedCalendarsKeyClosesCalendarManager(t *testing.T) {
+	m := remappedKeysModel()
+	if _, cmd := m.calendarManager.Update(keyPress("C")); cmd != nil {
+		if _, ok := cmd().(CalendarManagerClosedMsg); ok {
+			t.Fatal("old calendars key C still closes the calendar manager")
+		}
+	}
+	_, cmd := m.calendarManager.Update(keyPress("L"))
+	if cmd == nil {
+		t.Fatal("remapped calendars key L emits no command in the calendar manager")
+	}
+	if _, ok := cmd().(CalendarManagerClosedMsg); !ok {
+		t.Fatalf("calendars key emitted %T, want CalendarManagerClosedMsg", cmd())
+	}
+}
+
+func TestRemappedKeysShowInHelpFooterAndPalette(t *testing.T) {
+	m := remappedKeysModel()
+
+	updated, _ := m.Update(HelpDialogRequestedMsg{})
+	help := updated.(Model).helpDialog
+	for _, c := range []struct{ desc, want string }{
+		{"this help", "H"},
+		{"new event", "n"},
+		{"quit", "x (main view)"},
+		{"month / week / day / agenda view", "m · v · d · a"},
+	} {
+		if got := helpEntryKeys(t, help, c.desc); got != c.want {
+			t.Errorf("help entry %q keys = %q, want %q", c.desc, got, c.want)
+		}
+	}
+
+	footer := stripANSI(m.footer.Render(FooterMonth, 200, "", "", false, false))
+	if !strings.Contains(footer, "H help") || !strings.Contains(footer, "n new") {
+		t.Errorf("footer = %q, want the remapped H help and n new hints", footer)
+	}
+	if strings.Contains(footer, "? help") {
+		t.Errorf("footer = %q still shows the old ? help hint", footer)
+	}
+
+	cmds := buildPaletteCommands(m)
+	if got := paletteCommandByID(t, cmds, "view.week").Shortcut; got != "v" {
+		t.Errorf("palette week shortcut = %q, want v", got)
+	}
+	if got := paletteCommandByID(t, cmds, "app.quit").Shortcut; got != "x" {
+		t.Errorf("palette quit shortcut = %q, want x", got)
+	}
+}
+
+// TestShiftKeyLabelMatchesHelp remaps the help action to "shift+w" and
+// the week view to "shift+v". The help dialog shows "W". The footer hint
+// and the palette shortcut must show the uppercase letter too, not the raw
+// "shift+" spelling.
+func TestShiftKeyLabelMatchesHelp(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.viewMode = viewMonth
+	m = m.withKeys(newAppKeys(map[string][]string{"help": {"shift+w"}, "week_view": {"shift+v"}}))
+
+	updated, _ := m.Update(HelpDialogRequestedMsg{})
+	if got := helpEntryKeys(t, updated.(Model).helpDialog, "this help"); got != "W" {
+		t.Fatalf("help entry keys = %q, want W", got)
+	}
+	footer := stripANSI(m.footer.Render(FooterMonth, 200, "", "", false, false))
+	if !strings.Contains(footer, "W help") || strings.Contains(footer, "shift+w") {
+		t.Errorf("footer = %q, want the W help hint", footer)
+	}
+	if got := paletteCommandByID(t, buildPaletteCommands(m), "view.week").Shortcut; got != "V" {
+		t.Errorf("palette week shortcut = %q, want V", got)
+	}
+}
+
+func TestExpandKeyAliasesAddsShiftForm(t *testing.T) {
+	got := expandKeyAliases([]string{"shift+g", "x", "G"})
+	want := []string{"G", "shift+g", "x"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("expandKeyAliases = %v, want %v", got, want)
+	}
+}
+
+func helpEntryKeys(t *testing.T, h HelpDialogModel, desc string) string {
+	t.Helper()
+	for _, s := range h.sections() {
+		for _, e := range s.entries {
+			if e.desc == desc {
+				return e.keys
+			}
+		}
+	}
+	t.Fatalf("help dialog has no entry %q", desc)
+	return ""
+}
+
+// TestSidebarFooterShowsRemappedSwitchFocusKey remaps the switch_focus
+// action to "F". The sidebar footer hint for the way back must show "F",
+// not the default tab.
+func TestSidebarFooterShowsRemappedSwitchFocusKey(t *testing.T) {
+	m := NewModel(nil, "")
+	m = m.withKeys(newAppKeys(map[string][]string{"switch_focus": {"F"}}))
+	footer := stripANSI(m.footer.Render(FooterSidebar, 200, "", "", false, false))
+	if !strings.Contains(footer, "F back") || strings.Contains(footer, "tab back") {
+		t.Fatalf("sidebar footer = %q, want the F back hint", footer)
+	}
+}
+
+// sidebarFocusModel returns a model with the sidebar shown, the focus on
+// the main view, and the given switch_focus keys.
+func sidebarFocusModel(switchFocus ...string) Model {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	m.viewMode = viewMonth
+	m.showSidebar = true
+	m.focus = focusCalendar
+	if len(switchFocus) > 0 {
+		m = m.withKeys(newAppKeys(map[string][]string{"switch_focus": switchFocus}))
+	}
+	return m
+}
+
+func pressKey(t *testing.T, m Model, k string) Model {
+	t.Helper()
+	updated, cmd := m.Update(keyPressMsg(k))
+	m = updated.(Model)
+	// The sidebar answers the way out with SidebarFocusEscapedMsg.
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			if _, ok := msg.(SidebarFocusEscapedMsg); ok {
+				updated, _ = m.Update(msg)
+				m = updated.(Model)
+			}
+		}
+	}
+	return m
+}
+
+// TestRemappedSwitchFocusLeavesSidebar remaps switch_focus to "ctrl+o".
+// The key enters the sidebar, and the same key goes back to the main
+// view, as the footer hint says. Tab still moves between the sidebar
+// stops and does not leave on the first press.
+func TestRemappedSwitchFocusLeavesSidebar(t *testing.T) {
+	m := pressKey(t, sidebarFocusModel("ctrl+o"), "ctrl+o")
+	if m.focus != focusSidebar {
+		t.Fatalf("focus after ctrl+o = %v, want the sidebar", m.focus)
+	}
+	m = pressKey(t, m, "tab")
+	if m.focus != focusSidebar {
+		t.Fatalf("focus after tab in the sidebar = %v, want the sidebar (tab moves between stops)", m.focus)
+	}
+	m = pressKey(t, m, "ctrl+o")
+	if m.focus != focusCalendar || m.sidebar.Focused() {
+		t.Fatalf("focus after ctrl+o in the sidebar = %v (sidebar focused %v), want the main view", m.focus, m.sidebar.Focused())
+	}
+}
+
+// TestSwitchFocusShiftedKeyEntersAtEnd checks the enter direction. A
+// shifted switch_focus key enters at the last sidebar stop, as shift+tab
+// does. Any other key enters at the first stop.
+func TestSwitchFocusShiftedKeyEntersAtEnd(t *testing.T) {
+	for _, tc := range []struct {
+		keys  []string
+		press string
+		want  sidebarChild
+	}{
+		{nil, "tab", sidebarFocusMiniMonth},
+		{nil, "shift+tab", sidebarFocusList},
+		{[]string{"ctrl+o", "shift+f2"}, "shift+f2", sidebarFocusList},
+		{[]string{"ctrl+o", "shift+f2"}, "ctrl+o", sidebarFocusMiniMonth},
+	} {
+		m := pressKey(t, sidebarFocusModel(tc.keys...), tc.press)
+		if m.focus != focusSidebar {
+			t.Fatalf("%s: focus = %v, want the sidebar", tc.press, m.focus)
+		}
+		if m.sidebar.focus != tc.want {
+			t.Fatalf("%s: sidebar stop = %v, want %v", tc.press, m.sidebar.focus, tc.want)
+		}
+	}
+}
+
+// TestSidebarFooterBackKeySkipsStepKeys checks the "back" hint of the
+// sidebar footer. Tab and shift+tab step between the sidebar stops, so the
+// hint names the first switch_focus key that is not one of them. With the
+// default keys the hint stays "tab back", the text it had before (tab
+// leaves the sidebar at the last stop).
+func TestSidebarFooterBackKeySkipsStepKeys(t *testing.T) {
+	for _, tc := range []struct {
+		keys []string
+		want string
+	}{
+		{nil, "tab back"},
+		{[]string{"tab", "ctrl+o"}, "ctrl+o back"},
+		{[]string{"shift+tab", "tab", "F"}, "F back"},
+	} {
+		m := NewModel(nil, "")
+		if tc.keys != nil {
+			m = m.withKeys(newAppKeys(map[string][]string{"switch_focus": tc.keys}))
+		}
+		footer := stripANSI(m.footer.Render(FooterSidebar, 200, "", "", false, false))
+		if !strings.Contains(footer, tc.want) {
+			t.Fatalf("switch_focus %v: sidebar footer = %q, want %q", tc.keys, footer, tc.want)
+		}
+	}
+}
+
+// TestUndoToastShowsRemappedUndoKey remaps the undo action to "z". The
+// toast after a delete must name "z", not the default "u".
+func TestUndoToastShowsRemappedUndoKey(t *testing.T) {
+	m := NewModel(nil, "")
+	m = m.withKeys(newAppKeys(map[string][]string{"undo": {"z"}}))
+	m.toast.Deleted("Dentist", false)
+	view := stripANSI(m.toast.View())
+	if !strings.Contains(view, "undo (z)") || strings.Contains(view, "(u)") {
+		t.Fatalf("toast = %q, want the remapped undo key", view)
+	}
+}
