@@ -42,10 +42,12 @@ var keyActions = []KeyAction{
 // ReservedKeys names keys that a part of the TUI uses for its own work.
 // Actions lists the app actions that the TUI checks before that part, so a
 // key of such an action hides the key of the part. An empty Actions list
-// means every action. Use names the part for the error text.
+// means every action. Except lists the actions that the list does not
+// apply to. Use names the part for the error text.
 type ReservedKeys struct {
 	Use     string
 	Actions []string
+	Except  []string
 	Keys    []string
 }
 
@@ -80,13 +82,23 @@ var reservedKeys = []ReservedKeys{
 	},
 	{
 		// handleKeyPress checks every app action before the sidebar keys.
-		// Tab and shift+tab stay out: the switch_focus action owns them.
+		// Tab and shift+tab are in the next list, which leaves out the
+		// switch_focus action.
 		Use: "the sidebar uses it",
 		Keys: []string{
 			"up", "down", "left", "right", "h", "j", "k", "l",
 			"shift+up", "shift+down", "K", "J", "space", "enter",
 			"[", "]", "t",
 		},
+	},
+	{
+		// handleKeyPress checks every app action before the sidebar keys.
+		// The sidebar moves between its stops with tab and shift+tab. The
+		// switch_focus action can own them: it enters the sidebar with
+		// them, and the sidebar then uses them for its stops.
+		Use:    "the sidebar uses it to move between its stops",
+		Except: []string{"switch_focus"},
+		Keys:   []string{"tab", "shift+tab"},
 	},
 	{
 		// The help key works over the trash view.
@@ -134,7 +146,7 @@ var reservedKeys = []ReservedKeys{
 func ReservedKeyLists() []ReservedKeys {
 	out := make([]ReservedKeys, len(reservedKeys))
 	for i, r := range reservedKeys {
-		out[i] = ReservedKeys{Use: r.Use, Actions: slices.Clone(r.Actions), Keys: slices.Clone(r.Keys)}
+		out[i] = ReservedKeys{Use: r.Use, Actions: slices.Clone(r.Actions), Except: slices.Clone(r.Except), Keys: slices.Clone(r.Keys)}
 	}
 	return out
 }
@@ -145,6 +157,9 @@ func reservedKeyUse(action, k string) string {
 	canon := CanonicalKey(k)
 	for _, r := range reservedKeys {
 		if len(r.Actions) > 0 && !slices.Contains(r.Actions, action) {
+			continue
+		}
+		if slices.Contains(r.Except, action) {
 			continue
 		}
 		for _, rk := range r.Keys {

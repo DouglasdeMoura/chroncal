@@ -998,6 +998,7 @@ An action key has priority over the keys of a view. Thus chroncal rejects these 
 | All parts | All actions | `esc`, `ctrl+c` |
 | Month, week, day, and agenda views | All actions | arrows, `h`, `j`, `k`, `l`, `[`, `]`, `pgup`, `pgdown`, `t`, `enter`, `space`, `e`, `ctrl+d`, `x`, `delete`, `o` |
 | Sidebar | All actions | arrows, `h`, `j`, `k`, `l`, `shift+up`, `shift+down`, `K`, `J`, `space`, `enter`, `[`, `]`, `t` |
+| Sidebar stops | All actions but `switch_focus` | `tab`, `shift+tab` |
 | Trash view | `help` | `r`, `x`, `delete`, `X`, `space`, `A` |
 | Day dialog | `help`, `create` | arrows, `h`, `j`, `k`, `l`, `tab`, `shift+tab`, `enter`, `space`, `esc`, `q`, `pgup`, `pgdown`, `ctrl+b`, `ctrl+f`, `home`, `end`, `e`, `ctrl+d`, `x`, `delete`, `y`, `n`, `m`, `p` |
 | Event dialog | `help` | the same keys as the day dialog |

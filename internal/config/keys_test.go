@@ -77,6 +77,8 @@ func TestValidateKeys_Errors(t *testing.T) {
 		{"sidebar key", "[keys]\nsync = [\"K\"]\n", `keys.sync: chroncal reserves "K", because the sidebar uses it`},
 		{"trash view key", "[keys]\nhelp = [\"r\"]\n", `keys.help: chroncal reserves "r", because the trash view uses it`},
 		{"day dialog key", "[keys]\ncreate = [\"n\"]\n", `keys.create: chroncal reserves "n", because the day dialog uses it`},
+		{"sidebar stop key", "[keys]\nswitch_focus = [\"ctrl+o\"]\nsync = [\"tab\"]\n", `keys.sync: chroncal reserves "tab", because the sidebar uses it to move between its stops`},
+		{"sidebar stop key shift", "[keys]\nswitch_focus = [\"ctrl+o\"]\nhelp = [\"shift+tab\"]\n", `keys.help: chroncal reserves "shift+tab", because the sidebar uses it to move between its stops`},
 		{"event dialog key", "[keys]\nhelp = [\"p\"]\n", `keys.help: chroncal reserves "p"`},
 		{"help dialog key", "[keys]\nhelp = [\"G\"]\n", `keys.help: chroncal reserves "G", because the help dialog uses it`},
 	} {

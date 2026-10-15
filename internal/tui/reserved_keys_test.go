@@ -70,6 +70,12 @@ func TestReservedKeysMatchTUIKeymaps(t *testing.T) {
 			bindingKeys(t, defaultCalendarListKeys(), "Tab", "ShiftTab"),
 			bindingKeys(t, defaultMiniMonthKeys()),
 		),
+		// The sidebar moves between its stops with the Tab and ShiftTab
+		// bindings. Every action but switch_focus is checked first.
+		"the sidebar uses it to move between its stops": canonicalSet(
+			defaultCalendarListKeys().Tab.Keys(),
+			defaultCalendarListKeys().ShiftTab.Keys(),
+		),
 		"the trash view uses it": canonicalSet(
 			bindingKeys(t, defaultTrashKeys()),
 		),
