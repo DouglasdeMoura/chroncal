@@ -234,19 +234,21 @@ func (m Model) undoIsAllowed() bool {
 
 // textEntryActive reports whether an open overlay can take typed text. An
 // app key that is a plain letter (a remapped help key, for example) must
-// then reach the text field. The rule derives from anyOverlayOpen: each
-// overlay counts as text entry, except the key-only overlays below, which
-// have no text field. A new overlay in anyOverlayOpen then counts as text
-// entry until it is named here, so a new text field cannot be missed.
+// then reach the text field. Each overlay in this list counts as text
+// entry. Add a new overlay here unless it has no text field at all; then
+// add it to keyOnlyOverlayOpen. anyOverlayOpen covers both lists.
 func (m Model) textEntryActive() bool {
-	keyOnly := m
-	keyOnly.viewDialogOpen = false // event view
-	keyOnly.dialogOpen = false     // day dialog
-	keyOnly.confirmOpen = false
-	keyOnly.choiceOpen = false
-	keyOnly.helpDialogOpen = false
-	keyOnly.trashOpen = false
-	return keyOnly.anyOverlayOpen()
+	return m.paletteOpen || m.formOpen || m.calendarManagerOpen ||
+		m.accountRenameOpen || m.accountOAuthConfigOpen || m.accountCredentialsOpen ||
+		m.oauthFlowOpen
+}
+
+// keyOnlyOverlayOpen reports whether an overlay with no text field is open:
+// the event view, the day dialog, a confirm, a choice, the help dialog, or
+// the trash.
+func (m Model) keyOnlyOverlayOpen() bool {
+	return m.viewDialogOpen || m.dialogOpen || m.confirmOpen || m.choiceOpen ||
+		m.helpDialogOpen || m.trashOpen
 }
 
 // anyOverlayOpen reports whether any dialog, form, or palette is currently
@@ -254,8 +256,5 @@ func (m Model) textEntryActive() bool {
 // The app footer should then degrade to status plus toast rather than a
 // duplicate of the dialog's hints.
 func (m Model) anyOverlayOpen() bool {
-	return m.paletteOpen || m.formOpen || m.viewDialogOpen || m.dialogOpen ||
-		m.confirmOpen || m.choiceOpen || m.calendarManagerOpen ||
-		m.accountRenameOpen || m.accountOAuthConfigOpen || m.accountCredentialsOpen ||
-		m.helpDialogOpen || m.trashOpen || m.oauthFlowOpen
+	return m.textEntryActive() || m.keyOnlyOverlayOpen()
 }
