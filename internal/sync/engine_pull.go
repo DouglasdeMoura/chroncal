@@ -269,10 +269,13 @@ const multigetBatchSize = 50
 type pendingDeletions struct {
 	logger *slog.Logger
 	owner  map[string]string // uid -> ownerType, deduped across both sources
+	// explicit holds the UIDs that the server reported as deleted (404),
+	// not only absent from the inventory.
+	explicit map[string]bool
 }
 
 func newPendingDeletions(logger *slog.Logger) *pendingDeletions {
-	return &pendingDeletions{logger: logger, owner: make(map[string]string)}
+	return &pendingDeletions{logger: logger, owner: make(map[string]string), explicit: make(map[string]bool)}
 }
 
 // markExplicit records a deletion backed by positive evidence: the server
@@ -281,6 +284,7 @@ func newPendingDeletions(logger *slog.Logger) *pendingDeletions {
 func (p *pendingDeletions) markExplicit(r storage.SyncResource) {
 	if r.Uid != "" {
 		p.owner[r.Uid] = r.OwnerType
+		p.explicit[r.Uid] = true
 	}
 }
 
@@ -318,8 +322,8 @@ func (p *pendingDeletions) inferFromAbsence(calendarID int64, locals []storage.S
 	}
 }
 
-// apply executes the accumulated deletions. It soft-deletes each local owner
-// row and drops its sync_resource. It returns the count actually deleted and
+// apply executes the accumulated deletions. It soft-deletes the local rows
+// of each UID in calendarID only and drops its sync_resource. It returns the count actually deleted and
 // the count that failed. A failed soft-delete (for example a transient
 // SQLITE_BUSY) leaves the local row orphaned. The server dropped it, but we
 // did not. The caller must treat failed > 0 as an incomplete pull and
@@ -328,7 +332,33 @@ func (p *pendingDeletions) inferFromAbsence(calendarID int64, locals []storage.S
 // retry.
 func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int64) (deleted, failed int) {
 	for uid, ownerType := range p.owner {
-		if err := e.deleteLocalResourceByUID(ctx, ownerType, uid); err != nil {
+		// A tombstone of the UID in this calendar marks a local delete or
+		// a local move out of the calendar that is not sent yet. The local
+		// rows stay: after a move they live in another calendar, and after
+		// a delete they are in the trash already. When the server reported
+		// the delete, it did what the tombstone wanted, so the sync row and
+		// the tombstone go. An absence-inferred UID keeps both: the pull
+		// skips a tombstoned href, so its absence proves nothing, and the
+		// tombstone pass sends the DELETE (a 404 then clears both rows).
+		tombstones, err := e.q.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+		if err != nil {
+			e.logger.Error("count tombstones", "uid", uid, "error", err)
+			failed++
+			continue
+		}
+		if tombstones > 0 {
+			if !p.explicit[uid] {
+				continue
+			}
+			if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{CalendarID: calendarID, Uid: uid}); err != nil {
+				e.logger.Error("delete sync resource", "uid", uid, "error", err)
+			}
+			if err := e.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
+				e.logger.Error("delete tombstone", "uid", uid, "error", err)
+			}
+			continue
+		}
+		if err := e.deleteLocalResourceByUID(ctx, calendarID, ownerType, uid); err != nil {
 			e.logger.Error("delete local resource", "uid", uid, "owner_type", ownerType, "error", err)
 			failed++
 			continue

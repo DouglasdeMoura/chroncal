@@ -125,6 +125,16 @@ UPDATE events SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NULL;
 
+-- name: SoftDeleteEventsByCalendarUID :exec
+-- Soft-delete every live row of one UID in one calendar. A pull that sees
+-- the server object of the UID gone in that calendar uses it. Another
+-- calendar can hold the same UID (a move, or a copy), so the delete stays
+-- in the pulled calendar.
+UPDATE events SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
+
 -- name: SoftDeleteEventsByUID :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),

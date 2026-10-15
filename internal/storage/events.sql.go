@@ -1196,6 +1196,27 @@ func (q *Queries) SoftDeleteEvent(ctx context.Context, id int64) error {
 	return err
 }
 
+const softDeleteEventsByCalendarUID = `-- name: SoftDeleteEventsByCalendarUID :exec
+UPDATE events SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
+`
+
+type SoftDeleteEventsByCalendarUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Soft-delete every live row of one UID in one calendar. A pull that sees
+// the server object of the UID gone in that calendar uses it. Another
+// calendar can hold the same UID (a move, or a copy), so the delete stays
+// in the pulled calendar.
+func (q *Queries) SoftDeleteEventsByCalendarUID(ctx context.Context, arg SoftDeleteEventsByCalendarUIDParams) error {
+	_, err := q.db.ExecContext(ctx, softDeleteEventsByCalendarUID, arg.CalendarID, arg.Uid)
+	return err
+}
+
 const softDeleteEventsByUID = `-- name: SoftDeleteEventsByUID :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),

@@ -799,3 +799,80 @@ func TestPushMoveOrder(t *testing.T) {
 		t.Fatalf("pushes with no move = %v, want one", pushed)
 	}
 }
+
+// TestPullOfMoveSourceKeepsMovedRows moves an event from A to B, and then
+// the server deletes the A object before the source push. A full pull of A
+// finds the UID gone. The deletion must not touch the rows of the UID:
+// they live in B now, so they must stay live. The tombstone pass of A then
+// clears the sync row and the tombstone of A.
+func TestPullOfMoveSourceKeepsMovedRows(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+	srv.mu.Lock()
+	delete(srv.objects, "/cal/a/"+evt.UID+".ics")
+	srv.mu.Unlock()
+	// A full snapshot of A sees no object of the UID.
+	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET sync_token = NULL WHERE id = ?`, calA); err != nil {
+		t.Fatalf("clear sync token: %v", err)
+	}
+	_, _, client, remoteURL, err := engine.loadCalendarClient(ctx, calA)
+	if err != nil {
+		t.Fatalf("loadCalendarClient: %v", err)
+	}
+	if _, err := engine.pull(ctx, client, calA, remoteURL); err != nil {
+		t.Fatalf("pull A: %v", err)
+	}
+
+	got, err := engine.events.Get(ctx, evt.ID)
+	if err != nil || got.CalendarID != calB {
+		t.Fatalf("moved event after the pull of A = %+v, %v; want it live in B", got, err)
+	}
+	// The absence of a tombstoned href proves nothing, so the tombstone
+	// pass settles A: its DELETE gets 404 and clears both rows.
+	if _, err := engine.processTombstones(ctx, client, calA, remoteURL); err != nil {
+		t.Fatalf("processTombstones A: %v", err)
+	}
+	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID}); err == nil {
+		t.Fatalf("sync resource of A = %+v, want none", sr)
+	}
+	if ts, err := q.ListTombstonesByCalendar(ctx, calA); err != nil || len(ts) != 0 {
+		t.Fatalf("tombstones of A = %v, %v; want none", ts, err)
+	}
+}
+
+// TestExplicitDeleteOfMoveSourceKeepsMovedRows moves an event from A to B,
+// and the server then reports the A object as deleted (a 404). The delete
+// must not touch the rows in B. The server delete did what the tombstone
+// of A wanted, so the sync row and the tombstone of A go at once.
+func TestExplicitDeleteOfMoveSourceKeepsMovedRows(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+	srA, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
+	if err != nil {
+		t.Fatalf("GetSyncResource A: %v", err)
+	}
+	deletions := newPendingDeletions(engine.logger)
+	deletions.markExplicit(srA)
+	if _, failed := deletions.apply(ctx, engine, calA); failed != 0 {
+		t.Fatalf("apply failed = %d, want 0", failed)
+	}
+
+	got, err := engine.events.Get(ctx, evt.ID)
+	if err != nil || got.CalendarID != calB {
+		t.Fatalf("moved event after the delete of A = %+v, %v; want it live in B", got, err)
+	}
+	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID}); err == nil {
+		t.Fatalf("sync resource of A = %+v, want none", sr)
+	}
+	if ts, err := q.ListTombstonesByCalendar(ctx, calA); err != nil || len(ts) != 0 {
+		t.Fatalf("tombstones of A = %v, %v; want none", ts, err)
+	}
+}
