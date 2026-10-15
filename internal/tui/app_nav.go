@@ -136,9 +136,9 @@ func (m Model) openQuitConfirm() Model {
 // of any open dialog so they work from anywhere. A second ctrl+c while the
 // quit confirm is on screen forces the exit. When skipQuitConfirm is set
 // (ui.confirm_quit=false), q and ctrl+c quit at once. ctrl+c is truly
-// global. It is not a character anyone types into a field. ? is suppressed
-// while a text-entry surface owns input (palette search, event form,
-// calendar form) so users can type it normally. q is suppressed while any
+// global. It is not a character anyone types into a field. The help key
+// is suppressed while a text-entry surface owns input (textEntryActive), so
+// users can type it normally. q is suppressed while any
 // overlay is open so the overlay's own close binding runs instead. The quit
 // confirm also blocks ?. The help dialog handles its own close keys.
 func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
@@ -168,8 +168,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return next, nil, true
 		}
 	}
-	textEntryActive := m.paletteOpen || m.formOpen || m.calendarManagerOpen ||
-		m.oauthFlowOpen || m.accountOAuthConfigOpen || m.accountCredentialsOpen
+	textEntryActive := m.textEntryActive()
 	// q opens the quit confirm only from the bare grid. Any open overlay
 	// owns q. That includes text-entry (palette, form) and read-only/choice
 	// (event view, list, choice, calendar list, trash, help). Its own
@@ -231,6 +230,23 @@ func (m Model) undoIsAllowed() bool {
 		return false
 	}
 	return m.undoStack != nil && m.undoStack.Len() > 0
+}
+
+// textEntryActive reports whether an open overlay can take typed text. An
+// app key that is a plain letter (a remapped help key, for example) must
+// then reach the text field. The rule derives from anyOverlayOpen: each
+// overlay counts as text entry, except the key-only overlays below, which
+// have no text field. A new overlay in anyOverlayOpen then counts as text
+// entry until it is named here, so a new text field cannot be missed.
+func (m Model) textEntryActive() bool {
+	keyOnly := m
+	keyOnly.viewDialogOpen = false // event view
+	keyOnly.dialogOpen = false     // day dialog
+	keyOnly.confirmOpen = false
+	keyOnly.choiceOpen = false
+	keyOnly.helpDialogOpen = false
+	keyOnly.trashOpen = false
+	return keyOnly.anyOverlayOpen()
 }
 
 // anyOverlayOpen reports whether any dialog, form, or palette is currently
