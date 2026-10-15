@@ -356,7 +356,7 @@ chroncal freebusy --calendar Work --from 2026-04-01 --to 2026-04-30
 ### Events
 
 ```
-chroncal event list           [--from DATE] [--to DATE] [--calendar NAME] [--status STATUS] [--include-deleted]
+chroncal event list           [--from DATE] [--to DATE] [--calendar NAME] [--status STATUS] [--include-deleted] [--compact | --detail | --verbose]
 chroncal event get            <id|uid> [--recurrence-id ID]
 chroncal event search         <query> [--calendar NAME] [--from DATE] [--to DATE] [--status STATUS]
 chroncal event add            "<title>" [flags]
@@ -369,6 +369,10 @@ chroncal event purge-deleted  [--older-than DURATION] [--yes]
 ```
 
 Event flags: `--date`, `--time`, `--end-time`, `--duration`, `--timezone`, `--location`, `--description`, `--calendar`, `--status`, `--class`, `--transparency`, `--priority`, `--url`, `--categories`, `--geo`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--alarm`, `--attendee`, `--organizer`, `--contact`, `--resource`, `--comment`, `--related-to`
+
+`event list --verbose` shows each event on a time rail, with its time, calendar, categories, location, and description. A `|` starts each line of the description. The colors match the `--compact` table. Chroncal shows colors only on a terminal. Set `NO_COLOR` to turn them off.
+
+`event update --calendar NAME` moves an event to another calendar. A recurring series moves as one unit: the master and all its overrides go together. Chroncal refuses `--calendar` together with `--recurrence-id`, because one occurrence cannot leave its series. The error names the ID of the series to move instead. Chroncal also refuses a move when the target calendar holds a copy of the same UID, live or in the trash. On a remote calendar, sync creates the object in the target calendar first. Then it deletes the object in the source calendar. `todo update` and `journal update` use the same rules.
 
 `event delete` supports three scopes for a recurring series. Pass the series by ID or UID:
 
@@ -885,7 +889,7 @@ chroncal --event standup-uid --at 2026-04-17T14:00:00Z
 
 **Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`. Press `W` to switch the first day of the week between Sunday and Monday. The TUI stores the choice, the same way it stores the view. `ui.week_start` in `config.toml` sets the default before a stored choice exists.
 
-The TUI can create, edit, view, and delete events. Event details include alarms, attendees, and attachments. Use `p` to copy event details. Use `u` to undo a delete.
+The TUI can create, edit, view, and delete events. Event details include alarms, attendees, and attachments. The new-event form selects the default calendar (see `calendar set-default`). Long titles wrap in the event details. Use `p` to copy event details. Use `u` to undo a delete.
 
 The sidebar uses quiet, collapsible account sections. There is a separate **Local** section. Active calendars show an item-colored filled `●` circle. Hidden calendars show an outline `○` circle. Space or a click on the circle toggles visibility. Calendar colors stay on calendar rows, not on account headings.
 
