@@ -87,6 +87,7 @@ func (m Model) withKeys(keys appKeyMap) Model {
 	m.footer.SetKeys(keys)
 	m.agenda = m.agenda.WithAppKeys(keys)
 	m.calendarManager = m.calendarManager.WithAppKeys(keys)
+	m.toast = m.toast.WithUndoKey(keyLabel(keys.Undo))
 	return m
 }
 

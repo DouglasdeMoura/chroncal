@@ -340,3 +340,15 @@ func TestSidebarFooterBackKeySkipsStepKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestUndoToastShowsRemappedUndoKey remaps the undo action to "z". The
+// toast after a delete must name "z", not the default "u".
+func TestUndoToastShowsRemappedUndoKey(t *testing.T) {
+	m := NewModel(nil, "")
+	m = m.withKeys(newAppKeys(map[string][]string{"undo": {"z"}}))
+	m.toast.Deleted("Dentist", false)
+	view := stripANSI(m.toast.View())
+	if !strings.Contains(view, "undo (z)") || strings.Contains(view, "(u)") {
+		t.Fatalf("toast = %q, want the remapped undo key", view)
+	}
+}
