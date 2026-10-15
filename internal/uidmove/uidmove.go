@@ -205,6 +205,45 @@ func (r Rows) CheckTarget(ctx context.Context, fromCalendarID, toCalendarID int6
 	}
 }
 
+// MoveStep moves one kind of row of the UID (the item rows, or a
+// delete-log table) from one calendar to another. Name names the table in
+// an error.
+type MoveStep struct {
+	Name string
+	Move func(ctx context.Context, fromCalendarID, toCalendarID int64) error
+}
+
+// SingleMasterRows builds Rows for a domain whose schema keeps the key
+// UNIQUE(uid, recurrence_id) across all calendars (todos, journals). A UID
+// of such a domain has at most one master row, and a move cannot collide
+// with a row of the target calendar, so CountCollisions stays nil.
+//
+// master returns the master row of the UID, live or in the trash. found is
+// false (with a nil error) when no master row exists. MoveRows runs steps
+// in order.
+func SingleMasterRows(q *storage.Queries, uid string, errInstanceMove error, master func(ctx context.Context) (m Master, found bool, err error), steps ...MoveStep) Rows {
+	return Rows{
+		Q:               q,
+		UID:             uid,
+		ErrInstanceMove: errInstanceMove,
+		Masters: func(ctx context.Context) ([]Master, error) {
+			m, found, err := master(ctx)
+			if err != nil || !found {
+				return nil, err
+			}
+			return []Master{m}, nil
+		},
+		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
+			for _, step := range steps {
+				if err := step.Move(ctx, fromCalendarID, toCalendarID); err != nil {
+					return fmt.Errorf("move %s: %w", step.Name, err)
+				}
+			}
+			return nil
+		},
+	}
+}
+
 // Record records the move of the rows of the UID from one calendar to
 // another. It does nothing when the two calendars are the same. See
 // storage.RecordResourceMove.

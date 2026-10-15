@@ -742,37 +742,20 @@ func fromStorageSlice(rows []storage.Journal) []Journal {
 }
 
 // uidMoveRows binds the journal queries of the transaction to the shared
-// calendar-move rules for uid. The journals table keeps the key
-// UNIQUE(uid, recurrence_id) across all calendars. A move then cannot
-// collide with a row of the target calendar, so CountCollisions stays nil.
+// calendar-move rules for uid (see uidmove.SingleMasterRows). The journals
+// table keeps the key UNIQUE(uid, recurrence_id) across all calendars.
 func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
-	return uidmove.Rows{
-		Q:               qtx,
-		UID:             uid,
-		ErrInstanceMove: ErrInstanceCalendarMove,
-		Masters: func(ctx context.Context) ([]uidmove.Master, error) {
+	return uidmove.SingleMasterRows(qtx, uid, ErrInstanceCalendarMove,
+		func(ctx context.Context) (uidmove.Master, bool, error) {
 			m, err := qtx.GetJournalByUIDIncludingDeleted(ctx, uid)
-			if found, err := storage.Found(err); !found {
-				return nil, err
-			}
-			return []uidmove.Master{{ID: m.ID, CalendarID: m.CalendarID, Trashed: m.DeletedAt != nil}}, nil
+			found, err := storage.Found(err)
+			return uidmove.Master{ID: m.ID, CalendarID: m.CalendarID, Trashed: m.DeletedAt != nil}, found, err
 		},
-		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
-			return moveUIDRowsTx(ctx, qtx, storage.MoveJournalUIDToCalendarParams{
-				FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid,
-			})
-		},
-	}
-}
-
-// moveUIDRowsTx moves the journal rows and the delete-log rows of one UID to
-// another calendar. uidmove.Rows.Record calls it.
-func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveJournalUIDToCalendarParams) error {
-	if err := qtx.MoveJournalUIDToCalendar(ctx, arg); err != nil {
-		return fmt.Errorf("move journals: %w", err)
-	}
-	if err := qtx.MoveJournalExdateDeletesUIDToCalendar(ctx, storage.MoveJournalExdateDeletesUIDToCalendarParams(arg)); err != nil {
-		return fmt.Errorf("move journal_exdate_deletes: %w", err)
-	}
-	return nil
+		uidmove.MoveStep{Name: "journals", Move: func(ctx context.Context, from, to int64) error {
+			return qtx.MoveJournalUIDToCalendar(ctx, storage.MoveJournalUIDToCalendarParams{FromCalendarID: from, ToCalendarID: to, Uid: uid})
+		}},
+		uidmove.MoveStep{Name: "journal_exdate_deletes", Move: func(ctx context.Context, from, to int64) error {
+			return qtx.MoveJournalExdateDeletesUIDToCalendar(ctx, storage.MoveJournalExdateDeletesUIDToCalendarParams{FromCalendarID: from, ToCalendarID: to, Uid: uid})
+		}},
+	)
 }

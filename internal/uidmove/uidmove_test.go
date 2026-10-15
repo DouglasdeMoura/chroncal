@@ -195,3 +195,36 @@ func TestLegacyOverrideCountsTrashedMaster(t *testing.T) {
 		t.Fatalf("move to a calendar with a live master = %v, want nil", err)
 	}
 }
+
+// TestSingleMasterRows checks the Rows of a domain with one master row per
+// UID: no master row gives no master, and MoveRows runs the steps in order
+// and names the step that fails.
+func TestSingleMasterRows(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	var found bool
+	var ran []string
+	boom := errors.New("boom")
+	rows := SingleMasterRows(nil, "u1", errInstance,
+		func(context.Context) (Master, bool, error) { return Master{ID: 7, CalendarID: 1}, found, nil },
+		MoveStep{Name: "items", Move: func(context.Context, int64, int64) error { ran = append(ran, "items"); return nil }},
+		MoveStep{Name: "log", Move: func(context.Context, int64, int64) error { ran = append(ran, "log"); return boom }},
+	)
+	if m, err := rows.Masters(ctx); err != nil || len(m) != 0 {
+		t.Fatalf("Masters with no master row = %+v, %v; want none", m, err)
+	}
+	found = true
+	if m, err := rows.Masters(ctx); err != nil || len(m) != 1 || m[0].ID != 7 {
+		t.Fatalf("Masters = %+v, %v; want master 7", m, err)
+	}
+	err := rows.MoveRows(ctx, 1, 2)
+	if !errors.Is(err, boom) || !strings.Contains(err.Error(), "move log") {
+		t.Fatalf("MoveRows = %v, want the failed step named", err)
+	}
+	if strings.Join(ran, ",") != "items,log" {
+		t.Fatalf("steps = %v, want items then log", ran)
+	}
+	if rows.CountCollisions != nil {
+		t.Fatal("CountCollisions is set, want nil")
+	}
+}

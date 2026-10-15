@@ -781,37 +781,20 @@ func (s *Service) hydrate(ctx context.Context, t *Todo, failFast bool) error {
 }
 
 // uidMoveRows binds the todo queries of the transaction to the shared
-// calendar-move rules for uid. The todos table keeps the key
-// UNIQUE(uid, recurrence_id) across all calendars. A move then cannot
-// collide with a row of the target calendar, so CountCollisions stays nil.
+// calendar-move rules for uid (see uidmove.SingleMasterRows). The todos
+// table keeps the key UNIQUE(uid, recurrence_id) across all calendars.
 func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
-	return uidmove.Rows{
-		Q:               qtx,
-		UID:             uid,
-		ErrInstanceMove: ErrInstanceCalendarMove,
-		Masters: func(ctx context.Context) ([]uidmove.Master, error) {
+	return uidmove.SingleMasterRows(qtx, uid, ErrInstanceCalendarMove,
+		func(ctx context.Context) (uidmove.Master, bool, error) {
 			m, err := qtx.GetTodoByUIDIncludingDeleted(ctx, uid)
-			if found, err := storage.Found(err); !found {
-				return nil, err
-			}
-			return []uidmove.Master{{ID: m.ID, CalendarID: m.CalendarID, Trashed: m.DeletedAt != nil}}, nil
+			found, err := storage.Found(err)
+			return uidmove.Master{ID: m.ID, CalendarID: m.CalendarID, Trashed: m.DeletedAt != nil}, found, err
 		},
-		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
-			return moveUIDRowsTx(ctx, qtx, storage.MoveTodoUIDToCalendarParams{
-				FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid,
-			})
-		},
-	}
-}
-
-// moveUIDRowsTx moves the todo rows and the delete-log rows of one UID to
-// another calendar. uidmove.Rows.Record calls it.
-func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveTodoUIDToCalendarParams) error {
-	if err := qtx.MoveTodoUIDToCalendar(ctx, arg); err != nil {
-		return fmt.Errorf("move todos: %w", err)
-	}
-	if err := qtx.MoveTodoExdateDeletesUIDToCalendar(ctx, storage.MoveTodoExdateDeletesUIDToCalendarParams(arg)); err != nil {
-		return fmt.Errorf("move todo_exdate_deletes: %w", err)
-	}
-	return nil
+		uidmove.MoveStep{Name: "todos", Move: func(ctx context.Context, from, to int64) error {
+			return qtx.MoveTodoUIDToCalendar(ctx, storage.MoveTodoUIDToCalendarParams{FromCalendarID: from, ToCalendarID: to, Uid: uid})
+		}},
+		uidmove.MoveStep{Name: "todo_exdate_deletes", Move: func(ctx context.Context, from, to int64) error {
+			return qtx.MoveTodoExdateDeletesUIDToCalendar(ctx, storage.MoveTodoExdateDeletesUIDToCalendarParams{FromCalendarID: from, ToCalendarID: to, Uid: uid})
+		}},
+	)
 }
