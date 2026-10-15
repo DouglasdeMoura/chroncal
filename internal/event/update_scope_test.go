@@ -540,3 +540,76 @@ func TestUpdateInstance_DoesNotReviveOverrideHiddenBySplit(t *testing.T) {
 		t.Fatalf("live overrides after the refused edit = %+v, want none", overrides)
 	}
 }
+
+// TestUpdateInstance_RevivesOverrideAfterMasterRestore deletes a series
+// with an override, and then restores the master only. The override stays
+// in the trash, with no occurrence-delete log row. Its occurrence is still
+// part of the series, so a new edit of it must revive the row.
+func TestUpdateInstance_RevivesOverrideAfterMasterRestore(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-5", "FREQ=DAILY;COUNT=5")
+	inst := master.StartTime.Add(24 * time.Hour)
+	params := UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: inst, EndTime: inst.Add(time.Hour)}
+	first, err := svc.UpdateInstance(ctx, master.UID, inst, params)
+	if err != nil {
+		t.Fatalf("first UpdateInstance: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID master: %v", err)
+	}
+
+	params.Title = "Again"
+	second, err := svc.UpdateInstance(ctx, master.UID, inst, params)
+	if err != nil {
+		t.Fatalf("UpdateInstance after the master restore = %v, want nil", err)
+	}
+	if second.ID != first.ID || second.Title != "Again" {
+		t.Fatalf("second edit = %+v, want row %d revived", second, first.ID)
+	}
+}
+
+// TestUpdateInstance_RevivesOverrideAfterUntilRemoved splits a series at a
+// cut, which hides the override of a later occurrence. Then the user
+// removes the UNTIL of the master. The later occurrence is part of the
+// series again, so a new edit of it must revive the row.
+func TestUpdateInstance_RevivesOverrideAfterUntilRemoved(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-6", "FREQ=WEEKLY")
+	cut := master.StartTime.Add(7 * 24 * time.Hour)
+	later := cut.Add(7 * 24 * time.Hour)
+	params := func(at time.Time) UpdateParams {
+		return UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: at, EndTime: at.Add(time.Hour)}
+	}
+	first, err := svc.UpdateInstance(ctx, master.UID, later, params(later))
+	if err != nil {
+		t.Fatalf("UpdateInstance before the split: %v", err)
+	}
+	split := params(cut)
+	split.RecurrenceRule = "FREQ=WEEKLY"
+	if _, err := svc.UpdateFromInstance(ctx, master.UID, cut, split); err != nil {
+		t.Fatalf("UpdateFromInstance: %v", err)
+	}
+	fresh, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get master: %v", err)
+	}
+	if _, err := svc.Update(ctx, master.ID, UpdateParams{
+		CalendarID: fresh.CalendarID, Title: fresh.Title, StartTime: fresh.StartTime, EndTime: fresh.EndTime,
+		RecurrenceRule: "FREQ=WEEKLY", Status: fresh.Status, Transp: fresh.Transp, Class: fresh.Class,
+	}); err != nil {
+		t.Fatalf("remove UNTIL: %v", err)
+	}
+
+	second, err := svc.UpdateInstance(ctx, master.UID, later, params(later))
+	if err != nil {
+		t.Fatalf("UpdateInstance after the UNTIL removal = %v, want nil", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second edit = %+v, want row %d revived", second, first.ID)
+	}
+}

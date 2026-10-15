@@ -13,6 +13,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/duration"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/recurset"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/uidmove"
@@ -63,8 +64,8 @@ func IsMoveRefusal(err error) bool {
 }
 
 // ErrOccurrenceOutsideSeries reports an edit of an occurrence whose stored
-// override is in the trash for another reason than a delete of that one
-// occurrence, for example a "this and following" split that ended the
+// override is in the trash, and the occurrence is not part of the series
+// any more, for example after a "this and following" split that ended the
 // series before it. A revive of that row would leave a live override
 // outside the series. Restore the series tail from the trash first.
 var ErrOccurrenceOutsideSeries = errors.New("event: the occurrence is outside the series; restore the series tail from the trash first")
@@ -930,7 +931,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 					return Event{}, fmt.Errorf("retry get override: %w", eErr)
 				}
 				if existing.DeletedAt != nil && *existing.DeletedAt != "" {
-					if err := reviveOverrideTx(ctx, qtx, master.CalendarID, existing); err != nil {
+					if err := reviveOverrideTx(ctx, qtx, master, existing); err != nil {
 						return Event{}, err
 					}
 				}
@@ -966,9 +967,13 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 }
 
 // reviveOverrideTx un-hides a soft-deleted override row that an edit of the
-// same occurrence takes again. It revives only a row that a delete of that
-// one occurrence hid (the occurrence-delete log records it). Each other
-// row gives ErrOccurrenceOutsideSeries. masterCalendarID is the calendar of the
+// same occurrence takes again. It revives the row only when its recurrence
+// ID is an occurrence of the current recurrence set of master (RRULE and
+// RDATE, with the EXDATEs ignored, see recurset.Checker). A split or a
+// truncation that ended the series before the occurrence gives
+// ErrOccurrenceOutsideSeries. A row that a series delete hid, or that an
+// UNTIL hid until the user removed it, is an occurrence again, so it
+// revives. masterCalendarID is the calendar of the
 // master of the edit. Two calendars can hold the same UID, so the EXDATE
 // rule reads that calendar only. It uses the restore rule of the trash:
 // the master loses the EXDATE that the delete recorded, and an imported
@@ -978,21 +983,12 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 // the attendees, the alarms, the attachments, the comments, the contacts,
 // the resources, the relations, and the x-properties. A *WithRelations
 // caller then writes its own attendees and alarms.
-func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, masterCalendarID int64, row storage.Event) error {
-	// Only a delete of this one occurrence records a log row. Another
-	// soft-delete (a series split or truncation) hid the row because the
-	// occurrence is outside the series, so a revive would leave a live
-	// override past the end of the master.
-	_, err := qtx.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
-		CalendarID: masterCalendarID, Uid: row.Uid, RecurrenceID: row.RecurrenceID,
-	})
-	logged, err := storage.Found(err)
-	if err != nil {
-		return fmt.Errorf("find occurrence delete log: %w", err)
-	}
-	if !logged {
+func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, row storage.Event) error {
+	m := FromStorage(master)
+	if !recurset.NewChecker(m.RecurrenceRule, m.Timezone, m.StartTime, m.ParseRDates()).OccursAt(row.RecurrenceID) {
 		return ErrOccurrenceOutsideSeries
 	}
+	masterCalendarID := master.CalendarID
 	if err := qtx.RestoreEvent(ctx, row.ID); err != nil {
 		return fmt.Errorf("revive override: %w", err)
 	}
