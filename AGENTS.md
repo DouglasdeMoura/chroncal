@@ -87,6 +87,8 @@ SQLite pragmas in `open.go:openDB()`:
 
 The database stores a recurring event as one row with `recurrence_rule`. Each override is a separate row with the same `uid` and a non-empty `recurrence_id`. The unique key is `(calendar_id, uid, recurrence_id)`, so two calendars can store the same UID. EXDATEs and RDATEs are comma-separated RFC 3339 strings. The service expands recurrences at query time with `recurrence.ListExpandedEvents()`. Time ranges are half-open everywhere: `[start, end)`.
 
+A calendar move of a UID moves every row of that UID as one unit. The move rules live in `internal/uidmove`: the override rule, the target-collision check, and the move record. The event, todo, and journal services bind their queries to `uidmove.Rows` and call it inside the update transaction. Fix a move rule in `uidmove`. Do not fix it per domain.
+
 ### Alarms
 
 Triggers are RFC 5545 duration strings (`-PT15M` = 15 minutes before). Absolute triggers use RFC 3339. The `alarm_state` and `todo_alarm_state` tables store the state (`fired_at`, `acknowledged_at`, `snooze_until`). The service skips alarms older than 24 hours (`alarm.StaleThreshold`). The service fires extra alarms at `Duration` intervals, up to the `Repeat` count.

@@ -856,3 +856,18 @@ func TestTodoListAlarms_NormalizesMalformedStoredAction(t *testing.T) {
 		t.Fatalf("the write must accept the normalized row: %v", err)
 	}
 }
+
+// TestUpdateWithZeroCalendarKeepsCalendar updates a todo with no calendar
+// in the params. Calendar 0 means "keep the calendar", so the row keeps
+// its calendar.
+func TestUpdateWithZeroCalendarKeepsCalendar(t *testing.T) {
+	svc := newTestService(t)
+	td := createTodo(t, svc)
+	got, err := svc.Update(context.Background(), td.ID, UpdateParams{Summary: "Renamed", Status: td.Status, Class: td.Class})
+	if err != nil {
+		t.Fatalf("Update with calendar 0 = %v, want nil", err)
+	}
+	if got.CalendarID != td.CalendarID {
+		t.Fatalf("calendar after the update = %d, want %d", got.CalendarID, td.CalendarID)
+	}
+}

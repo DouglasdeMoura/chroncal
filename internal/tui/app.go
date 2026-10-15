@@ -140,12 +140,15 @@ type pendingAction struct {
 // pendingTarget holds the payload of one pendingAction. Exactly one
 // member is live at a time; the owning kind selects it.
 type pendingTarget struct {
-	ev           event.Event      // eventDelete, eventDeleteScope
-	save         EventFormSaveMsg // editScope
-	calendarID   int64            // calendarDelete, calendarKeepLocal, calendarPromote
-	promoteID    int64            // calendarDelete: replacement default
-	promoteCands []int64          // calendarPromote: candidate IDs by button index
-	accountID    int64            // accountRemove
+	ev   event.Event      // eventDelete, eventDeleteScope
+	save EventFormSaveMsg // editScope
+	// scopeOffset is added to the button index of the edit-scope prompt.
+	// It is 1 when the prompt leaves out "This event" (editScope).
+	scopeOffset  int
+	calendarID   int64   // calendarDelete, calendarKeepLocal, calendarPromote
+	promoteID    int64   // calendarDelete: replacement default
+	promoteCands []int64 // calendarPromote: candidate IDs by button index
+	accountID    int64   // accountRemove
 	selection    *accountCalendarSelection
 	defaultCands []accountDefaultCandidate
 	entries      []trash.Entry // purgeEntries
@@ -166,20 +169,25 @@ type eventViewLoadedMsg struct {
 	err   error
 }
 
+// eventUpdatedMsg reports a finished edit of an event: an edit by row
+// (handleEventFormSave) or a scope-routed edit (dispatchEditScope).
 type eventUpdatedMsg struct {
 	calendarID int64
-	err        error
-}
-
-// eventUpdateAfterScopeMsg is fired by dispatchEditScope after a scope-routed
-// edit (UpdateInstance / UpdateFromInstance / Update) completes. It exists so
-// the agenda reloads without a reuse of eventUpdatedMsg. That message currently
-// drives the "return to view dialog" behaviour. That behaviour does not apply
-// when the row under the edit may have been replaced. One example is "this
-// and following", which splits to a new UID.
-type eventUpdateAfterScopeMsg struct {
-	calendarID int64
-	err        error
+	// fromCalendarID is the calendar of the event (or of the master of a
+	// scope edit) before the edit. A move leaves a tombstone there, and a
+	// split into another calendar leaves a change there, so the push after
+	// the edit pushes it too.
+	fromCalendarID int64
+	// uid is the UID of the edited event, or of the master of a scope
+	// edit. The source push of a move checks the target state of that UID
+	// first.
+	uid string
+	// scoped marks a scope-routed edit (UpdateInstance, UpdateFromInstance,
+	// or Update of the master). The row under the edit can be replaced
+	// ("this and following" splits to a new UID), so the edit does not
+	// return to the view dialog.
+	scoped bool
+	err    error
 }
 
 type eventDeletedMsg struct {

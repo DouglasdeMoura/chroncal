@@ -59,8 +59,11 @@ func (m Model) dispatchEditScope(editID int64, choice int, save EventFormSaveMsg
 	ctx := context.Background()
 	master, err := m.app.Events.Get(ctx, editID)
 	if err != nil {
-		return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
+		return eventUpdatedMsg{calendarID: save.CalendarID, err: err, scoped: true}
 	}
+	// The calendar of the master before the edit. A move of the series or a
+	// split into another calendar changes that calendar too.
+	fromCalendarID := master.CalendarID
 
 	params := event.UpdateParams{
 		CalendarID:     save.CalendarID,
@@ -98,9 +101,9 @@ func (m Model) dispatchEditScope(editID int64, choice int, save EventFormSaveMsg
 		_, err = m.app.Events.UpdateWithRelations(ctx, master.ID, params, save.Attendees, save.Alarms)
 	}
 	if err != nil {
-		return eventUpdateAfterScopeMsg{calendarID: save.CalendarID, err: err}
+		return eventUpdatedMsg{calendarID: save.CalendarID, err: err, scoped: true}
 	}
-	return eventUpdateAfterScopeMsg{calendarID: save.CalendarID}
+	return eventUpdatedMsg{calendarID: save.CalendarID, fromCalendarID: fromCalendarID, uid: master.UID, scoped: true}
 }
 
 func (m Model) loadEvents() tea.Cmd {

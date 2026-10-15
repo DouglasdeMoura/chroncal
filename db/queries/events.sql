@@ -27,11 +27,25 @@ SELECT * FROM events WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
 -- name: GetEventByCalendarUID :one
 SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
 
+-- name: ListEventMastersByUIDIncludingDeleted :many
+-- Every master row of one UID, live or soft-deleted, in all calendars. The
+-- legacy-override rule reads it (see storage.LegacyOverride).
+SELECT * FROM events WHERE uid = ? AND recurrence_id = '' ORDER BY id;
+
+-- name: ListEventsByUIDAndRecurrenceID :many
+SELECT * FROM events WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL ORDER BY id;
+
 -- name: GetEventByUIDAndRecurrenceID :one
 SELECT * FROM events WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
 
 -- name: GetEventByCalendarUIDAndRecurrenceID :one
 SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NULL;
+
+-- name: GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted :one
+-- The row of one (calendar, UID, recurrence ID) key, live or soft-deleted.
+-- A soft-deleted override keeps its UNIQUE key, so a new override of the
+-- same occurrence must revive it.
+SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?;
 
 -- name: GetEventIncludingDeleted :one
 SELECT * FROM events WHERE id = ?;
@@ -110,6 +124,16 @@ UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NULL;
+
+-- name: SoftDeleteEventsByCalendarUID :exec
+-- Soft-delete every live row of one UID in one calendar. A pull that sees
+-- the server object of the UID gone in that calendar uses it. Another
+-- calendar can hold the same UID (a move, or a copy), so the delete stays
+-- in the pulled calendar.
+UPDATE events SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
 
 -- name: SoftDeleteEventsByUID :exec
 UPDATE events SET
@@ -205,3 +229,43 @@ FROM events AS src
 WHERE src.calendar_id = ? AND src.deleted_at IS NULL AND src.uid != ''
 GROUP BY uid
 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
+
+-- name: CountEventUIDMoveCollisions :one
+-- Count the live rows and the soft-deleted rows in the target calendar
+-- that share the UID and the recurrence ID of a row that
+-- MoveEventUIDToCalendar moves. A nonzero count means the move breaks the
+-- UNIQUE key.
+SELECT
+    CAST(COALESCE(SUM(dst.deleted_at IS NULL), 0) AS INTEGER) AS live,
+    CAST(COALESCE(SUM(dst.deleted_at IS NOT NULL), 0) AS INTEGER) AS trashed
+FROM events AS dst
+WHERE dst.calendar_id = sqlc.arg(to_calendar_id) AND dst.uid = sqlc.arg(uid)
+  AND dst.recurrence_id IN (
+    SELECT src.recurrence_id FROM events AS src
+    WHERE src.calendar_id = sqlc.arg(from_calendar_id) AND src.uid = sqlc.arg(uid)
+  );
+
+-- name: MoveEventUIDToCalendar :exec
+-- Move every row of one UID (live or soft-deleted) from one calendar to
+-- another. A local calendar move of a resource calls it. See issue #828.
+UPDATE events SET calendar_id = sqlc.arg(to_calendar_id)
+WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
+
+-- name: CountEventUIDRowsInCalendar :one
+-- Count the master rows and the override rows (live or soft-deleted) of
+-- one UID in one calendar. The dirty-mark rule for a legacy override reads
+-- it. See storage.MarkResourceDirty.
+SELECT
+    CAST(COALESCE(SUM(recurrence_id = ''), 0) AS INTEGER) AS masters,
+    CAST(COALESCE(SUM(recurrence_id != ''), 0) AS INTEGER) AS overrides
+FROM events
+WHERE calendar_id = ? AND uid = ?;
+
+-- name: EventUIDMasterCalendars :one
+-- Count the calendars with a live master row of one UID, and give the
+-- lowest of them. With one calendar, that calendar is the only one.
+SELECT
+    COUNT(DISTINCT calendar_id) AS calendars,
+    CAST(COALESCE(MIN(calendar_id), 0) AS INTEGER) AS calendar_id
+FROM events
+WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;

@@ -359,7 +359,7 @@ func (s *Service) clearSyncOnlyAlarms(ctx context.Context, eventID int64) error 
 }
 
 func (s *Service) ReplaceAlarms(ctx context.Context, eventID int64, alarms []model.Alarm) error {
-	if err := s.ensureEventWritable(ctx, eventID, 0); err != nil {
+	if err := s.ensureEventWritable(ctx, eventID); err != nil {
 		return err
 	}
 	return s.ReplaceAlarmsForSync(ctx, eventID, alarms)

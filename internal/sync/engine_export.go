@@ -11,6 +11,7 @@ import (
 	hydratepkg "github.com/douglasdemoura/chroncal/internal/hydrate"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -34,15 +35,16 @@ var errUnknownOwnerType = errors.New("unknown owner type")
 // entry rather than synchronized edits to parallel switches. A missed
 // type cannot compile cleanly into a silent mis-dispatch.
 type ownerOps struct {
-	softDeleteByUID func(ctx context.Context, e *Engine, uid string) error
+	// softDeleteByUID soft-deletes the live rows of uid in one calendar.
+	softDeleteByUID func(ctx context.Context, e *Engine, calendarID int64, uid string) error
 	lookupID        func(ctx context.Context, e *Engine, uid string) (int64, error)
 	export          func(ctx context.Context, e *Engine, uid string) ([]byte, error)
 }
 
 var ownerOpsByType = map[string]ownerOps{
 	ownerTypeEvent: {
-		softDeleteByUID: func(ctx context.Context, e *Engine, uid string) error {
-			return e.q.SoftDeleteEventsByUID(ctx, uid)
+		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
+			return e.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
 		lookupID: func(ctx context.Context, e *Engine, uid string) (int64, error) {
 			row, err := e.q.GetEventByUID(ctx, uid)
@@ -58,8 +60,8 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 	},
 	ownerTypeTodo: {
-		softDeleteByUID: func(ctx context.Context, e *Engine, uid string) error {
-			return e.q.SoftDeleteTodosByUID(ctx, uid)
+		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
+			return e.q.SoftDeleteTodosByCalendarUID(ctx, storage.SoftDeleteTodosByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
 		lookupID: func(ctx context.Context, e *Engine, uid string) (int64, error) {
 			row, err := e.q.GetTodoByUID(ctx, uid)
@@ -75,8 +77,8 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 	},
 	ownerTypeJournal: {
-		softDeleteByUID: func(ctx context.Context, e *Engine, uid string) error {
-			return e.q.SoftDeleteJournalsByUID(ctx, uid)
+		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
+			return e.q.SoftDeleteJournalsByCalendarUID(ctx, storage.SoftDeleteJournalsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
 		lookupID: func(ctx context.Context, e *Engine, uid string) (int64, error) {
 			row, err := e.q.GetJournalByUID(ctx, uid)
@@ -187,7 +189,11 @@ func ownerOpsFor(ownerType string) (ownerOps, error) {
 	return ops, nil
 }
 
-func (e *Engine) deleteLocalResourceByUID(ctx context.Context, ownerType, uid string) error {
+// deleteLocalResourceByUID soft-deletes the local rows of uid in
+// calendarID after the server deleted the object of that calendar. The
+// delete stays in that calendar: another calendar can hold the same UID (a
+// local move, or a copy in another account).
+func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64, ownerType, uid string) error {
 	// Soft-delete across every owner type so a remote DELETE that races with
 	// a user action doesn't nuke the local row — it stays in trash until the
 	// retention window expires. The caller clears the sync_resource so a
@@ -196,7 +202,7 @@ func (e *Engine) deleteLocalResourceByUID(ctx context.Context, ownerType, uid st
 	if err != nil {
 		return err
 	}
-	return ops.softDeleteByUID(ctx, e, uid)
+	return ops.softDeleteByUID(ctx, e, calendarID, uid)
 }
 
 // lookupOwnerID resolves the local row ID that backs a UID for the given owner

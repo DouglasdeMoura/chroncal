@@ -380,6 +380,17 @@ func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calend
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusForbidden {
+		// RFC 4791 section 5.3.2.1: a duplicate UID gets 403 with the
+		// CALDAV:no-uid-conflict precondition. Keep the typed 403 and mark
+		// it, so the caller can tell it from a plain 403.
+		body, truncated := readErrorBody(resp)
+		err := httpErrorFromBody(resp, body, truncated)
+		if hasNoUIDConflict(body) {
+			return "", fmt.Errorf("put resource: %w: %w", errUIDConflict, err)
+		}
+		return "", fmt.Errorf("put resource: %w", err)
+	}
 	if resp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("put resource: %w", httpError(resp))
 	}
@@ -431,7 +442,13 @@ func (c *Client) DeleteResource(ctx context.Context, path, etag string) error {
 func (c *Client) GetResource(ctx context.Context, path string) (*Resource, error) {
 	obj, err := c.inner.GetCalendarObject(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("get resource: %w", err)
+		// Keep the status of the go-webdav error as a typed HTTPError, so
+		// IsAbsent and IsConflict do not depend on the message prefix.
+		wrapped := fmt.Errorf("get resource: %w", err)
+		if code := retry.StatusCode(err); code != 0 {
+			return nil, retry.NewHTTPError(code, wrapped)
+		}
+		return nil, wrapped
 	}
 	return &Resource{
 		Path: obj.Path,
@@ -649,14 +666,19 @@ func httpError(resp *http.Response) error {
 		return fmt.Errorf("HTTP 0")
 	}
 
-	var body []byte
-	truncated := false
-	if resp.Body != nil {
-		lr := &io.LimitedReader{R: resp.Body, N: httpErrorBodyLimit}
-		body, _ = io.ReadAll(lr)
-		truncated = lr.N == 0
-	}
+	body, truncated := readErrorBody(resp)
 	return httpErrorFromBody(resp, body, truncated)
+}
+
+// readErrorBody reads at most httpErrorBodyLimit bytes of an error
+// response body. truncated reports that the body can hold more bytes.
+func readErrorBody(resp *http.Response) (body []byte, truncated bool) {
+	if resp.Body == nil {
+		return nil, false
+	}
+	lr := &io.LimitedReader{R: resp.Body, N: httpErrorBodyLimit}
+	body, _ = io.ReadAll(lr)
+	return body, lr.N == 0
 }
 
 // httpErrorFromBody builds the same typed HTTP error as httpError when the

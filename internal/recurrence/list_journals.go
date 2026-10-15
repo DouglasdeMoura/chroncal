@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/recurset"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -87,27 +88,28 @@ func (s *Service) populateJournalCategories(ctx context.Context, journals []jour
 	)
 }
 
-// newJournalRRuleSet parses j's RRULE into a reusable rruleSet. ok is false when
-// the journal has no start date (so it cannot be expanded). Journals are points
-// in time, so the set carries no duration.
-func newJournalRRuleSet(j journal.Journal, includeExDates bool) (rruleSet, bool) {
+// newJournalRRuleSet parses j's RRULE into a reusable recurset.Set for
+// expansion, with the EXDATEs applied. ok is false when the journal has no
+// start date (so it cannot be expanded). Journals are points in time, so
+// the set carries no duration.
+func newJournalRRuleSet(j journal.Journal) (recurset.Set, bool) {
 	anchor := j.ParseStartDate()
 	if anchor.IsZero() {
-		return rruleSet{}, false
+		return recurset.Set{}, false
 	}
-	return newRRuleSet(j.RecurrenceRule, j.Timezone, anchor, 0,
-		j.ParseExDates(), j.ParseRDates(), includeExDates)
+	return recurset.New(j.RecurrenceRule, j.Timezone, anchor, 0,
+		j.ParseExDates(), j.ParseRDates())
 }
 
 // newJournalOccChecker builds a reusable orphan-detection checker for a
 // recurring journal master. A cancelled series matches nothing (see
 // newEventOccChecker).
-func newJournalOccChecker(j journal.Journal) occChecker {
-	if cancelledRecurringMaster(j.RecurrenceRule, j.Status) {
-		return occChecker{}
+func newJournalOccChecker(j journal.Journal) recurset.Checker {
+	anchor := j.ParseStartDate()
+	if anchor.IsZero() || cancelledRecurringMaster(j.RecurrenceRule, j.Status) {
+		return recurset.Checker{}
 	}
-	rs, _ := newJournalRRuleSet(j, false)
-	return occChecker{rs: rs, anchor: j.ParseStartDate()}
+	return recurset.NewChecker(j.RecurrenceRule, j.Timezone, anchor, j.ParseRDates())
 }
 
 // singleJournalInstance returns j as a lone occurrence (non-recurring or
@@ -126,14 +128,14 @@ func ExpandJournal(j journal.Journal, from, to time.Time) []ExpandedJournal {
 	if cancelledRecurringMaster(j.RecurrenceRule, j.Status) {
 		return nil
 	}
-	rs, ok := newJournalRRuleSet(j, true)
+	rs, ok := newJournalRRuleSet(j)
 	if !ok {
 		return singleJournalInstance(j, from, to)
 	}
 
 	var instances []ExpandedJournal
-	for _, occ := range rs.between(from, to) {
-		_, isRDate := rs.rdateSet[rdateKey(occ)]
+	for _, occ := range rs.Between(from, to) {
+		_, isRDate := rs.RDates[recurset.RDateKey(occ)]
 		instances = append(instances, ExpandedJournal{Journal: j, InstanceTime: occ.UTC(), IsOverride: isRDate})
 	}
 	return instances
@@ -166,7 +168,7 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 				// follows would drop it too).
 				anchor, _ = timeutil.ParseRecurrenceID(o.RecurrenceID)
 			}
-			return oj, inWindow(anchor, from, to)
+			return oj, recurset.InWindow(anchor, from, to)
 		},
 	}
 	return expandRecurringRowsBy(ctx, k, rows, from, to)

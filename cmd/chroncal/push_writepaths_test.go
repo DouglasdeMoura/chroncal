@@ -158,3 +158,51 @@ func assertPushed(t *testing.T, pushed []int64, want int64) {
 	}
 	t.Fatalf("write path did not opportunistically push calendar %d; pushed=%v", want, pushed)
 }
+
+// TestMoveWritePathsPushBothCalendars moves an event, a todo, and a journal
+// to another calendar. The move leaves a tombstone in the source calendar,
+// so the write path must push the target and then the source. Before the
+// fix the source delete waited for the next full sync.
+func TestMoveWritePathsPushBothCalendars(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	ctx := context.Background()
+	work, err := a.Calendars.Create(ctx, "MoveFrom", "#7C3AED", "")
+	if err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	personal, err := a.Calendars.Create(ctx, "MoveTo", "#7C3AED", "")
+	if err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	a.Close()
+
+	for _, tc := range []struct {
+		name string
+		cmd  func() *cobra.Command
+		add  []string
+		move []string
+	}{
+		{"event", eventCmd, []string{"event", "add", "Standup", "--calendar", "MoveFrom", "--date", "2026-05-18", "--time", "09:00", "--duration", "30m"}, []string{"event", "update", "1", "--calendar", "MoveTo"}},
+		{"todo", todoCmd, []string{"todo", "add", "Ship", "--calendar", "MoveFrom"}, []string{"todo", "update", "1", "--calendar", "MoveTo"}},
+		{"journal", journalCmd, []string{"journal", "add", "Note", "--calendar", "MoveFrom"}, []string{"journal", "update", "1", "--calendar", "MoveTo"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubPushSeam(t)
+			if err := runWriteCommand(t, tc.cmd(), tc.add...); err != nil {
+				t.Fatalf("%s add: %v", tc.name, err)
+			}
+			pushed := stubPushSeam(t)
+			if err := runWriteCommand(t, tc.cmd(), tc.move...); err != nil {
+				t.Fatalf("%s update --calendar: %v", tc.name, err)
+			}
+			if len(*pushed) != 2 || (*pushed)[0] != personal.ID || (*pushed)[1] != work.ID {
+				t.Fatalf("pushed = %v, want [%d %d] (the target, then the source)", *pushed, personal.ID, work.ID)
+			}
+		})
+	}
+}

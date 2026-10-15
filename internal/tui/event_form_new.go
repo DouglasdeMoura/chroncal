@@ -202,6 +202,8 @@ func NewEventFormModelForEdit(ev event.Event, calendars map[int64]CalendarInfo, 
 func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	m, cmd := NewEventFormModel(ev.StartTime, calendars, theme)
 	m.editID = ev.ID
+	m.editCalendarID = ev.CalendarID
+	m.editUID = ev.UID
 	m.instanceTime = instanceTime
 	m.titleField.SetValue(ev.Title)
 	m.locationField.SetValue(ev.Location)
@@ -314,7 +316,9 @@ func NewEventFormModelForEditInstance(ev event.Event, instanceTime time.Time, ca
 // event's data but in create mode (editID = 0).
 func NewEventFormModelForDuplicate(ev event.Event, calendars map[int64]CalendarInfo, theme Theme) (EventFormModel, tea.Cmd) {
 	m, cmd := NewEventFormModelForEdit(ev, calendars, theme)
-	m.editID = 0
+	// A duplicate is not a move of the source event, so it keeps no
+	// edit identity.
+	m.editID, m.editCalendarID, m.editUID = 0, 0, ""
 	// A duplicate is a new local event. Keep only the fireable alarms:
 	// a preserved sync-only VALARM belongs to another client, and a copy
 	// would publish that sentinel under a fresh UID (issue #579).

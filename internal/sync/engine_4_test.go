@@ -49,7 +49,7 @@ func TestEnginePullHoldsTokenWhenDeletionApplyFails(t *testing.T) {
 		t.Fatalf("GetCalendar: %v", err)
 	}
 
-	// Drop the events table so SoftDeleteEventsByUID errors, deterministically
+	// Drop the events table so SoftDeleteEventsByCalendarUID errors, deterministically
 	// reproducing a failed apply() (the issue cites a transient SQLITE_BUSY).
 	// The calendars and sync_resources tables stay intact, so the token-write
 	// path is still reachable — only the deletion fails.

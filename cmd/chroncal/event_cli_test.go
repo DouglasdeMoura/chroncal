@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -873,5 +874,34 @@ func TestEventRestoreNotFoundIsTagged(t *testing.T) {
 		if !strings.Contains(payload.Error, "not found") {
 			t.Fatalf("event restore %s: error = %q, want a not-found message", ref, payload.Error)
 		}
+	}
+}
+
+// TestEventUpdate_OverrideCalendarMoveNamesTheSeries asks for another
+// calendar on one occurrence. The command refuses, and the error tells the
+// user to move the whole series with the numeric ID of the master.
+func TestEventUpdate_OverrideCalendarMoveNamesTheSeries(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+
+	master := addOverrideGapSeries(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Home"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	day2 := "2026-09-02T10:00:00Z"
+	if _, _, err := runChroncalCommand(t,
+		"event", "update", master.UID, "--recurrence-id", day2, "--title", "Day 2 moved",
+	); err != nil {
+		t.Fatalf("event update --recurrence-id: %v", err)
+	}
+	_, _, err := runChroncalCommand(t,
+		"event", "update", master.UID, "--recurrence-id", day2, "--calendar", "Home",
+	)
+	if err == nil {
+		t.Fatal("event update of one occurrence with --calendar succeeded, want a refusal")
+	}
+	want := "event update " + strconv.FormatInt(master.ID, 10) + " --calendar"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %q, want it to name %q", err, want)
 	}
 }

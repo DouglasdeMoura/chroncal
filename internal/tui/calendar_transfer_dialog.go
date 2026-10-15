@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
 )
 
@@ -336,7 +337,7 @@ func calendarImportDestinations(calendars map[int64]CalendarInfo, preview icaltr
 	destinations := make([]CalendarImportDestination, 0, len(ids))
 	for _, id := range ids {
 		info := calendars[id]
-		if strings.EqualFold(strings.TrimSpace(info.RemoteAccess), "read") {
+		if calendaraccess.IsReadOnly(info.RemoteAccess) {
 			continue
 		}
 		if !calendarSupportsImportPreview(info, preview) {

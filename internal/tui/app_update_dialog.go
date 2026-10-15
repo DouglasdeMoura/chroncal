@@ -58,7 +58,7 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 	case pendingActionEditScope:
 		save := act.target.save
 		editID := m.form.editID
-		choice := msg.Choice
+		choice := msg.Choice + act.target.scopeOffset
 		return m, func() tea.Msg {
 			return m.dispatchEditScope(editID, choice, save)
 		}

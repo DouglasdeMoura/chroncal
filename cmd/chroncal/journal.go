@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -555,6 +556,10 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 			}
 
 			j, err := a.Journals.Update(ctx, existing.ID, p)
+			if errors.Is(err, journal.ErrInstanceCalendarMove) {
+				// A journal UID has one master in all calendars.
+				return errOccurrenceMove(ctx, a, "journal", existing.UID, existing.RecurrenceID, existing.CalendarID, err)
+			}
 			if err != nil {
 				return fmt.Errorf("update journal: %w", err)
 			}
@@ -600,11 +605,11 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 				if err := printOutput(w, toJSONJournal(j)); err != nil {
 					return err
 				}
-				opportunisticPush(a, j.CalendarID, cmd)
+				opportunisticPushMove(a, existing.CalendarID, j.CalendarID, j.UID, cmd)
 				return nil
 			}
 			printJournal(w, j)
-			opportunisticPush(a, j.CalendarID, cmd)
+			opportunisticPushMove(a, existing.CalendarID, j.CalendarID, j.UID, cmd)
 			return nil
 		},
 	}

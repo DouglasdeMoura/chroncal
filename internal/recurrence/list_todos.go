@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/recurset"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -90,25 +91,26 @@ func todoDuration(td todo.Todo) time.Duration {
 	return 0
 }
 
-// newTodoRRuleSet parses td's RRULE into a reusable rruleSet. ok is false when
-// the todo has no anchor (so it cannot be expanded).
-func newTodoRRuleSet(td todo.Todo, includeExDates bool) (rruleSet, bool) {
+// newTodoRRuleSet parses td's RRULE into a reusable recurset.Set for
+// expansion, with the EXDATEs applied. ok is false when the todo has no
+// anchor (so it cannot be expanded).
+func newTodoRRuleSet(td todo.Todo) (recurset.Set, bool) {
 	anchor := todoAnchor(td)
 	if anchor.IsZero() {
-		return rruleSet{}, false
+		return recurset.Set{}, false
 	}
-	return newRRuleSet(td.RecurrenceRule, td.Timezone, anchor,
-		todoDuration(td), td.ParseExDates(), td.ParseRDates(), includeExDates)
+	return recurset.New(td.RecurrenceRule, td.Timezone, anchor,
+		todoDuration(td), td.ParseExDates(), td.ParseRDates())
 }
 
 // newTodoOccChecker builds a reusable orphan-detection checker for a recurring
 // todo master. A cancelled series matches nothing (see newEventOccChecker).
-func newTodoOccChecker(td todo.Todo) occChecker {
-	if cancelledRecurringMaster(td.RecurrenceRule, td.Status) {
-		return occChecker{}
+func newTodoOccChecker(td todo.Todo) recurset.Checker {
+	anchor := todoAnchor(td)
+	if anchor.IsZero() || cancelledRecurringMaster(td.RecurrenceRule, td.Status) {
+		return recurset.Checker{}
 	}
-	rs, _ := newTodoRRuleSet(td, false)
-	return occChecker{rs: rs, anchor: todoAnchor(td)}
+	return recurset.NewChecker(td.RecurrenceRule, td.Timezone, anchor, td.ParseRDates())
 }
 
 // singleTodoInstance returns td as a lone occurrence (non-recurring or
@@ -129,14 +131,14 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 	if cancelledRecurringMaster(td.RecurrenceRule, td.Status) {
 		return nil
 	}
-	rs, ok := newTodoRRuleSet(td, true)
+	rs, ok := newTodoRRuleSet(td)
 	if !ok {
 		return singleTodoInstance(td, from, to)
 	}
 
 	var instances []ExpandedTodo
-	for _, occ := range rs.between(from, to) {
-		_, isRDate := rs.rdateSet[rdateKey(occ)]
+	for _, occ := range rs.Between(from, to) {
+		_, isRDate := rs.RDates[recurset.RDateKey(occ)]
 		instances = append(instances, ExpandedTodo{
 			Todo:         td,
 			InstanceTime: occ.UTC(),
@@ -181,15 +183,15 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 			if anchor.IsZero() {
 				// No datable anchor: fall back to the replaced slot for the
 				// window check. An unparseable recurrence_id leaves anchor zero,
-				// which fails keepOccurrence and is dropped (the orphan probe
+				// which fails recurset.KeepOccurrence and is dropped (the orphan probe
 				// that follows would drop it too).
 				anchor, _ = timeutil.ParseRecurrenceID(o.RecurrenceID)
 			}
 			// Keep on [START, DUE) interval overlap (honoring todoDuration), so a
 			// multi-day override whose START precedes the window but whose DUE
 			// falls inside it is not dropped -- matching the master-occurrence
-			// path (keepOccurrence/between) and the event override path.
-			return ot, keepOccurrence(anchor, todoDuration(ot), from, to)
+			// path (recurset.Set.Between) and the event override path.
+			return ot, recurset.KeepOccurrence(anchor, todoDuration(ot), from, to)
 		},
 	}
 	return expandRecurringRowsBy(ctx, k, rows, from, to)

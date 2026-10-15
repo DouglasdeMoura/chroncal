@@ -14,6 +14,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/hydrate"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 type SearchParams struct {
@@ -159,6 +160,11 @@ const (
 )
 
 var ErrInvalidTiming = errors.New("invalid todo timing")
+
+// ErrInstanceCalendarMove reports an edit of one occurrence that asks for
+// another calendar. One CalDAV object holds the whole series, so move the
+// master instead (issue #828).
+var ErrInstanceCalendarMove = errors.New("todo: one occurrence cannot move to another calendar; move the whole series")
 
 func defaults(status, class string) (string, string) {
 	if status == "" {
@@ -479,21 +485,6 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, error) {
-	existing, err := s.q.GetTodo(ctx, id)
-	if err != nil {
-		return Todo{}, err
-	}
-	// Reject writes the linked remote collection cannot accept before any
-	// side effect. Guard the source calendar (where the todo lives). On a
-	// move, guard the destination calendar too.
-	if err := calendaraccess.EnsureWritable(ctx, s.q, existing.CalendarID, todoComponent); err != nil {
-		return Todo{}, err
-	}
-	if p.CalendarID != existing.CalendarID {
-		if err := calendaraccess.EnsureWritable(ctx, s.q, p.CalendarID, todoComponent); err != nil {
-			return Todo{}, err
-		}
-	}
 	p.Status, p.Class = defaults(p.Status, p.Class)
 	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
 	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
@@ -503,47 +494,61 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, e
 
 	// One transaction wraps the todo row and its categories. A category write
 	// that fails then rolls the row update back. The path does not commit a
-	// half-updated row whose MarkResourceDirty never ran (issue #222).
+	// half-updated row whose MarkResourceDirty never ran (issue #222). The
+	// read of the stored row runs in the transaction too, because the move
+	// rules below use its calendar.
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
 		return Todo{}, err
 	}
 	defer rollback()
 
-	r, err := qtx.UpdateTodo(ctx, storage.UpdateTodoParams{
-		ID:              id,
-		Summary:         p.Summary,
-		Description:     storage.StringToNullable(p.Description),
-		Location:        storage.StringToNullable(p.Location),
-		DueDate:         storage.StringToNullable(p.DueDate),
-		StartDate:       storage.StringToNullable(p.StartDate),
-		Duration:        storage.StringToNullable(p.Duration),
-		CompletedAt:     storage.StringToNullable(p.CompletedAt),
-		PercentComplete: p.PercentComplete,
-		Status:          p.Status,
-		CalendarID:      p.CalendarID,
-		Priority:        p.Priority,
-		Class:           p.Class,
-		Url:             storage.StringToNullable(p.URL),
-		RecurrenceRule:  storage.StringToNullable(p.RecurrenceRule),
-		Timezone:        storage.StringToNullable(p.Timezone),
-		Exdates:         storage.StringToNullable(p.ExDates),
-		Rdates:          storage.StringToNullable(p.RDates),
-		Geo:             storage.StringToNullable(p.Geo),
-		Dtstamp:         storage.StringToNullable(p.DtStamp),
-	})
+	existing, err := qtx.GetTodo(ctx, id)
 	if err != nil {
 		return Todo{}, err
 	}
-	t := fromStorage(r)
-	if err := replaceCategoriesTx(ctx, qtx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
-		return Todo{}, fmt.Errorf("replace categories: %w", err)
+	// The access checks, the move rules, the move record, and the dirty
+	// mark run in the transaction, in the order of uidmove.Rows.Update.
+	var t Todo
+	err = uidMoveRows(qtx, existing.Uid).Update(ctx, todoComponent, "todo", existing.RecurrenceID, existing.CalendarID, p.CalendarID, func(ctx context.Context, calendarID int64) error {
+		r, err := qtx.UpdateTodo(ctx, storage.UpdateTodoParams{
+			ID:              id,
+			Summary:         p.Summary,
+			Description:     storage.StringToNullable(p.Description),
+			Location:        storage.StringToNullable(p.Location),
+			DueDate:         storage.StringToNullable(p.DueDate),
+			StartDate:       storage.StringToNullable(p.StartDate),
+			Duration:        storage.StringToNullable(p.Duration),
+			CompletedAt:     storage.StringToNullable(p.CompletedAt),
+			PercentComplete: p.PercentComplete,
+			Status:          p.Status,
+			CalendarID:      calendarID,
+			Priority:        p.Priority,
+			Class:           p.Class,
+			Url:             storage.StringToNullable(p.URL),
+			RecurrenceRule:  storage.StringToNullable(p.RecurrenceRule),
+			Timezone:        storage.StringToNullable(p.Timezone),
+			Exdates:         storage.StringToNullable(p.ExDates),
+			Rdates:          storage.StringToNullable(p.RDates),
+			Geo:             storage.StringToNullable(p.Geo),
+			Dtstamp:         storage.StringToNullable(p.DtStamp),
+		})
+		if err != nil {
+			return err
+		}
+		t = fromStorage(r)
+		if err := replaceCategoriesTx(ctx, qtx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
+			return fmt.Errorf("replace categories: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Todo{}, err
 	}
 	if err := commit(); err != nil {
 		return Todo{}, fmt.Errorf("commit update todo: %w", err)
 	}
 	t.Categories = p.Categories
-	_ = storage.MarkResourceDirty(ctx, s.dirtyExec(), t.CalendarID, t.UID, "todo")
 	return t, nil
 }
 
@@ -752,4 +757,23 @@ func (s *Service) collect(ctx context.Context, t *Todo, failFast bool) *hydrate.
 
 func (s *Service) hydrate(ctx context.Context, t *Todo, failFast bool) error {
 	return s.collect(ctx, t, failFast).Err()
+}
+
+// uidMoveRows binds the todo queries of the transaction to the shared
+// calendar-move rules for uid (see uidmove.SingleMasterRows). The todos
+// table keeps the key UNIQUE(uid, recurrence_id) across all calendars.
+func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
+	return uidmove.SingleMasterRows(qtx, uid, ErrInstanceCalendarMove,
+		func(ctx context.Context) (uidmove.Master, bool, error) {
+			m, err := qtx.GetTodoByUIDIncludingDeleted(ctx, uid)
+			found, err := storage.Found(err)
+			return uidmove.Master{ID: m.ID, CalendarID: m.CalendarID, Trashed: m.DeletedAt != nil}, found, err
+		},
+		uidmove.MoveStep{Name: "todos", Move: func(ctx context.Context, from, to int64) error {
+			return qtx.MoveTodoUIDToCalendar(ctx, storage.MoveTodoUIDToCalendarParams{FromCalendarID: from, ToCalendarID: to, Uid: uid})
+		}},
+		uidmove.MoveStep{Name: "todo_exdate_deletes", Move: func(ctx context.Context, from, to int64) error {
+			return qtx.MoveTodoExdateDeletesUIDToCalendar(ctx, storage.MoveTodoExdateDeletesUIDToCalendarParams{FromCalendarID: from, ToCalendarID: to, Uid: uid})
+		}},
+	)
 }

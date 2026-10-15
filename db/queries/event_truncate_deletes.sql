@@ -27,3 +27,9 @@ DELETE FROM event_truncate_deletes WHERE id = ?;
 
 -- name: PurgeOldEventTruncateDeletes :execrows
 DELETE FROM event_truncate_deletes WHERE deleted_at < ?;
+
+-- name: MoveEventTruncateDeletesUIDToCalendar :exec
+-- Move every row of one UID (live or soft-deleted) from one calendar to
+-- another. A local calendar move of a resource calls it. See issue #828.
+UPDATE event_truncate_deletes SET calendar_id = sqlc.arg(to_calendar_id)
+WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);

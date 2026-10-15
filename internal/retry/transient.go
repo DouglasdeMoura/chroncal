@@ -140,6 +140,10 @@ func IsConflict(err error) bool {
 	}
 }
 
+// StatusCode returns the HTTP status that err carries, or zero. It reads a
+// typed HTTPError first and an explicit status marker in the message second.
+func StatusCode(err error) int { return statusCode(err) }
+
 func statusCode(err error) int {
 	if err == nil {
 		return 0

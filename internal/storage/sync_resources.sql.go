@@ -9,6 +9,23 @@ import (
 	"context"
 )
 
+const clearPushedSyncResourceDirty = `-- name: ClearPushedSyncResourceDirty :exec
+UPDATE sync_resources SET dirty = 0
+WHERE calendar_id = ? AND uid = ? AND remote_url != ''
+`
+
+type ClearPushedSyncResourceDirtyParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Clear the dirty flag of a sync row that has a server object. The etag
+// stays. A calendar move calls it on the source row. See issue #828.
+func (q *Queries) ClearPushedSyncResourceDirty(ctx context.Context, arg ClearPushedSyncResourceDirtyParams) error {
+	_, err := q.db.ExecContext(ctx, clearPushedSyncResourceDirty, arg.CalendarID, arg.Uid)
+	return err
+}
+
 const clearSyncResourceDirty = `-- name: ClearSyncResourceDirty :exec
 UPDATE sync_resources SET dirty = 0, etag = ? WHERE calendar_id = ? AND uid = ?
 `
@@ -40,6 +57,22 @@ type ClearSyncResourcePushFailureParams struct {
 func (q *Queries) ClearSyncResourcePushFailure(ctx context.Context, arg ClearSyncResourcePushFailureParams) error {
 	_, err := q.db.ExecContext(ctx, clearSyncResourcePushFailure, arg.CalendarID, arg.Uid)
 	return err
+}
+
+const countTombstonesByCalendarAndUID = `-- name: CountTombstonesByCalendarAndUID :one
+SELECT COUNT(*) FROM tombstones WHERE calendar_id = ? AND uid = ?
+`
+
+type CountTombstonesByCalendarAndUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) CountTombstonesByCalendarAndUID(ctx context.Context, arg CountTombstonesByCalendarAndUIDParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTombstonesByCalendarAndUID, arg.CalendarID, arg.Uid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createTombstone = `-- name: CreateTombstone :exec
@@ -121,6 +154,23 @@ type DeleteTombstonesByCalendarAndUIDParams struct {
 
 func (q *Queries) DeleteTombstonesByCalendarAndUID(ctx context.Context, arg DeleteTombstonesByCalendarAndUIDParams) error {
 	_, err := q.db.ExecContext(ctx, deleteTombstonesByCalendarAndUID, arg.CalendarID, arg.Uid)
+	return err
+}
+
+const deleteUnpushedSyncResource = `-- name: DeleteUnpushedSyncResource :exec
+DELETE FROM sync_resources
+WHERE calendar_id = ? AND uid = ? AND remote_url = ''
+`
+
+type DeleteUnpushedSyncResourceParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Delete a sync row that has no server object. A push of that row would
+// create a copy on the server. See issue #828.
+func (q *Queries) DeleteUnpushedSyncResource(ctx context.Context, arg DeleteUnpushedSyncResourceParams) error {
+	_, err := q.db.ExecContext(ctx, deleteUnpushedSyncResource, arg.CalendarID, arg.Uid)
 	return err
 }
 
@@ -222,6 +272,72 @@ func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) 
 			&i.Rev,
 			&i.PushFailCount,
 			&i.LastPushError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSiblingTombstones = `-- name: ListSiblingTombstones :many
+SELECT
+    t.id, t.calendar_id, t.uid, t.remote_url, t.deleted_at,
+    c.remote_url AS calendar_remote_url,
+    c.remote_access AS calendar_remote_access,
+    COALESCE(sr.etag, '') AS etag
+FROM tombstones t
+JOIN calendars c ON c.id = t.calendar_id
+LEFT JOIN sync_resources sr ON sr.calendar_id = t.calendar_id AND sr.uid = t.uid
+WHERE c.account_id = (SELECT own.account_id FROM calendars own WHERE own.id = ?1)
+  AND c.account_id != 0
+  AND c.id != ?1
+  AND c.remote_url IS NOT NULL AND c.remote_url != ''
+  AND t.uid = ?2
+ORDER BY c.display_order, c.name, t.deleted_at
+`
+
+type ListSiblingTombstonesParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+type ListSiblingTombstonesRow struct {
+	Tombstone            Tombstone
+	CalendarRemoteUrl    *string
+	CalendarRemoteAccess string
+	Etag                 string
+}
+
+// The unsent tombstones of one UID in the other calendars of one account,
+// with the last known etag of each source object. A calendar without a remote_url
+// has no server object to delete. The caller drops the read-only
+// calendars. A local move between two calendars of one account leaves a
+// tombstone in the source calendar. See issue #828.
+func (q *Queries) ListSiblingTombstones(ctx context.Context, arg ListSiblingTombstonesParams) ([]ListSiblingTombstonesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSiblingTombstones, arg.CalendarID, arg.Uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSiblingTombstonesRow
+	for rows.Next() {
+		var i ListSiblingTombstonesRow
+		if err := rows.Scan(
+			&i.Tombstone.ID,
+			&i.Tombstone.CalendarID,
+			&i.Tombstone.Uid,
+			&i.Tombstone.RemoteUrl,
+			&i.Tombstone.DeletedAt,
+			&i.CalendarRemoteUrl,
+			&i.CalendarRemoteAccess,
+			&i.Etag,
 		); err != nil {
 			return nil, err
 		}

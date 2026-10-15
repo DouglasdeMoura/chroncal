@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/hydrate"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
@@ -193,27 +192,14 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string, d
 		}
 	}
 
-	// A PUT can reach the server and still lose its response, which Retry
-	// classifies as transient. The retried PUT re-sends the stale If-Match
-	// and the server answers 412 forever. Mirror the regular push loop:
-	// when an earlier attempt may have landed and the server now holds the
-	// exact body we sent, adopt the landed ETag. See issues #294 and #647.
-	priorAttemptMayHaveLanded := false
-	newEtag, putErr := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
-		etag, err := client.PutResource(ctx, putPath, body, res.Etag)
-		if err == nil {
-			return etag, nil
-		}
-		// A 412 is never transient, so these branches are exclusive.
-		if caldav.IsTransient(err) {
-			priorAttemptMayHaveLanded = true
-		} else if priorAttemptMayHaveLanded && caldav.IsConflict(err) {
-			if landedEtag, ok := e.putAlreadyLanded(ctx, client, putPath, body); ok {
-				return landedEtag, nil
-			}
-		}
-		return etag, err
-	})
+	// putResource adopts a PUT that landed before a lost response (#647).
+	// putOrSettleMove also settles a refused create of a moved resource,
+	// as the normal push does (issue #828).
+	newEtag, putErr, moveErr := e.putOrSettleMove(ctx, client, calendarID, putPath, body, *res)
+	if moveErr != nil {
+		e.recordPushFailure(ctx, calendarID, uid, moveErr)
+		return dropped, moveErr
+	}
 
 	if putErr != nil {
 		putErr = fmt.Errorf("put %s: %w", uid, putErr)

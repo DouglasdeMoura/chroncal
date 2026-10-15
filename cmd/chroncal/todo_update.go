@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -270,6 +271,10 @@ a --progress value other than 100.`,
 			}
 
 			t, err := a.Todos.Update(ctx, existing.ID, p)
+			if errors.Is(err, todo.ErrInstanceCalendarMove) {
+				// A todo UID has one master in all calendars.
+				return errOccurrenceMove(ctx, a, "todo", existing.UID, existing.RecurrenceID, existing.CalendarID, err)
+			}
 			if err != nil {
 				return fmt.Errorf("update todo: %w", err)
 			}
@@ -338,11 +343,11 @@ a --progress value other than 100.`,
 				if err := printOutput(w, toJSONTodo(t)); err != nil {
 					return err
 				}
-				opportunisticPush(a, t.CalendarID, cmd)
+				opportunisticPushMove(a, existing.CalendarID, t.CalendarID, t.UID, cmd)
 				return nil
 			}
 			printTodo(w, t)
-			opportunisticPush(a, t.CalendarID, cmd)
+			opportunisticPushMove(a, existing.CalendarID, t.CalendarID, t.UID, cmd)
 			return nil
 		},
 	}

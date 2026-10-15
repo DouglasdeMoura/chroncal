@@ -22,11 +22,11 @@ func OccurrenceExistsAt(evt event.Event, at time.Time) bool {
 	if cancelledRecurringMaster(evt.RecurrenceRule, evt.Status) {
 		return false
 	}
-	rs, ok := newEventRRuleSet(evt, true)
+	rs, ok := newEventRRuleSet(evt)
 	if !ok {
 		return evt.StartTime.Equal(at)
 	}
-	return rs.occursAt(at.UTC().Format(time.RFC3339))
+	return rs.OccursAt(at.UTC().Format(time.RFC3339))
 }
 
 // HasOccurrenceFrom reports whether scoping the series at from removes at
@@ -36,15 +36,15 @@ func HasOccurrenceFrom(evt event.Event, from time.Time) bool {
 	if cancelledRecurringMaster(evt.RecurrenceRule, evt.Status) {
 		return false
 	}
-	rs, ok := newEventRRuleSet(evt, true)
+	rs, ok := newEventRRuleSet(evt)
 	if !ok {
 		return !evt.StartTime.Before(from)
 	}
-	// rs.between keeps occurrences that merely overlap the window (a
+	// between keeps occurrences that merely overlap the window (a
 	// multi-day instance started earlier still runs at from). Deletion keys
 	// on starts, so only a start at or after the cutoff counts.
 	lo := from.UTC()
-	for _, occ := range rs.between(lo, lo.Add(instanceScopeHorizon)) {
+	for _, occ := range rs.Between(lo, lo.Add(instanceScopeHorizon)) {
 		if !occ.Before(lo) {
 			return true
 		}
@@ -59,7 +59,7 @@ func NextOccurrenceAfter(evt event.Event, after time.Time) (time.Time, bool) {
 	if cancelledRecurringMaster(evt.RecurrenceRule, evt.Status) {
 		return time.Time{}, false
 	}
-	rs, ok := newEventRRuleSet(evt, true)
+	rs, ok := newEventRRuleSet(evt)
 	if !ok {
 		if evt.StartTime.After(after) {
 			return evt.StartTime, true
@@ -67,7 +67,7 @@ func NextOccurrenceAfter(evt event.Event, after time.Time) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	lo := after.UTC()
-	for _, occ := range rs.between(lo, lo.Add(instanceScopeHorizon)) {
+	for _, occ := range rs.Between(lo, lo.Add(instanceScopeHorizon)) {
 		if occ.After(after) {
 			return occ, true
 		}
