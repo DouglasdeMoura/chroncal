@@ -8,6 +8,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/recurset"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -52,7 +53,7 @@ func newEventOccChecker(evt event.Event) occChecker {
 		return occChecker{}
 	}
 	rs, _ := newEventRRuleSet(evt, false)
-	return occChecker{rs: rs, anchor: evt.StartTime}
+	return occChecker{Set: rs, Anchor: evt.StartTime}
 }
 
 // singleEventInstance returns evt as a lone occurrence when it is non-recurring
@@ -76,8 +77,8 @@ func ExpandEvent(evt event.Event, from, to time.Time) []ExpandedEvent {
 	}
 
 	var instances []ExpandedEvent
-	for _, occ := range rs.between(from, to) {
-		_, isRDate := rs.rdateSet[rdateKey(occ)]
+	for _, occ := range between(rs, from, to) {
+		_, isRDate := rs.RDates[recurset.RDateKey(occ)]
 		instances = append(instances, ExpandedEvent{
 			Event:        evt,
 			InstanceTime: occ.UTC(),

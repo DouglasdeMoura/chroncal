@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/recurset"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -107,7 +108,7 @@ func newJournalOccChecker(j journal.Journal) occChecker {
 		return occChecker{}
 	}
 	rs, _ := newJournalRRuleSet(j, false)
-	return occChecker{rs: rs, anchor: j.ParseStartDate()}
+	return occChecker{Set: rs, Anchor: j.ParseStartDate()}
 }
 
 // singleJournalInstance returns j as a lone occurrence (non-recurring or
@@ -132,8 +133,8 @@ func ExpandJournal(j journal.Journal, from, to time.Time) []ExpandedJournal {
 	}
 
 	var instances []ExpandedJournal
-	for _, occ := range rs.between(from, to) {
-		_, isRDate := rs.rdateSet[rdateKey(occ)]
+	for _, occ := range between(rs, from, to) {
+		_, isRDate := rs.RDates[recurset.RDateKey(occ)]
 		instances = append(instances, ExpandedJournal{Journal: j, InstanceTime: occ.UTC(), IsOverride: isRDate})
 	}
 	return instances

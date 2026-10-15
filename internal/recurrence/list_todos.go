@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/recurset"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -108,7 +109,7 @@ func newTodoOccChecker(td todo.Todo) occChecker {
 		return occChecker{}
 	}
 	rs, _ := newTodoRRuleSet(td, false)
-	return occChecker{rs: rs, anchor: todoAnchor(td)}
+	return occChecker{Set: rs, Anchor: todoAnchor(td)}
 }
 
 // singleTodoInstance returns td as a lone occurrence (non-recurring or
@@ -135,8 +136,8 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 	}
 
 	var instances []ExpandedTodo
-	for _, occ := range rs.between(from, to) {
-		_, isRDate := rs.rdateSet[rdateKey(occ)]
+	for _, occ := range between(rs, from, to) {
+		_, isRDate := rs.RDates[recurset.RDateKey(occ)]
 		instances = append(instances, ExpandedTodo{
 			Todo:         td,
 			InstanceTime: occ.UTC(),
