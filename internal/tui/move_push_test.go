@@ -136,3 +136,59 @@ func TestEditMovePushKeepsSourceWhenTargetFails(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ts, 1, "the source tombstone must stay")
 }
+
+// openOccurrenceEdit opens the edit form of the second occurrence of a
+// daily series in Work and selects Personal in the calendar picker.
+func (f tuiMoveFixture) openOccurrenceEdit(t *testing.T) Model {
+	t.Helper()
+	ctx := context.Background()
+	start := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
+	series, err := f.a.Events.Create(ctx, event.CreateParams{
+		CalendarID: f.work, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	require.NoError(t, err)
+	occurrence := series
+	occurrence.StartTime = start.Add(24 * time.Hour)
+	occurrence.EndTime = occurrence.StartTime.Add(time.Hour)
+	m, next := step(t, f.m, EventEditMsg{Event: occurrence})
+	m, _ = step(t, m, next)
+	require.True(t, m.formOpen)
+	for i, c := range m.form.calendars {
+		if c.ID == f.personal {
+			m.form.calendarField.SetSelected(i)
+		}
+	}
+	return m
+}
+
+// TestOccurrenceEditWithNewCalendarOffersNoThisEventOnly changes the
+// calendar in the edit form of one occurrence. One occurrence cannot move
+// alone, so the scope prompt must not offer "This event".
+func TestOccurrenceEditWithNewCalendarOffersNoThisEventOnly(t *testing.T) {
+	f := newTUIMoveFixture(t)
+	m := f.openOccurrenceEdit(t)
+	m, save := submitOpenForm(t, m)
+	updated, _ := m.Update(save)
+	m = updated.(Model)
+	require.True(t, m.choiceOpen, "the scope prompt did not open")
+	view := stripANSI(m.choiceDialog.View())
+	require.NotContains(t, view, "This event")
+	require.Contains(t, view, "This and following")
+	require.Contains(t, view, "All events")
+	require.Equal(t, 2, m.choiceDialog.choices)
+}
+
+// TestOccurrenceMoveRefusalKeepsTheForm feeds a refused occurrence move
+// back to the model. The form must open again with the error, so the
+// edits of the user are not lost.
+func TestOccurrenceMoveRefusalKeepsTheForm(t *testing.T) {
+	f := newTUIMoveFixture(t)
+	m := f.openOccurrenceEdit(t)
+	m, save := submitOpenForm(t, m)
+	updated, _ := m.Update(save)
+	m = updated.(Model)
+	updated, _ = m.Update(eventUpdateAfterScopeMsg{calendarID: f.personal, err: event.ErrInstanceCalendarMove})
+	m = updated.(Model)
+	require.True(t, m.formOpen, "the form closed after a refused move")
+	require.Contains(t, stripANSI(m.form.View()), "one occurrence cannot move")
+}

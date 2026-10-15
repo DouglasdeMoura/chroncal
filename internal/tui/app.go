@@ -140,12 +140,15 @@ type pendingAction struct {
 // pendingTarget holds the payload of one pendingAction. Exactly one
 // member is live at a time; the owning kind selects it.
 type pendingTarget struct {
-	ev           event.Event      // eventDelete, eventDeleteScope
-	save         EventFormSaveMsg // editScope
-	calendarID   int64            // calendarDelete, calendarKeepLocal, calendarPromote
-	promoteID    int64            // calendarDelete: replacement default
-	promoteCands []int64          // calendarPromote: candidate IDs by button index
-	accountID    int64            // accountRemove
+	ev   event.Event      // eventDelete, eventDeleteScope
+	save EventFormSaveMsg // editScope
+	// scopeOffset is added to the button index of the edit-scope prompt.
+	// It is 1 when the prompt leaves out "This event" (editScope).
+	scopeOffset  int
+	calendarID   int64   // calendarDelete, calendarKeepLocal, calendarPromote
+	promoteID    int64   // calendarDelete: replacement default
+	promoteCands []int64 // calendarPromote: candidate IDs by button index
+	accountID    int64   // accountRemove
 	selection    *accountCalendarSelection
 	defaultCands []accountDefaultCandidate
 	entries      []trash.Entry // purgeEntries

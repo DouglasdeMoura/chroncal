@@ -580,3 +580,17 @@ func (m EventFormModel) BoxSize() (int, int) {
 	}
 	return lipgloss.Size(m.View())
 }
+
+// withCalendarError shows a refused save under the calendar field, or
+// under the first field when the form has no calendar picker.
+func (m EventFormModel) withCalendarError(msg string) EventFormModel {
+	field := 0
+	for i, k := range m.fieldKeys {
+		if k == efKeyCalendar {
+			field = i
+			break
+		}
+	}
+	m.form.SetError(field, msg)
+	return m
+}

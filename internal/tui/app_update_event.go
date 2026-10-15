@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -225,16 +226,19 @@ func (m Model) handleEventFormSave(msg EventFormSaveMsg) (tea.Model, tea.Cmd) {
 	// (ChoiceDialogResultMsg below) reads the armed save and routes
 	// to UpdateInstance / UpdateFromInstance / Update.
 	if editID > 0 && !msg.InstanceTime.IsZero() {
+		// One occurrence cannot move to another calendar (issue #828). A
+		// save with a new calendar then gets no "This event" choice.
+		options := []string{"This event", "This and following", "All events"}
+		offset := 0
+		if fromCalendarID != 0 && msg.CalendarID != fromCalendarID {
+			options, offset = options[1:], 1
+		}
 		return m.armChoice(
 			pendingAction{
 				kind:   pendingActionEditScope,
-				target: pendingTarget{save: msg},
+				target: pendingTarget{save: msg, scopeOffset: offset},
 			},
-			NewChoiceDialogModel(
-				fmt.Sprintf("Update %q?", msg.Title),
-				m.theme,
-				"This event", "This and following", "All events",
-			),
+			NewChoiceDialogModel(fmt.Sprintf("Update %q?", msg.Title), m.theme, options...),
 		), nil
 	}
 	if editID > 0 {
@@ -315,6 +319,9 @@ func (m Model) handlePaletteSelected(msg PaletteSelectedMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) handleEventUpdateAfterScope(msg eventUpdateAfterScopeMsg) (tea.Model, tea.Cmd) {
+	if errors.Is(msg.err, event.ErrInstanceCalendarMove) {
+		return m.reopenFormWithError(msg.err), nil
+	}
 	if msg.err != nil {
 		m.err = msg.err
 		m.viewReturnEvent = event.Event{}
@@ -350,6 +357,9 @@ func (m Model) handleEventCreated(msg eventCreatedMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleEventUpdated(msg eventUpdatedMsg) (tea.Model, tea.Cmd) {
+	if errors.Is(msg.err, event.ErrInstanceCalendarMove) {
+		return m.reopenFormWithError(msg.err), nil
+	}
 	if msg.err != nil {
 		m.err = msg.err
 		m.viewReturnEvent = event.Event{}
@@ -597,4 +607,14 @@ func (m Model) handleTrashActionDone(msg trashActionDoneMsg) (tea.Model, tea.Cmd
 		cmds = append(cmds, m.toast.Purged(msg.title))
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// reopenFormWithError opens the edit form again with a refused save. The
+// form keeps the edits of the user, so the user can pick another calendar
+// or another scope and save again.
+func (m Model) reopenFormWithError(err error) Model {
+	m.form = m.form.withCalendarError(err.Error())
+	m.formOpen = true
+	m.viewReturnEvent = event.Event{}
+	return m
 }
