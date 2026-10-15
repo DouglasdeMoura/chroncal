@@ -20,18 +20,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	if err != nil {
 		return nil, fmt.Errorf("list tombstones: %w", err)
 	}
-	tombstonedPaths := make(map[string]bool, len(tombstones))
-	tombstonedUIDs := make(map[string]bool, len(tombstones))
-	for _, ts := range tombstones {
-		if ts.RemoteUrl != "" {
-			if p, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl); hrefErr == nil {
-				tombstonedPaths[p] = true
-			}
-		}
-		if ts.Uid != "" {
-			tombstonedUIDs[ts.Uid] = true
-		}
-	}
+	tombstonedPaths, tombstonedUIDs := e.tombstoneSets(client, calendarID, remoteURL, tombstones)
 
 	localResources, err := e.q.ListSyncResourcesByCalendar(ctx, calendarID)
 	if err != nil {
@@ -333,4 +322,27 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	}
 
 	return result, nil
+}
+
+// tombstoneSets returns the canonical hrefs and the UIDs of the tombstones
+// of calendarID. A UID counts also when its href is invalid, because the
+// deletion rule of pendingDeletions.apply reads the UIDs.
+func (e *Engine) tombstoneSets(client *caldav.Client, calendarID int64, remoteURL string, tombstones []storage.Tombstone) (paths, uids map[string]bool) {
+	paths = make(map[string]bool, len(tombstones))
+	uids = make(map[string]bool, len(tombstones))
+	for _, ts := range tombstones {
+		if ts.Uid != "" {
+			uids[ts.Uid] = true
+		}
+		if ts.RemoteUrl == "" {
+			continue
+		}
+		p, err := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
+		if err != nil {
+			e.logger.Warn("ignore invalid tombstone href", "calendar_id", calendarID, "uid", ts.Uid, "remote_url", ts.RemoteUrl, "error", err)
+			continue
+		}
+		paths[p] = true
+	}
+	return paths, uids
 }

@@ -100,23 +100,7 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 	if err != nil {
 		return nil, fmt.Errorf("list tombstones: %w", err)
 	}
-	tombstonedPaths := make(map[string]bool, len(tombstones))
-	tombstonedUIDs := make(map[string]bool, len(tombstones))
-	for _, ts := range tombstones {
-		// The UID counts also when the href is invalid: the deletion rule
-		// of apply reads tombstonedUIDs.
-		if ts.Uid != "" {
-			tombstonedUIDs[ts.Uid] = true
-		}
-		if ts.RemoteUrl != "" {
-			remotePath, hrefErr := client.CanonicalObjectRef(remoteURL, ts.RemoteUrl)
-			if hrefErr != nil {
-				e.logger.Warn("ignore invalid tombstone href", "calendar_id", calendarID, "uid", ts.Uid, "remote_url", ts.RemoteUrl, "error", hrefErr)
-				continue
-			}
-			tombstonedPaths[remotePath] = true
-		}
-	}
+	tombstonedPaths, tombstonedUIDs := e.tombstoneSets(client, calendarID, remoteURL, tombstones)
 
 	// Build map of known local resources
 	localResources, err := e.q.ListSyncResourcesByCalendar(ctx, calendarID)
