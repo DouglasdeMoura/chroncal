@@ -15,6 +15,9 @@ func (m Model) dispatchLifecycleMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case accountCredentialStoredMsg:
 		next, cmd := m.finishAccountCredentialStore(msg)
 		return next, cmd, true
+	case plaintextOptInSavedMsg:
+		next, cmd := m.handlePlaintextOptInSaved(msg)
+		return next, cmd, true
 	case accountReauthReadyMsg:
 		next, cmd := m.handleAccountReauthReady(msg)
 		return next, cmd, true
