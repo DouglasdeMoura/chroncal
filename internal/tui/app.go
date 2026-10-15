@@ -504,6 +504,10 @@ type Model struct {
 	// plaintext opt-in runs. The form handlers refuse a second submit in
 	// that window. The flag does not show the sync spinner.
 	plaintextSaving bool
+	// plaintextOptedIn is true after the user turns on plaintext storage
+	// in this session. The model holds it, not the shared *app.App,
+	// because commands read app.App from other goroutines.
+	plaintextOptedIn bool
 	// pendingSyncCalendar holds a calendar whose sync was requested while
 	// another sync was running (e.g. a re-auth completing mid-sync).
 	// syncFinishedMsg drains it so the post-reauth sync isn't lost and the

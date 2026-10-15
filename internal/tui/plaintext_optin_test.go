@@ -118,7 +118,7 @@ func TestPlaintextOptInCancelKeepsTheFormAndWritesNothing(t *testing.T) {
 	if !strings.Contains(m.syncStatus, "no secure credential store") {
 		t.Fatalf("status = %q, want the refusal", m.syncStatus)
 	}
-	if m.app.AllowPlaintext {
+	if m.allowPlaintext() {
 		t.Fatal("the cancel turned on plaintext storage")
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -150,8 +150,13 @@ func TestPlaintextOptInConfirmWritesConfigAndRetriesAddAccount(t *testing.T) {
 
 	updated, _ = m.Update(saved)
 	m = updated.(Model)
-	if !m.app.AllowPlaintext {
-		t.Fatal("app.AllowPlaintext stayed false after the opt-in")
+	if !m.allowPlaintext() {
+		t.Fatal("allowPlaintext stayed false after the opt-in")
+	}
+	// Commands read the shared *app.App from other goroutines, so the
+	// opt-in must not write it.
+	if m.app.AllowPlaintext {
+		t.Fatal("the opt-in wrote app.AllowPlaintext on the shared app")
 	}
 	if !m.syncing || m.syncStatus != "Adding account…" {
 		t.Fatalf("syncing = %v, status = %q; want the Add Account retry", m.syncing, m.syncStatus)
@@ -229,9 +234,9 @@ func TestPlaintextOptInConfirmSavesTheRotatedPassword(t *testing.T) {
 	}
 	updated, cmd = m.Update(saved)
 	m = updated.(Model)
-	if !m.app.AllowPlaintext || m.accountCredentialsOpen || !m.syncing {
+	if !m.allowPlaintext() || m.accountCredentialsOpen || !m.syncing {
 		t.Fatalf("AllowPlaintext = %v, form open = %v, syncing = %v; want the rotation retry",
-			m.app.AllowPlaintext, m.accountCredentialsOpen, m.syncing)
+			m.allowPlaintext(), m.accountCredentialsOpen, m.syncing)
 	}
 	stored := findMsg[accountCredentialStoredMsg](t, cmd)
 	if stored.err != nil {
@@ -256,8 +261,8 @@ func TestPlaintextOptInConfirmSavesTheRotatedPassword(t *testing.T) {
 // start, and the status tells the user to save the secret again.
 func wantDroppedRetryStatus(t *testing.T, m Model, cmd tea.Cmd, want string) {
 	t.Helper()
-	if !m.app.AllowPlaintext {
-		t.Fatal("app.AllowPlaintext stayed false after the opt-in")
+	if !m.allowPlaintext() {
+		t.Fatal("allowPlaintext stayed false after the opt-in")
 	}
 	if m.syncing {
 		t.Fatal("the retry started after the user closed the form")
@@ -347,7 +352,7 @@ func TestPlaintextOptInRefusesAFalseEnvOverride(t *testing.T) {
 	}
 	updated, _ = m.Update(saved)
 	m = updated.(Model)
-	if m.app.AllowPlaintext {
+	if m.allowPlaintext() {
 		t.Fatal("the refused opt-in turned on plaintext storage")
 	}
 	if !strings.Contains(m.syncStatus, "CHRONCAL_SECURITY_ALLOW_PLAINTEXT") {

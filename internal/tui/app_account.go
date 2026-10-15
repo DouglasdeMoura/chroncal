@@ -172,12 +172,19 @@ func (m Model) finishAccountManagementDiscovery(
 // e.g. rows that share a backfilled default). Shared by the reload handler and
 // the reorder handler so both produce identical row order.
 
+// allowPlaintext reports whether a new credential store may fall back to
+// plaintext storage: the config permits it, or the user turned it on in
+// this session.
+func (m Model) allowPlaintext() bool {
+	return m.app.AllowPlaintext || m.plaintextOptedIn
+}
+
 func (m Model) openCredentialStore() (auth.CredentialStore, error) {
 	return auth.NewCredentialStoreWithWarnings(
 		m.app.CredentialNamespace,
 		m.app.PreviousCredentialNamespaces,
 		m.app.MigrateLegacyCredentials,
-		m.app.AllowPlaintext,
+		m.allowPlaintext(),
 		io.Discard,
 	)
 }

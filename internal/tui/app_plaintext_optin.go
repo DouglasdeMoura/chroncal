@@ -101,8 +101,9 @@ func (m Model) plaintextRetryDroppedStatus(retry tea.Msg) string {
 
 // handlePlaintextOptInSaved turns on plaintext storage for this session and
 // dispatches the refused request again. openCredentialStore reads
-// app.AllowPlaintext each time it opens a store, so the retry uses the
-// plaintext store with no restart. A failed write keeps the setting off and
+// allowPlaintext each time it opens a store, so the retry uses the
+// plaintext store with no restart. The flag lives on the model, not on the
+// shared *app.App, because commands read app.App from other goroutines. A failed write keeps the setting off and
 // leaves the user in the form. A request that can no longer run gets a
 // status line, because a silent drop leaves the secret unsaved.
 func (m Model) handlePlaintextOptInSaved(msg plaintextOptInSavedMsg) (tea.Model, tea.Cmd) {
@@ -115,7 +116,7 @@ func (m Model) handlePlaintextOptInSaved(msg plaintextOptInSavedMsg) (tea.Model,
 			m.expireStatusAfter(10*time.Second, m.statusToken),
 		)
 	}
-	m.app.AllowPlaintext = true
+	m.plaintextOptedIn = true
 	if status := m.plaintextRetryDroppedStatus(msg.retry); status != "" {
 		m.statusToken++
 		m.syncStatus = status
