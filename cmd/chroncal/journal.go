@@ -605,11 +605,11 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 				if err := printOutput(w, toJSONJournal(j)); err != nil {
 					return err
 				}
-				opportunisticPush(a, j.CalendarID, cmd)
+				opportunisticPushMove(a, existing.CalendarID, j.CalendarID, cmd)
 				return nil
 			}
 			printJournal(w, j)
-			opportunisticPush(a, j.CalendarID, cmd)
+			opportunisticPushMove(a, existing.CalendarID, j.CalendarID, cmd)
 			return nil
 		},
 	}

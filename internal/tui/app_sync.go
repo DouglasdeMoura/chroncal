@@ -213,6 +213,36 @@ func syncProgressLabel(name string) string {
 	return string(runes[:maxLen-1]) + "…"
 }
 
+// runMovePush is runOpportunisticPush for an edit that can move an item
+// from fromCalendarID to toCalendarID. A move leaves a tombstone in the
+// source calendar (storage.RecordResourceMove). The push of the target
+// alone leaves that delete for the next full sync, and a server that keeps
+// a UID unique per collection shows a copy in both calendars until then.
+// So after a move it pushes the target and then the source, in one
+// command, so the two pushes do not run at the same time. The target goes
+// first: on a server that keeps a UID unique per account, its push sends
+// the source delete itself (issue #828).
+func (m Model) runMovePush(fromCalendarID, toCalendarID int64) tea.Cmd {
+	target := m.runOpportunisticPush(toCalendarID)
+	if fromCalendarID == 0 || fromCalendarID == toCalendarID {
+		return target
+	}
+	source := m.runOpportunisticPush(fromCalendarID)
+	if target == nil || source == nil {
+		if target != nil {
+			return target
+		}
+		return source
+	}
+	return func() tea.Msg {
+		first, second := target(), source()
+		return tea.BatchMsg{
+			func() tea.Msg { return first },
+			func() tea.Msg { return second },
+		}
+	}
+}
+
 // runOpportunisticPush pushes unpushed changes for a single calendar with no
 // pull. Best-effort: failures do not surface as errors. The dirty flag
 // survives and the background tick will retry. A 412 records a conflict and

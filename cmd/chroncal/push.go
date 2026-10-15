@@ -34,6 +34,21 @@ func opportunisticPush(a *app.App, calendarID int64, cmd *cobra.Command) {
 	pushCalendarAfterWrite(a, calendarID, outW, cmd.ErrOrStderr())
 }
 
+// opportunisticPushMove is opportunisticPush for an update that can move
+// the item from fromCalendarID to toCalendarID. A move leaves a tombstone
+// in the source calendar (storage.RecordResourceMove). The push of the
+// target alone leaves that delete for the next full sync, and a server
+// that keeps a UID unique per collection shows a copy in both calendars
+// until then. So after a move it pushes the target and then the source.
+// The target goes first: on a server that keeps a UID unique per account,
+// its push sends the source delete itself (issue #828).
+func opportunisticPushMove(a *app.App, fromCalendarID, toCalendarID int64, cmd *cobra.Command) {
+	opportunisticPush(a, toCalendarID, cmd)
+	if fromCalendarID != 0 && fromCalendarID != toCalendarID {
+		opportunisticPush(a, fromCalendarID, cmd)
+	}
+}
+
 // pushCalendarAfterWrite opportunistically pushes unpushed changes for one
 // calendar upstream after a CLI write. It is best-effort. Failures are
 // reported to outW but do not affect the command's exit status. The dirty

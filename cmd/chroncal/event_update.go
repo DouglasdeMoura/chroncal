@@ -418,11 +418,11 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				if err := printOutput(w, toJSONEvent(e)); err != nil {
 					return err
 				}
-				opportunisticPush(a, e.CalendarID, cmd)
+				opportunisticPushMove(a, existing.CalendarID, e.CalendarID, cmd)
 				return nil
 			}
 			printEvent(w, e)
-			opportunisticPush(a, e.CalendarID, cmd)
+			opportunisticPushMove(a, existing.CalendarID, e.CalendarID, cmd)
 			return nil
 		},
 	}
