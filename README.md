@@ -356,7 +356,7 @@ chroncal freebusy --calendar Work --from 2026-04-01 --to 2026-04-30
 ### Events
 
 ```
-chroncal event list           [--from DATE] [--to DATE] [--calendar NAME] [--status STATUS] [--include-deleted]
+chroncal event list           [--from DATE] [--to DATE] [--calendar NAME] [--status STATUS] [--include-deleted] [--compact | --detail | --verbose]
 chroncal event get            <id|uid> [--recurrence-id ID]
 chroncal event search         <query> [--calendar NAME] [--from DATE] [--to DATE] [--status STATUS]
 chroncal event add            "<title>" [flags]
@@ -369,6 +369,8 @@ chroncal event purge-deleted  [--older-than DURATION] [--yes]
 ```
 
 Event flags: `--date`, `--time`, `--end-time`, `--duration`, `--timezone`, `--location`, `--description`, `--calendar`, `--status`, `--class`, `--transparency`, `--priority`, `--url`, `--categories`, `--geo`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--alarm`, `--attendee`, `--organizer`, `--contact`, `--resource`, `--comment`, `--related-to`
+
+`event list --verbose` shows each event on a time rail, with its time, title, location, and description. A `|` starts each line of the description. The colors match the `--compact` table. Chroncal shows colors only on a terminal. Set `NO_COLOR` to turn them off.
 
 `event delete` supports three scopes for a recurring series. Pass the series by ID or UID:
 
