@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -319,7 +318,7 @@ func (m Model) handlePaletteSelected(msg PaletteSelectedMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) handleEventUpdateAfterScope(msg eventUpdateAfterScopeMsg) (tea.Model, tea.Cmd) {
-	if errors.Is(msg.err, event.ErrInstanceCalendarMove) {
+	if event.IsMoveRefusal(msg.err) {
 		return m.reopenFormWithError(msg.err), nil
 	}
 	if msg.err != nil {
@@ -357,7 +356,7 @@ func (m Model) handleEventCreated(msg eventCreatedMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleEventUpdated(msg eventUpdatedMsg) (tea.Model, tea.Cmd) {
-	if errors.Is(msg.err, event.ErrInstanceCalendarMove) {
+	if event.IsMoveRefusal(msg.err) {
 		return m.reopenFormWithError(msg.err), nil
 	}
 	if msg.err != nil {

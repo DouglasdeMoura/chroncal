@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -191,4 +192,24 @@ func TestOccurrenceMoveRefusalKeepsTheForm(t *testing.T) {
 	m = updated.(Model)
 	require.True(t, m.formOpen, "the form closed after a refused move")
 	require.Contains(t, stripANSI(m.form.View()), "one occurrence cannot move")
+}
+
+// TestMoveConflictRefusalKeepsTheForm feeds a move refusal for an open sync
+// conflict back to the model, for an edit by row and for a scope edit.
+// Each move refusal must open the form again with the error, so the edits
+// of the user are not lost.
+func TestMoveConflictRefusalKeepsTheForm(t *testing.T) {
+	f := newTUIMoveFixture(t)
+	for _, msg := range []tea.Msg{
+		eventUpdatedMsg{calendarID: f.personal, err: fmt.Errorf("record calendar move: move u: %w", storage.ErrMoveOpenConflict)},
+		eventUpdateAfterScopeMsg{calendarID: f.personal, err: event.ErrOccurrenceOutsideSeries},
+	} {
+		m := f.openOccurrenceEdit(t)
+		m, save := submitOpenForm(t, m)
+		updated, _ := m.Update(save)
+		m = updated.(Model)
+		updated, _ = m.Update(msg)
+		m = updated.(Model)
+		require.True(t, m.formOpen, "the form closed after %T", msg)
+	}
 }

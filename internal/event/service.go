@@ -43,6 +43,25 @@ var ErrMoveTargetHasUID = errors.New("event: the target calendar already holds t
 // occurrence and no master. The service refuses the edit.
 var ErrAmbiguousUID = errors.New("event: the UID has a series in more than one calendar; name the calendar of the series")
 
+// IsMoveRefusal reports whether err is a refusal of an edit that the user
+// can fix in the edit form: a refused calendar move or a refused
+// occurrence edit. A caller that shows a form keeps it open with the error,
+// so the edits are not lost.
+func IsMoveRefusal(err error) bool {
+	for _, refusal := range []error{
+		ErrInstanceCalendarMove,
+		ErrMoveTargetHasUID,
+		ErrAmbiguousUID,
+		ErrOccurrenceOutsideSeries,
+		storage.ErrMoveOpenConflict,
+	} {
+		if errors.Is(err, refusal) {
+			return true
+		}
+	}
+	return false
+}
+
 // ErrOccurrenceOutsideSeries reports an edit of an occurrence whose stored
 // override is in the trash for another reason than a delete of that one
 // occurrence, for example a "this and following" split that ended the
