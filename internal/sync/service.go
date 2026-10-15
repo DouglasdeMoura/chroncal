@@ -81,7 +81,7 @@ type SyncStatus struct {
 	LastSyncError       string
 	PendingPush         int
 	Conflicts           int
-	// StuckHrefs lists the known hrefs that the pull stopped retrying.
+	// StuckHrefs lists the known hrefs whose retries the pull stopped.
 	// Each one keeps its local row. See issue #816.
 	StuckHrefs []StuckHref
 }

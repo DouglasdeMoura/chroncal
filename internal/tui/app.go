@@ -706,8 +706,8 @@ func resolveFullSyncStrategy(name string) syncpkg.ConflictStrategy {
 }
 
 func Run(a *app.App, themeName string, opts RunOptions) error {
-	// config.Load does not check the [keys] table, so the CLI keeps
-	// working with a bad remap. The TUI refuses to start with it. A silent
+	// config.Load does not check the [keys] table, so the CLI continues to
+	// work with a bad remap. The TUI refuses to start with it. A silent
 	// fallback to the defaults hides the typo.
 	keys, err := config.ParseKeys(opts.Keys)
 	if err != nil {
