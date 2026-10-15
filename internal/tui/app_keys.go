@@ -156,3 +156,17 @@ func isShiftedKey(k string) bool {
 func isSidebarStepKey(k string) bool {
 	return k == "tab" || k == "shift+tab"
 }
+
+// sidebarBackKey returns the key that the sidebar footer names for the way
+// back to the main view. Tab and shift+tab step between the sidebar stops,
+// so the first switch_focus key that is not one of them goes back at once.
+// With no such key the footer names tab, which leaves the sidebar at the
+// last stop.
+func sidebarBackKey(b key.Binding) string {
+	for _, k := range b.Keys() {
+		if !isSidebarStepKey(k) {
+			return config.CanonicalKey(k)
+		}
+	}
+	return "tab"
+}

@@ -315,3 +315,28 @@ func TestSwitchFocusShiftedKeyEntersAtEnd(t *testing.T) {
 		}
 	}
 }
+
+// TestSidebarFooterBackKeySkipsStepKeys checks the "back" hint of the
+// sidebar footer. Tab and shift+tab step between the sidebar stops, so the
+// hint names the first switch_focus key that is not one of them. With the
+// default keys the hint stays "tab back", the text it had before (tab
+// leaves the sidebar at the last stop).
+func TestSidebarFooterBackKeySkipsStepKeys(t *testing.T) {
+	for _, tc := range []struct {
+		keys []string
+		want string
+	}{
+		{nil, "tab back"},
+		{[]string{"tab", "ctrl+o"}, "ctrl+o back"},
+		{[]string{"shift+tab", "tab", "F"}, "F back"},
+	} {
+		m := NewModel(nil, "")
+		if tc.keys != nil {
+			m = m.withKeys(newAppKeys(map[string][]string{"switch_focus": tc.keys}))
+		}
+		footer := stripANSI(m.footer.Render(FooterSidebar, 200, "", "", false, false))
+		if !strings.Contains(footer, tc.want) {
+			t.Fatalf("switch_focus %v: sidebar footer = %q, want %q", tc.keys, footer, tc.want)
+		}
+	}
+}
