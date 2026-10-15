@@ -762,3 +762,40 @@ func TestDoctorPushSettlesAMove(t *testing.T) {
 	}
 	wantOnlyServerObject(t, srv, "/cal/b/"+evt.UID+".ics")
 }
+
+// TestPushMoveOrder checks the shared order of the write-path pushes after
+// a move: the target first, and the source only when the target holds the
+// item. The recorder push sends nothing, so the target stays dirty at
+// first and the source push must not run.
+func TestPushMoveOrder(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	evt := createPushedEvent(t, engine, calA)
+	moveEvent(t, engine, evt, calB)
+
+	var pushed []int64
+	record := func(calendarID int64) { pushed = append(pushed, calendarID) }
+	PushMove(ctx, q, calA, calB, evt.UID, record)
+	if len(pushed) != 1 || pushed[0] != calB {
+		t.Fatalf("pushes with a dirty target = %v, want only the target %d", pushed, calB)
+	}
+
+	// The target now holds the item.
+	if _, err := engine.db.ExecContext(ctx,
+		`UPDATE sync_resources SET dirty = 0, remote_url = '/cal/b/x.ics' WHERE calendar_id = ? AND uid = ?`, calB, evt.UID); err != nil {
+		t.Fatalf("settle the target row: %v", err)
+	}
+	pushed = nil
+	PushMove(ctx, q, calA, calB, evt.UID, record)
+	if len(pushed) != 2 || pushed[0] != calB || pushed[1] != calA {
+		t.Fatalf("pushes with a settled target = %v, want [%d %d]", pushed, calB, calA)
+	}
+
+	pushed = nil
+	PushMove(ctx, q, calB, calB, evt.UID, record)
+	if len(pushed) != 1 {
+		t.Fatalf("pushes with no move = %v, want one", pushed)
+	}
+}

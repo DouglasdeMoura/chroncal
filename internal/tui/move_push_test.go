@@ -109,10 +109,7 @@ func TestEditMovePushesSourceCalendar(t *testing.T) {
 	require.Equal(t, f.work, msg.fromCalendarID, "the update message must carry the source calendar")
 	require.Equal(t, f.evt.UID, msg.uid)
 
-	// runMovePush runs these two pushes in sequence: the target, then
-	// the source.
-	runPush(t, m.runOpportunisticPush(msg.calendarID))
-	runPush(t, m.runMoveSourcePush(msg.fromCalendarID, msg.calendarID, msg.uid))
+	runPush(t, m.runMovePush(msg.fromCalendarID, msg.calendarID, msg.uid))
 	got := f.stub.Paths()
 	require.Len(t, got, 1, "server objects = %v", got)
 	require.True(t, strings.HasPrefix(got[0], "/calendars/personal/"), "server objects = %v", got)
@@ -128,8 +125,7 @@ func TestEditMovePushKeepsSourceWhenTargetFails(t *testing.T) {
 	f.stub.SetPutStatus("/calendars/personal/", http.StatusInsufficientStorage)
 	m, msg := f.moveWithForm(t)
 
-	runPush(t, m.runOpportunisticPush(msg.calendarID))
-	runPush(t, m.runMoveSourcePush(msg.fromCalendarID, msg.calendarID, msg.uid))
+	runPush(t, m.runMovePush(msg.fromCalendarID, msg.calendarID, msg.uid))
 	got := f.stub.Paths()
 	require.Len(t, got, 1, "server objects = %v", got)
 	require.True(t, strings.HasPrefix(got[0], "/calendars/work/"), "server objects = %v", got)

@@ -46,6 +46,34 @@ func (s *Service) PushLocalEdits(ctx context.Context, calendarID int64) (*SyncRe
 	return s.engine.PushLocalEdits(ctx, calendarID)
 }
 
+// PushMove runs the pushes after a write that can move the item uid from
+// fromCalendarID to toCalendarID. push runs the opportunistic push of one
+// calendar for the caller (the CLI and the TUI report the result in their
+// own way). The CLI and the TUI share this order:
+//
+//  1. push the target calendar
+//  2. push the source calendar, only when the write moved the item and
+//     storage.MoveSourceDeleteSafe allows it
+//
+// A move leaves a tombstone in the source calendar
+// (storage.RecordResourceMove). The push of the target alone leaves that
+// delete for the next full sync, and a server that keeps a UID unique per
+// collection shows a copy in both calendars until then. The target goes
+// first: on a server that keeps a UID unique per account, its push sends
+// the source delete itself (issue #828). After a failed target push the
+// source object is the only server copy, so its delete waits with its
+// tombstone. A failed check also skips the source push.
+func PushMove(ctx context.Context, q *storage.Queries, fromCalendarID, toCalendarID int64, uid string, push func(calendarID int64)) {
+	push(toCalendarID)
+	if fromCalendarID == 0 || fromCalendarID == toCalendarID {
+		return
+	}
+	if safe, err := storage.MoveSourceDeleteSafe(ctx, q, fromCalendarID, toCalendarID, uid); err != nil || !safe {
+		return
+	}
+	push(fromCalendarID)
+}
+
 // SyncAccount syncs all calendars linked to one account.
 func (s *Service) SyncAccount(ctx context.Context, accountID int64, strategy ConflictStrategy) ([]*SyncResult, error) {
 	return s.engine.SyncAccount(ctx, accountID, strategy)
