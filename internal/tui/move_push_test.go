@@ -188,7 +188,7 @@ func TestOccurrenceMoveRefusalKeepsTheForm(t *testing.T) {
 	m, save := submitOpenForm(t, m)
 	updated, _ := m.Update(save)
 	m = updated.(Model)
-	updated, _ = m.Update(eventUpdateAfterScopeMsg{calendarID: f.personal, err: event.ErrInstanceCalendarMove})
+	updated, _ = m.Update(eventUpdatedMsg{calendarID: f.personal, err: event.ErrInstanceCalendarMove, scoped: true})
 	m = updated.(Model)
 	require.True(t, m.formOpen, "the form closed after a refused move")
 	require.Contains(t, stripANSI(m.form.View()), "one occurrence cannot move")
@@ -202,7 +202,7 @@ func TestMoveConflictRefusalKeepsTheForm(t *testing.T) {
 	f := newTUIMoveFixture(t)
 	for _, msg := range []tea.Msg{
 		eventUpdatedMsg{calendarID: f.personal, err: fmt.Errorf("record calendar move: move u: %w", storage.ErrMoveOpenConflict)},
-		eventUpdateAfterScopeMsg{calendarID: f.personal, err: event.ErrOccurrenceOutsideSeries},
+		eventUpdatedMsg{calendarID: f.personal, err: event.ErrOccurrenceOutsideSeries, scoped: true},
 	} {
 		m := f.openOccurrenceEdit(t)
 		m, save := submitOpenForm(t, m)

@@ -169,31 +169,25 @@ type eventViewLoadedMsg struct {
 	err   error
 }
 
+// eventUpdatedMsg reports a finished edit of an event: an edit by row
+// (handleEventFormSave) or a scope-routed edit (dispatchEditScope).
 type eventUpdatedMsg struct {
 	calendarID int64
-	// fromCalendarID is the calendar of the event before the edit. A move
-	// leaves a tombstone there, so the push after the edit pushes it too.
+	// fromCalendarID is the calendar of the event (or of the master of a
+	// scope edit) before the edit. A move leaves a tombstone there, and a
+	// split into another calendar leaves a change there, so the push after
+	// the edit pushes it too.
 	fromCalendarID int64
-	// uid is the UID of the edited event. The source push of a move checks
-	// the target state of that UID first.
+	// uid is the UID of the edited event, or of the master of a scope
+	// edit. The source push of a move checks the target state of that UID
+	// first.
 	uid string
-	err error
-}
-
-// eventUpdateAfterScopeMsg is fired by dispatchEditScope after a scope-routed
-// edit (UpdateInstance / UpdateFromInstance / Update) completes. It exists so
-// the agenda reloads without a reuse of eventUpdatedMsg. That message currently
-// drives the "return to view dialog" behaviour. That behaviour does not apply
-// when the row under the edit may have been replaced. One example is "this
-// and following", which splits to a new UID.
-type eventUpdateAfterScopeMsg struct {
-	calendarID int64
-	// fromCalendarID is the calendar of the master before the edit. A move
-	// or a split into another calendar leaves a change there too.
-	fromCalendarID int64
-	// uid is the UID of the master.
-	uid string
-	err error
+	// scoped marks a scope-routed edit (UpdateInstance, UpdateFromInstance,
+	// or Update of the master). The row under the edit can be replaced
+	// ("this and following" splits to a new UID), so the edit does not
+	// return to the view dialog.
+	scoped bool
+	err    error
 }
 
 type eventDeletedMsg struct {

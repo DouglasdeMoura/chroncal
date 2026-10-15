@@ -317,26 +317,6 @@ func (m Model) handlePaletteSelected(msg PaletteSelectedMsg) (tea.Model, tea.Cmd
 	return m, func() tea.Msg { return action() }
 }
 
-func (m Model) handleEventUpdateAfterScope(msg eventUpdateAfterScopeMsg) (tea.Model, tea.Cmd) {
-	if event.IsMoveRefusal(msg.err) {
-		return m.reopenFormWithError(msg.err), nil
-	}
-	if msg.err != nil {
-		m.err = msg.err
-		m.viewReturnEvent = event.Event{}
-		return m, nil
-	}
-	cmds := []tea.Cmd{m.loadEvents()}
-	if push := m.runMovePush(msg.fromCalendarID, msg.calendarID, msg.uid); push != nil {
-		cmds = append(cmds, push)
-	}
-	// On scope-dispatched edits we don't return to the prior view dialog;
-	// the underlying row may have been replaced (e.g. "This and following"
-	// creates a new master with a fresh UID).
-	m.viewReturnEvent = event.Event{}
-	return m, tea.Batch(cmds...)
-}
-
 func (m Model) handleEventCreated(msg eventCreatedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.err = msg.err
@@ -367,6 +347,12 @@ func (m Model) handleEventUpdated(msg eventUpdatedMsg) (tea.Model, tea.Cmd) {
 	cmds := []tea.Cmd{m.loadEvents()}
 	if push := m.runMovePush(msg.fromCalendarID, msg.calendarID, msg.uid); push != nil {
 		cmds = append(cmds, push)
+	}
+	if msg.scoped {
+		// A scope edit does not return to the view dialog. The row under
+		// the edit can be replaced (see eventUpdatedMsg.scoped).
+		m.viewReturnEvent = event.Event{}
+		return m, tea.Batch(cmds...)
 	}
 	if m.viewReturnEvent.ID != 0 {
 		ev := m.viewReturnEvent
