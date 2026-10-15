@@ -2,6 +2,7 @@ package event
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -501,5 +502,41 @@ func TestUpdateInstance_RevivesOverrideOfItsOwnSeries(t *testing.T) {
 		if got := strings.Contains(m.ExDates, inst.Format("2006-01-02T15")); got != tc.wantHas {
 			t.Fatalf("%s master EXDATEs = %q, want the EXDATE kept = %v", tc.name, m.ExDates, tc.wantHas)
 		}
+	}
+}
+
+// TestUpdateInstance_DoesNotReviveOverrideHiddenBySplit edits an occurrence
+// after a "this and following" split. The split soft-deleted the override
+// of that occurrence, because the occurrence is past the UNTIL of the
+// master. An edit of it must not revive that row: the result would be a
+// live override outside the series. The edit must fail with a clear error.
+func TestUpdateInstance_DoesNotReviveOverrideHiddenBySplit(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master := newRecurringMaster(t, svc, "revive-uid-4", "FREQ=WEEKLY")
+	cut := master.StartTime.Add(7 * 24 * time.Hour)
+	later := cut.Add(7 * 24 * time.Hour)
+	params := func(at time.Time) UpdateParams {
+		return UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: at, EndTime: at.Add(time.Hour)}
+	}
+	if _, err := svc.UpdateInstance(ctx, master.UID, later, params(later)); err != nil {
+		t.Fatalf("UpdateInstance before the split: %v", err)
+	}
+	split := params(cut)
+	split.RecurrenceRule = "FREQ=WEEKLY"
+	if _, err := svc.UpdateFromInstance(ctx, master.UID, cut, split); err != nil {
+		t.Fatalf("UpdateFromInstance: %v", err)
+	}
+
+	_, err := svc.UpdateInstance(ctx, master.UID, later, params(later))
+	if !errors.Is(err, ErrOccurrenceOutsideSeries) {
+		t.Fatalf("UpdateInstance past the split = %v, want ErrOccurrenceOutsideSeries", err)
+	}
+	overrides, err := svc.ListOverridesByUID(ctx, master.UID)
+	if err != nil {
+		t.Fatalf("ListOverridesByUID: %v", err)
+	}
+	if len(overrides) != 0 {
+		t.Fatalf("live overrides after the refused edit = %+v, want none", overrides)
 	}
 }
