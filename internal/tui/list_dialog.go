@@ -70,6 +70,14 @@ type ListDialogModel struct {
 	selectedColor color.Color
 	width, height int
 	body          viewport.Model
+	// titleLines holds the wrapped rows of the pinned title. syncBody
+	// computes them once per layout change. The value is nil when the
+	// detail pane has no pinned title. renderDetails and BodyRowScreenY
+	// read this field, so they do not wrap the title again.
+	titleLines []string
+	// layoutDirty is true when a setter changed an input of syncBody and
+	// syncBody did not run after that change. ensureLayout reads it.
+	layoutDirty bool
 	// cache holds per-frame memoized sub-renders that don't depend on
 	// the selection (action bar, help line). It's a pointer so that
 	// value copies of the model — which the bubbletea Update cycle
@@ -120,16 +128,15 @@ func (m ListDialogModel) SetSelectedColor(c color.Color) ListDialogModel {
 // SetRows replaces the list rows. The caller is responsible for a pre-render
 // of each row (swatch, time prefix, …). Scroll and selection are clamped.
 // Disabled-row state is cleared because it belongs to the row set.
-// It does not touch the body viewport. Rows live in the left column only.
-// The body shows the right-column details. Other setters
-// (SetDetailLines, SetActions, SetDetailTitle, SetEmptyList, SetSize)
-// trigger syncBody when they actually need it.
+// The row count changes the detail-pane layout (the pinned title and the
+// stacked list height), so SetRows marks the layout dirty.
 func (m ListDialogModel) SetRows(rows []string) ListDialogModel {
 	m.rows = rows
 	m.rowDisabled = nil
 	if m.selected >= len(rows) {
 		m.selected = max(len(rows)-1, 0)
 	}
+	m.layoutDirty = true
 	return m
 }
 
@@ -228,7 +235,7 @@ func (m ListDialogModel) SelectedColor() color.Color { return m.selectedColor }
 // selected row. The caller rebuilds these whenever selection changes.
 func (m ListDialogModel) SetDetailLines(lines []string) ListDialogModel {
 	m.detailLines = lines
-	m.syncBody()
+	m.layoutDirty = true
 	return m
 }
 
@@ -238,7 +245,7 @@ func (m ListDialogModel) SetDetailLines(lines []string) ListDialogModel {
 // single-event dialog. Empty string clears the pinned title.
 func (m ListDialogModel) SetDetailTitle(t string) ListDialogModel {
 	m.detailTitle = t
-	m.syncBody()
+	m.layoutDirty = true
 	return m
 }
 
@@ -247,7 +254,7 @@ func (m ListDialogModel) SetDetailTitle(t string) ListDialogModel {
 func (m ListDialogModel) SetEmptyList(listMsg string, details []string) ListDialogModel {
 	m.emptyList = listMsg
 	m.emptyDetails = details
-	m.syncBody()
+	m.layoutDirty = true
 	return m
 }
 
@@ -261,7 +268,7 @@ func (m ListDialogModel) SetActions(actions []ListDialogAction) ListDialogModel 
 	if m.focusZone == ListZoneActions && m.firstEnabledAction() < 0 {
 		m.focusZone = ListZoneList
 	}
-	m.syncBody()
+	m.layoutDirty = true
 	return m
 }
 
@@ -274,34 +281,41 @@ func (m ListDialogModel) firstEnabledAction() int {
 	return -1
 }
 
-// syncBody pushes the current detail dimensions and content into the body
-// viewport. HandleKey/HandleMouseWheel can then scroll with no wait for the
-// next View() call to learn about layout. Width/height/content match the
-// values renderDetails would compute for the same model state.
+// SyncLayout runs the detail-pane layout work that waits. SetRows,
+// SetDetailTitle, SetDetailLines, SetEmptyList, and SetActions only mark
+// the layout dirty. Call SyncLayout once at the end of a refresh, so
+// that the title wrap and the viewport update run once per refresh.
+// View, BodyRowScreenY, and the scroll methods also sync a dirty layout,
+// so a skipped call costs time but does not change the output.
+func (m ListDialogModel) SyncLayout() ListDialogModel {
+	m.ensureLayout()
+	return m
+}
+
+// ensureLayout calls syncBody when a setter marked the layout dirty.
+func (m *ListDialogModel) ensureLayout() {
+	if m.layoutDirty {
+		m.syncBody()
+	}
+}
+
+// syncBody computes the detail-pane layout once: the wrapped pinned title
+// and the body size. It pushes the body size and content into the body
+// viewport. HandleKey/HandleMouseWheel can then scroll with no wait for
+// the next View() call. renderDetails and BodyRowScreenY read the same
+// layout from the model.
 func (m *ListDialogModel) syncBody() {
+	m.layoutDirty = false
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	boxW, boxH := m.boxSize()
-	innerW := max(boxW-5, 10)
-	innerH := max(boxH-3, 6)
-	bodyH := max(innerH-4, 3)
-
-	var detailW, detailH int
-	if m.isNarrow() {
-		rowCount := max(len(m.rows), 1)
-		listH := min(max(rowCount+1, 3), max(bodyH/3, 3))
-		detailW = innerW
-		detailH = max(bodyH-listH-1, 3)
-	} else {
-		detailW = detailColumnWidth(innerW)
-		detailH = bodyH
-	}
+	detailW, detailH := m.detailPaneSize()
+	m.titleLines = m.pinnedTitleLines(detailW, detailH)
 	if len(m.actions) > 0 {
 		detailH = max(detailH-2, 1)
 	}
-	if m.hasPinnedTitle() {
-		detailH = max(detailH-2, 1)
+	if m.titleLines != nil {
+		detailH = max(detailH-len(m.titleLines)-1, 1)
 	}
 
 	lines := m.detailLines
@@ -313,8 +327,39 @@ func (m *ListDialogModel) syncBody() {
 	m.body.SetContentLines(lines)
 }
 
-// hasPinnedTitle reports whether the shell should reserve two lines at the
-// top of the detail pane for a pinned title row. The empty-state pane
+// detailPaneSize returns the width and the height of the full detail
+// pane. The height includes the pinned title, the body, and the action
+// bar. The values match the arguments that View gives to renderDetails.
+func (m ListDialogModel) detailPaneSize() (int, int) {
+	boxW, boxH := m.boxSize()
+	innerW := max(boxW-5, 10)
+	innerH := max(boxH-3, 6)
+	bodyH := max(innerH-4, 3)
+
+	if m.isNarrow() {
+		rowCount := max(len(m.rows), 1)
+		listH := min(max(rowCount+1, 3), max(bodyH/3, 3))
+		return innerW, max(bodyH-listH-1, 3)
+	}
+	return detailColumnWidth(innerW), bodyH
+}
+
+// pinnedTitleLines returns the wrapped rows of the pinned title for a
+// detail pane of w cells by h rows. It returns nil when the pane has no
+// pinned title. The title gets at most half of the rows that remain after
+// the action bar and the rule, so the body always keeps space to scroll.
+func (m ListDialogModel) pinnedTitleLines(w, h int) []string {
+	if !m.hasPinnedTitle() {
+		return nil
+	}
+	if len(m.actions) > 0 {
+		h -= 2
+	}
+	return wrapTitleLines(m.detailTitle, w, max((h-1)/2, 1))
+}
+
+// hasPinnedTitle reports whether the shell should reserve lines at the
+// top of the detail pane for a pinned title and its rule. The empty-state pane
 // (no rows) intentionally skips the title since emptyDetails carries its
 // own message.
 func (m ListDialogModel) hasPinnedTitle() bool {

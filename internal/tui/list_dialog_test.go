@@ -280,7 +280,59 @@ func makeOverflowingListDialog() ListDialogModel {
 		SetActions([]ListDialogAction{
 			{Label: "Edit", Msg: func() tea.Msg { return "edit" }},
 			{Label: "Delete", Danger: true, Msg: func() tea.Msg { return "delete" }},
-		})
+		}).
+		SyncLayout()
+}
+
+// TestListDialog_SettersDeferLayout guards the one-layout-per-refresh
+// contract. The setters only mark the layout dirty. SyncLayout runs the
+// layout once. View and BodyRowScreenY give the same result with or
+// without the SyncLayout call.
+func TestListDialog_SettersDeferLayout(t *testing.T) {
+	long := make([]string, 40)
+	for i := range long {
+		long[i] = "detail line"
+	}
+	lazy := NewListDialogModel(newThemedHelp(NewTheme(false))).
+		SetSize(120, 30).
+		SetTitle("Events").
+		SetRows([]string{"Row one", "Row two"}).
+		SetDetailTitle(strings.Repeat("title word ", 30)).
+		SetDetailLines(long).
+		SetActions([]ListDialogAction{{Label: "Edit", Msg: func() tea.Msg { return "edit" }}})
+
+	if !lazy.layoutDirty {
+		t.Fatal("setters should mark the layout dirty")
+	}
+	if got := lazy.body.TotalLineCount(); got != 0 {
+		t.Fatalf("setters should not push the body content, got %d lines", got)
+	}
+
+	synced := lazy.SyncLayout()
+	if synced.layoutDirty {
+		t.Fatal("SyncLayout should clear the dirty flag")
+	}
+	if got := synced.body.TotalLineCount(); got != len(long) {
+		t.Fatalf("SyncLayout body lines = %d, want %d", got, len(long))
+	}
+	if len(synced.titleLines) < 2 {
+		t.Fatalf("SyncLayout should wrap the long title, got %d lines", len(synced.titleLines))
+	}
+
+	if lazy.View() != synced.View() {
+		t.Error("View of a dirty layout should match View after SyncLayout")
+	}
+	lazyY, lazyOK := lazy.BodyRowScreenY(0)
+	syncedY, syncedOK := synced.BodyRowScreenY(0)
+	if lazyY != syncedY || lazyOK != syncedOK {
+		t.Errorf("BodyRowScreenY dirty = (%d, %v), synced = (%d, %v)", lazyY, lazyOK, syncedY, syncedOK)
+	}
+
+	scrolled, _, _ := lazy.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown}, func() tea.Msg { return nil })
+	if scrolled.layoutDirty || scrolled.body.YOffset() == 0 {
+		t.Errorf("HandleKey on a dirty layout should sync, then scroll; dirty=%v YOffset=%d",
+			scrolled.layoutDirty, scrolled.body.YOffset())
+	}
 }
 
 func TestListDialog_OverflowSurfacesMoreHint(t *testing.T) {
