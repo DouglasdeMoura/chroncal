@@ -861,7 +861,7 @@ func TestExplicitDeleteOfMoveSourceKeepsMovedRows(t *testing.T) {
 	}
 	deletions := newPendingDeletions(engine.logger)
 	deletions.markExplicit(srA)
-	if _, failed := deletions.apply(ctx, engine, calA); failed != 0 {
+	if _, failed := deletions.apply(ctx, engine, calA, nil); failed != 0 {
 		t.Fatalf("apply failed = %d, want 0", failed)
 	}
 

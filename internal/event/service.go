@@ -900,7 +900,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	if err := move.CheckOf(ctx, recID, fromCalendarID, p.CalendarID, masters); err != nil {
 		return Event{}, err
 	}
-	if p.CalendarID != master.CalendarID {
+	if p.CalendarID != master.CalendarID && p.CalendarID != fromCalendarID {
 		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
 			return Event{}, err
 		}
