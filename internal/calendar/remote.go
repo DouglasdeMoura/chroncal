@@ -312,8 +312,8 @@ func clearCalendarRemoteState(ctx context.Context, q *storage.Queries, calendarI
 	if err := q.DeleteTombstonesByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete calendar tombstones: %w", err)
 	}
-	if err := q.DeleteSyncPendingHrefsByCalendar(ctx, calendarID); err != nil {
-		return fmt.Errorf("delete calendar pending hrefs: %w", err)
+	if err := q.DeleteSyncHrefRetriesByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("calendar href retries: %w", err)
 	}
 	if err := q.DeleteSyncConflictsByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete calendar conflicts: %w", err)

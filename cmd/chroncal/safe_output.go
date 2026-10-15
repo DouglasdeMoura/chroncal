@@ -64,6 +64,16 @@ func writeSyncStatusLine(w io.Writer, status syncPkg.SyncStatus) {
 		status.Conflicts,
 		lastError,
 	)
+	// A stuck href does not give the calendar a sync error, so this line is
+	// the persistent signal for it. See issue #816.
+	for _, h := range status.StuckHrefs {
+		fmt.Fprintf(w, "    stuck href=%s  uid=%s  reason=%s  since=%s  (local copy kept; server changes not imported)\n",
+			safeText(h.Href),
+			safeText(h.UID),
+			safeText(h.Reason),
+			safeText(h.GaveUpAt),
+		)
+	}
 }
 
 func writeSyncConflictLine(w io.Writer, conflict syncPkg.Conflict) {

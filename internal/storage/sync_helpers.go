@@ -281,3 +281,17 @@ func MoveSourceDeleteSafe(ctx context.Context, q *Queries, fromCalendarID, toCal
 	}
 	return sr.Dirty == 0 && sr.RemoteUrl != "", nil
 }
+
+// DeleteSyncHrefRetriesByCalendar deletes the two per-href retry tables of
+// one calendar: sync_pending_hrefs and sync_known_misses. A calendar reset
+// and a remote unlink call it, so a new server state starts with no old
+// retry budget.
+func (q *Queries) DeleteSyncHrefRetriesByCalendar(ctx context.Context, calendarID int64) error {
+	if err := q.DeleteSyncPendingHrefsByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("delete pending hrefs: %w", err)
+	}
+	if err := q.DeleteSyncKnownMissesByCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("delete known misses: %w", err)
+	}
+	return nil
+}
