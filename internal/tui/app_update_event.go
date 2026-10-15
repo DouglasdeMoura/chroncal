@@ -227,7 +227,7 @@ func (m Model) handleEventFormSave(msg EventFormSaveMsg) (tea.Model, tea.Cmd) {
 	if editID > 0 && !msg.InstanceTime.IsZero() {
 		// One occurrence cannot move to another calendar (issue #828). A
 		// save with a new calendar then gets no "This event" choice.
-		// Each remaining choice then moves the series, so Cancel gets the
+		// Each choice that stays then moves the series, so Cancel gets the
 		// focus and a quick Enter cancels.
 		options := []string{"This event", "This and following", "All events"}
 		offset := 0

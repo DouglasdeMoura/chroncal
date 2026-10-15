@@ -98,7 +98,7 @@ func newJournalRRuleSet(j journal.Journal) (recurset.Set, bool) {
 		return recurset.Set{}, false
 	}
 	return recurset.New(j.RecurrenceRule, j.Timezone, anchor, 0,
-		j.ParseExDates(), j.ParseRDates(), true)
+		j.ParseExDates(), j.ParseRDates())
 }
 
 // newJournalOccChecker builds a reusable orphan-detection checker for a

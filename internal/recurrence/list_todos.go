@@ -100,7 +100,7 @@ func newTodoRRuleSet(td todo.Todo) (recurset.Set, bool) {
 		return recurset.Set{}, false
 	}
 	return recurset.New(td.RecurrenceRule, td.Timezone, anchor,
-		todoDuration(td), td.ParseExDates(), td.ParseRDates(), true)
+		todoDuration(td), td.ParseExDates(), td.ParseRDates())
 }
 
 // newTodoOccChecker builds a reusable orphan-detection checker for a recurring
@@ -183,14 +183,14 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 			if anchor.IsZero() {
 				// No datable anchor: fall back to the replaced slot for the
 				// window check. An unparseable recurrence_id leaves anchor zero,
-				// which fails keepOccurrence and is dropped (the orphan probe
+				// which fails recurset.KeepOccurrence and is dropped (the orphan probe
 				// that follows would drop it too).
 				anchor, _ = timeutil.ParseRecurrenceID(o.RecurrenceID)
 			}
 			// Keep on [START, DUE) interval overlap (honoring todoDuration), so a
 			// multi-day override whose START precedes the window but whose DUE
 			// falls inside it is not dropped -- matching the master-occurrence
-			// path (keepOccurrence/between) and the event override path.
+			// path (recurset.Set.Between) and the event override path.
 			return ot, recurset.KeepOccurrence(anchor, todoDuration(ot), from, to)
 		},
 	}

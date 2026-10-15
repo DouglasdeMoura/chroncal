@@ -43,18 +43,24 @@ type Set struct {
 }
 
 // New parses an "RRULE:"-prefixed rule anchored at dtstart in timezone tz,
-// and applies exDates/rDates. includeExDates controls whether the EXDATEs
-// are applied. Occurrence expansion needs them. Orphan detection must not
-// (see OccursAt). ok is false only when there is truly nothing to expand
-// (rule is empty AND no rDates). Callers fall back to a single instance in
-// that case.
+// and applies exDates and rDates, for an expansion of the occurrences. ok is
+// false only when there is truly nothing to expand (rule is empty AND no
+// rDates). Callers fall back to a single instance in that case. The
+// occurrence test of an override ignores the EXDATEs; NewChecker builds
+// its set for that.
 //
 // RFC 5545 §3.8.5.2 permits RDATE-only recurrence with no RRULE. When rule
 // is empty but rDates is non-empty, an empty rrule.Set is built and DTSTART
 // is added as an implicit occurrence. RFC 5545 makes DTSTART an occurrence
 // of the recurrence set even without an RRULE. DTSTART is intentionally
 // excluded from RDates so it is not mislabelled IsOverride.
-func New(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates []time.Time, includeExDates bool) (Set, bool) {
+func New(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates []time.Time) (Set, bool) {
+	return newSet(rule, tz, dtstart, dur, exDates, rDates, true)
+}
+
+// newSet is New with a choice: includeExDates false leaves out the EXDATEs
+// for the occurrence test (see OccursAt).
+func newSet(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates []time.Time, includeExDates bool) (Set, bool) {
 	// Nothing to expand: no RRULE and no explicit RDATEs.
 	if rule == "" && len(rDates) == 0 {
 		return Set{}, false
@@ -135,8 +141,8 @@ func New(rule, tz string, dtstart time.Time, dur time.Duration, exDates, rDates 
 // string). Suppression and orphan detection then cannot disagree about a
 // given slot.
 //
-// The set must be built with includeExDates=false. A RECURRENCE-ID override
-// wins over its slot. An EXDATE for the same slot must not make a
+// The set must come from NewChecker, with no EXDATEs. A RECURRENCE-ID
+// override wins over its slot. An EXDATE for the same slot must not make a
 // legitimate override look like an orphan.
 func (s Set) OccursAt(recurrenceID string) bool {
 	t, err := timeutil.ParseRecurrenceID(recurrenceID)
@@ -223,7 +229,7 @@ type Checker struct {
 // NewChecker builds the Checker of a master: its RRULE and RDATEs anchored
 // at dtstart in timezone tz, with the EXDATEs ignored.
 func NewChecker(rule, tz string, dtstart time.Time, rDates []time.Time) Checker {
-	s, _ := New(rule, tz, dtstart, 0, nil, rDates, false)
+	s, _ := newSet(rule, tz, dtstart, 0, nil, rDates, false)
 	return Checker{Set: s, Anchor: dtstart}
 }
 

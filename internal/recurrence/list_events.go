@@ -42,7 +42,7 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 // ignores the EXDATEs and uses recurset.NewChecker instead.
 func newEventRRuleSet(evt event.Event) (recurset.Set, bool) {
 	return recurset.New(evt.RecurrenceRule, evt.Timezone, evt.StartTime,
-		evt.EndTime.Sub(evt.StartTime), evt.ParseExDates(), evt.ParseRDates(), true)
+		evt.EndTime.Sub(evt.StartTime), evt.ParseExDates(), evt.ParseRDates())
 }
 
 // newEventOccChecker builds a reusable orphan-detection checker for a recurring
