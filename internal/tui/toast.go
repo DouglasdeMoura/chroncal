@@ -15,7 +15,7 @@ type ToastState int
 
 const (
 	ToastEmpty           ToastState = iota // nothing to show
-	ToastDeletedUnsynced                   // "Deleted 'X' — undo (u)"
+	ToastDeletedUnsynced                   // "Deleted 'X' — undo (u)", with the undo key
 	ToastDeletedSynced                     // "Deleted 'X' (synced) — undo (u)"
 	ToastRestoring                         // "Restoring…"
 	ToastRestored                          // "✓ Restored 'X'"
@@ -51,11 +51,20 @@ type ToastModel struct {
 	token    int
 	theme    Theme
 	deadline time.Time
+	// undoKey is the label of the undo key in the delete toast. A [keys]
+	// remap of the undo action changes it (WithUndoKey).
+	undoKey string
 }
 
 // NewToastModel returns an empty toast bound to the given theme.
 func NewToastModel(theme Theme) ToastModel {
-	return ToastModel{theme: theme, state: ToastEmpty}
+	return ToastModel{theme: theme, state: ToastEmpty, undoKey: "u"}
+}
+
+// WithUndoKey sets the label of the undo key that the delete toast names.
+func (t ToastModel) WithUndoKey(label string) ToastModel {
+	t.undoKey = label
+	return t
 }
 
 // Theme lets late theme switches propagate to the toast.
@@ -171,12 +180,12 @@ func (t ToastModel) View() string {
 		return fmt.Sprintf("%s %s — undo %s",
 			okStyle.Render("✓"),
 			dimStyle.Render(fmt.Sprintf("Deleted %q", t.title)),
-			keyStyle.Render("(u)"))
+			keyStyle.Render("("+t.undoKey+")"))
 	case ToastDeletedSynced:
 		return fmt.Sprintf("%s %s — undo %s",
 			okStyle.Render("✓"),
 			dimStyle.Render(fmt.Sprintf("Deleted %q (synced)", t.title)),
-			keyStyle.Render("(u)"))
+			keyStyle.Render("("+t.undoKey+")"))
 	case ToastRestoring:
 		return dimStyle.Render("Restoring…")
 	case ToastRestored:

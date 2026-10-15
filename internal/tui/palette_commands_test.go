@@ -8,7 +8,7 @@ import (
 )
 
 func TestPaletteExposesOneCalendarsEntry(t *testing.T) {
-	commands := buildPaletteCommands(Model{})
+	commands := buildPaletteCommands(Model{keys: defaultAppKeys()})
 	manage := paletteCommandByID(t, commands, "calendar.manage")
 	if manage.Title != "Calendars" || manage.Shortcut != "C" {
 		t.Fatalf("calendar.manage = %+v, want Calendars with C shortcut", manage)
@@ -26,7 +26,7 @@ func TestPaletteExposesOneCalendarsEntry(t *testing.T) {
 // canonical CalendarManagerRequestedMsg with the same manager
 // target. There is no bespoke message per entry point.
 func TestPaletteExposesNewCalendarAndAddAccount(t *testing.T) {
-	commands := buildPaletteCommands(Model{})
+	commands := buildPaletteCommands(Model{keys: defaultAppKeys()})
 
 	create := paletteCommandByID(t, commands, "calendar.create")
 	if create.Title != "New Calendar…" || create.Category != "Calendar" {
@@ -46,7 +46,7 @@ func TestPaletteExposesNewCalendarAndAddAccount(t *testing.T) {
 }
 
 func TestPaletteDoesNotExposeIndividualAccountManagement(t *testing.T) {
-	commands := buildPaletteCommands(Model{accounts: map[int64]account.Account{
+	commands := buildPaletteCommands(Model{keys: defaultAppKeys(), accounts: map[int64]account.Account{
 		9: {ID: 9, DisplayName: "Work", DisplayOrder: 1},
 		7: {ID: 7, DisplayName: "Personal Google", DisplayOrder: 0},
 	}})

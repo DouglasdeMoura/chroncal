@@ -921,6 +921,7 @@ Configuration loads in this order of precedence:
 | `ui.list_format` | Default text format for list and search commands (`detail` or `compact`, in any case). `--compact` and `--detail` override it. An unknown value stops only the list and search commands. | `detail` |
 | `ui.event_list_days` | Number of days in the default forward window for `event list`. A value less than `1` stops `event list` when you do not pass `--to`. | `30` |
 | `ui.confirm_quit` | Set to `false` to make `q` and `ctrl+c` quit at once. The default `true` shows the "Quit chroncal?" prompt first. | `true` |
+| `keys.<action>` | Keys for one TUI action, as a list. See [TUI key bindings](#tui-key-bindings). Only the config file sets this table. | (built-in keys) |
 | `soft_delete.purge_days` | Days to keep soft-deleted rows before the background purge. `0` disables automatic purge. | `30` |
 | `alarms.default` | Default alarms for events without alarms, as a list of trigger specs (`"-PT30M"`, `"AUDIO:-PT5M"`). See [Default alarms](#default-alarms). Never syncs back to the server. | (empty — off) |
 | `alarms.skip_all_day` | Exclude all-day events from default alarms. | `false` |
@@ -931,7 +932,7 @@ Configuration loads in this order of precedence:
 | `security.allow_unsafe_alarm_audio_attach` | Allow AUDIO alarms to attach arbitrary URIs. Off by default. | `false` |
 | `security.allow_unsafe_alarm_email_attendees` | Allow EMAIL alarms to send to unverified attendee addresses. Off by default. | `false` |
 
-Every key is also available as an environment variable (`CHRONCAL_` prefix, dots become underscores). Examples: `CHRONCAL_UI_THEME`, `CHRONCAL_UI_WEEK_START`, `CHRONCAL_UI_LIST_FORMAT`, `CHRONCAL_UI_EVENT_LIST_DAYS`, `CHRONCAL_UI_CONFIRM_QUIT`, `CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
+Every key except the `[keys]` table is also available as an environment variable (`CHRONCAL_` prefix, dots become underscores). Examples: `CHRONCAL_UI_THEME`, `CHRONCAL_UI_WEEK_START`, `CHRONCAL_UI_LIST_FORMAT`, `CHRONCAL_UI_EVENT_LIST_DAYS`, `CHRONCAL_UI_CONFIRM_QUIT`, `CHRONCAL_SOFT_DELETE_PURGE_DAYS`, `CHRONCAL_SYNC_INTERVAL`.
 
 ### TUI themes
 
@@ -942,6 +943,68 @@ The TUI ships two built-in themes:
 
 Override with `ui.theme = "default"` in `config.toml` or
 `CHRONCAL_UI_THEME=default`.
+
+### TUI key bindings
+
+The `[keys]` table in `config.toml` changes the keys of the main TUI actions. Each entry is a list of keys. The list replaces the built-in keys of that action. The help dialog, the footer, and the command palette show the first key of the list. An action without an entry keeps its built-in keys.
+
+```toml
+[keys]
+quit = ["ctrl+q"]
+week_view = ["v"]
+palette = [":", "ctrl+k"]
+```
+
+Write a key with its Bubble Tea name, for example `"x"`, `"ctrl+k"`, `"tab"`, `"shift+tab"`, `"f1"`, or `"space"`. An uppercase letter such as `"W"` also matches `"shift+w"`.
+
+| Action | Description | Default |
+|--------|-------------|---------|
+| `quit` | Quit from the main view | `q` |
+| `month_view` | Show the month view | `m` |
+| `week_view` | Show the week view | `w` |
+| `day_view` | Show the day view | `d` |
+| `agenda_view` | Show the agenda view | `a` |
+| `sidebar` | Show or hide the sidebar | `\` |
+| `week_numbers` | Show or hide the week numbers | `#` |
+| `week_start` | Change the first day of the week | `W` |
+| `create` | Create an event. The key also works in the agenda and in the day dialog | `c` |
+| `switch_focus` | Move the focus from the main view into the sidebar. A key with `shift` (such as `shift+tab`) enters at the last stop. Every other key enters at the first stop. In the sidebar, `tab` and `shift+tab` move between the stops and leave at the ends. Any other key of this action goes back to the main view | `tab`, `shift+tab` |
+| `help` | Open the help dialog | `?` |
+| `palette` | Open the command palette | `/`, `ctrl+k` |
+| `calendars` | Open the calendar manager. The key also closes it | `C` |
+| `sync` | Sync all calendars | `s` |
+| `undo` | Undo the last delete | `u` |
+| `trash` | Open the recently deleted list | `D` |
+
+Chroncal checks the table when the TUI starts. Each of these conditions stops the TUI with an error. The CLI commands, sync, and the alarm daemon do not read the table, so they keep working:
+
+- The table names an unknown action.
+- An action has an empty list or an empty key.
+- A key name has an uppercase letter that Bubble Tea never gives, for example `"Ctrl+Q"` or `"Tab"`. Write the name in lowercase. A single uppercase letter (`"W"`) and `"shift+W"` stay valid.
+- Two actions use the same key. Chroncal compares the keys after the table replaces the defaults. To swap two keys, set the two actions together.
+- An action uses a key that a view or a dialog uses. See the list below.
+
+An action key has priority over the keys of a view. Thus chroncal rejects these keys:
+
+| Part of the TUI | Actions | Rejected keys |
+|-----------------|---------|---------------|
+| All parts | All actions | `esc`, `ctrl+c` |
+| Month, week, day, and agenda views | All actions | arrows, `h`, `j`, `k`, `l`, `[`, `]`, `pgup`, `pgdown`, `t`, `enter`, `space`, `e`, `ctrl+d`, `x`, `delete`, `o` |
+| Sidebar | All actions | arrows, `h`, `j`, `k`, `l`, `shift+up`, `shift+down`, `K`, `J`, `space`, `enter`, `[`, `]`, `t` |
+| Sidebar stops | All actions but `switch_focus` | `tab`, `shift+tab` |
+| Trash view | `help` | `r`, `x`, `delete`, `X`, `space`, `A` |
+| Day dialog | `help`, `create` | arrows, `h`, `j`, `k`, `l`, `tab`, `shift+tab`, `enter`, `space`, `esc`, `q`, `pgup`, `pgdown`, `ctrl+b`, `ctrl+f`, `home`, `end`, `e`, `ctrl+d`, `x`, `delete`, `y`, `n`, `m`, `p` |
+| Event dialog | `help` | the same keys as the day dialog |
+| Help dialog | `help` | `esc`, `q`, `up`, `k`, `down`, `j`, `pgup`, `pgdown`, `space`, `home`, `g`, `end`, `G` |
+| Calendar manager | `calendars` | arrows, `h`, `j`, `k`, `l`, `shift+up`, `shift+down`, `K`, `J`, `tab`, `shift+tab`, `enter`, `space`, `esc`, `q`, `a` |
+
+The rejected keys of a part never include the default key of an action that does not work in that part. For example, the calendar manager uses `a`, but chroncal accepts `a` for `agenda_view`, because that action does not work in the calendar manager.
+
+The table does not change these keys:
+
+- The navigation keys of the month, week, day, and agenda views (arrows, `hjkl`, `[`, `]`, `t`, `enter`). The help dialog and the footer show them as groups, and the four views share them.
+- The keys inside dialogs, forms, the sidebar, the command palette, and the trash list.
+- `ctrl+c` (force quit) and `esc`.
 
 ### SMTP (for email alarms)
 
