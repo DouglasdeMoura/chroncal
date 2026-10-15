@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/douglasdemoura/chroncal/internal/config"
+	"github.com/douglasdemoura/chroncal/internal/fsutil"
 	"github.com/zalando/go-keyring"
 )
 
@@ -323,57 +324,17 @@ func (s *PlaintextFileStore) write(cred Credential) (string, error) {
 	if err := cred.ValidatePasswordSources(); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path(cred.AccountID)), 0o700); err != nil {
-		return "", fmt.Errorf("create credential dir: %w", err)
-	}
 	data, err := json.MarshalIndent(cred, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal credential: %w", err)
 	}
 	path := s.path(cred.AccountID)
-	// Write through a temp file in the same directory and rename. A crash
-	// or a full disk then leaves the old file intact instead of a truncated
-	// secret. The rename is atomic within one filesystem.
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".credential-*")
-	if err != nil {
-		return "", fmt.Errorf("create credential temp file: %w", err)
+	// WriteFileAtomic sets mode 0600 on every write, so a loose old file
+	// cannot keep its mode. A crash or a full disk keeps the old file
+	// instead of a truncated secret.
+	if err := fsutil.WriteFileAtomic(path, data, 0o600, ".credential-*"); err != nil {
+		return "", fmt.Errorf("write credential file: %w", err)
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	// os.WriteFile keeps the mode of an existing file. Enforce 0600 on every
-	// write so a pre-existing loose file cannot survive forever.
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("restrict credential file: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("write credential: %w", err)
-	}
-	// Sync the data before the rename. Without the sync, a power loss can
-	// persist the rename and lose the data blocks. The write then destroys
-	// the previous secret.
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("sync credential temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("close credential file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return "", fmt.Errorf("replace credential file: %w", err)
-	}
-	// Sync the directory so the rename survives a power loss. Some
-	// platforms do not support a sync on a directory handle. Ignore that
-	// failure.
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return "", fmt.Errorf("open credential dir: %w", err)
-	}
-	// Some platforms reject fsync on a directory. The data file is already
-	// synced; losing the directory entry on a crash is the remaining risk.
-	_ = dir.Sync()
-	dir.Close()
 	return path, nil
 }
 

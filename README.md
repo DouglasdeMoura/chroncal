@@ -475,6 +475,8 @@ allow_plaintext = true
 
 `--allow-plaintext` and `CHRONCAL_SECURITY_ALLOW_PLAINTEXT=true` do the same for one run. Both apply to the TUI: start it with `chroncal --allow-plaintext`. Prefer the config key. It holds for every run, and a TUI session that already runs cannot take a flag.
 
+The TUI can also set the key for you. When **Add Account…** or **Update Credentials** refuses a password or a token, the TUI shows a prompt with the trade-off below. Cancel has the focus, so a quick Enter writes nothing. Select **Store in Plaintext** to agree. The TUI then writes `allow_plaintext = true` to the `[security]` table of the config file, and it keeps the other lines of the file. It saves the secret that you typed, with no restart. If the TUI cannot edit the file safely, it changes nothing and shows the error. Then set the key by hand.
+
 > **Read the trade-off first.** The 0600 mode blocks a casual `cat`. It does not block backups, filesystem snapshots, or sync tools (Dropbox, iCloud, rsync) that ignore Unix permissions. A password command keeps the secret out of the file, so prefer option 1 when your password manager supports it.
 
 `CHRONCAL_SECURITY_DISABLE_KEYRING=1` turns the OS keyring off for the process that has it in its environment. Chroncal then behaves as if no keyring exists: it falls back to the file store under the same `allow_plaintext` rule. Set it on a host where the keyring is locked or absent but the session still runs, for example over SSH. The test suite sets it too, so tests never read or write the real keyring. It is an environment variable only. No config key has the same function.
@@ -496,7 +498,7 @@ The last row wins over the three above it. An account whose file already holds a
 Each refusal names the three remedies above. Chroncal refuses before it does the work, but the two front ends ask you for the secret at different times:
 
 - The CLI stops before the prompt.
-- The TUI takes the dialog first. It stops when you submit the dialog. It does not contact the server and it does not add the account.
+- The TUI takes the dialog first. It stops when you submit the dialog. It does not contact the server and it does not add the account. For a password or a token, it then offers the plaintext opt-in that option 3 describes.
 
 A read is always permitted, so an account you added once with `--allow-plaintext` keeps syncing on a later run without the flag. Chroncal also permits a rewrite of that same file. An OAuth access token expires after about an hour. Chroncal then writes the new token to the file it already wrote, and the account keeps working. The same applies to a credential that an older version of chroncal wrote: chroncal moves it to the current location and keeps it usable.
 

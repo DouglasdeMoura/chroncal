@@ -118,6 +118,7 @@ const (
 	pendingActionAccountSelection // account calendar reconcile
 	pendingActionCalendarKeepLocal
 	pendingActionCalendarDelete
+	pendingActionPlaintextOptIn // plaintext credential storage opt-in
 	// Choice dialogs.
 	pendingActionEventDeleteScope        // recurring delete scope
 	pendingActionEditScope               // recurring edit scope
@@ -149,6 +150,7 @@ type pendingTarget struct {
 	defaultCands []accountDefaultCandidate
 	entries      []trash.Entry // purgeEntries
 	move         *calendarMoveState
+	retry        tea.Msg // plaintextOptIn: the refused request
 }
 
 // isCalendarMove reports whether the armed action drives the calendar
@@ -308,6 +310,9 @@ type accountCredentialStoredMsg struct {
 	accountID int64
 	name      string
 	err       error
+	// plaintextRetry holds the refused rotation when the secretless store
+	// refused the secret. The handler then offers the plaintext opt-in.
+	plaintextRetry *AccountCredentialsUpdateSubmittedMsg
 }
 
 type accountDiscoveryReadyMsg struct {
@@ -319,6 +324,10 @@ type accountDiscoveryReadyMsg struct {
 	// failed cleanup does not leave the row and the credential behind in
 	// silence.
 	orphanAccountID int64
+	// plaintextRetry holds the refused Add Account request when the
+	// secretless store refused the secret. The handler then offers the
+	// plaintext opt-in.
+	plaintextRetry *CalendarDiscoveryRequestedMsg
 }
 
 type accountManagementDiscoveryReadyMsg struct {
@@ -491,6 +500,14 @@ type Model struct {
 	// flips synchronously so the second press is rejected. Cleared on every
 	// terminal path (flow opened, load failed, or fallback dialog shown).
 	oauthPending bool
+	// plaintextSaving is true while the config write of a confirmed
+	// plaintext opt-in runs. The form handlers refuse a second submit in
+	// that window. The flag does not show the sync spinner.
+	plaintextSaving bool
+	// plaintextOptedIn is true after the user turns on plaintext storage
+	// in this session. The model holds it, not the shared *app.App,
+	// because commands read app.App from other goroutines.
+	plaintextOptedIn bool
 	// pendingSyncCalendar holds a calendar whose sync was requested while
 	// another sync was running (e.g. a re-auth completing mid-sync).
 	// syncFinishedMsg drains it so the post-reauth sync isn't lost and the
