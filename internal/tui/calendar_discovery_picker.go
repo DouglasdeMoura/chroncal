@@ -436,7 +436,7 @@ func (m AccountCalendarPickerModel) refresh() AccountCalendarPickerModel {
 		keys.Tab,
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		keys.Close,
-	})
+	}).SyncLayout()
 	return m
 }
 

@@ -6,16 +6,49 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 )
 
-// paneTitle renders the detail pane heading: bold title on the first line,
-// a faint horizontal rule on the second. Shared so both dialogs anchor the
-// detail pane with the same visual weight. Both lines are padded to w
-// cells. The result can then be spliced into a row-zipped column with no
-// extra measurement pass at the end.
-func paneTitle(text string, w int) string {
-	title := lipgloss.NewStyle().Bold(true).Render(truncateTo(text, w))
-	title = padTrailing(title, w)
-	rule := lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", w))
-	return title + "\n" + rule
+// paneTitle renders the detail pane heading: the bold title on the first
+// lines and a faint horizontal rule on the last line. Both dialogs use it,
+// so the detail pane has the same visual weight in each. The caller wraps
+// the title with wrapTitleLines. The function pads each line to w cells.
+// The caller can then put the result into a row-zipped column with no
+// other measurement.
+func paneTitle(lines []string, w int) string {
+	bold := lipgloss.NewStyle().Bold(true)
+	out := make([]string, 0, len(lines)+1)
+	for _, line := range lines {
+		out = append(out, padTrailing(bold.Render(line), w))
+	}
+	out = append(out, lipgloss.NewStyle().Faint(true).Render(strings.Repeat("─", w)))
+	return strings.Join(out, "\n")
+}
+
+// wrapTitleLines wraps a title into lines of at most w cells each, so the
+// full title shows (issue #825). The width of each rune is its display
+// width, so a wide (CJK) rune counts as two cells. The result has at most
+// maxLines lines. When the title needs more lines, the last line gets the
+// rest of the title, and truncateTo cuts it with "…".
+//
+// The rest comes from the title text, not from a join of the wrapped
+// lines. wrapLine splits a long word (a URL, a CJK run) with no separator,
+// so a join with " " puts a false space into the word.
+func wrapTitleLines(text string, w, maxLines int) []string {
+	lines := wrapLine(text, w)
+	maxLines = max(maxLines, 1)
+	if len(lines) <= maxLines {
+		return lines
+	}
+	// wrapLine joins the words of strings.Fields with one space, so each
+	// line is a substring of normalized, and one space or no separator
+	// follows it.
+	normalized := strings.Join(strings.Fields(text), " ")
+	offset := 0
+	for _, line := range lines[:maxLines-1] {
+		offset += len(line)
+		if offset < len(normalized) && normalized[offset] == ' ' {
+			offset++
+		}
+	}
+	return append(lines[:maxLines-1:maxLines-1], truncateTo(normalized[offset:], w))
 }
 
 // padTrailing extends s with plain spaces so it is exactly w cells wide.
