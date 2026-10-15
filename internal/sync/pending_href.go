@@ -24,7 +24,10 @@ const pendingHrefMissLimit = 3
 //	localRowsSafe: may the sync-token advance?
 //
 // A known miss (a local row whose body was not fetched) answers no to
-// both. That is the data-loss guard. An unknown miss has no local row.
+// both. That is the data-loss guard. knownMisses counts only the misses
+// inside knownMissLimit. After the budget a known miss no longer counts:
+// the engine keeps its UID in seenUIDs, so absence deletion still spares
+// the local row (issue #816). An unknown miss has no local row.
 // It does not flip inventoryObserved. Token advance still requires a
 // recorded retry obligation. A record failure withholds the token. It
 // does not withhold absence deletion.
@@ -72,10 +75,8 @@ func (v pullView) incomplete() bool {
 //	appendUnseen: add stored hrefs that the change list did not already name
 //	noteMiss: bump the miss count and drop the row after the budget
 type pendingHrefs struct {
-	q          *storage.Queries
-	logger     *slog.Logger
-	calendarID int64
-	byHref     map[string]struct{}
+	hrefSet[struct{}]
+	q *storage.Queries
 }
 
 func loadPendingHrefs(ctx context.Context, q *storage.Queries, logger *slog.Logger, calendarID int64) (*pendingHrefs, error) {
@@ -83,31 +84,12 @@ func loadPendingHrefs(ctx context.Context, q *storage.Queries, logger *slog.Logg
 	if err != nil {
 		return nil, fmt.Errorf("list pending hrefs: %w", err)
 	}
-	byHref := make(map[string]struct{}, len(rows))
-	for _, row := range rows {
-		byHref[row.Href] = struct{}{}
-	}
-	return &pendingHrefs{q: q, logger: logger, calendarID: calendarID, byHref: byHref}, nil
-}
-
-func (p *pendingHrefs) forget(ctx context.Context, href string) {
-	if _, ok := p.byHref[href]; !ok {
-		return
-	}
-	if err := p.q.DeleteSyncPendingHref(ctx, storage.DeleteSyncPendingHrefParams{
-		CalendarID: p.calendarID,
-		Href:       href,
-	}); err != nil {
-		p.logger.Warn("delete pending href", "calendar_id", p.calendarID, "href", href, "error", err)
-		return
-	}
-	delete(p.byHref, href)
-}
-
-func (p *pendingHrefs) forgetSet(ctx context.Context, hrefs map[string]bool) {
-	for href := range hrefs {
-		p.forget(ctx, href)
-	}
+	set := loadHrefSet(logger, calendarID, "pending href", rows,
+		func(row storage.SyncPendingHref) (string, struct{}) { return row.Href, struct{}{} },
+		func(ctx context.Context, href string) error {
+			return q.DeleteSyncPendingHref(ctx, storage.DeleteSyncPendingHrefParams{CalendarID: calendarID, Href: href})
+		})
+	return &pendingHrefs{hrefSet: set, q: q}, nil
 }
 
 func (p *pendingHrefs) appendUnseen(fetchPaths []string) []string {

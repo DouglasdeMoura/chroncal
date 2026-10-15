@@ -109,6 +109,19 @@ type SyncStatus struct {
 	LastSyncError       string
 	PendingPush         int
 	Conflicts           int
+	// StuckHrefs lists the known hrefs whose retries the pull stopped.
+	// Each one keeps its local row. See issue #816.
+	StuckHrefs []StuckHref
+}
+
+// StuckHref is a known href whose server body the pull cannot import
+// after the retry budget. Reason is "missing" (multiget 404) or
+// "unparseable" (the ical decoder rejects the body).
+type StuckHref struct {
+	Href     string
+	UID      string
+	Reason   string
+	GaveUpAt string // RFC 3339
 }
 
 // Status returns sync status for all synced calendars.
@@ -116,6 +129,19 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 	cals, err := s.q.ListCalendars(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list calendars: %w", err)
+	}
+
+	// Like the dirty and conflict counts, a read failure shows no stuck
+	// hrefs. It does not fail the status.
+	stuckRows, _ := s.q.ListGaveUpSyncKnownMisses(ctx)
+	stuckByCalendar := make(map[int64][]StuckHref)
+	for _, r := range stuckRows {
+		stuckByCalendar[r.CalendarID] = append(stuckByCalendar[r.CalendarID], StuckHref{
+			Href:     r.Href,
+			UID:      r.Uid,
+			Reason:   r.Reason,
+			GaveUpAt: storage.NullableToString(r.GaveUpAt),
+		})
 	}
 
 	var statuses []SyncStatus
@@ -141,6 +167,7 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 			LastSyncError:       storage.NullableToString(cal.LastSyncError),
 			PendingPush:         len(dirty),
 			Conflicts:           len(conflicts),
+			StuckHrefs:          stuckByCalendar[cal.ID],
 		})
 	}
 	return statuses, nil
@@ -421,8 +448,8 @@ func (s *Service) ResetCalendar(ctx context.Context, calendarID int64) error {
 	if err := qtx.DeleteTombstonesByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete tombstones: %w", err)
 	}
-	if err := qtx.DeleteSyncPendingHrefsByCalendar(ctx, calendarID); err != nil {
-		return fmt.Errorf("delete pending hrefs: %w", err)
+	if err := qtx.DeleteSyncHrefRetriesByCalendar(ctx, calendarID); err != nil {
+		return err
 	}
 	if err := qtx.DeleteSyncConflictsByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete conflicts: %w", err)
