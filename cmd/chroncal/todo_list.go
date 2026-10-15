@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/termcolor"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -120,15 +121,15 @@ func writeCompactTodoTable(w io.Writer, todos []todo.Todo, showHeader, useColor 
 		} else {
 			hasCategories = true
 		}
-		stateColor := "2"
+		stateColor := termcolor.Dim
 		if td.IsCompleted() {
-			stateColor = "32"
+			stateColor = termcolor.Green
 		}
 		rows[i] = []compactCell{
-			{fmt.Sprintf("%d", td.ID), "1;36"},
+			{fmt.Sprintf("%d", td.ID), termcolor.BoldCyan},
 			{todoCheckbox(td), stateColor},
-			{due, "2"},
-			{categories, "33"},
+			{due, termcolor.Dim},
+			{categories, termcolor.Yellow},
 			{textsafe.Display(td.Summary), ""},
 		}
 	}

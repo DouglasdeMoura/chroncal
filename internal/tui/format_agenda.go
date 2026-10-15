@@ -9,6 +9,8 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/termcolor"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
 // formatTimeColumn returns a fixed-width label for an event's time slot.
@@ -111,7 +113,21 @@ type FormatEventListOptions struct {
 	ShowID bool
 	// ShowCalendar appends or prints the calendar name in text output.
 	ShowCalendar bool
+	// Color wraps parts of the Verbose view in ANSI SGR codes. The caller
+	// sets it only for a terminal that accepts color. A false value gives
+	// plain text. The compact view ignores it.
+	Color bool
 }
+
+// SGR codes for the Verbose view. They come from the termcolor palette,
+// so they match the "event list --compact" table.
+const (
+	verboseDateColor        = termcolor.BoldCyan
+	verboseTimeColor        = termcolor.Yellow
+	verboseTitleColor       = termcolor.Bold
+	verboseDescriptionColor = termcolor.Dim
+	verboseCalendarColor    = termcolor.Magenta
+)
 
 type eventListDayEntry struct {
 	ev        event.Event
@@ -223,9 +239,9 @@ func FormatEventList(opts FormatEventListOptions) string {
 				if !firstVerboseDay {
 					out.WriteByte('\n')
 				}
-				out.WriteString(dayPrefix)
+				out.WriteString(termcolor.Colorize(dayPrefix, verboseDateColor, opts.Color))
 				out.WriteByte('\n')
-				out.WriteString(strings.Repeat("-", len(dayPrefix)))
+				out.WriteString(termcolor.Colorize(strings.Repeat("-", len(dayPrefix)), verboseDateColor, opts.Color))
 				out.WriteByte('\n')
 				for _, entry := range dayEvents {
 					writeVerboseEventListEntry(&out, entry, opts)
@@ -289,7 +305,7 @@ func verboseContinuationLabel(ev event.Event, dayIndex, totalDays int) string {
 }
 
 func compactEventLabel(entry eventListDayEntry, opts FormatEventListOptions) string {
-	label := entry.ev.Title
+	label := textsafe.Display(entry.ev.Title)
 	if opts.ShowID && entry.ev.ID > 0 {
 		label += fmt.Sprintf(" (%d)", entry.ev.ID)
 	}
@@ -305,7 +321,7 @@ func compactEventLabel(entry eventListDayEntry, opts FormatEventListOptions) str
 }
 
 func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, opts FormatEventListOptions) {
-	title := entry.ev.Title
+	title := textsafe.Display(entry.ev.Title)
 	if opts.ShowID && entry.ev.ID > 0 {
 		title = fmt.Sprintf("%s (%d)", title, entry.ev.ID)
 	}
@@ -313,18 +329,29 @@ func writeVerboseEventListEntry(out *strings.Builder, entry eventListDayEntry, o
 		title = fmt.Sprintf("%s (day %d/%d)", title, entry.dayIndex, entry.totalDays)
 	}
 
-	fmt.Fprintf(out, "%-7s | %s\n", verboseTimeRailLabel(entry.ev, entry.dayIndex), title)
-	if entry.ev.Location != "" {
-		fmt.Fprintf(out, "%7s | %s\n", "", entry.ev.Location)
+	// Pad the time label as plain text first. The SGR bytes then do not
+	// change the width of the time column.
+	timeLabel := fmt.Sprintf("%-7s", verboseTimeRailLabel(entry.ev, entry.dayIndex))
+	fmt.Fprintf(out, "%s | %s\n", termcolor.Colorize(timeLabel, verboseTimeColor, opts.Color),
+		termcolor.Colorize(title, verboseTitleColor, opts.Color))
+	writeDetail := func(text, code string) {
+		if text == "" {
+			fmt.Fprintf(out, "%7s |\n", "")
+			return
+		}
+		fmt.Fprintf(out, "%7s | %s\n", "", termcolor.Colorize(text, code, opts.Color))
 	}
-	if entry.ev.Description != "" {
-		fmt.Fprintf(out, "%7s | %s\n", "", entry.ev.Description)
+	if location := textsafe.Display(entry.ev.Location); location != "" {
+		writeDetail(location, "")
 	}
-	if metadata := verboseMetadataLine(entry.ev, opts); metadata != "" {
-		fmt.Fprintf(out, "%7s | %s\n", "", metadata)
+	for _, line := range textsafe.DisplayLines(entry.ev.Description) {
+		writeDetail(line, verboseDescriptionColor)
+	}
+	if metadata := textsafe.Display(verboseMetadataLine(entry.ev, opts)); metadata != "" {
+		writeDetail(metadata, verboseCalendarColor)
 	}
 	if continuation := verboseContinuationLabel(entry.ev, entry.dayIndex, entry.totalDays); continuation != "" {
-		fmt.Fprintf(out, "%7s | %s\n", "", continuation)
+		writeDetail(continuation, "")
 	}
 }
 
@@ -333,7 +360,7 @@ func formatCalendarLabel(calendarID int64, calendarNames map[int64]string) strin
 		return ""
 	}
 	if name := calendarNames[calendarID]; name != "" {
-		return name
+		return textsafe.Display(name)
 	}
 	return fmt.Sprintf("%d", calendarID)
 }

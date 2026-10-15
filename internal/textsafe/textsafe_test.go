@@ -1,6 +1,33 @@
 package textsafe
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+func TestDisplayLinesKeepsLineBreaks(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"empty", "", nil},
+		{"only blanks", "\n \r\n\t\n", nil},
+		{"single line", "  one   two ", []string{"one two"}},
+		{"crlf and cr", "a\r\nb\rc", []string{"a", "b", "c"}},
+		{"inner blank kept", "\na\n\n b \n\n", []string{"a", "", "b"}},
+		{"escapes and controls", "\x1b[31mred\x1b[0m\nx\x07y\u202e", []string{"red", "xy"}},
+		{"osc across break", "a\x1b]0;evil\npayload\x07b", []string{"ab"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DisplayLines(tc.in)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("DisplayLines(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
 
 func TestStripEscapes(t *testing.T) {
 	cases := []struct {
