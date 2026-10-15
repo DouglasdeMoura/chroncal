@@ -184,10 +184,10 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if key.Matches(msg, m.keys.Help) && !inQuitConfirm && !m.helpDialogOpen && !textEntryActive {
 		return m, func() tea.Msg { return HelpDialogRequestedMsg{} }, true
 	}
-	// Trash: shift+D opens the Recently-deleted overlay from the main grid.
-	// Blocked while a text-entry surface owns input (so typing "D" in the
-	// palette / form doesn't jump out).
-	if key.Matches(msg, m.keys.TrashView) && !m.trashOpen && !inQuitConfirm && !textEntryActive && !m.anyOverlayOpen() {
+	// Trash: the trash key opens the Recently-deleted overlay from the main
+	// grid only. Each open overlay (text entry, the quit confirm, the trash
+	// itself) owns the key.
+	if key.Matches(msg, m.keys.TrashView) && !m.anyOverlayOpen() {
 		m.trashOpen = true
 		m.trash = NewTrashModel(m.calendars, newThemedHelp(m.theme)).
 			SetSelectedColor(m.theme.Selected).

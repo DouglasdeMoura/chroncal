@@ -348,15 +348,11 @@ func (m Model) handleEventUpdated(msg eventUpdatedMsg) (tea.Model, tea.Cmd) {
 	if push := m.runMovePush(msg.fromCalendarID, msg.calendarID, msg.uid); push != nil {
 		cmds = append(cmds, push)
 	}
-	if msg.scoped {
-		// A scope edit does not return to the view dialog. The row under
-		// the edit can be replaced (see eventUpdatedMsg.scoped).
-		m.viewReturnEvent = event.Event{}
-		return m, tea.Batch(cmds...)
-	}
-	if m.viewReturnEvent.ID != 0 {
-		ev := m.viewReturnEvent
-		m.viewReturnEvent = event.Event{}
+	// A scope edit does not return to the view dialog. The row under the
+	// edit can be replaced (see eventUpdatedMsg.scoped).
+	ev := m.viewReturnEvent
+	m.viewReturnEvent = event.Event{}
+	if ev.ID != 0 && !msg.scoped {
 		cmds = append(cmds, func() tea.Msg { return EventViewRequestedMsg{Event: ev} })
 	}
 	return m, tea.Batch(cmds...)
