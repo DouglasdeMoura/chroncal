@@ -51,7 +51,13 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 
 	var fetchPaths []string
 	var deletedPaths []string
+	// listedETags holds the ETag of each changed href. A known miss
+	// records it, so a later change of the object is visible.
+	listedETags := make(map[string]string, len(syncResult.Changes))
 	seenUIDs := make(map[string]bool, len(syncResult.Changes))
+	// currentPaths holds each listed href whose local copy holds the listed
+	// ETag. The pull fetches no body for it, and its known miss is over.
+	currentPaths := make(map[string]bool)
 	for _, ch := range syncResult.Changes {
 		canonical, hrefErr := client.CanonicalObjectRef(remoteURL, ch.Path)
 		if hrefErr != nil {
@@ -65,8 +71,10 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		if tombstonedPaths[canonical] {
 			continue
 		}
+		listedETags[canonical] = ch.ETag
 		if local, exists := localByPath[canonical]; exists && local.Etag == ch.ETag {
 			seenUIDs[local.Uid] = true
+			currentPaths[canonical] = true
 			continue
 		}
 		fetchPaths = append(fetchPaths, canonical)
@@ -83,6 +91,17 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	pending.forgetSet(ctx, deletedSet)
 	pending.forgetSet(ctx, tombstonedPaths)
 	fetchPaths = pending.appendUnseen(fetchPaths)
+
+	known, err := loadKnownMisses(ctx, e.q, e.logger, calendarID, localByPath, e.clock())
+	if err != nil {
+		return nil, err
+	}
+	known.forgetSet(ctx, deletedSet)
+	known.forgetSet(ctx, tombstonedPaths)
+	known.forgetSet(ctx, currentPaths)
+	for href, etag := range listedETags {
+		known.recordNewVersion(ctx, href, etag)
+	}
 
 	// Per-resource 404s from the multiget are NOT deletions. Google can list
 	// an href that 404s on multiget for a reason other than a real delete.
@@ -108,14 +127,37 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 		}
 		switch kind {
 		case multigetMissKnown:
-			view.knownMisses++
 			// Treat the missing path's UID as "still seen" so the initial
 			// snapshot deletion loop below does not conclude the resource
 			// is gone from the server. Otherwise an empty token + a
 			// transient multiget 404 would soft-delete the local event
 			// even though we have no actual evidence of deletion.
 			seenUIDs[local.Uid] = true
+
+			// Inside the retry budget a known miss withholds the token.
+			// After the budget the miss no longer counts: a server that
+			// keeps a bad body must not make each pull of the calendar fail.
+			// The local row stays, and sync status names the href. A
+			// record failure withholds the token. See issue #816.
+			reason, cause := knownMissReasonMissing, "server returns 404 for a known resource"
 			if unparseable {
+				reason, cause = knownMissReasonUnparseable, "server body unparseable"
+			}
+			exhausted, gaveUp, recErr := known.noteMiss(ctx, canonical, local.Uid, reason, listedETags[canonical])
+			if recErr != nil {
+				e.logger.Warn("record known multiget miss", "calendar_id", calendarID, "href", miss, "error", recErr)
+			}
+			if !exhausted {
+				view.knownMisses++
+			}
+			switch {
+			case gaveUp:
+				msg := fmt.Sprintf("%s; gave up after %d or more attempts, local copy kept (see sync status)", cause, knownMissLimit)
+				noteWarning(ImportWarning{Path: miss, UID: local.Uid, Message: msg})
+			case exhausted:
+				// The href gave up before, and sync status names it. A
+				// new version that fails again does not warn again.
+			case unparseable:
 				noteWarning(ImportWarning{
 					Path:    miss,
 					UID:     local.Uid,
@@ -204,6 +246,12 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 				// REPORT re-lists this change. See importFetchedResource.
 				view.persistFailures++
 				continue
+			}
+			// A body with a UID went through the import, so a known miss
+			// for the href is over. A body that does not import gives no
+			// UID and keeps its row, as on the full-snapshot path.
+			if uid != "" {
+				known.forget(ctx, resPath)
 			}
 			if !imported {
 				// A tombstoned UID never comes back; drop its retry

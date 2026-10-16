@@ -587,6 +587,13 @@ Conflict handling:
 - The conflict strategy (`server-wins` or `prompt`) governs full sync passes only. The default is `prompt`; set `server-wins` in `config.toml` under `[sync]` to adopt the server body automatically. A full pass is `sync run`, the background service, or a TUI sync. A `server-wins` pass adopts the server body, clears the dirty flag, and marks the conflict resolved as `server-auto`. A `prompt` pass records the conflict and skips that row until you resolve it.
 - A resolved conflict keeps its row. Run `chroncal sync conflicts --resolved` to list resolved conflicts. Run `chroncal sync resolve <id> --pick local` on a resolved conflict to restore the recorded local version.
 
+Stuck resources:
+
+- Sometimes the server keeps a body that chroncal cannot import for a resource that chroncal already synced. The multiget returns 404, or the body does not parse. Sync then keeps the local copy and tries again on the next run.
+- Sync stops the retries after three failed runs, when at least one hour has gone by since the first failure. A frequent background sync then cannot use up the retries on a short server problem. The calendar is then no longer marked as failing. The local copy stays, and the server changes to that resource are not imported.
+- After the stop, a new version of the resource on the server (a new ETag) gets one more attempt. When that attempt fails, the retries stay stopped, and sync does not warn again.
+- `chroncal sync status` lists each such resource on a `stuck href=...` line below its calendar. The `-o json` output lists it under `stuck_hrefs`. Correct the resource on the server. The next good fetch removes the entry.
+
 ### Google Calendar via CalDAV
 
 Google Calendar requires OAuth 2.0. It only exposes `VEVENT` over CalDAV.

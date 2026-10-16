@@ -879,3 +879,186 @@ func TestEnginePushServerWinsPreservesConcurrentEdit(t *testing.T) {
 		t.Fatalf("open conflicts = %d, want 1 (row stays open while dirty survives)", len(open))
 	}
 }
+
+// TestEnginePullFullSnapshotForgetsKnownMisses covers the known-miss rows
+// on the QueryAll fallback. A given-up href whose body now imports must
+// lose its row. A row for an href that the server no longer lists must go
+// too. Otherwise sync status names both hrefs forever.
+func TestEnginePullFullSnapshotForgetsKnownMisses(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	for _, r := range []struct{ uid, href string }{
+		{"fixed-uid", "/calendar/fixed.ics"},
+		{"vanished-uid", "/calendar/vanished.ics"},
+	} {
+		insertTestEvent(t, db, calendarID, r.uid)
+		if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+			CalendarID: calendarID, Uid: r.uid, OwnerType: "event",
+			RemoteUrl: r.href, Etag: "e1", Dirty: 0, SyncStrategy: "sync-token",
+		}); err != nil {
+			t.Fatalf("UpsertSyncResource %s: %v", r.uid, err)
+		}
+		if _, err := q.BumpSyncKnownMiss(ctx, storage.BumpSyncKnownMissParams{
+			CalendarID: calendarID, Href: r.href, Uid: r.uid, Reason: "unparseable",
+			Etag: "bad", FirstMissAt: "2026-01-01T00:00:00Z",
+		}); err != nil {
+			t.Fatalf("BumpSyncKnownMiss %s: %v", r.uid, err)
+		}
+		gaveUp := "2026-01-02T00:00:00Z"
+		if err := q.MarkSyncKnownMissGaveUp(ctx, storage.MarkSyncKnownMissGaveUpParams{
+			GaveUpAt: &gaveUp, CalendarID: calendarID, Href: r.href,
+		}); err != nil {
+			t.Fatalf("MarkSyncKnownMissGaveUp %s: %v", r.uid, err)
+		}
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(raw), "sync-collection") {
+			return &http.Response{
+				StatusCode: http.StatusUnprocessableEntity,
+				Status:     "422 Unprocessable Entity",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><error xmlns="DAV:"/>`)),
+				Request:    r,
+			}, nil
+		}
+		// The inventory lists fixed.ics with a good body and leaves out
+		// vanished.ics.
+		queryBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/fixed.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;good&quot;</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:fixed-uid
+DTSTAMP:20260606T120000Z
+DTSTART:20260606T120000Z
+DTEND:20260606T130000Z
+SUMMARY:Fixed
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(queryBody)),
+			Request:    r,
+		}, nil
+	})
+
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+		t.Fatalf("pull (fullsnapshot): %v", err)
+	}
+	rows, err := q.ListSyncKnownMissesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncKnownMissesByCalendar: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("known misses after a full snapshot = %+v, want none", rows)
+	}
+}
+
+// TestEnginePullFullSnapshotRecordsKnownMisses covers the known-miss
+// budget on the QueryAll fallback. The server lists two known hrefs with a
+// new ETag: one has a body that does not import (a VEVENT with no UID), and
+// one has no body. QueryAll rejects a body that does not parse, so these two
+// are the misses that reach the import. The pull must
+// keep both local rows and record a known miss for each, so sync status
+// can name the hrefs after the budget.
+func TestEnginePullFullSnapshotRecordsKnownMisses(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	insertTestEvent(t, db, calendarID, "bad-uid")
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: "bad-uid", OwnerType: "event",
+		RemoteUrl: "/calendar/bad.ics", Etag: "e1", Dirty: 0, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(raw), "sync-collection") {
+			return &http.Response{
+				StatusCode: http.StatusUnprocessableEntity,
+				Status:     "422 Unprocessable Entity",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><error xmlns="DAV:"/>`)),
+				Request:    r,
+			}, nil
+		}
+		queryBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/bad.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;e2&quot;</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+DTSTAMP:20260606T120000Z
+DTSTART:20260606T120000Z
+DTEND:20260606T130000Z
+SUMMARY:No UID
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(queryBody)),
+			Request:    r,
+		}, nil
+	})
+
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+		t.Fatalf("pull (fullsnapshot): %v", err)
+	}
+	if _, err := q.GetEventByUID(ctx, "bad-uid"); err != nil {
+		t.Fatalf("local row was deleted: %v", err)
+	}
+	rows, err := q.ListSyncKnownMissesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncKnownMissesByCalendar: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Href != "/calendar/bad.ics" || rows[0].Uid != "bad-uid" ||
+		rows[0].Reason != knownMissReasonUnparseable || rows[0].Etag != "e2" {
+		t.Fatalf("known misses = %+v, want one unparseable row for /calendar/bad.ics with ETag e2", rows)
+	}
+}
