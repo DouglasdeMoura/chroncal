@@ -152,7 +152,8 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			continue
 		}
 
-		if local, exists := localByPath[resPath]; exists {
+		local, isLocal := localByPath[resPath]
+		if isLocal {
 			remoteUIDs[local.Uid] = true
 			if local.Etag == res.ETag {
 				// The local copy holds the current server version.
@@ -160,9 +161,21 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 				continue
 			}
 		}
+		// noteMiss records a known href whose body does not import. This
+		// path stores no sync-token, so the budget withholds nothing. The
+		// row lets sync status name the href after the budget.
+		noteMiss := func(reason string) {
+			if !isLocal {
+				return
+			}
+			if _, _, err := known.noteMiss(ctx, resPath, local.Uid, reason, res.ETag); err != nil {
+				e.logger.Warn("record known QueryAll miss", "calendar_id", calendarID, "href", res.Path, "error", err)
+			}
+		}
 
 		// Import the resource
 		if res.Data == nil {
+			noteMiss(knownMissReasonMissing)
 			continue
 		}
 		uid, imported, warnings, persistErr := e.importFetchedResource(ctx, calendarID, tombstonedUIDs, fetchedResource{
@@ -180,9 +193,11 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 			continue
 		}
 		// A body with a UID went through the import, so the miss is over.
-		// A body that does not import gives no UID and keeps its row.
+		// A body that does not import gives no UID and counts as a miss.
 		if uid != "" {
 			known.forget(ctx, resPath)
+		} else {
+			noteMiss(knownMissReasonUnparseable)
 		}
 		if imported {
 			result.pulled++
