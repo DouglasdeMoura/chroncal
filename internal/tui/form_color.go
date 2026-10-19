@@ -85,7 +85,7 @@ func (f *ColorField) View() string {
 	base := f.hex.input.View()
 	hexVal := strings.TrimSpace(f.hex.Value())
 	hexRendered := base
-	if model.ValidateHexColor(hexVal) == nil {
+	if model.IsHexColor(hexVal) {
 		dot := lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render(Glyphs["dot"])
 		hexRendered = base + "  " + dot
 	}

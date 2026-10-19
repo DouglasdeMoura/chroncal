@@ -274,6 +274,13 @@ func validateCalendars(entries []CalendarConfig) error {
 		if err != nil {
 			return fmt.Errorf("calendars[%d] (%s): resolve path %q: %w", i, e.Name, raw, err)
 		}
+		// The import reads a directory and its subdirectories, so two
+		// entries on one tree would import the same files.
+		for _, earlier := range entries[:i] {
+			if fsutil.SameTree(earlier.Path, resolved) {
+				return fmt.Errorf("calendars[%d] (%s): path %q overlaps the path of %q", i, e.Name, raw, earlier.Name)
+			}
+		}
 		e.Path = resolved
 	}
 	return nil
