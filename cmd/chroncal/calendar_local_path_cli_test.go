@@ -595,9 +595,9 @@ func TestCalendarNameLookupPrefersExactMatch(t *testing.T) {
 	}
 }
 
-// TestCalendarPathOverlapAndDuplicateNameCodes covers the overlap rule on
-// the CLI and the invalid_input code of a duplicate name.
-func TestCalendarPathOverlapAndDuplicateNameCodes(t *testing.T) {
+// TestCalendarPathOverlapCode covers the overlap rule on the CLI and its
+// invalid_input code.
+func TestCalendarPathOverlapCode(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	parent := tempDir(t)
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "All", "--path", parent); err != nil {
@@ -606,10 +606,6 @@ func TestCalendarPathOverlapAndDuplicateNameCodes(t *testing.T) {
 	_, stderr, err := runChroncalCommand(t, "calendar", "create", "Work", "--path", filepath.Join(parent, "work"), "--output", "json")
 	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") || !strings.Contains(stderr, "its own tree") {
 		t.Fatalf("calendar create inside another tree: err=%v stderr=%q", err, stderr)
-	}
-	_, stderr, err = runChroncalCommand(t, "calendar", "create", "All", "--output", "json")
-	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") {
-		t.Fatalf("duplicate calendar name must be invalid_input: err=%v stderr=%q", err, stderr)
 	}
 }
 

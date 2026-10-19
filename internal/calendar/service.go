@@ -15,7 +15,7 @@ import (
 var ErrLastCalendar = errors.New("cannot delete the last calendar")
 
 // ErrDuplicateName is returned when a calendar name already exists.
-var ErrDuplicateName = newInputError("a calendar with this name already exists")
+var ErrDuplicateName = errors.New("a calendar with this name already exists")
 
 // ErrDefaultCalendarRequiresPromotion is returned when the current default
 // calendar is among those being deleted but no replacement that survives was
@@ -164,7 +164,7 @@ func (s *Service) Update(ctx context.Context, id int64, name, color, description
 		return Calendar{}, err
 	}
 	if existing.Name != name {
-		if err := s.refuseDeclared(existing.Name); err != nil {
+		if err := s.refuseDeclaredRename(existing.Name, name); err != nil {
 			return Calendar{}, err
 		}
 	}

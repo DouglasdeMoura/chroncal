@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -375,15 +376,19 @@ func TestApplyWarnsWhenItResetsAStoredField(t *testing.T) {
 }
 
 func TestInputErrorsCarryTheMarker(t *testing.T) {
-	for _, err := range []error{ErrDuplicateName, ErrDeclaredCalendar, ErrDeclaredRemote, ErrRemoteLocalPath, ErrLocalPathLink, ErrAmbiguousName, ErrOverlappingPath} {
-		var input InputError
+	for _, err := range []error{ErrDeclaredCalendar, ErrDeclaredRemote, ErrRemoteLocalPath, ErrLocalPathLink, ErrAmbiguousName, ErrOverlappingPath} {
+		var input model.InputError
 		if !errors.As(err, &input) || !input.InvalidInput() {
 			t.Errorf("%v does not carry the InputError marker", err)
 		}
 	}
-	var input InputError
-	if errors.As(ErrLastCalendar, &input) {
-		t.Error("ErrLastCalendar must not carry the InputError marker")
+	// ErrDuplicateName and ErrLastCalendar keep the generic code, as they
+	// did before the declared calendars existed.
+	for _, err := range []error{ErrDuplicateName, ErrLastCalendar} {
+		var input model.InputError
+		if errors.As(err, &input) {
+			t.Errorf("%v must not carry the InputError marker", err)
+		}
 	}
 }
 
@@ -431,5 +436,66 @@ func TestApplyCreatesWithoutAnOverlappingPath(t *testing.T) {
 	}
 	if !svc.IsDeclared("New") {
 		t.Fatal("the created calendar must still be bound to its entry")
+	}
+}
+
+func TestApplyKeepsTheStoredPathOnAConflict(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.CreateWithPath(ctx, "A", "#111111", "", "/p1"); err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	if _, err := svc.CreateWithPath(ctx, "C", "#111111", "", "/srv/x"); err != nil {
+		t.Fatalf("create C: %v", err)
+	}
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "A", Path: "/srv/x/sub"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `calendar "C"`) {
+		t.Fatalf("warnings = %v, want one overlap warning that names C", warnings)
+	}
+	a, _ := svc.getByName(ctx, "A")
+	if a.LocalPath != "/p1" {
+		t.Fatalf("A lost its working path: %q", a.LocalPath)
+	}
+}
+
+func TestApplyNewEntryTakesOverAPathInOneApply(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.CreateWithPath(ctx, "A", "#111111", "", "/p1"); err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "A", Path: "/p2"}, {Name: "B", Path: "/p1"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	a, _ := svc.getByName(ctx, "A")
+	b, _ := svc.getByName(ctx, "B")
+	if a.LocalPath != "/p2" || b.LocalPath != "/p1" {
+		t.Fatalf("paths after the takeover: A=%q B=%q, warnings=%v", a.LocalPath, b.LocalPath, warnings)
+	}
+}
+
+func TestDeclaredCalendarAllowsACaseOnlyRename(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	stored, err := svc.Create(ctx, "Fastmail", "#111111", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Apply(ctx, []Declared{{Name: "fastmail"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := svc.Update(ctx, stored.ID, "fastmail", "#111111", ""); err != nil {
+		t.Fatalf("case-only rename of a declared calendar: %v", err)
+	}
+	// The guard follows the new spelling.
+	if !svc.IsDeclared("fastmail") || svc.IsDeclared("Fastmail") {
+		t.Fatal("the guard did not follow the rename")
+	}
+	if _, err := svc.Update(ctx, stored.ID, "Mail", "#111111", ""); !errors.Is(err, ErrDeclaredCalendar) {
+		t.Fatalf("a real rename must still be refused: %v", err)
 	}
 }

@@ -41,11 +41,11 @@ type cliError struct {
 func (e *cliError) Error() string { return e.Msg }
 
 // isInvalidInputSentinel reports a service error that marks itself as a
-// request the user must change (calendar.InputError). printCLIError gives
-// it the "invalid_input" code, so every command shares one rule and the
-// service owns the classification.
+// request the user must change (model.InputError). printCLIError gives it
+// the "invalid_input" code, so every command shares one rule and each
+// domain service owns the classification of its own errors.
 func isInvalidInputSentinel(err error) bool {
-	var input calendarpkg.InputError
+	var input model.InputError
 	return errors.As(err, &input) && input.InvalidInput()
 }
 
