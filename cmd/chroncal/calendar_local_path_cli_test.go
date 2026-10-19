@@ -392,9 +392,9 @@ func TestCalendarCreateRejectsBadColorAndPathWithRemote(t *testing.T) {
 // links the collection root to a mounted directory.
 func TestIcalImportFollowsSymlinkedStoredDirectory(t *testing.T) {
 	setupCalendarCLITestEnv(t)
-	real := writeTestICSDir(t, "link-1", "Linked event")
+	target := writeTestICSDir(t, "link-1", "Linked event")
 	link := filepath.Join(t.TempDir(), "calendars")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink: %v", err)
 	}
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "Linked", "--path", link); err != nil {
