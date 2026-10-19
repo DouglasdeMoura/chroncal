@@ -95,6 +95,12 @@ func (s *Service) MigrateCalendarToAccount(
 	if err != nil {
 		return MigrateResult{}, fmt.Errorf("get source calendar: %w", err)
 	}
+	// A declared calendar stays local (issue #809). The move would retire
+	// the source row, and the next launch would create an empty calendar
+	// with the declared name and the directory.
+	if s.isDeclared(source.Name) {
+		return MigrateResult{}, fmt.Errorf("calendar %q: %w", source.Name, calendar.ErrDeclaredCalendar)
+	}
 	if source.AccountID != nil && *source.AccountID != 0 {
 		return MigrateResult{}, ErrCannotMigrateRemoteCalendar
 	}

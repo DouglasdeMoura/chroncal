@@ -119,6 +119,9 @@ func (s *Service) reusableConnectAccount(ctx context.Context, cal Calendar) (sto
 // Connect takes the remote lifecycle lock and reads the account again, so the
 // answer is a prediction. The store keeps the final say on the write.
 func (s *Service) ConnectTarget(ctx context.Context, cal Calendar, link RemoteLink) (int64, string, error) {
+	if err := s.CheckLinkable(cal); err != nil {
+		return 0, "", err
+	}
 	serverURL, err := DeriveServerURL(link.RemoteURL, link.AllowInsecure)
 	if err != nil {
 		return 0, "", err
@@ -145,13 +148,11 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	defer release()
 	cal = lockedCal
 
-	// A declared calendar stays local (issue #809), and a calendar with a
-	// local directory cannot also be a server collection.
-	if s.isDeclared(cal.Name) {
-		return fmt.Errorf("calendar %q: %w", cal.Name, ErrDeclaredLink)
-	}
-	if cal.LocalPath != "" {
-		return fmt.Errorf("calendar %q: %w", cal.Name, ErrLocalPathLink)
+	// The check runs again on the locked row (issue #809). ConnectTarget
+	// checked an earlier read, and a path or an apply may have landed
+	// since.
+	if err := s.CheckLinkable(cal); err != nil {
+		return err
 	}
 
 	link.AuthType = NormalizeAuthType(link.AuthType)

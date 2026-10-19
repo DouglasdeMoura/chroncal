@@ -386,11 +386,11 @@ func TestUniqueUnlinkedByRemoteIdentity_RequiresSameOrigin(t *testing.T) {
 		RemoteUrl: storage.StringToNullable(stored),
 	}}
 	lookup := remoteIdentityKey("/cal/work/", "https://other.example.test/")
-	if _, ok := uniqueUnlinkedByRemoteIdentity(rows, "https://other.example.test/")[lookup]; ok {
+	if _, ok := uniqueUnlinkedByRemoteIdentity(rows, "https://other.example.test/", nil)[lookup]; ok {
 		t.Fatalf("different origin matched lookup %q", lookup)
 	}
 	key := remoteIdentityKey("/cal/work/", "https://cal.example.test/")
-	got := uniqueUnlinkedByRemoteIdentity(rows, "https://cal.example.test/")
+	got := uniqueUnlinkedByRemoteIdentity(rows, "https://cal.example.test/", nil)
 	if got[key] != 7 {
 		t.Fatalf("same origin = %v, want id 7 at %q", got, key)
 	}
@@ -409,7 +409,7 @@ func TestUniqueUnlinkedByRemoteIdentity_DropsDuplicates(t *testing.T) {
 		{ID: 4, RemoteUrl: storage.StringToNullable(key)},
 		{ID: 5, AccountID: &linkedID, RemoteUrl: storage.StringToNullable(other)},
 	}
-	got := uniqueUnlinkedByRemoteIdentity(rows, server)
+	got := uniqueUnlinkedByRemoteIdentity(rows, server, nil)
 	if _, ok := got[key]; ok {
 		t.Fatalf("ambiguous key present: %v", got)
 	}
@@ -426,7 +426,19 @@ func TestUniqueUnlinkedByRemoteIdentitySkipsDirectoryFedCalendar(t *testing.T) {
 	rows := []storage.Calendar{
 		{ID: 7, RemoteUrl: storage.StringToNullable(server + "dav/work/"), LocalPath: "/home/me/cal/work"},
 	}
-	if got := uniqueUnlinkedByRemoteIdentity(rows, server); len(got) != 0 {
+	if got := uniqueUnlinkedByRemoteIdentity(rows, server, nil); len(got) != 0 {
 		t.Fatalf("a directory-fed calendar was offered for relink: %v", got)
+	}
+
+	// A declared calendar without a directory is not a candidate either.
+	rows = []storage.Calendar{
+		{ID: 8, Name: "Work", RemoteUrl: storage.StringToNullable(server + "dav/work/")},
+	}
+	declared := func(name string) bool { return name == "Work" }
+	if got := uniqueUnlinkedByRemoteIdentity(rows, server, declared); len(got) != 0 {
+		t.Fatalf("a declared calendar was offered for relink: %v", got)
+	}
+	if got := uniqueUnlinkedByRemoteIdentity(rows, server, nil); len(got) != 1 {
+		t.Fatalf("an undeclared calendar must stay a relink candidate: %v", got)
 	}
 }

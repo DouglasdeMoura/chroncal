@@ -25,10 +25,26 @@ type Service struct {
 	db       *sql.DB
 	q        *storage.Queries
 	discover discoverFunc
+	// declared reports whether a [[calendars]] entry of config.toml binds
+	// a calendar name (issue #809). A calendar move does not retire such
+	// a calendar, and a discovery does not relink it. app.New wires it to
+	// calendar.Service.IsDeclared. A nil value declares nothing.
+	declared func(name string) bool
 }
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
 	return &Service{db: db, q: q, discover: discoverRemoteCalendars}
+}
+
+// SetDeclaredGuard installs the declared-calendar check. See the declared
+// field.
+func (s *Service) SetDeclaredGuard(declared func(name string) bool) {
+	s.declared = declared
+}
+
+// isDeclared reports whether the guard binds the name.
+func (s *Service) isDeclared(name string) bool {
+	return s.declared != nil && s.declared(name)
 }
 
 func (s *Service) List(ctx context.Context) ([]Account, error) {

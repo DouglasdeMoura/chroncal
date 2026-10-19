@@ -440,6 +440,13 @@ config.toml sets the same fields declaratively.`,
 // absolute, clean path with "~" resolved. An empty flag stays empty, which
 // on update means "remove the directory".
 func resolveCalendarPathFlag(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "~") && raw != "~" && !strings.HasPrefix(raw, "~/") {
+		// "~alice/dir" names another user's home. chroncal does not
+		// resolve that form, and a shell leaves it alone in quotes, so a
+		// silent store would point at a directory that does not exist.
+		return "", errInvalidInputf("--path: %q is not supported; use an absolute path or one that starts with ~/", raw)
+	}
 	resolved, err := fsutil.ExpandHome(raw)
 	if err != nil {
 		return "", errInvalidInputf("--path: %v", err)
@@ -528,6 +535,14 @@ inherits the global [alarms] default from config.toml again.
 			}
 			if cmd.Flags().Changed("path") && strings.TrimSpace(localPath) != "" && strings.TrimSpace(remoteURL) != "" {
 				return errInvalidInputf("--path and --remote-url are mutually exclusive: a calendar is local or a server collection")
+			}
+			// Refuse a link that the service would refuse before any other
+			// field changes, so the command never prompts for a secret or
+			// leaves a partial update behind a refusal.
+			if !disconnectRemote && strings.TrimSpace(remoteURL) != "" {
+				if err := a.Calendars.CheckLinkable(existing); err != nil {
+					return err
+				}
 			}
 
 			n, co, d := existing.Name, existing.Color, existing.Description
