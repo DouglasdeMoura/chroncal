@@ -322,39 +322,54 @@ func componentNames(set verifySupportedCalendarComponentSet) []string {
 	return names
 }
 
-// QueryAll fetches all resources from a calendar.
-func (c *Client) QueryAll(ctx context.Context, calendarPath string) ([]Resource, error) {
+// QueryAll fetches every resource of a calendar with the calendar-query
+// REPORT. A server without sync-collection support gets a full snapshot
+// through this call. The result reports a resource whose calendar-data is
+// missing or does not parse in Missing or Unparseable, so one bad body does
+// not fail the whole snapshot (issue #853). See decodeTolerantReport.
+func (c *Client) QueryAll(ctx context.Context, calendarPath string) (*ReportResult, error) {
 	calendarPath, err := c.CanonicalCollectionRef(calendarPath)
 	if err != nil {
 		return nil, err
 	}
 
-	query := &caldav.CalendarQuery{
-		CompRequest: caldav.CalendarCompRequest{
-			Name:     "VCALENDAR",
-			AllComps: true,
-			AllProps: true,
-		},
-		CompFilter: caldav.CompFilter{
-			Name: "VCALENDAR",
-		},
+	req, err := http.NewRequestWithContext(ctx, "REPORT", c.ResolveURL(calendarPath), strings.NewReader(calendarQueryBody))
+	if err != nil {
+		return nil, fmt.Errorf("new REPORT request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
+	req.Header.Set("Depth", "1")
 
-	objects, err := c.inner.QueryCalendar(ctx, calendarPath, query)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("query all: %w", err)
 	}
+	defer resp.Body.Close()
 
-	out := make([]Resource, 0, len(objects))
-	for _, obj := range objects {
-		out = append(out, Resource{
-			Path: obj.Path,
-			ETag: normalizeETag(obj.ETag),
-			Data: obj.Data,
-		})
+	if resp.StatusCode != http.StatusMultiStatus && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("REPORT calendar-query: %w", httpError(resp))
 	}
-	return out, nil
+
+	result, err := decodeTolerantReport(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("query all: %w", err)
+	}
+	return result, nil
 }
+
+// calendarQueryBody asks for every object of the collection with its ETag
+// and its full body (RFC 4791 section 7.8). A bare calendar-data element
+// returns the whole object.
+const calendarQueryBody = `<?xml version="1.0" encoding="utf-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:getetag/>
+    <c:calendar-data/>
+  </d:prop>
+  <c:filter>
+    <c:comp-filter name="VCALENDAR"/>
+  </c:filter>
+</c:calendar-query>`
 
 // PutResource uploads a single iCal resource. Returns the new ETag.
 // If etag is non-empty, the server will reject the PUT if the resource was

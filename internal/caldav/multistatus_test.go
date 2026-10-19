@@ -28,7 +28,7 @@ func TestDavMultiStatusDecodesCanonicalSample(t *testing.T) {
   </d:response>
 </d:multistatus>`
 
-	var ms davMultiStatus[multiGetProps]
+	var ms davMultiStatus[reportProps]
 	if err := xml.NewDecoder(strings.NewReader(body)).Decode(&ms); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestDavMultiStatusDecodesCanonicalSample(t *testing.T) {
 	}
 
 	// A response with only error propstats yields ok == false, not an error.
-	var ms2 davMultiStatus[multiGetProps]
+	var ms2 davMultiStatus[reportProps]
 	bad := strings.Replace(body, "200 OK", "500 Server Error", 1)
 	bad = strings.Replace(bad, "404 Not Found", "500 Server Error", 1)
 	if err := xml.NewDecoder(strings.NewReader(bad)).Decode(&ms2); err != nil {
@@ -88,7 +88,7 @@ END:VCALENDAR</c:calendar-data></d:prop>
   </d:response>
 </d:multistatus>`
 
-	var ms davMultiStatus[multiGetProps]
+	var ms davMultiStatus[reportProps]
 	if err := xml.NewDecoder(strings.NewReader(body)).Decode(&ms); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -105,7 +105,7 @@ END:VCALENDAR</c:calendar-data></d:prop>
 
 	// A response with only error propstats yields an empty slice, not an error.
 	bad := strings.ReplaceAll(body, "200 OK", "500 Server Error")
-	var ms2 davMultiStatus[multiGetProps]
+	var ms2 davMultiStatus[reportProps]
 	if err := xml.NewDecoder(strings.NewReader(bad)).Decode(&ms2); err != nil {
 		t.Fatalf("decode bad: %v", err)
 	}

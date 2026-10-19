@@ -191,17 +191,17 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			end = len(fetchPaths)
 		}
 		batch := fetchPaths[start:end]
-		multi, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.MultiGetResult, error) {
+		multi, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.ReportResult, error) {
 			return client.MultiGetTolerant(ctx, remoteURL, batch)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("multiget batch %d: %w", start, err)
 		}
 		for _, miss := range multi.Missing {
-			handleMiss(miss, false)
+			handleMiss(miss.Href, false)
 		}
 		for _, miss := range multi.Unparseable {
-			handleMiss(miss, true)
+			handleMiss(miss.Href, true)
 		}
 		for _, res := range multi.Resources {
 			resPath, hrefErr := client.CanonicalObjectRef(remoteURL, res.Path)

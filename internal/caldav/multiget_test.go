@@ -94,7 +94,7 @@ END:VCALENDAR
 	}
 	gotMissing := map[string]bool{}
 	for _, m := range result.Missing {
-		gotMissing[m] = true
+		gotMissing[m.Href] = true
 	}
 	if !gotMissing["/calendar/gone-toplevel.ics"] {
 		t.Errorf("expected /calendar/gone-toplevel.ics in Missing")
@@ -148,10 +148,10 @@ func TestMultiGetTolerantReportsUnparseableBody(t *testing.T) {
 	if len(result.Resources) != 0 {
 		t.Fatalf("Resources = %d, want 0", len(result.Resources))
 	}
-	if len(result.Missing) != 1 || result.Missing[0] != "/calendar/gone.ics" {
+	if len(result.Missing) != 1 || result.Missing[0].Href != "/calendar/gone.ics" {
 		t.Fatalf("Missing = %v, want [/calendar/gone.ics]", result.Missing)
 	}
-	if len(result.Unparseable) != 1 || result.Unparseable[0] != "/calendar/garbage.ics" {
+	if len(result.Unparseable) != 1 || result.Unparseable[0].Href != "/calendar/garbage.ics" {
 		t.Fatalf("Unparseable = %v, want [/calendar/garbage.ics]", result.Unparseable)
 	}
 }

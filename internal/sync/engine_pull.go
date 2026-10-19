@@ -88,13 +88,16 @@ const maxSyncCollectionPages = 200
 func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*pullResult, error) {
 	result := &pullResult{}
 
-	// Fetch all resources from server
-	resources, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) ([]caldav.Resource, error) {
+	// Fetch all resources from server. QueryAll reports a body that is
+	// missing or does not parse per href, so one broken object on the
+	// server does not fail the whole snapshot (issue #853).
+	report, err := caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (*caldav.ReportResult, error) {
 		return client.QueryAll(ctx, remoteURL)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("query all: %w", err)
 	}
+	resources := report.Resources
 
 	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
 	if err != nil {
@@ -127,7 +130,7 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 	if err != nil {
 		return nil, err
 	}
-	listedPaths := make(map[string]bool, len(resources))
+	listedPaths := make(map[string]bool, len(resources)+len(report.Missing)+len(report.Unparseable))
 
 	// Track which UIDs the server still reports. Deletion detection is keyed
 	// by UID rather than path because some CalDAV servers (GMX/Cosmo) rewrite
@@ -135,47 +138,99 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 	// one we stored, so path-based comparison produces false "deleted on
 	// server" signals and nukes healthy local resources.
 	remoteUIDs := make(map[string]bool, len(resources))
-	// persistFailures counts bodies QueryAll delivered but the local store
-	// refused. The accounting mirrors the sync-collection path: a nonzero
-	// count makes the pull incomplete (see the note after the loop).
-	persistFailures := 0
-	for _, res := range resources {
-		resPath, hrefErr := client.CanonicalObjectRef(remoteURL, res.Path)
+
+	// claim does the bookkeeping that every listed href shares, with or
+	// without a body: the canonical path, the listed set, the tombstone
+	// skip, and the local row. A local row counts as seen on the server
+	// before any import, so a body that does not import cannot make the
+	// absence check below delete the row. ok is false when the loop must
+	// skip the href: the path is out of scope, the href is tombstoned, or
+	// the local copy already holds the listed ETag. An empty listed ETag
+	// tells nothing about the local copy, so the href goes on.
+	claim := func(href, etag string) (resPath string, local storage.SyncResource, isLocal, ok bool) {
+		resPath, hrefErr := client.CanonicalObjectRef(remoteURL, href)
 		if hrefErr != nil {
-			e.logger.Warn("skip out-of-scope remote href", "calendar_id", calendarID, "path", res.Path, "error", hrefErr)
-			continue
+			e.logger.Warn("skip out-of-scope remote href", "calendar_id", calendarID, "path", href, "error", hrefErr)
+			return "", storage.SyncResource{}, false, false
 		}
 		listedPaths[resPath] = true
 		if tombstonedPaths[resPath] {
 			e.logger.Debug("skip tombstoned remote resource by path", "path", resPath)
 			known.forget(ctx, resPath)
-			continue
+			return resPath, storage.SyncResource{}, false, false
 		}
-
-		local, isLocal := localByPath[resPath]
+		local, isLocal = localByPath[resPath]
 		if isLocal {
 			remoteUIDs[local.Uid] = true
-			if local.Etag == res.ETag {
+			if etag != "" && local.Etag == etag {
 				// The local copy holds the current server version.
 				known.forget(ctx, resPath)
-				continue
+				return resPath, local, true, false
 			}
 		}
-		// noteMiss records a known href whose body does not import. This
-		// path stores no sync-token, so the budget withholds nothing. The
-		// row lets sync status name the href after the budget.
-		noteMiss := func(reason string) {
-			if !isLocal {
-				return
-			}
-			if _, _, err := known.noteMiss(ctx, resPath, local.Uid, reason, res.ETag); err != nil {
-				e.logger.Warn("record known QueryAll miss", "calendar_id", calendarID, "href", res.Path, "error", err)
-			}
-		}
+		return resPath, local, isLocal, true
+	}
 
-		// Import the resource
-		if res.Data == nil {
-			noteMiss(knownMissReasonMissing)
+	// noteMiss records a known href whose body does not import. This path
+	// stores no sync-token, so the budget withholds nothing. The row lets
+	// sync status name the href after the budget, and the warnings mirror
+	// the multiget path: once per pull while the budget lasts, once more at
+	// the give-up, then silence.
+	noteMiss := func(resPath, href string, local storage.SyncResource, isLocal bool, reason, etag string) {
+		if !isLocal {
+			return
+		}
+		exhausted, gaveUp, err := known.noteMiss(ctx, resPath, local.Uid, reason, etag)
+		if err != nil {
+			e.logger.Warn("record known QueryAll miss", "calendar_id", calendarID, "href", href, "error", err)
+			return
+		}
+		cause := "server returns 404 for a known resource"
+		if reason == knownMissReasonUnparseable {
+			cause = "server body unparseable"
+		}
+		switch {
+		case gaveUp:
+			result.warnings = append(result.warnings, ImportWarning{
+				Path: href, UID: local.Uid,
+				Message: fmt.Sprintf("%s; gave up after %d or more attempts, local copy kept (see sync status)", cause, knownMissLimit),
+			})
+		case exhausted:
+			// The href gave up before, and sync status names it.
+		case reason == knownMissReasonUnparseable:
+			result.warnings = append(result.warnings, ImportWarning{
+				Path: href, UID: local.Uid,
+				Message: "server body unparseable; local copy kept, update not imported",
+			})
+		}
+	}
+
+	// A response without calendar-data, or with a body the ical decoder
+	// rejects, names an href the snapshot could not deliver. A known local
+	// row keeps its copy and takes one miss. An unknown href has no local
+	// data to protect, so nothing is to do until the server fixes it.
+	for _, miss := range report.Missing {
+		if resPath, local, isLocal, ok := claim(miss.Href, miss.ETag); ok {
+			e.logger.Warn("full snapshot href without calendar-data", "calendar_id", calendarID, "href", miss.Href, "known", isLocal)
+			noteMiss(resPath, miss.Href, local, isLocal, knownMissReasonMissing, miss.ETag)
+		}
+	}
+	for _, miss := range report.Unparseable {
+		if resPath, local, isLocal, ok := claim(miss.Href, miss.ETag); ok {
+			if !isLocal {
+				e.logger.Warn("full snapshot body unparseable", "calendar_id", calendarID, "href", miss.Href)
+			}
+			noteMiss(resPath, miss.Href, local, isLocal, knownMissReasonUnparseable, miss.ETag)
+		}
+	}
+
+	// persistFailures counts bodies QueryAll delivered but the local store
+	// refused. The accounting mirrors the sync-collection path: a nonzero
+	// count makes the pull incomplete (see the note after the loop).
+	persistFailures := 0
+	for _, res := range resources {
+		resPath, local, isLocal, ok := claim(res.Path, res.ETag)
+		if !ok {
 			continue
 		}
 		uid, imported, warnings, persistErr := e.importFetchedResource(ctx, calendarID, tombstonedUIDs, fetchedResource{
@@ -197,7 +252,7 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 		if uid != "" {
 			known.forget(ctx, resPath)
 		} else {
-			noteMiss(knownMissReasonUnparseable)
+			noteMiss(resPath, res.Path, local, isLocal, knownMissReasonUnparseable, res.ETag)
 		}
 		if imported {
 			result.pulled++
