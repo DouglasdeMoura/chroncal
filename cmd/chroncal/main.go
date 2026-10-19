@@ -46,7 +46,6 @@ func (e *cliError) Error() string { return e.Msg }
 // without a pre-check in each command.
 var invalidInputSentinels = []error{
 	calendarpkg.ErrDeclaredCalendar,
-	calendarpkg.ErrDeclaredRemote,
 	calendarpkg.ErrDeclaredLink,
 	calendarpkg.ErrRemoteLocalPath,
 	calendarpkg.ErrLocalPathLink,

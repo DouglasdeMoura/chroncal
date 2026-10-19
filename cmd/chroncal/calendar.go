@@ -440,13 +440,6 @@ config.toml sets the same fields declaratively.`,
 // absolute, clean path with "~" resolved. An empty flag stays empty, which
 // on update means "remove the directory".
 func resolveCalendarPathFlag(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if strings.HasPrefix(raw, "~") && raw != "~" && !strings.HasPrefix(raw, "~/") {
-		// "~alice/dir" names another user's home. chroncal does not
-		// resolve that form, and a shell leaves it alone in quotes, so a
-		// silent store would point at a directory that does not exist.
-		return "", errInvalidInputf("--path: %q is not supported; use an absolute path or one that starts with ~/", raw)
-	}
 	resolved, err := fsutil.ExpandHome(raw)
 	if err != nil {
 		return "", errInvalidInputf("--path: %v", err)
@@ -533,14 +526,32 @@ inherits the global [alarms] default from config.toml again.
 			if err := validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID, allowInsecure, disconnectRemote); err != nil {
 				return err
 			}
-			if cmd.Flags().Changed("path") && strings.TrimSpace(localPath) != "" && strings.TrimSpace(remoteURL) != "" {
+			// Resolve --path first. Every check below reads the state the
+			// command will leave behind, so a refusal costs no write.
+			var resolvedPath string
+			if cmd.Flags().Changed("path") {
+				resolvedPath, err = resolveCalendarPathFlag(localPath)
+				if err != nil {
+					return err
+				}
+			}
+			if resolvedPath != "" && strings.TrimSpace(remoteURL) != "" {
 				return errInvalidInputf("--path and --remote-url are mutually exclusive: a calendar is local or a server collection")
+			}
+			if resolvedPath != "" && existing.AccountID != 0 && !disconnectRemote {
+				return errInvalidInputf("calendar %q: %v", existing.Name, calendarpkg.ErrRemoteLocalPath)
 			}
 			// Refuse a link that the service would refuse before any other
 			// field changes, so the command never prompts for a secret or
-			// leaves a partial update behind a refusal.
+			// leaves a partial update behind a refusal. The check sees the
+			// path as this command leaves it, so --path "" in the same
+			// command clears the way for the link.
 			if !disconnectRemote && strings.TrimSpace(remoteURL) != "" {
-				if err := a.Calendars.CheckLinkable(existing); err != nil {
+				after := existing
+				if cmd.Flags().Changed("path") {
+					after.LocalPath = resolvedPath
+				}
+				if err := a.Calendars.CheckLinkable(after); err != nil {
 					return err
 				}
 			}
@@ -564,21 +575,20 @@ inherits the global [alarms] default from config.toml again.
 				return fmt.Errorf("update calendar: %w", err)
 			}
 
+			// A cleared path lands before a link, so --path "" next to
+			// --remote-url frees the calendar for the link in one command.
+			// A new path lands after a disconnect (see below).
+			if cmd.Flags().Changed("path") && resolvedPath == "" {
+				if err := a.Calendars.SetLocalPath(ctx, c.ID, ""); err != nil {
+					return fmt.Errorf("set calendar path: %w", err)
+				}
+				c.LocalPath = ""
+			}
+
 			if cmd.Flags().Changed("email") {
 				if err := a.Calendars.SetOwnerEmail(ctx, c.ID, email); err != nil {
 					return fmt.Errorf("set owner email: %w", err)
 				}
-			}
-
-			if cmd.Flags().Changed("path") {
-				resolvedPath, err := resolveCalendarPathFlag(localPath)
-				if err != nil {
-					return err
-				}
-				if err := a.Calendars.SetLocalPath(ctx, c.ID, resolvedPath); err != nil {
-					return fmt.Errorf("set calendar path: %w", err)
-				}
-				c.LocalPath = resolvedPath
 			}
 
 			if cmd.Flags().Changed("default-alarm") || cmd.Flags().Changed("clear-default-alarms") {
@@ -615,6 +625,17 @@ inherits the global [alarms] default from config.toml again.
 				if err != nil {
 					return fmt.Errorf("get calendar: %w", err)
 				}
+			}
+
+			// A new path lands after a disconnect, so "--disconnect-remote
+			// --path DIR" turns a server collection into a directory-fed
+			// calendar in one command. The checks above refused a new path
+			// next to a link.
+			if cmd.Flags().Changed("path") && resolvedPath != "" {
+				if err := a.Calendars.SetLocalPath(ctx, c.ID, resolvedPath); err != nil {
+					return fmt.Errorf("set calendar path: %w", err)
+				}
+				c.LocalPath = resolvedPath
 			}
 
 			w := cmd.OutOrStdout()
@@ -899,20 +920,17 @@ func findCalendarByRef(cals []calendarpkg.Calendar, ref string) (calendarpkg.Cal
 		return calendarpkg.Calendar{}, &cliError{Code: "not_found", Msg: fmt.Sprintf("calendar %q not found", ref)}
 	}
 
-	var matches []calendarpkg.Calendar
-	for _, cal := range cals {
-		if strings.EqualFold(cal.Name, ref) {
-			matches = append(matches, cal)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return calendarpkg.Calendar{}, &cliError{Code: "not_found", Msg: fmt.Sprintf("calendar %q not found", ref)}
-	case 1:
-		return matches[0], nil
-	default:
+	// calendar.FindByName is the one name rule: an exact match wins, then
+	// one match in another case. Apply uses the same rule, so a declared
+	// calendar is always addressable by its name.
+	cal, ok, err := calendarpkg.FindByName(cals, ref)
+	if err != nil {
 		return calendarpkg.Calendar{}, errInvalidInputf("calendar name %q is ambiguous; use its numeric ID instead", ref)
 	}
+	if !ok {
+		return calendarpkg.Calendar{}, &cliError{Code: "not_found", Msg: fmt.Sprintf("calendar %q not found", ref)}
+	}
+	return cal, nil
 }
 
 func jsonCalendars(ctx context.Context, a *app.App, cals []calendarpkg.Calendar) ([]jsonCalendar, error) {

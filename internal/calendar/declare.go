@@ -53,11 +53,12 @@ var ErrRemoteLocalPath = errors.New(
 var ErrLocalPathLink = errors.New(
 	"this calendar has a local directory; remove it with --path \"\" before you link it to a CalDAV account")
 
-// ErrAmbiguousDeclaredName reports a declared name that matches several
-// stored calendars that differ only in case. Apply cannot pick one, so it
-// skips the entry with a warning. The user renames one of the calendars.
-var ErrAmbiguousDeclaredName = errors.New(
-	"several calendars match this name in another case; rename one of them")
+// ErrAmbiguousName reports a name that matches several stored calendars
+// that differ only in case and none exactly. Apply skips such an entry
+// with a warning, and the CLI asks for the numeric ID. The user renames
+// one of the calendars.
+var ErrAmbiguousName = errors.New(
+	"several calendars match this name in another case; rename one of them or use the numeric ID")
 
 // IsDeclared reports whether Apply bound an entry to a stored calendar with
 // that exact name. Apply records the stored spelling, so a stray case
@@ -93,13 +94,13 @@ func (s *Service) CheckLinkable(cal Calendar) error {
 	return nil
 }
 
-// findByName returns the calendar with that name. An exact match wins. One
+// FindByName returns the calendar with that name. An exact match wins. One
 // match that differs only in case comes next, so a declared "fastmail"
-// adopts a stored "Fastmail" instead of a second calendar. The CLI resolves
-// a name the same way, and a second calendar would make every name
-// reference ambiguous. Several case variants and no exact match give
-// ErrAmbiguousDeclaredName.
-func findByName(cals []Calendar, name string) (Calendar, bool, error) {
+// adopts a stored "Fastmail" instead of a second calendar. The CLI
+// --calendar lookup and Apply share this rule, so a name resolves the same
+// way everywhere. Several case variants and no exact match give
+// ErrAmbiguousName.
+func FindByName(cals []Calendar, name string) (Calendar, bool, error) {
 	for _, c := range cals {
 		if c.Name == name {
 			return c, true, nil
@@ -121,17 +122,17 @@ func findByName(cals []Calendar, name string) (Calendar, bool, error) {
 	case 1:
 		return found, true, nil
 	default:
-		return Calendar{}, false, ErrAmbiguousDeclaredName
+		return Calendar{}, false, ErrAmbiguousName
 	}
 }
 
-// getByName returns the calendar with that name (see findByName).
+// getByName returns the calendar with that name (see FindByName).
 func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) {
 	cals, err := s.List(ctx)
 	if err != nil {
 		return Calendar{}, err
 	}
-	c, ok, err := findByName(cals, name)
+	c, ok, err := FindByName(cals, name)
 	if err != nil {
 		return Calendar{}, err
 	}
@@ -151,7 +152,7 @@ func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) 
 //
 // A conflict in one entry does not stop the launch. An entry whose name
 // matches a calendar that a CalDAV account owns (ErrDeclaredRemote), or
-// several case variants (ErrAmbiguousDeclaredName), becomes a warning, and
+// several case variants (ErrAmbiguousName), becomes a warning, and
 // Apply skips that entry. A launch that fails on a config conflict would
 // also block the commands that resolve it. A database error stays an
 // error.
@@ -174,7 +175,7 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	}
 	for _, d := range declared {
 		name := strings.TrimSpace(d.Name)
-		cal, ok, err := findByName(existing, name)
+		cal, ok, err := FindByName(existing, name)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
 			continue

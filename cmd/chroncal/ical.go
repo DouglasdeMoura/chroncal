@@ -99,17 +99,17 @@ again updates existing items instead of blindly duplicating them.`,
 			for _, target := range targets {
 				// Each run gets its own time budget. One large directory
 				// must not starve the calendars after it.
-				outcome, err := importOneTarget(a, target)
-				if err != nil {
+				outcome := importOneTarget(a, target)
+				if outcome.err != nil {
 					if !batch {
-						return err
+						return outcome.err
 					}
 					// A batch run reports the calendar that failed and
 					// continues, so one missing directory does not stop
 					// the other calendars. The JSON array carries the
 					// failed run with its error, so a script sees it too.
-					fmt.Fprintf(os.Stderr, "chroncal: %s: %v\n", safeText(target.calendarName), err)
-					outcomes = append(outcomes, icalImportOutcome{target: target, err: err})
+					fmt.Fprintf(os.Stderr, "chroncal: %s: %v\n", safeText(target.calendarName), outcome.err)
+					outcomes = append(outcomes, outcome)
 					failed++
 					continue
 				}
@@ -179,7 +179,7 @@ func batchLabel(target icalImportTarget, batch bool) string {
 }
 
 // importOneTarget runs one import with its own time budget.
-func importOneTarget(a *app.App, target icalImportTarget) (icalImportOutcome, error) {
+func importOneTarget(a *app.App, target icalImportTarget) icalImportOutcome {
 	ctx, cancel := context.WithTimeout(context.Background(), icalImportTimeout)
 	defer cancel()
 	return importIntoCalendar(ctx, a, target)
@@ -239,7 +239,8 @@ type icalImportOutcome struct {
 	// did before the batch mode existed.
 	freeBusy []freebusy.Result
 	// err is set when the run did not start: the parse or the destination
-	// check failed. The summary is then empty.
+	// check failed. The summary is then empty. It is the one error channel
+	// of a run, so every outcome carries its target.
 	err error
 }
 
@@ -277,8 +278,9 @@ func (o icalImportOutcome) json() map[string]any {
 }
 
 // importIntoCalendar parses the source of one target and imports it into
-// the calendar of that target.
-func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget) (icalImportOutcome, error) {
+// the calendar of that target. A failure comes back in the err field of
+// the outcome, with the target filled in.
+func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget) icalImportOutcome {
 	path := target.path
 	if target.fromDirectory {
 		// The stored directory is the user's own setting, so a symbolic
@@ -295,19 +297,19 @@ func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget
 		if target.fromDirectory && errors.Is(err, icaltransfer.ErrNoICSFiles) {
 			// A collection without events is a normal state for a sync
 			// directory. The run imports nothing and succeeds.
-			return icalImportOutcome{target: target}, nil
+			return icalImportOutcome{target: target}
 		}
-		return icalImportOutcome{}, err
+		return icalImportOutcome{target: target, err: err}
 	}
 	if err := icaltransfer.ValidateDestination(ctx, a, target.calendarID, preview); err != nil {
-		return icalImportOutcome{}, err
+		return icalImportOutcome{target: target, err: err}
 	}
 	summary := icaltransfer.Import(ctx, a, target.calendarID, &preview.Result)
 	return icalImportOutcome{
 		target:   target,
 		summary:  summary,
 		freeBusy: preview.Result.FreeBusy,
-	}, nil
+	}
 }
 
 // printImportWarnings lists the warnings of one run on stderr. A non-empty

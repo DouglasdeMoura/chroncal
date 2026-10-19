@@ -133,8 +133,8 @@ func (q *Queries) CountDefaultCalendars(ctx context.Context) (int64, error) {
 }
 
 const createCalendar = `-- name: CreateCalendar :one
-INSERT INTO calendars (name, color, description, display_order)
-VALUES (?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars))
+INSERT INTO calendars (name, color, description, local_path, display_order)
+VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars))
 RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms, local_path
 `
 
@@ -142,12 +142,18 @@ type CreateCalendarParams struct {
 	Name        string
 	Color       string
 	Description *string
+	LocalPath   string
 }
 
 // display_order is computed as MAX+1 (0 for the first calendar) so new
 // calendars append to the bottom of the sidebar instead of all colliding at 0.
 func (q *Queries) CreateCalendar(ctx context.Context, arg CreateCalendarParams) (Calendar, error) {
-	row := q.db.QueryRowContext(ctx, createCalendar, arg.Name, arg.Color, arg.Description)
+	row := q.db.QueryRowContext(ctx, createCalendar,
+		arg.Name,
+		arg.Color,
+		arg.Description,
+		arg.LocalPath,
+	)
 	var i Calendar
 	err := row.Scan(
 		&i.ID,

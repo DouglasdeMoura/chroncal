@@ -7,8 +7,8 @@ SELECT * FROM calendars WHERE id = ?;
 -- name: CreateCalendar :one
 -- display_order is computed as MAX+1 (0 for the first calendar) so new
 -- calendars append to the bottom of the sidebar instead of all colliding at 0.
-INSERT INTO calendars (name, color, description, display_order)
-VALUES (?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars))
+INSERT INTO calendars (name, color, description, local_path, display_order)
+VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars))
 RETURNING *;
 
 -- name: UpdateCalendar :one

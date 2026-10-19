@@ -65,7 +65,10 @@ func TestFindCalendarByRefErrorTaxonomy(t *testing.T) {
 
 // TestFindCalendarByRefRejectsAmbiguousName proves that two calendars that
 // share the same case-insensitive name are never resolved to the first
-// match in silence. The caller must disambiguate with a numeric ID.
+// match in silence. An exact match wins (calendar.FindByName, the rule
+// that Apply shares). A name that matches several calendars in another
+// case and none exactly must error, and the caller disambiguates with a
+// numeric ID.
 func TestFindCalendarByRefRejectsAmbiguousName(t *testing.T) {
 	t.Parallel()
 	cals := []calendar.Calendar{
@@ -74,10 +77,17 @@ func TestFindCalendarByRefRejectsAmbiguousName(t *testing.T) {
 		{ID: 3, Name: "Personal"},
 	}
 
-	// Ambiguous name must error, not return ID 1 (the first match).
-	if _, err := findCalendarByRef(cals, "Work"); err == nil {
-		t.Fatal("ambiguous calendar name should be rejected, not silently resolved to the first match")
+	// The exact spelling resolves to its own row, never to the other one.
+	for _, tc := range []struct {
+		ref  string
+		want int64
+	}{{"Work", 1}, {"work", 2}} {
+		got, err := findCalendarByRef(cals, tc.ref)
+		if err != nil || got.ID != tc.want {
+			t.Fatalf("findCalendarByRef(%q) = %v, %v; want ID %d", tc.ref, got.ID, err, tc.want)
+		}
 	}
+	// No exact match and two case variants is ambiguous.
 	if _, err := findCalendarByRef(cals, "WORK"); err == nil {
 		t.Fatal("case-insensitive ambiguous name should be rejected")
 	}
