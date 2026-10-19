@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -40,11 +41,19 @@ func SameTree(a, b string) bool {
 	return SameResolvedTree(ResolveTree(a), ResolveTree(b))
 }
 
+// caseInsensitivePaths is true on the platforms whose default file system
+// folds case (macOS and Windows). Two spellings of one directory are then
+// one tree.
+var caseInsensitivePaths = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+
 // SameResolvedTree is SameTree for two paths that ResolveTree already
 // resolved. A caller that compares one path with many resolves it once.
 func SameResolvedTree(a, b string) bool {
 	if a == "" || b == "" {
 		return false
+	}
+	if caseInsensitivePaths {
+		a, b = strings.ToLower(a), strings.ToLower(b)
 	}
 	if a == b {
 		return true

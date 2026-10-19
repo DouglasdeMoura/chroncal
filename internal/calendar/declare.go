@@ -65,17 +65,19 @@ var ErrAmbiguousName = model.NewInputError(
 // calendars on one tree would import the same files and move each todo
 // and journal between them on every run.
 var ErrOverlappingPath = model.NewInputError(
-	"another calendar uses this directory or a directory above or below it; each calendar needs its own tree")
+	"each calendar needs its own directory tree")
 
 // checkPathFree returns ErrOverlappingPath when another calendar than id
-// uses path or a directory above or below it. The list order decides which
-// calendar the error names, so the name is stable across launches. The
-// candidate resolves once; each stored path resolves once per call.
+// uses path or a directory above or below it. The error names the path and
+// the other calendar; the caller adds the subject calendar. The list order
+// decides which calendar the error names, so the name is stable across
+// launches. The candidate resolves once; each stored path resolves once
+// per call.
 func checkPathFree(cals []Calendar, id int64, path string) error {
 	candidate := fsutil.ResolveTree(path)
 	for _, c := range cals {
 		if c.ID != id && fsutil.SameResolvedTree(fsutil.ResolveTree(c.LocalPath), candidate) {
-			return fmt.Errorf("calendar %q: %w", c.Name, ErrOverlappingPath)
+			return fmt.Errorf("path %s overlaps the directory of calendar %q: %w", path, c.Name, ErrOverlappingPath)
 		}
 	}
 	return nil
@@ -122,6 +124,25 @@ func (s *Service) checkDeclaredRename(from, to string) (rebind bool, err error) 
 		return true, nil
 	}
 	return false, fmt.Errorf("calendar %q: %w", from, ErrDeclaredCalendar)
+}
+
+// CheckRename reports whether a calendar can take a new name: a declared
+// calendar changes only its case (ErrDeclaredCalendar), and the name must
+// be free in cals (ErrDuplicateName). The CLI calls it before any write,
+// so a refused rename costs no write. Update runs the same checks.
+func (s *Service) CheckRename(cals []Calendar, from, to string) error {
+	if from == to {
+		return nil
+	}
+	if _, err := s.checkDeclaredRename(from, to); err != nil {
+		return err
+	}
+	for _, c := range cals {
+		if c.Name == to {
+			return ErrDuplicateName
+		}
+	}
+	return nil
 }
 
 // rebindDeclared moves the guard from one spelling to another.
@@ -255,8 +276,6 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		}
 		// adopted marks a row that existed before this apply. A reset of
 		// one of its fields gets a warning; a new row gets none.
-		// pathRefused marks a declared path that the create refused, so
-		// the second pass does not report the same conflict again.
 		adopted := ok
 		if !ok {
 			color := d.Color
@@ -345,18 +364,31 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			}
 		}
 	}
-	accepted := changes[:0]
-	for _, c := range changes {
-		if err := checkPathFree(planned, c.ID, c.To); err != nil {
-			warnings = append(warnings, fmt.Sprintf("calendar %q: path %s: %v", c.Name, c.To, err))
-			for i := range planned {
-				if planned[i].ID == c.ID {
-					planned[i].LocalPath = c.From
+	// A refusal reverts one planned path, which can create a conflict for
+	// a change that passed before. The check repeats until no change is
+	// refused, so every conflict gets its own warning and every
+	// independent change lands.
+	accepted := append([]pathChange(nil), changes...)
+	for {
+		refused := false
+		kept := accepted[:0]
+		for _, c := range accepted {
+			if err := checkPathFree(planned, c.ID, c.To); err != nil {
+				warnings = append(warnings, fmt.Sprintf("calendar %q: %v", c.Name, err))
+				for i := range planned {
+					if planned[i].ID == c.ID {
+						planned[i].LocalPath = c.From
+					}
 				}
+				refused = true
+				continue
 			}
-			continue
+			kept = append(kept, c)
 		}
-		accepted = append(accepted, c)
+		accepted = kept
+		if !refused {
+			break
+		}
 	}
 	if len(accepted) == 0 {
 		return warnings, nil

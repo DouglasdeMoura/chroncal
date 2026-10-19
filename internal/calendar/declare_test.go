@@ -521,3 +521,61 @@ func TestDeclaredGuardStaysOnAFailedRename(t *testing.T) {
 		t.Fatal("the guard moved although the rename failed")
 	}
 }
+
+func TestApplyPathPlanReachesAFixpoint(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	for name, path := range map[string]string{"A": "/x", "B": "/y", "C": "/z/sub", "D": "/p"} {
+		if _, err := svc.CreateWithPath(ctx, name, "#111111", "", path); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	// A takes /y from B, B wants /z (refused: C holds /z/sub), D moves to
+	// /q. The refusal of B reverts B to /y, so A conflicts too. D is
+	// independent and must land.
+	warnings, err := svc.Apply(ctx, []Declared{
+		{Name: "A", Path: "/y"}, {Name: "B", Path: "/z"}, {Name: "D", Path: "/q"},
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	get := func(name string) string {
+		c, err := svc.getByName(ctx, name)
+		if err != nil {
+			t.Fatalf("get %s: %v", name, err)
+		}
+		return c.LocalPath
+	}
+	if get("A") != "/x" || get("B") != "/y" || get("D") != "/q" {
+		t.Fatalf("paths after apply: A=%q B=%q D=%q; warnings=%v", get("A"), get("B"), get("D"), warnings)
+	}
+	var aWarned, bWarned bool
+	for _, w := range warnings {
+		aWarned = aWarned || strings.HasPrefix(w, `calendar "A"`)
+		bWarned = bWarned || strings.HasPrefix(w, `calendar "B"`)
+	}
+	if !aWarned || !bWarned {
+		t.Fatalf("each refused change needs its own warning: %v", warnings)
+	}
+}
+
+func TestCheckRename(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.Create(ctx, "Work", "#111111", ""); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Apply(ctx, []Declared{{Name: "Work"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	cals, _ := svc.List(ctx)
+	if err := svc.CheckRename(cals, "Work", "Deep"); !errors.Is(err, ErrDeclaredCalendar) {
+		t.Errorf("rename of a declared calendar: %v", err)
+	}
+	if err := svc.CheckRename(cals, "Personal", "Work"); !errors.Is(err, ErrDuplicateName) {
+		t.Errorf("rename onto a taken name: %v", err)
+	}
+	if err := svc.CheckRename(cals, "Personal", "Mine"); err != nil {
+		t.Errorf("free rename: %v", err)
+	}
+}

@@ -193,17 +193,13 @@ func importOneTarget(a *app.App, target icalImportTarget) icalImportOutcome {
 // Without a path, each calendar that has a directory is one run (issue
 // #809). With --calendar and no path, that calendar must have a directory.
 func icalImportTargets(ctx context.Context, a *app.App, args []string, calendarName string) ([]icalImportTarget, error) {
-	if len(args) == 1 {
+	if len(args) == 1 || calendarName != "" {
 		cal, err := resolveCalendar(ctx, a, calendarName)
 		if err != nil {
 			return nil, err
 		}
-		return []icalImportTarget{{path: args[0], calendarID: cal.ID, calendarName: cal.Name}}, nil
-	}
-	if calendarName != "" {
-		cal, err := resolveCalendar(ctx, a, calendarName)
-		if err != nil {
-			return nil, err
+		if len(args) == 1 {
+			return []icalImportTarget{{path: args[0], calendarID: cal.ID, calendarName: cal.Name}}, nil
 		}
 		if cal.AccountID != 0 {
 			return nil, errInvalidInputf("calendar %q: %v", cal.Name, calendarpkg.ErrRemoteLocalPath)
