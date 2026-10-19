@@ -122,7 +122,9 @@ again updates existing items instead of blindly duplicating them.`,
 				// the event, todo, and journal write paths do. The import
 				// then does not wait for the next "service run" tick
 				// (issue #115).
-				if outcome.landed() > 0 {
+				// A directory-fed calendar is local, so the push would be
+				// a no-op that still opens the credential store.
+				if outcome.landed() > 0 && !target.fromDirectory {
 					opportunisticPush(a, target.calendarID, cmd)
 				}
 				failed += outcome.summary.Failed

@@ -116,8 +116,8 @@ type CalendarConfig struct {
 	// Path is the directory of .ics files that feeds the calendar. A sync
 	// tool such as vdirsyncer or pimsync writes one .ics file for each
 	// event there. "chroncal ical import" without a path argument imports
-	// every calendar that has one. Load resolves a leading "~" and makes
-	// the path absolute.
+	// every calendar that has one. Load resolves a "~" at the start and
+	// makes the path absolute.
 	Path string `mapstructure:"path"`
 }
 

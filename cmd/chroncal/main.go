@@ -47,6 +47,7 @@ func (e *cliError) Error() string { return e.Msg }
 var invalidInputSentinels = []error{
 	calendarpkg.ErrDeclaredCalendar,
 	calendarpkg.ErrDeclaredLink,
+	calendarpkg.ErrAmbiguousName,
 	calendarpkg.ErrRemoteLocalPath,
 	calendarpkg.ErrLocalPathLink,
 }

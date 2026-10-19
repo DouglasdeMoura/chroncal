@@ -53,7 +53,7 @@ func ContractHome(path string) string {
 }
 
 // ExpandHome resolves a path that a user wrote in a config file or on the
-// command line. A leading "~" or "~/" becomes the home directory. The result
+// command line. A "~" or "~/" at the start becomes the home directory. The result
 // is absolute, and filepath.Abs cleans it, so two spellings of one
 // directory compare equal. An empty path stays empty.
 func ExpandHome(path string) (string, error) {

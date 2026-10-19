@@ -305,7 +305,17 @@ func (s *Service) UpdateSyncState(ctx context.Context, id int64, ctag, syncToken
 	})
 }
 
+// LinkToAccount attaches a calendar to an account. It refuses a declared
+// calendar and a calendar with a local directory (CheckLinkable), like
+// Connect does.
 func (s *Service) LinkToAccount(ctx context.Context, id, accountID int64, remoteURL string) error {
+	existing, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.CheckLinkable(existing); err != nil {
+		return err
+	}
 	return s.q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
 		ID:        id,
 		AccountID: &accountID,

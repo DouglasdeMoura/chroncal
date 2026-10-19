@@ -442,7 +442,7 @@ func TestCalendarUpdateRejectsPathWithRemote(t *testing.T) {
 	}
 	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--path", t.TempDir(),
 		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer")
-	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+	if err == nil || !strings.Contains(err.Error(), "has a local directory") {
 		t.Fatalf("calendar update --path with --remote-url: error = %v", err)
 	}
 	if got := calendarJSONByName(t, "Work").LocalPath; got != "" {

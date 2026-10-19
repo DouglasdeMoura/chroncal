@@ -535,9 +535,6 @@ inherits the global [alarms] default from config.toml again.
 					return err
 				}
 			}
-			if resolvedPath != "" && strings.TrimSpace(remoteURL) != "" {
-				return errInvalidInputf("--path and --remote-url are mutually exclusive: a calendar is local or a server collection")
-			}
 			if resolvedPath != "" && existing.AccountID != 0 && !disconnectRemote {
 				return errInvalidInputf("calendar %q: %v", existing.Name, calendarpkg.ErrRemoteLocalPath)
 			}
@@ -545,7 +542,8 @@ inherits the global [alarms] default from config.toml again.
 			// field changes, so the command never prompts for a secret or
 			// leaves a partial update behind a refusal. The check sees the
 			// path as this command leaves it, so --path "" in the same
-			// command clears the way for the link.
+			// command clears the way for the link, and --path DIR next to
+			// --remote-url is refused as ErrLocalPathLink.
 			if !disconnectRemote && strings.TrimSpace(remoteURL) != "" {
 				after := existing
 				if cmd.Flags().Changed("path") {

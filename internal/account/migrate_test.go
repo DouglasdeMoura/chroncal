@@ -424,3 +424,19 @@ func TestMigrateRefusesDeclaredSource(t *testing.T) {
 		t.Fatalf("the refused move retired the source: %v", err)
 	}
 }
+
+// TestMigrateRefusesDirectoryFedSource verifies a calendar move applies the
+// same rule as Connect: a calendar that a local directory feeds cannot
+// become a server collection.
+func TestMigrateRefusesDirectoryFedSource(t *testing.T) {
+	svc, q, _, acct := newMigrationFixture(t)
+	ctx := context.Background()
+	source, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Fastmail", Color: "#111111", LocalPath: "/p"})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	_, err = svc.MigrateCalendarToAccount(ctx, source.ID, discoveryFor(acct, "/dav/fastmail/", "Fastmail remote"), "/dav/fastmail/")
+	if !errors.Is(err, calendar.ErrLocalPathLink) {
+		t.Fatalf("migrate of a directory-fed source: error = %v, want ErrLocalPathLink", err)
+	}
+}
