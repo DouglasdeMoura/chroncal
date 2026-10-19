@@ -359,16 +359,9 @@ config.toml sets the same fields declaratively.`,
 			defer a.Close()
 
 			ctx := context.Background()
-			c, err := a.Calendars.Create(ctx, args[0], color, description)
+			c, err := a.Calendars.CreateWithPath(ctx, args[0], color, description, resolvedPath)
 			if err != nil {
 				return fmt.Errorf("create calendar: %w", err)
-			}
-
-			if resolvedPath != "" {
-				if err := a.Calendars.SetLocalPath(ctx, c.ID, resolvedPath); err != nil {
-					return fmt.Errorf("set calendar path: %w", err)
-				}
-				c.LocalPath = resolvedPath
 			}
 
 			if email != "" {

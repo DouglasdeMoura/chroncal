@@ -6,17 +6,31 @@ import (
 	"strings"
 )
 
+// hasHomePrefix reports whether ExpandHome resolves the start of path to
+// the home directory: a bare "~" or a "~/" prefix.
+func hasHomePrefix(path string) bool {
+	return path == "~" || strings.HasPrefix(path, "~/")
+}
+
+// IsAbsOrHome reports whether path does not depend on the working
+// directory: it is absolute, or ExpandHome resolves its start to the home
+// directory. A config file uses this rule, because the working directory
+// of a launch is not stable.
+func IsAbsOrHome(path string) bool {
+	path = strings.TrimSpace(path)
+	return hasHomePrefix(path) || filepath.IsAbs(path)
+}
+
 // ExpandHome resolves a path that a user wrote in a config file or on the
 // command line. A leading "~" or "~/" becomes the home directory. The result
 // is absolute and clean, so two spellings of one directory compare equal.
-// An empty path stays empty. config.validateCalendars accepts the same two
-// prefixes, so keep the two in step.
+// An empty path stays empty.
 func ExpandHome(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", nil
 	}
-	if path == "~" || strings.HasPrefix(path, "~/") {
+	if hasHomePrefix(path) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err

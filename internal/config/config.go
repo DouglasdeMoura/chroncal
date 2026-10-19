@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -233,6 +234,10 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// hexColorPattern matches the calendar color form that the CLI, the TUI,
+// and the database use: "#" and six hex digits.
+var hexColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
+
 // validateCalendars checks the [[calendars]] entries and resolves each
 // path in place. An entry without a name stops the load, because the name
 // is the key that ties the entry to a stored calendar. Two entries with one
@@ -252,14 +257,17 @@ func validateCalendars(entries []CalendarConfig) error {
 		}
 		seen[e.Name] = true
 		e.Color = strings.TrimSpace(e.Color)
+		if e.Color != "" && !hexColorPattern.MatchString(e.Color) {
+			return fmt.Errorf("calendars[%d] (%s): color %q must be a hex color such as #0F766E", i, e.Name, e.Color)
+		}
 		e.Description = strings.TrimSpace(e.Description)
 		raw := strings.TrimSpace(e.Path)
 		if raw == "" {
 			e.Path = ""
 			continue
 		}
-		if raw != "~" && !strings.HasPrefix(raw, "~/") && !filepath.IsAbs(raw) {
-			return fmt.Errorf("calendars[%d] (%s): path %q must be absolute or start with ~/", i, e.Name, raw)
+		if !fsutil.IsAbsOrHome(raw) {
+			return fmt.Errorf("calendars[%d] (%s): path %q must be absolute, or be ~ or start with ~/", i, e.Name, raw)
 		}
 		resolved, err := fsutil.ExpandHome(raw)
 		if err != nil {

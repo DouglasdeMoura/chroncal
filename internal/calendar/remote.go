@@ -410,6 +410,9 @@ func (s *Service) DeleteWithRemoteCleanup(ctx context.Context, id, newDefaultID 
 		return err
 	}
 	defer release()
+	if err := s.refuseDeclared(cal.Name); err != nil {
+		return err
+	}
 
 	count, err := s.q.CountCalendars(ctx)
 	if err != nil {

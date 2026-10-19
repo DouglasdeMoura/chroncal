@@ -678,6 +678,11 @@ name = "A"
 name = "A"
 path = "calendars/a"
 `,
+		"bad color": `
+[[calendars]]
+name = "A"
+color = "teal"
+`,
 	}
 	for label, content := range cases {
 		t.Run(label, func(t *testing.T) {

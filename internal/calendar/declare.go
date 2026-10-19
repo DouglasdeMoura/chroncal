@@ -37,15 +37,49 @@ func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) 
 	return Calendar{}, fmt.Errorf("calendar %q not found", name)
 }
 
+// ErrDeclaredCalendar reports a rename or a delete of a calendar that a
+// [[calendars]] entry of config.toml declares. Apply would create the
+// calendar again on the next launch, so the user removes the entry first.
+var ErrDeclaredCalendar = errors.New(
+	"a [[calendars]] entry in config.toml declares this calendar, so the next launch would create it again; remove the entry first")
+
+// ErrDeclaredRemote reports a [[calendars]] entry whose name matches a
+// calendar that a CalDAV account owns. The table declares local calendars
+// only. An apply would push the declared color to the server and feed the
+// remote calendar from a local directory.
+var ErrDeclaredRemote = errors.New(
+	"a CalDAV account owns a calendar with this name; the [[calendars]] table declares local calendars only")
+
+// refuseDeclared returns ErrDeclaredCalendar when Apply received an entry
+// with that name.
+func (s *Service) refuseDeclared(name string) error {
+	if s.declared[name] {
+		return fmt.Errorf("calendar %q: %w", name, ErrDeclaredCalendar)
+	}
+	return nil
+}
+
 // Apply reconciles the declared calendars into the database. For each
 // entry it creates a missing calendar, and it updates a stored color,
 // description, or path that differs from a non-empty declared value. It
 // never deletes a calendar: an entry that goes away from the config leaves
-// the calendar and its events in place.
+// the calendar and its events in place. After Apply, Update refuses to
+// rename a declared calendar, and the delete methods refuse to delete one.
+//
+// An entry whose name matches a calendar that a CalDAV account owns is an
+// error (ErrDeclaredRemote). The table declares local calendars only.
 //
 // Apply runs on every launch, so it must stay idempotent and cheap. It
 // reads the calendar list once and writes only the rows that differ.
 func (s *Service) Apply(ctx context.Context, declared []Declared) error {
+	s.declared = make(map[string]bool, len(declared))
+	for _, d := range declared {
+		name := strings.TrimSpace(d.Name)
+		if name == "" {
+			return fmt.Errorf("calendars: an entry has no name")
+		}
+		s.declared[name] = true
+	}
 	if len(declared) == 0 {
 		return nil
 	}
@@ -59,16 +93,16 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) error {
 	}
 	for _, d := range declared {
 		name := strings.TrimSpace(d.Name)
-		if name == "" {
-			return fmt.Errorf("calendars: an entry has no name")
-		}
 		cal, ok := byName[name]
+		if ok && cal.AccountID != 0 {
+			return fmt.Errorf("calendar %q: %w", name, ErrDeclaredRemote)
+		}
 		if !ok {
 			color := d.Color
 			if color == "" {
 				color = DefaultColor
 			}
-			created, err := s.Create(ctx, name, color, d.Description)
+			created, err := s.CreateWithPath(ctx, name, color, d.Description, d.Path)
 			if errors.Is(err, ErrDuplicateName) {
 				// Two launches at one moment (the TUI and a timer that
 				// runs "ical import") both see the calendar missing. The

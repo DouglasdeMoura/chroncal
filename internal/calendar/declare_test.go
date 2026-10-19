@@ -2,7 +2,10 @@ package calendar
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 func TestApplyCreatesMissingCalendar(t *testing.T) {
@@ -116,5 +119,85 @@ func TestApplyEmptyListIsNoop(t *testing.T) {
 	svc := newTestService(t)
 	if err := svc.Apply(context.Background(), nil); err != nil {
 		t.Fatalf("Apply(nil) error: %v", err)
+	}
+}
+
+func TestApplyRefusesRemoteCalendar(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: 1, AccountID: &account.ID, RemoteUrl: storage.StringToNullable("https://example.com/cal/personal"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+
+	err = svc.Apply(ctx, []Declared{{Name: "Personal", Color: "#222222", Path: "/p"}})
+	if !errors.Is(err, ErrDeclaredRemote) {
+		t.Fatalf("Apply on a remote calendar: error = %v, want ErrDeclaredRemote", err)
+	}
+	got, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Color == "#222222" || got.LocalPath != "" {
+		t.Fatalf("Apply changed the remote calendar: %+v", got)
+	}
+}
+
+func TestApplyThenRenameAndDeleteRefused(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	if err := svc.Apply(ctx, []Declared{{Name: "Fastmail"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	cals, _ := svc.List(ctx)
+	var fm Calendar
+	for _, c := range cals {
+		if c.Name == "Fastmail" {
+			fm = c
+		}
+	}
+
+	if _, err := svc.Update(ctx, fm.ID, "Mail", fm.Color, fm.Description); !errors.Is(err, ErrDeclaredCalendar) {
+		t.Fatalf("rename of a declared calendar: error = %v, want ErrDeclaredCalendar", err)
+	}
+	// An update that keeps the name still works.
+	if _, err := svc.Update(ctx, fm.ID, "Fastmail", "#010101", "note"); err != nil {
+		t.Fatalf("update of a declared calendar without a rename: %v", err)
+	}
+	if err := svc.Delete(ctx, fm.ID); !errors.Is(err, ErrDeclaredCalendar) {
+		t.Fatalf("delete of a declared calendar: error = %v, want ErrDeclaredCalendar", err)
+	}
+	if err := svc.DeleteAndPromote(ctx, fm.ID, 1); !errors.Is(err, ErrDeclaredCalendar) {
+		t.Fatalf("DeleteAndPromote of a declared calendar: error = %v, want ErrDeclaredCalendar", err)
+	}
+	// The seed calendar is not declared, so its delete still works.
+	if err := svc.DeleteAndPromote(ctx, 1, fm.ID); err != nil {
+		t.Fatalf("delete of an undeclared calendar: %v", err)
+	}
+}
+
+func TestCreateWithPathStoresPathInOneTransaction(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	c, err := svc.CreateWithPath(ctx, "Fastmail", "#111111", "", "/srv/fastmail")
+	if err != nil {
+		t.Fatalf("CreateWithPath: %v", err)
+	}
+	if c.LocalPath != "/srv/fastmail" {
+		t.Fatalf("returned LocalPath = %q", c.LocalPath)
+	}
+	got, err := svc.Get(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.LocalPath != "/srv/fastmail" {
+		t.Fatalf("stored LocalPath = %q", got.LocalPath)
 	}
 }
