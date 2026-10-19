@@ -281,3 +281,62 @@ func TestIcalImportRejectsTwoPaths(t *testing.T) {
 		t.Fatalf("ical import with two paths: error = %v", err)
 	}
 }
+
+// TestIcalImportBatchShapeAndEmptyDirectory covers two batch-mode
+// contracts: the JSON output is an array even for one target, and an
+// empty stored directory imports nothing and succeeds.
+func TestIcalImportBatchShapeAndEmptyDirectory(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	emptyDir := t.TempDir()
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Holidays", "--path", emptyDir); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+
+	stdout, _, err := runChroncalCommand(t, "ical", "import")
+	if err != nil {
+		t.Fatalf("ical import with an empty directory: %v", err)
+	}
+	if !strings.Contains(stdout, "Holidays (") || !strings.Contains(stdout, "Imported 0 new, updated 0 existing") {
+		t.Fatalf("empty directory output:\n%s", stdout)
+	}
+
+	stdout, _, err = runChroncalCommand(t, "ical", "import", "--output", "json")
+	if err != nil {
+		t.Fatalf("ical import --output json: %v", err)
+	}
+	var runs []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &runs); err != nil {
+		t.Fatalf("batch json with one target must be an array: %v\n%s", err, stdout)
+	}
+	if len(runs) != 1 || runs[0]["calendar"] != "Holidays" {
+		t.Fatalf("batch json = %v", runs)
+	}
+
+	// An explicit empty directory is still an error, as before.
+	if _, _, err := runChroncalCommand(t, "ical", "import", emptyDir, "--calendar", "Holidays"); err == nil {
+		t.Fatal("ical import of an explicit empty directory succeeded")
+	}
+}
+
+// TestIcalImportSinglePathJSONKeepsFreeBusyList guards the pre-existing
+// JSON contract of a single import: "freebusy" is the parsed list, not a
+// count, and the result is one object.
+func TestIcalImportSinglePathJSONKeepsFreeBusyList(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	dir := writeTestICSDir(t, "single-1", "Single")
+	stdout, _, err := runChroncalCommand(t, "ical", "import", dir, "--output", "json")
+	if err != nil {
+		t.Fatalf("ical import: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("single import json must be one object: %v\n%s", err, stdout)
+	}
+	// Master emitted the parsed list, which is null when the file holds no
+	// VFREEBUSY. A count would be a number, so a number is the regression.
+	switch v := out["freebusy"].(type) {
+	case nil, []any:
+	default:
+		t.Fatalf("freebusy = %#v, want a list or null", v)
+	}
+}

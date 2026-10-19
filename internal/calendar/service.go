@@ -33,6 +33,12 @@ var ErrInvalidPromotionTarget = errors.New("invalid promotion target for default
 type Service struct {
 	db *sql.DB
 	q  *storage.Queries
+
+	// declared holds the names of the [[calendars]] entries that Apply
+	// received (issue #809). Update and the delete methods refuse to
+	// rename or delete one of them, because Apply would create the
+	// calendar again on the next launch.
+	declared map[string]bool
 }
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
@@ -84,6 +90,14 @@ func (s *Service) Get(ctx context.Context, id int64) (Calendar, error) {
 }
 
 func (s *Service) Create(ctx context.Context, name, color, description string) (Calendar, error) {
+	return s.CreateWithPath(ctx, name, color, description, "")
+}
+
+// CreateWithPath creates a local calendar and stores the directory of .ics
+// files that feeds it in the same transaction (issue #809). An empty path
+// creates a calendar without a directory. A failure leaves no half-made
+// row behind.
+func (s *Service) CreateWithPath(ctx context.Context, name, color, description, localPath string) (Calendar, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Calendar{}, fmt.Errorf("begin tx: %w", err)
@@ -118,6 +132,16 @@ func (s *Service) Create(ctx context.Context, name, color, description string) (
 		r.IsDefault = 1
 	}
 
+	if localPath != "" {
+		if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{
+			LocalPath: localPath,
+			ID:        r.ID,
+		}); err != nil {
+			return Calendar{}, fmt.Errorf("set local path: %w", err)
+		}
+		r.LocalPath = localPath
+	}
+
 	if err := tx.Commit(); err != nil {
 		return Calendar{}, err
 	}
@@ -135,6 +159,11 @@ func (s *Service) Update(ctx context.Context, id int64, name, color, description
 	existing, err := qtx.GetCalendar(ctx, id)
 	if err != nil {
 		return Calendar{}, err
+	}
+	if existing.Name != name {
+		if err := s.refuseDeclared(existing.Name); err != nil {
+			return Calendar{}, err
+		}
 	}
 
 	if _, err := qtx.UpdateCalendar(ctx, storage.UpdateCalendarParams{
@@ -197,6 +226,9 @@ func (s *Service) deleteWithOptionalPromotion(ctx context.Context, id, newDefaul
 	// a missing ID from the last-calendar constraint.
 	target, err := qtx.GetCalendar(ctx, id)
 	if err != nil {
+		return err
+	}
+	if err := s.refuseDeclared(target.Name); err != nil {
 		return err
 	}
 
