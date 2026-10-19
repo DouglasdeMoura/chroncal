@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/synclock"
 )
@@ -115,7 +116,7 @@ func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string, d
 		// A calendar that a local directory feeds, or that a [[calendars]]
 		// entry declares, stays local (issue #809). The discovery creates
 		// a fresh row for the collection.
-		if row.LocalPath != "" || (declared != nil && declared(row.Name)) {
+		if calendar.StaysLocal(row.Name, row.LocalPath, declared) != nil {
 			continue
 		}
 		key := remoteIdentityKey(storage.NullableToString(row.RemoteUrl), serverURL)
