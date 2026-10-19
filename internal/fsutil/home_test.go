@@ -93,7 +93,7 @@ func TestSameTree(t *testing.T) {
 	}
 }
 
-func TestExpandHomeResolvesLinksOfAnExistingDirectory(t *testing.T) {
+func TestExpandHomeKeepsTheSpellingOfALink(t *testing.T) {
 	base, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve temp dir: %v", err)
@@ -106,12 +106,12 @@ func TestExpandHomeResolvesLinksOfAnExistingDirectory(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink: %v", err)
 	}
-	got, err := ExpandHome(link)
-	if err != nil || got != target {
-		t.Fatalf("ExpandHome(link) = %q, %v; want %q", got, err, target)
+	// A stored path must not change with the mount state of a link, so
+	// ExpandHome keeps the link. SameTree sees through it.
+	if got, err := ExpandHome(link); err != nil || got != link {
+		t.Fatalf("ExpandHome(link) = %q, %v; want the link kept", got, err)
 	}
-	absent := filepath.Join(base, "absent")
-	if got, err := ExpandHome(absent); err != nil || got != absent {
-		t.Fatalf("ExpandHome(absent) = %q, %v; want the spelling kept", got, err)
+	if !SameTree(link, target) || !SameTree(filepath.Join(link, "work"), target) {
+		t.Fatal("SameTree does not see through the link")
 	}
 }

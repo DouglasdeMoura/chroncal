@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/douglasdemoura/chroncal/internal/fsutil"
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 // DefaultColor is the color of a new calendar when the caller gives none.
@@ -25,54 +26,37 @@ type Declared struct {
 	Path        string
 }
 
-// InputError marks a service error that reports a request the user must
-// change, not a system failure. The CLI gives such an error the
-// "invalid_input" code. The marker lives on the error, so a new sentinel
-// needs no entry in a list elsewhere.
-type InputError interface {
-	error
-	InvalidInput() bool
-}
-
-type inputError struct{ msg string }
-
-func (e *inputError) Error() string      { return e.msg }
-func (e *inputError) InvalidInput() bool { return true }
-
-// newInputError returns a sentinel that satisfies InputError.
-func newInputError(msg string) error { return &inputError{msg: msg} }
-
 // ErrDeclaredCalendar reports a rename, a delete, a link, or a move of a
 // calendar that a [[calendars]] entry of config.toml declares. The entry
 // binds the calendar to its name and keeps it local. The user removes the
 // entry first.
-var ErrDeclaredCalendar = newInputError(
+var ErrDeclaredCalendar = model.NewInputError(
 	"a [[calendars]] entry in config.toml declares this calendar, so it keeps its name and stays local; remove the entry first")
 
 // ErrDeclaredRemote reports a [[calendars]] entry whose name matches a
 // calendar that a CalDAV account owns. The table declares local calendars
 // only. An apply would push the declared color to the server and feed the
 // remote calendar from a local directory.
-var ErrDeclaredRemote = newInputError(
+var ErrDeclaredRemote = model.NewInputError(
 	"a CalDAV account owns a calendar with this name; the [[calendars]] table declares local calendars only")
 
 // ErrRemoteLocalPath reports a local directory on a calendar that a CalDAV
 // account owns. An import from the directory would push the files to the
 // server, which already owns the collection.
-var ErrRemoteLocalPath = newInputError(
+var ErrRemoteLocalPath = model.NewInputError(
 	"a CalDAV account owns this calendar, so it cannot have a local directory")
 
 // ErrLocalPathLink reports a link of a calendar that has a local directory
 // to a CalDAV account. The user removes the directory first. The text
 // names no CLI flag, because the TUI reports the same error.
-var ErrLocalPathLink = newInputError(
+var ErrLocalPathLink = model.NewInputError(
 	"this calendar has a local directory; remove the directory before you link it to a CalDAV account")
 
 // ErrAmbiguousName reports a name that matches several stored calendars
 // that differ only in case and none exactly. Apply skips such an entry
 // with a warning, and the CLI asks for the numeric ID. The user renames
 // one of the calendars.
-var ErrAmbiguousName = newInputError(
+var ErrAmbiguousName = model.NewInputError(
 	"several calendars match this name in another case; rename one of them or use the numeric ID")
 
 // ErrOverlappingPath reports a local directory that another calendar
@@ -80,7 +64,7 @@ var ErrAmbiguousName = newInputError(
 // calendar. The import reads a directory and its subdirectories, so two
 // calendars on one tree would import the same files and move each todo
 // and journal between them on every run.
-var ErrOverlappingPath = newInputError(
+var ErrOverlappingPath = model.NewInputError(
 	"another calendar uses this directory or a directory above or below it; each calendar needs its own tree")
 
 // checkPathFree returns ErrOverlappingPath when another calendar than id
@@ -110,6 +94,22 @@ func (s *Service) refuseDeclared(name string) error {
 		return fmt.Errorf("calendar %q: %w", name, ErrDeclaredCalendar)
 	}
 	return nil
+}
+
+// refuseDeclaredRename refuses a rename of a declared calendar, except a
+// change of case. FindByName still binds the entry to the row in another
+// case, so the rename cannot cause the re-create the guard exists to
+// prevent. The guard then follows the new spelling.
+func (s *Service) refuseDeclaredRename(from, to string) error {
+	if !s.IsDeclared(from) {
+		return nil
+	}
+	if strings.EqualFold(from, to) {
+		delete(s.declared, from)
+		s.declared[to] = true
+		return nil
+	}
+	return fmt.Errorf("calendar %q: %w", from, ErrDeclaredCalendar)
 }
 
 // CheckLinkable reports whether a calendar can take a CalDAV link. A
@@ -191,9 +191,10 @@ func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) 
 // on a config conflict would also block the commands that resolve it. A
 // database error stays an error.
 //
-// The paths land in a second pass. The pass first clears every path that
-// changes, then sets the new ones, so two entries that exchange their
-// paths converge in one apply.
+// The paths land in a second pass. The pass plans the paths as they stand
+// after the apply, warns about a change that would share a tree with
+// another calendar, then clears every accepted change and sets the new
+// paths, so two entries that exchange their paths converge in one apply.
 //
 // Apply runs on every launch, so it must stay idempotent and cheap. It
 // reads the calendar list once and writes only the rows that differ.
@@ -240,21 +241,16 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		// one of its fields gets a warning; a new row gets none.
 		// pathRefused marks a declared path that the create refused, so
 		// the second pass does not report the same conflict again.
-		adopted, pathRefused := ok, false
+		adopted := ok
 		if !ok {
 			color := d.Color
 			if color == "" {
 				color = DefaultColor
 			}
-			created, err := s.CreateWithPath(ctx, name, color, d.Description, d.Path)
-			if errors.Is(err, ErrOverlappingPath) {
-				// The calendar still lands, without the path. The path
-				// warning below names the conflict, and a later apply sets
-				// the path once the conflict is gone.
-				warnings = append(warnings, fmt.Sprintf("calendar %q: path %s: %v", name, d.Path, err))
-				created, err = s.CreateWithPath(ctx, name, color, d.Description, "")
-				pathRefused = true
-			}
+			// The row lands without its path. The second pass sets the
+			// path with every other change, so a new entry that takes a
+			// path over from another entry converges in one apply.
+			created, err := s.Create(ctx, name, color, d.Description)
 			if errors.Is(err, ErrDuplicateName) {
 				// Two launches at one moment (the TUI and a timer that
 				// runs "ical import") both see the calendar missing. The
@@ -310,14 +306,41 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 				warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored %s", name, strings.Join(reset, ", ")))
 			}
 		}
-		if d.Path != "" && d.Path != cal.LocalPath && !pathRefused {
+		if d.Path != "" && d.Path != cal.LocalPath {
 			changes = append(changes, pathChange{cal: cal, path: d.Path})
 		}
 	}
 
-	// Second pass: clear every path that changes, then set the new ones.
-	// A clear first frees a path that another entry takes over.
+	// Second pass. Plan the paths as they stand after the apply, then
+	// check each change against that state. A change that would share a
+	// tree with another calendar warns and keeps its stored path, so a
+	// conflict never leaves a calendar without a directory. The accepted
+	// changes clear first and set second, so two entries that exchange
+	// their paths converge in one apply.
+	planned := make(map[int64]string, len(existing))
+	for _, c := range existing {
+		planned[c.ID] = c.LocalPath
+	}
 	for _, c := range changes {
+		planned[c.cal.ID] = c.path
+	}
+	accepted := changes[:0]
+	for _, c := range changes {
+		conflict := ""
+		for id, path := range planned {
+			if id != c.cal.ID && fsutil.SameTree(path, c.path) {
+				conflict = nameOf(existing, id)
+				break
+			}
+		}
+		if conflict != "" {
+			warnings = append(warnings, fmt.Sprintf("calendar %q: path %s: calendar %q: %v", c.cal.Name, c.path, conflict, ErrOverlappingPath))
+			planned[c.cal.ID] = c.cal.LocalPath
+			continue
+		}
+		accepted = append(accepted, c)
+	}
+	for _, c := range accepted {
 		if c.cal.LocalPath == "" {
 			continue
 		}
@@ -325,12 +348,11 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			return warnings, fmt.Errorf("clear path of calendar %q: %w", c.cal.Name, err)
 		}
 	}
-	for _, c := range changes {
+	for _, c := range accepted {
 		if err := s.SetLocalPath(ctx, c.cal.ID, c.path); err != nil {
 			if errors.Is(err, ErrOverlappingPath) {
-				// Another calendar, outside the entries, uses the tree.
-				// The old path stays cleared, so the two calendars never
-				// read one tree; the warning names the conflict.
+				// A concurrent write took the tree between the plan and
+				// the set. The next launch applies the entry.
 				warnings = append(warnings, fmt.Sprintf("calendar %q: path %s: %v", c.cal.Name, c.path, err))
 				continue
 			}
@@ -341,4 +363,14 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		}
 	}
 	return warnings, nil
+}
+
+// nameOf returns the name of the calendar with that ID.
+func nameOf(cals []Calendar, id int64) string {
+	for _, c := range cals {
+		if c.ID == id {
+			return c.Name
+		}
+	}
+	return fmt.Sprintf("#%d", id)
 }

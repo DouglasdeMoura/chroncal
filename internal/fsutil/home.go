@@ -30,16 +30,39 @@ func IsAbsOrHome(path string) bool {
 }
 
 // SameTree reports whether two clean absolute directories are one tree:
-// equal, or one inside the other. An empty path is in no tree.
+// equal, or one inside the other. An empty path is in no tree. A directory
+// that exists compares through its resolved symbolic links, so a linked
+// spelling of one tree does not pass as a second tree.
 func SameTree(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
+	a, b = resolveIfExists(a), resolveIfExists(b)
 	if a == b {
 		return true
 	}
 	sep := string(filepath.Separator)
 	return strings.HasPrefix(a, b+sep) || strings.HasPrefix(b, a+sep)
+}
+
+// resolveIfExists returns the path with the symbolic links of its longest
+// existing prefix resolved. A path below a linked directory that does not
+// exist yet still lands in the resolved tree, so the overlap rule sees
+// "~/.calendars/new" and "/mnt/sync/new" as one tree when ~/.calendars is
+// a link to /mnt/sync. A path with no existing prefix stays as it is.
+func resolveIfExists(path string) string {
+	rest := ""
+	for p := path; ; {
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return path
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+		p = parent
+	}
 }
 
 // ContractHome is the inverse of ExpandHome for display. A path inside the
@@ -67,9 +90,8 @@ func ContractHome(path string) string {
 
 // ExpandHome resolves a path that a user wrote in a config file or on the
 // command line. A "~" or "~/" at the start becomes the home directory. The
-// result is absolute, clean, and free of symbolic links when the directory
-// exists, so two spellings of one directory compare equal. An empty path
-// stays empty.
+// result is absolute and clean, so two spellings of one directory compare
+// equal. An empty path stays empty.
 func ExpandHome(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -85,15 +107,10 @@ func ExpandHome(path string) (string, error) {
 		}
 		path = filepath.Join(home, path[1:])
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	// A directory that exists resolves through its symbolic links, so two
-	// spellings of one directory compare equal in the overlap rule. A path
-	// that is not there yet keeps its spelling.
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved, nil
-	}
-	return abs, nil
+	// The result keeps the spelling of the user and does not resolve a
+	// symbolic link. A resolved path would change with the mount state of
+	// a linked drive, and a stored path must stay stable. SameTree resolves
+	// links when it compares two paths, and the import resolves them when
+	// it reads.
+	return filepath.Abs(path)
 }
