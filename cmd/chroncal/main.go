@@ -121,6 +121,10 @@ func printCLIError(err error) {
 }
 
 var (
+	// tuiOwnsTerminal is true once the root command decides to start the
+	// TUI. initApp then keeps its warnings off stderr, because a write
+	// there would print over the display.
+	tuiOwnsTerminal bool
 	outputFmt       string
 	allowPlaintext  bool
 	tuiEventRef     string
@@ -283,6 +287,7 @@ Helpful conventions:
 		}
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		tuiOwnsTerminal = true
 		a, err := initApp()
 		if err != nil {
 			return err
@@ -395,9 +400,20 @@ func initApp() (*app.App, error) {
 				Path:        c.Path,
 			})
 		}
-		if err := a.Calendars.Apply(context.Background(), declared); err != nil {
+		warnings, err := a.Calendars.Apply(context.Background(), declared)
+		if err != nil {
 			a.Close()
 			return nil, fmt.Errorf("apply [[calendars]] from config: %w", err)
+		}
+		// A conflict in one entry is a warning, not a stop: a stop would
+		// also block the commands that resolve the conflict. The warning
+		// goes to the state-dir log always, and to stderr for a CLI
+		// command. The TUI owns the terminal, so it must not print.
+		for _, w := range warnings {
+			config.SharedStateDirLogger().Warn("config [[calendars]] entry skipped", "reason", w)
+			if !tuiOwnsTerminal {
+				fmt.Fprintf(os.Stderr, "chroncal: warning: [[calendars]] entry skipped: %s\n", safeText(w))
+			}
 		}
 	}
 	return a, nil

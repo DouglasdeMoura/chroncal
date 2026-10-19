@@ -526,6 +526,9 @@ inherits the global [alarms] default from config.toml again.
 			if err := validateCalendarRemoteFlags(remoteURL, username, authType, oauthClientID, allowInsecure, disconnectRemote); err != nil {
 				return err
 			}
+			if cmd.Flags().Changed("path") && strings.TrimSpace(localPath) != "" && strings.TrimSpace(remoteURL) != "" {
+				return errInvalidInputf("--path and --remote-url are mutually exclusive: a calendar is local or a server collection")
+			}
 
 			n, co, d := existing.Name, existing.Color, existing.Description
 			if cmd.Flags().Changed("name") {

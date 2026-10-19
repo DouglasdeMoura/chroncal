@@ -6,6 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -83,7 +85,7 @@ func (f *ColorField) View() string {
 	base := f.hex.input.View()
 	hexVal := strings.TrimSpace(f.hex.Value())
 	hexRendered := base
-	if hexRE.MatchString(hexVal) {
+	if model.ValidateHexColor(hexVal) == nil {
 		dot := lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render(Glyphs["dot"])
 		hexRendered = base + "  " + dot
 	}

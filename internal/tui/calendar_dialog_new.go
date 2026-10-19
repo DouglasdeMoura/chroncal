@@ -1,12 +1,13 @@
 package tui
 
 import (
-	"os"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/fsutil"
 )
 
 // NewCalendarDialogModel builds a dialog for create (params.ID==0) or edit.
@@ -444,16 +445,9 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 // directory after "Local", so the user can see where the events come from.
 // The home directory shortens to "~" to keep the row short.
 func localLocationLabel(localPath string) string {
-	path := strings.TrimSpace(localPath)
+	path := fsutil.ContractHome(localPath)
 	if path == "" {
 		return "Local"
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		if path == home {
-			path = "~"
-		} else if strings.HasPrefix(path, home+string(os.PathSeparator)) {
-			path = "~" + path[len(home):]
-		}
 	}
 	return "Local: " + path
 }

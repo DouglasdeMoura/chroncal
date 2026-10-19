@@ -20,6 +20,8 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/todo"
+
+	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
 )
 
 const icalImportTimeout = 2 * time.Minute
@@ -199,6 +201,9 @@ func icalImportTargets(ctx context.Context, a *app.App, args []string, calendarN
 		cal, err := resolveCalendar(ctx, a, calendarName)
 		if err != nil {
 			return nil, err
+		}
+		if cal.AccountID != 0 {
+			return nil, errInvalidInputf("calendar %q: %v", cal.Name, calendarpkg.ErrRemoteLocalPath)
 		}
 		if cal.LocalPath == "" {
 			return nil, errInvalidInputf("calendar %q has no directory; pass a path, or set one with 'chroncal calendar update %q --path DIR'", cal.Name, cal.Name)

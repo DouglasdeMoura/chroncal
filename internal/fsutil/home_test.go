@@ -42,3 +42,20 @@ func TestExpandHomeRelativeIsAbsolute(t *testing.T) {
 		t.Errorf("ExpandHome(rel/dir) = %q, want %q", got, want)
 	}
 }
+
+func TestContractHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cases := map[string]string{
+		"":                                 "",
+		"/srv/calendars":                   "/srv/calendars",
+		filepath.Join(home, "cal", "work"): "~/cal/work",
+		home:                               "~",
+		home + "-other":                    home + "-other",
+	}
+	for in, want := range cases {
+		if got := ContractHome(in); got != want {
+			t.Errorf("ContractHome(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

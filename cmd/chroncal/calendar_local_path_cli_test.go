@@ -431,3 +431,58 @@ func TestConfigCalendarsDeclaredRefusesRemoteLink(t *testing.T) {
 	// Every later command still works.
 	calendarJSONByName(t, "Fastmail")
 }
+
+// TestCalendarUpdateRejectsPathWithRemote verifies update refuses the flag
+// pair before it writes, like create does.
+func TestCalendarUpdateRejectsPathWithRemote(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--path", t.TempDir(),
+		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer")
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("calendar update --path with --remote-url: error = %v", err)
+	}
+	if got := calendarJSONByName(t, "Work").LocalPath; got != "" {
+		t.Fatalf("the refused update wrote a path: %q", got)
+	}
+}
+
+// TestConfigCalendarsConflictWarnsButRuns verifies a conflicting entry (a
+// name that a CalDAV account owns) gives a warning and the command still
+// runs, so the user can resolve the conflict with the CLI.
+func TestConfigCalendarsConflictWarnsButRuns(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work",
+		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer"); err != nil {
+		t.Fatalf("calendar create remote: %v", err)
+	}
+	configDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "chroncal")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[[calendars]]\nname = \"Work\"\ncolor = \"#123456\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	stdout, stderr, err := runChroncalCommand(t, "calendar", "list", "--output", "json")
+	if err != nil {
+		t.Fatalf("calendar list with a conflicting entry must run: %v", err)
+	}
+	if !strings.Contains(stderr, "[[calendars]] entry skipped") || !strings.Contains(stderr, "declares local calendars only") {
+		t.Fatalf("missing skip warning on stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, "\"name\": \"Work\"") || strings.Contains(stdout, "#123456") {
+		t.Fatalf("the skipped entry changed the remote calendar:\n%s", stdout)
+	}
+	// The remote calendar is not bound, so --disconnect-remote resolves
+	// the conflict from the CLI.
+	if _, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--disconnect-remote"); err != nil {
+		t.Fatalf("calendar update --disconnect-remote: %v", err)
+	}
+	if got := calendarJSONByName(t, "Work").Color; got != "#123456" {
+		t.Fatalf("after the disconnect the entry must apply: color = %q", got)
+	}
+}
