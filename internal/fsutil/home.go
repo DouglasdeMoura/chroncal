@@ -66,9 +66,10 @@ func ContractHome(path string) string {
 }
 
 // ExpandHome resolves a path that a user wrote in a config file or on the
-// command line. A "~" or "~/" at the start becomes the home directory. The result
-// is absolute, and filepath.Abs cleans it, so two spellings of one
-// directory compare equal. An empty path stays empty.
+// command line. A "~" or "~/" at the start becomes the home directory. The
+// result is absolute, clean, and free of symbolic links when the directory
+// exists, so two spellings of one directory compare equal. An empty path
+// stays empty.
 func ExpandHome(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -84,5 +85,15 @@ func ExpandHome(path string) (string, error) {
 		}
 		path = filepath.Join(home, path[1:])
 	}
-	return filepath.Abs(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	// A directory that exists resolves through its symbolic links, so two
+	// spellings of one directory compare equal in the overlap rule. A path
+	// that is not there yet keeps its spelling.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	}
+	return abs, nil
 }

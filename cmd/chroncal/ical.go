@@ -280,6 +280,16 @@ func (o icalImportOutcome) json() map[string]any {
 	}
 }
 
+// missingDirectoryOutcome is the run of a stored directory that is not
+// there: the sync tool has not created it yet, or the mount is away. The
+// run imports nothing, succeeds, and carries a warning, so a timer job
+// does not fail on every tick before the first sync.
+func missingDirectoryOutcome(target icalImportTarget) icalImportOutcome {
+	outcome := icalImportOutcome{target: target}
+	outcome.summary.Warnings = []string{fmt.Sprintf("the directory %s does not exist yet", target.path)}
+	return outcome
+}
+
 // importIntoCalendar parses the source of one target and imports it into
 // the calendar of that target. A failure comes back in the err field of
 // the outcome, with the target filled in.
@@ -291,8 +301,15 @@ func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget
 		// links ~/.calendars to a mounted directory. ParsePath refuses a
 		// link, so resolve it first. A path that does not exist keeps its
 		// spelling and gets the usual error from ParsePath.
-		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		resolved, err := filepath.EvalSymlinks(path)
+		switch {
+		case err == nil:
 			path = resolved
+		case errors.Is(err, fs.ErrNotExist):
+			// A link to an unmounted drive, or a directory that the sync
+			// tool has not created yet. ParsePath would refuse the link
+			// with another message, so report the real state here.
+			return missingDirectoryOutcome(target)
 		}
 	}
 	preview, err := icaltransfer.ParsePath(path)
@@ -303,13 +320,7 @@ func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget
 			return icalImportOutcome{target: target}
 		}
 		if target.fromDirectory && errors.Is(err, fs.ErrNotExist) {
-			// The sync tool has not created the directory yet, or the
-			// mount is away. The run imports nothing, succeeds, and
-			// carries a warning, so a timer job does not fail on every
-			// tick before the first sync.
-			outcome := icalImportOutcome{target: target}
-			outcome.summary.Warnings = []string{fmt.Sprintf("the directory %s does not exist yet", target.path)}
-			return outcome
+			return missingDirectoryOutcome(target)
 		}
 		return icalImportOutcome{target: target, err: err}
 	}

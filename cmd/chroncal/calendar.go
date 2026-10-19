@@ -541,6 +541,9 @@ inherits the global [alarms] default from config.toml again.
 			if resolvedPath != "" && existing.AccountID != 0 && !disconnectRemote {
 				return errInvalidInputf("calendar %q: %v", existing.Name, calendarpkg.ErrRemoteLocalPath)
 			}
+			if err := a.Calendars.CheckPathFree(ctx, existing.ID, resolvedPath); err != nil {
+				return err
+			}
 			// Refuse a link that the service would refuse before any other
 			// field changes, so the command never prompts for a secret or
 			// leaves a partial update behind a refusal. The check sees the
