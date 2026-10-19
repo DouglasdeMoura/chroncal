@@ -2,12 +2,14 @@ package calendar
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
 
 // DefaultColor is the color of a new calendar when the caller gives none.
-// The CLI --color flag and the config [[calendars]] entries share it.
+// The CLI --color flag, the account discovery, and the config
+// [[calendars]] entries share it.
 const DefaultColor = "#7C3AED"
 
 // Declared is one [[calendars]] entry from config.toml (issue #809). Name
@@ -19,6 +21,20 @@ type Declared struct {
 	Color       string
 	Description string
 	Path        string
+}
+
+// getByName returns the calendar with that exact name.
+func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) {
+	cals, err := s.List(ctx)
+	if err != nil {
+		return Calendar{}, err
+	}
+	for _, c := range cals {
+		if c.Name == name {
+			return c, nil
+		}
+	}
+	return Calendar{}, fmt.Errorf("calendar %q not found", name)
 }
 
 // Apply reconciles the declared calendars into the database. For each
@@ -53,6 +69,12 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) error {
 				color = DefaultColor
 			}
 			created, err := s.Create(ctx, name, color, d.Description)
+			if errors.Is(err, ErrDuplicateName) {
+				// Two launches at one moment (the TUI and a timer that
+				// runs "ical import") both see the calendar missing. The
+				// loser adopts the row that the winner created.
+				created, err = s.getByName(ctx, name)
+			}
 			if err != nil {
 				return fmt.Errorf("create calendar %q: %w", name, err)
 			}

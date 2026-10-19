@@ -991,7 +991,7 @@ chroncal applies the entries on every launch:
 - It creates a calendar when no calendar with that name exists.
 - It updates the stored `color`, `description`, or `path` when the entry gives a different value.
 - It keeps the stored value of a key that the entry omits, so a short entry does not reset a field that you set from the CLI or the TUI.
-- It never deletes a calendar. Remove a calendar with `chroncal calendar delete`.
+- It never deletes a calendar. A declared calendar returns on the next launch, so `calendar delete` and `calendar update --name` refuse a declared calendar. Remove the entry from the file first.
 
 An entry without a `name`, two entries with one `name`, or a relative `path` stops every command with an error. Fix the file, then run the command again.
 

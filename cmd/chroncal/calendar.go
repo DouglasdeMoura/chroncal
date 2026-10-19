@@ -414,10 +414,13 @@ config.toml sets the same fields declaratively.`,
 				return printOutput(w, item)
 			}
 			fmt.Fprintf(w, "Created calendar %d: %s\n", c.ID, c.Name)
+			if c.LocalPath != "" {
+				fmt.Fprintf(w, "Path: %s\n", safeText(c.LocalPath))
+			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&color, "color", "#7C3AED", "calendar color (hex)")
+	cmd.Flags().StringVar(&color, "color", calendarpkg.DefaultColor, "calendar color (hex)")
 	cmd.Flags().StringVar(&description, "description", "", "calendar description")
 	cmd.Flags().StringVar(&email, "email", "", "owner email address (used for RSVP matching)")
 	cmd.Flags().StringVar(&remoteURL, "remote-url", "", "remote CalDAV calendar URL")
@@ -523,7 +526,10 @@ inherits the global [alarms] default from config.toml again.
 			}
 
 			n, co, d := existing.Name, existing.Color, existing.Description
-			if cmd.Flags().Changed("name") {
+			if cmd.Flags().Changed("name") && name != existing.Name {
+				if err := declaredCalendarError(existing.Name, "rename"); err != nil {
+					return err
+				}
 				n = name
 			}
 			if cmd.Flags().Changed("color") {
@@ -600,6 +606,9 @@ inherits the global [alarms] default from config.toml again.
 				return printOutput(w, item)
 			}
 			fmt.Fprintf(w, "Updated calendar %d: %s\n", c.ID, c.Name)
+			if cmd.Flags().Changed("path") && c.LocalPath != "" {
+				fmt.Fprintf(w, "Path: %s\n", safeText(c.LocalPath))
+			}
 			return nil
 		},
 	}
@@ -724,6 +733,9 @@ to stderr.`,
 			cal, getErr := a.Calendars.Get(ctx, id)
 			if getErr != nil {
 				return notFoundErr(getErr, "calendar", id)
+			}
+			if err := declaredCalendarError(cal.Name, "delete"); err != nil {
+				return err
 			}
 			eventCount, err := a.Queries.CountEventsByCalendar(ctx, id)
 			if err != nil {

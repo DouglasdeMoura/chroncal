@@ -16,7 +16,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
-const defaultCalendarColor = "#7C3AED"
+const defaultCalendarColor = calendar.DefaultColor
 
 type discoverFunc func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error)
 
