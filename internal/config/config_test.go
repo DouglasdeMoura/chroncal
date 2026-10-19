@@ -612,3 +612,83 @@ func TestLoad_AlarmsDefaultAbsent(t *testing.T) {
 		t.Fatal("Alarms.SkipAllDay = true, want false")
 	}
 }
+
+func TestLoad_CalendarsFromFile(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "chroncal")
+	os.MkdirAll(configDir, 0o755)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	content := `
+[[calendars]]
+name = "Fastmail"
+path = "~/calendars/fastmail"
+
+[[calendars]]
+name = " Work "
+color = "#0F766E"
+description = "Office"
+`
+	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o644)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	cfg := mustLoad(t)
+	if len(cfg.Calendars) != 2 {
+		t.Fatalf("Calendars = %+v, want 2 entries", cfg.Calendars)
+	}
+	fm := cfg.Calendars[0]
+	if fm.Name != "Fastmail" {
+		t.Errorf("Calendars[0].Name = %q, want Fastmail", fm.Name)
+	}
+	if want := filepath.Join(home, "calendars", "fastmail"); fm.Path != want {
+		t.Errorf("Calendars[0].Path = %q, want %q (~ resolved)", fm.Path, want)
+	}
+	work := cfg.Calendars[1]
+	if work.Name != "Work" {
+		t.Errorf("Calendars[1].Name = %q, want trimmed Work", work.Name)
+	}
+	if work.Color != "#0F766E" || work.Description != "Office" || work.Path != "" {
+		t.Errorf("Calendars[1] = %+v, want color, description, no path", work)
+	}
+}
+
+func TestLoad_CalendarsAbsentIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfg := mustLoad(t)
+	if len(cfg.Calendars) != 0 {
+		t.Fatalf("Calendars = %+v, want none", cfg.Calendars)
+	}
+}
+
+func TestLoad_CalendarsRejectsBadEntries(t *testing.T) {
+	cases := map[string]string{
+		"missing name": `
+[[calendars]]
+path = "/tmp/x"
+`,
+		"duplicate name": `
+[[calendars]]
+name = "A"
+[[calendars]]
+name = "A"
+`,
+		"relative path": `
+[[calendars]]
+name = "A"
+path = "calendars/a"
+`,
+	}
+	for label, content := range cases {
+		t.Run(label, func(t *testing.T) {
+			dir := t.TempDir()
+			configDir := filepath.Join(dir, "chroncal")
+			os.MkdirAll(configDir, 0o755)
+			os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o644)
+			t.Setenv("XDG_CONFIG_HOME", dir)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "calendars[") {
+				t.Fatalf("Load() error = %v, want a calendars[...] error", err)
+			}
+		})
+	}
+}

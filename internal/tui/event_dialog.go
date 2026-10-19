@@ -55,6 +55,9 @@ type CalendarInfo struct {
 	OwnerEmail  string
 	Description string
 	EventCount  int64
+	// LocalPath is the directory of .ics files that feeds a local calendar
+	// (issue #809). Empty when the calendar has no directory.
+	LocalPath string
 	// DisplayOrder is the persisted sidebar sort position (lower sorts first).
 	DisplayOrder int64
 	// Synced reports whether the calendar is linked to a CalDAV account.

@@ -20,7 +20,7 @@ Core data services:
 - **event** - CRUD, search, export, recurrence queries, soft-delete, restore, purge
 - **todo** - CRUD, search, completion, soft-delete, restore, purge
 - **journal** - CRUD, search, soft-delete, restore, purge
-- **calendar** - CRUD, color control, remote-link metadata
+- **calendar** - CRUD, color control, remote-link metadata, and `Apply` for the `[[calendars]]` entries of `config.toml` (issue #809). `initApp` calls `Apply` on every launch. `Apply` creates a missing calendar and updates a declared color, description, or `local_path`. It never deletes a calendar.
 - **alarm** - Check due alarms. Fire, dismiss, and snooze alarms
 - **recurrence** - Expand recurring events, todos, and journals. Apply overrides
 - **trash** - Mixed soft-delete view of events, todos, and journals (list, restore, purge)

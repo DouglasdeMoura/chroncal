@@ -135,7 +135,7 @@ func (q *Queries) CountDefaultCalendars(ctx context.Context) (int64, error) {
 const createCalendar = `-- name: CreateCalendar :one
 INSERT INTO calendars (name, color, description, display_order)
 VALUES (?, ?, ?, (SELECT COALESCE(MAX(display_order), -1) + 1 FROM calendars))
-RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms
+RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms, local_path
 `
 
 type CreateCalendarParams struct {
@@ -173,6 +173,7 @@ func (q *Queries) CreateCalendar(ctx context.Context, arg CreateCalendarParams) 
 		&i.RemoteComponents,
 		&i.RemoteMissing,
 		&i.DefaultAlarms,
+		&i.LocalPath,
 	)
 	return i, err
 }
@@ -188,7 +189,7 @@ VALUES (
     ?, ?, ?,
     ?, ?, ?, ?
 )
-RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms
+RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms, local_path
 `
 
 type CreateDiscoveredCalendarParams struct {
@@ -242,6 +243,7 @@ func (q *Queries) CreateDiscoveredCalendar(ctx context.Context, arg CreateDiscov
 		&i.RemoteComponents,
 		&i.RemoteMissing,
 		&i.DefaultAlarms,
+		&i.LocalPath,
 	)
 	return i, err
 }
@@ -256,7 +258,7 @@ func (q *Queries) DeleteCalendar(ctx context.Context, id int64) error {
 }
 
 const getCalendar = `-- name: GetCalendar :one
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms FROM calendars WHERE id = ?
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms, local_path FROM calendars WHERE id = ?
 `
 
 func (q *Queries) GetCalendar(ctx context.Context, id int64) (Calendar, error) {
@@ -286,12 +288,13 @@ func (q *Queries) GetCalendar(ctx context.Context, id int64) (Calendar, error) {
 		&i.RemoteComponents,
 		&i.RemoteMissing,
 		&i.DefaultAlarms,
+		&i.LocalPath,
 	)
 	return i, err
 }
 
 const getDefaultCalendar = `-- name: GetDefaultCalendar :one
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms FROM calendars WHERE is_default = 1 LIMIT 1
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms, local_path FROM calendars WHERE is_default = 1 LIMIT 1
 `
 
 func (q *Queries) GetDefaultCalendar(ctx context.Context) (Calendar, error) {
@@ -321,6 +324,7 @@ func (q *Queries) GetDefaultCalendar(ctx context.Context) (Calendar, error) {
 		&i.RemoteComponents,
 		&i.RemoteMissing,
 		&i.DefaultAlarms,
+		&i.LocalPath,
 	)
 	return i, err
 }
@@ -345,7 +349,7 @@ func (q *Queries) LinkCalendarToAccount(ctx context.Context, arg LinkCalendarToA
 }
 
 const listCalendars = `-- name: ListCalendars :many
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms FROM calendars ORDER BY display_order, name
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms, local_path FROM calendars ORDER BY display_order, name
 `
 
 func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
@@ -381,6 +385,7 @@ func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
 			&i.RemoteComponents,
 			&i.RemoteMissing,
 			&i.DefaultAlarms,
+			&i.LocalPath,
 		); err != nil {
 			return nil, err
 		}
@@ -396,7 +401,7 @@ func (q *Queries) ListCalendars(ctx context.Context) ([]Calendar, error) {
 }
 
 const listCalendarsByAccount = `-- name: ListCalendarsByAccount :many
-SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms FROM calendars WHERE account_id = ? ORDER BY display_order, name
+SELECT id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms, local_path FROM calendars WHERE account_id = ? ORDER BY display_order, name
 `
 
 func (q *Queries) ListCalendarsByAccount(ctx context.Context, accountID *int64) ([]Calendar, error) {
@@ -432,6 +437,7 @@ func (q *Queries) ListCalendarsByAccount(ctx context.Context, accountID *int64) 
 			&i.RemoteComponents,
 			&i.RemoteMissing,
 			&i.DefaultAlarms,
+			&i.LocalPath,
 		); err != nil {
 			return nil, err
 		}
@@ -520,7 +526,7 @@ func (q *Queries) SetCalendarDisplayOrder(ctx context.Context, arg SetCalendarDi
 }
 
 const updateCalendar = `-- name: UpdateCalendar :one
-UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms
+UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? RETURNING id, name, color, description, created_at, updated_at, account_id, remote_url, ctag, sync_token, last_sync_at, last_sync_attempted_at, last_sync_error, remote_color, color_dirty, owner_email, is_default, display_order, remote_name, remote_access, remote_components, remote_missing, default_alarms, local_path
 `
 
 type UpdateCalendarParams struct {
@@ -562,6 +568,7 @@ func (q *Queries) UpdateCalendar(ctx context.Context, arg UpdateCalendarParams) 
 		&i.RemoteComponents,
 		&i.RemoteMissing,
 		&i.DefaultAlarms,
+		&i.LocalPath,
 	)
 	return i, err
 }
@@ -658,6 +665,23 @@ func (q *Queries) UpdateCalendarDiscovery(ctx context.Context, arg UpdateCalenda
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const updateCalendarLocalPath = `-- name: UpdateCalendarLocalPath :exec
+UPDATE calendars SET
+    local_path = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?
+`
+
+type UpdateCalendarLocalPathParams struct {
+	LocalPath string
+	ID        int64
+}
+
+func (q *Queries) UpdateCalendarLocalPath(ctx context.Context, arg UpdateCalendarLocalPathParams) error {
+	_, err := q.db.ExecContext(ctx, updateCalendarLocalPath, arg.LocalPath, arg.ID)
+	return err
 }
 
 const updateCalendarOwnerEmail = `-- name: UpdateCalendarOwnerEmail :exec

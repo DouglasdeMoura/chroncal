@@ -49,6 +49,7 @@ type Calendar struct {
 	RemoteComponents    string
 	RemoteMissing       int64
 	DefaultAlarms       *string
+	LocalPath           string
 }
 
 type CredentialLocation struct {

@@ -25,6 +25,11 @@ type CalendarDialogParams struct {
 	OwnerEmail   string
 	RemoteLinked bool
 
+	// LocalPath is the directory of .ics files that feeds a local calendar
+	// (issue #809). The Location row shows it after "Local". Ignored for
+	// a remote-linked calendar and in create mode.
+	LocalPath string
+
 	// LastSyncAt and LastSyncError are compact, display-only account context
 	// for linked calendars. Account maintenance lives in Account Settings.
 	LastSyncAt    string // RFC 3339, empty when never synced cleanly
