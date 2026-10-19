@@ -114,11 +114,6 @@ func (s *Service) CreateWithPath(ctx context.Context, name, color, description, 
 	defer tx.Rollback()
 
 	qtx := s.q.WithTx(tx)
-	if localPath != "" {
-		if err := s.checkPathFreeTx(ctx, qtx, 0, localPath); err != nil {
-			return Calendar{}, err
-		}
-	}
 	r, err := qtx.CreateCalendar(ctx, storage.CreateCalendarParams{
 		Name:        name,
 		Color:       color,
@@ -130,6 +125,14 @@ func (s *Service) CreateWithPath(ctx context.Context, name, color, description, 
 			return Calendar{}, ErrDuplicateName
 		}
 		return Calendar{}, err
+	}
+	// The overlap check runs after the insert. The write takes the SQLite
+	// write lock, so two writers cannot both read a list without the
+	// other path and both commit. A conflict rolls the insert back.
+	if localPath != "" {
+		if err := s.checkPathFreeTx(ctx, qtx, r.ID, localPath); err != nil {
+			return Calendar{}, err
+		}
 	}
 
 	// If no other calendar holds the default, promote this one. This is
@@ -427,8 +430,14 @@ func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange) error
 			return fmt.Errorf("clear path of calendar %q: %w", c.Name, err)
 		}
 	}
-	// One list after the clears serves every check. Each set lands in the
-	// list as it lands in the database.
+	// Every set lands before the check. The writes take the SQLite write
+	// lock, so the one list below sees every committed path and two
+	// writers cannot both pass. A conflict rolls every change back.
+	for _, c := range changes {
+		if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{LocalPath: c.To, ID: c.ID}); err != nil {
+			return fmt.Errorf("set path of calendar %q: %w", c.Name, err)
+		}
+	}
 	cals, err := listWith(ctx, qtx)
 	if err != nil {
 		return fmt.Errorf("list calendars: %w", err)
@@ -436,14 +445,6 @@ func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange) error
 	for _, c := range changes {
 		if err := checkPathFree(cals, c.ID, c.To); err != nil {
 			return err
-		}
-		if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{LocalPath: c.To, ID: c.ID}); err != nil {
-			return fmt.Errorf("set path of calendar %q: %w", c.Name, err)
-		}
-		for i := range cals {
-			if cals[i].ID == c.ID {
-				cals[i].LocalPath = c.To
-			}
 		}
 	}
 	return tx.Commit()
@@ -474,6 +475,15 @@ func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+	// The write comes first. It takes the SQLite write lock, so the
+	// checks below see every committed path and two writers cannot both
+	// pass. A refusal rolls the write back.
+	if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{
+		LocalPath: path,
+		ID:        id,
+	}); err != nil {
+		return err
+	}
 	if path != "" {
 		existing, err := qtx.GetCalendar(ctx, id)
 		if err != nil {
@@ -487,12 +497,6 @@ func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error
 		if err := s.checkPathFreeTx(ctx, qtx, id, path); err != nil {
 			return err
 		}
-	}
-	if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{
-		LocalPath: path,
-		ID:        id,
-	}); err != nil {
-		return err
 	}
 	return tx.Commit()
 }

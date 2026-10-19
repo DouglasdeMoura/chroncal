@@ -95,16 +95,12 @@ func (s *Service) MigrateCalendarToAccount(
 	if err != nil {
 		return MigrateResult{}, fmt.Errorf("get source calendar: %w", err)
 	}
-	// A declared calendar stays local (issue #809). The move would retire
+	// A declared calendar and a directory-fed calendar stay local (issue
+	// #809), the same rule that Connect enforces. The move would retire
 	// the source row, and the next launch would create an empty calendar
 	// with the declared name and the directory.
-	if s.isDeclared(source.Name) {
-		return MigrateResult{}, fmt.Errorf("calendar %q: %w", source.Name, calendar.ErrDeclaredCalendar)
-	}
-	// A calendar that a local directory feeds cannot become a server
-	// collection, the same rule that Connect enforces (ErrLocalPathLink).
-	if source.LocalPath != "" {
-		return MigrateResult{}, fmt.Errorf("calendar %q: %w", source.Name, calendar.ErrLocalPathLink)
+	if err := calendar.StaysLocal(source.Name, source.LocalPath, s.declared); err != nil {
+		return MigrateResult{}, err
 	}
 	if source.AccountID != nil && *source.AccountID != 0 {
 		return MigrateResult{}, ErrCannotMigrateRemoteCalendar

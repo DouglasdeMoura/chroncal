@@ -166,20 +166,27 @@ func (s *Service) rebindDeclared(from, to string) {
 	s.declared[to] = true
 }
 
-// CheckLinkable reports whether a calendar can take a CalDAV link. A
-// declared calendar stays local (ErrDeclaredCalendar), and a calendar with a
-// local directory cannot also be a server collection (ErrLocalPathLink).
-// ConnectTarget and Connect call it, and the CLI calls it before it writes
-// any other field of the calendar, so a refusal costs no prompt, no network
-// request, and no partial update.
-func (s *Service) CheckLinkable(cal Calendar) error {
-	if err := s.refuseDeclared(cal.Name); err != nil {
-		return err
+// StaysLocal is the one rule for a calendar that cannot become a server
+// collection: a declared calendar (ErrDeclaredCalendar) and a calendar
+// with a local directory (ErrLocalPathLink). CheckLinkable, the calendar
+// move, and the discovery relink share it, so the three cannot drift. A
+// nil declared function declares nothing.
+func StaysLocal(name, localPath string, declared func(name string) bool) error {
+	if declared != nil && declared(name) {
+		return fmt.Errorf("calendar %q: %w", name, ErrDeclaredCalendar)
 	}
-	if cal.LocalPath != "" {
-		return fmt.Errorf("calendar %q: %w", cal.Name, ErrLocalPathLink)
+	if localPath != "" {
+		return fmt.Errorf("calendar %q: %w", name, ErrLocalPathLink)
 	}
 	return nil
+}
+
+// CheckLinkable reports whether a calendar can take a CalDAV link
+// (StaysLocal). ConnectTarget and Connect call it, and the CLI calls it
+// before it writes any other field of the calendar, so a refusal costs no
+// prompt, no network request, and no partial update.
+func (s *Service) CheckLinkable(cal Calendar) error {
+	return StaysLocal(cal.Name, cal.LocalPath, s.IsDeclared)
 }
 
 // FindByName returns the calendar with that name. An exact match wins. One
@@ -273,19 +280,21 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	for _, d := range declared {
 		name := strings.TrimSpace(d.Name)
 		cal, ok, err := FindByName(existing, name)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
-			continue
-		}
-		if ok && cal.AccountID != 0 && cal.Name != name {
-			// A case variant that a CalDAV account owns is not a match.
-			// The exact name is free, so the entry creates its own local
-			// calendar, as "calendar create" would.
-			ok = false
-		}
-		if ok && cal.AccountID != 0 {
+		if ok && err == nil && cal.Name == name && cal.AccountID != 0 {
 			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, ErrDeclaredRemote))
 			continue
+		}
+		if err != nil || (ok && cal.AccountID != 0) {
+			// A case variant that a CalDAV account owns is not a match,
+			// and it must not make the name ambiguous: Apply never adopts
+			// a remote row. The lookup repeats over the local rows. The
+			// exact name is free, so an entry without a local variant
+			// creates its own calendar, as "calendar create" would.
+			cal, ok, err = FindByName(localOnly(existing), name)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
+				continue
+			}
 		}
 		// adopted marks a row that existed before this apply. A reset of
 		// one of its fields gets a warning; a new row gets none.
@@ -334,12 +343,18 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		// CLI or TUI edit, or from an edit of the file. The entry wins,
 		// and a warning names the reset, so an edit never vanishes in
 		// silence.
-		var reset []string
+		// An empty stored value is nothing to replace, so the first apply
+		// of a new entry field warns about nothing.
+		var reset, replaced []string
 		if d.Color != "" && !strings.EqualFold(d.Color, cal.Color) {
 			reset = append(reset, "color")
+			replaced = append(replaced, "color")
 		}
 		if d.Description != "" && d.Description != cal.Description {
 			reset = append(reset, "description")
+			if cal.Description != "" {
+				replaced = append(replaced, "description")
+			}
 		}
 		if len(reset) > 0 {
 			color, description := cal.Color, cal.Description
@@ -352,13 +367,16 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			if _, err := s.Update(ctx, cal.ID, cal.Name, color, description); err != nil {
 				return warnings, fmt.Errorf("update calendar %q: %w", name, err)
 			}
-			if adopted {
-				warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored %s", name, strings.Join(reset, ", ")))
+			if adopted && len(replaced) > 0 {
+				warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored %s", name, strings.Join(replaced, ", ")))
 			}
 		}
 		if d.Path != "" && d.Path != cal.LocalPath {
-			changes = append(changes, pathChange{ID: cal.ID, Name: cal.Name, From: cal.LocalPath, To: d.Path})
+			changes = append(changes, pathChange{ID: cal.ID, Name: cal.Name, From: cal.LocalPath, To: d.Path, Adopted: adopted})
 		}
+	}
+	if len(changes) == 0 {
+		return warnings, nil
 	}
 
 	// Second pass. Plan the paths as they stand after the apply, then
@@ -427,11 +445,22 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		return warnings, err
 	}
 	for _, c := range accepted {
-		if c.From != "" {
-			warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored path", c.Name))
+		if c.Adopted {
+			warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry set the path %s", c.Name, c.To))
 		}
 	}
 	return warnings, nil
+}
+
+// localOnly returns the calendars that no CalDAV account owns.
+func localOnly(cals []Calendar) []Calendar {
+	local := make([]Calendar, 0, len(cals))
+	for _, c := range cals {
+		if c.AccountID == 0 {
+			local = append(local, c)
+		}
+	}
+	return local
 }
 
 // pathChange is a declared path that differs from the stored one.
@@ -439,4 +468,8 @@ type pathChange struct {
 	ID       int64
 	Name     string
 	From, To string
+	// Adopted marks a row that existed before the apply. A user who
+	// cleared the directory of a declared calendar then gets a warning
+	// when the entry puts it back.
+	Adopted bool
 }

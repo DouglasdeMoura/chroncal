@@ -575,7 +575,13 @@ Directory rules:
 
 Entries are matched by UID, so a second import of the same path updates the existing items.
 
-Without a path, the command imports every calendar that has a directory. Set the directory with `calendar create --path`, `calendar update --path`, or a `[[calendars]]` entry in `config.toml`. With `--calendar`, the command imports only that calendar from its directory. The JSON output is one object when the command names a path or a calendar, and an array in the batch mode without both. The batch output names each calendar. A directory that does not exist yet, or that holds no `.ics` file, imports nothing and gives a warning, so a timer job does not fail before the first sync. Another failure in one calendar becomes an error on stderr, and the other calendars still land. Run the command after each pass of the sync tool, for example from a timer:
+Without a path, the command imports every calendar that has a directory. Set the directory with `calendar create --path`, `calendar update --path`, or a `[[calendars]]` entry in `config.toml`. With `--calendar`, the command imports only that calendar from its directory. Run the command after each pass of the sync tool, for example from a timer.
+
+The JSON output is one object when the command names a path or a calendar. It is an array in the batch mode without both. The batch text output names each calendar.
+
+A directory that does not exist yet imports nothing and gives a warning. A directory that holds no `.ics` file does the same. A timer job then does not fail before the first sync. Another failure in one calendar becomes an error on stderr, and the other calendars still land.
+
+Examples:
 
 ```bash
 # Every calendar with a directory

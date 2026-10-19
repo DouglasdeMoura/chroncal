@@ -361,8 +361,8 @@ func TestApplyWarnsWhenItResetsAStoredField(t *testing.T) {
 	}
 	// The color resets in the first pass and the path in the second, so
 	// two warnings name the two fields.
-	if len(warnings) != 2 || !strings.Contains(warnings[0], "replaced the stored color") || !strings.Contains(warnings[1], "replaced the stored path") {
-		t.Fatalf("warnings = %v, want a color reset warning and a path reset warning", warnings)
+	if len(warnings) != 2 || !strings.Contains(warnings[0], "replaced the stored color") || !strings.Contains(warnings[1], "set the path /new") {
+		t.Fatalf("warnings = %v, want a color reset warning and a path warning", warnings)
 	}
 	got, _ := svc.Get(ctx, cal.ID)
 	if got.Color != "#222222" || got.LocalPath != "/new" {
@@ -577,5 +577,75 @@ func TestCheckRename(t *testing.T) {
 	}
 	if err := svc.CheckRename(cals, "Personal", "Mine"); err != nil {
 		t.Errorf("free rename: %v", err)
+	}
+}
+
+func TestApplyWarnsWhenItPutsAClearedPathBack(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	cal, err := svc.Create(ctx, "Fastmail", "#111111", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// The user cleared the directory; the entry puts it back and says so.
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "Fastmail", Path: "/p"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "set the path /p") {
+		t.Fatalf("warnings = %v, want a path warning for an adopted row", warnings)
+	}
+	got, _ := svc.Get(ctx, cal.ID)
+	if got.LocalPath != "/p" {
+		t.Fatalf("path not applied: %q", got.LocalPath)
+	}
+}
+
+func TestApplyDoesNotWarnWhenTheStoredDescriptionWasEmpty(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.Create(ctx, "Work", "#111111", ""); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "Work", Description: "Office"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("an empty stored description is nothing to replace: %v", warnings)
+	}
+}
+
+func TestApplyAdoptsTheLocalVariantNextToARemoteOne(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	// "Personal" (the seed) becomes remote; "PERSONAL" is local.
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: 1, AccountID: &account.ID, RemoteUrl: storage.StringToNullable("https://example.com/cal/p"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	local, err := svc.Create(ctx, "PERSONAL", "#111111", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "personal", Path: "/p"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, ErrAmbiguousName.Error()) || strings.Contains(w, ErrDeclaredRemote.Error()) {
+			t.Fatalf("a remote variant must not make the entry ambiguous or remote: %v", warnings)
+		}
+	}
+	got, _ := svc.Get(ctx, local.ID)
+	if got.LocalPath != "/p" {
+		t.Fatalf("the local variant was not adopted: %+v", got)
 	}
 }

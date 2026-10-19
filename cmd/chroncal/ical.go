@@ -320,9 +320,6 @@ func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget
 			// directory. The run imports nothing and succeeds.
 			return icalImportOutcome{target: target}
 		}
-		if target.fromDirectory && errors.Is(err, fs.ErrNotExist) {
-			return missingDirectoryOutcome(target)
-		}
 		return icalImportOutcome{target: target, err: err}
 	}
 	if err := icaltransfer.ValidateDestination(ctx, a, target.calendarID, preview); err != nil {
