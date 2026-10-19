@@ -134,3 +134,53 @@ func TestClientQueryAllFailsOnReportError(t *testing.T) {
 		t.Fatal("QueryAll err = nil, want a report-level failure")
 	}
 }
+
+// TestDecodeTolerantReportMergesSplitPropstats covers RFC 4918 section
+// 9.1.2: a server may put getetag and calendar-data in two separate 200
+// propstats. The decoder must merge them into one Resource, not report
+// the href as Missing.
+func TestDecodeTolerantReportMergesSplitPropstats(t *testing.T) {
+	t.Parallel()
+
+	const responseBody = `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/split.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;etag-split&quot;</d:getetag>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+    <d:propstat>
+      <d:prop>
+        <cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:split-uid
+DTSTAMP:20260606T120000Z
+DTSTART:20260606T120000Z
+DTEND:20260606T130000Z
+SUMMARY:Split
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+
+	result, err := decodeTolerantReport(strings.NewReader(responseBody))
+	if err != nil {
+		t.Fatalf("decodeTolerantReport: %v", err)
+	}
+	if len(result.Missing) != 0 || len(result.Unparseable) != 0 {
+		t.Fatalf("Missing = %+v, Unparseable = %+v, want none", result.Missing, result.Unparseable)
+	}
+	if len(result.Resources) != 1 || result.Resources[0].Path != "/calendar/split.ics" ||
+		result.Resources[0].ETag != "etag-split" || result.Resources[0].Data == nil {
+		t.Fatalf("Resources = %+v, want one parsed body of /calendar/split.ics with ETag etag-split", result.Resources)
+	}
+}

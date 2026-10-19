@@ -69,10 +69,20 @@ func decodeTolerantReport(body io.Reader) (*ReportResult, error) {
 			result.Missing = append(result.Missing, ReportMiss{Href: href})
 			continue
 		}
-		ps, ok := firstOKPropstat(r)
-		etag := normalizeETag(ps.ETag)
-		data := ps.CalendarData
-		if !ok || data == "" {
+		// RFC 4918 section 9.1.2 lets a server split the properties of one
+		// response across several 2xx propstats: getetag in one block and
+		// calendar-data in another. Merge them before the classification.
+		var rawETag, data string
+		for _, ps := range allOKPropstats(r) {
+			if rawETag == "" {
+				rawETag = ps.ETag
+			}
+			if data == "" {
+				data = ps.CalendarData
+			}
+		}
+		etag := normalizeETag(rawETag)
+		if data == "" {
 			result.Missing = append(result.Missing, ReportMiss{Href: href, ETag: etag})
 			continue
 		}
