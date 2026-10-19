@@ -37,7 +37,15 @@ func SameTree(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	a, b = resolveIfExists(a), resolveIfExists(b)
+	return SameResolvedTree(ResolveTree(a), ResolveTree(b))
+}
+
+// SameResolvedTree is SameTree for two paths that ResolveTree already
+// resolved. A caller that compares one path with many resolves it once.
+func SameResolvedTree(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
 	if a == b {
 		return true
 	}
@@ -45,12 +53,16 @@ func SameTree(a, b string) bool {
 	return strings.HasPrefix(a, b+sep) || strings.HasPrefix(b, a+sep)
 }
 
-// resolveIfExists returns the path with the symbolic links of its longest
+// ResolveTree returns the path with the symbolic links of its longest
 // existing prefix resolved. A path below a linked directory that does not
 // exist yet still lands in the resolved tree, so the overlap rule sees
 // "~/.calendars/new" and "/mnt/sync/new" as one tree when ~/.calendars is
-// a link to /mnt/sync. A path with no existing prefix stays as it is.
-func resolveIfExists(path string) string {
+// a link to /mnt/sync. A path with no existing prefix, and an empty path,
+// stay as they are.
+func ResolveTree(path string) string {
+	if path == "" {
+		return ""
+	}
 	rest := ""
 	for p := path; ; {
 		if resolved, err := filepath.EvalSymlinks(p); err == nil {

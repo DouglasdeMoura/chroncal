@@ -488,7 +488,7 @@ func TestConfigCalendarsConflictWarnsButRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("calendar list with a conflicting entry must run: %v", err)
 	}
-	if !strings.Contains(stderr, "[[calendars]] entry skipped") || !strings.Contains(stderr, "declares local calendars only") {
+	if !strings.Contains(stderr, "warning: [[calendars]]:") || !strings.Contains(stderr, "declares local calendars only") {
 		t.Fatalf("missing skip warning on stderr: %q", stderr)
 	}
 	if !strings.Contains(stdout, "\"name\": \"Work\"") || strings.Contains(stdout, "#123456") {
