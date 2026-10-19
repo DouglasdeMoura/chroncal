@@ -93,10 +93,10 @@ func (s *Service) Create(ctx context.Context, name, color, description string) (
 	return s.CreateWithPath(ctx, name, color, description, "")
 }
 
-// CreateWithPath creates a local calendar and stores the directory of .ics
-// files that feeds it in the same transaction (issue #809). An empty path
-// creates a calendar without a directory. A failure leaves no half-made
-// row behind.
+// CreateWithPath creates a local calendar with the directory of .ics files
+// that feeds it (issue #809). The insert carries the path, so a failure
+// leaves no half-made row behind. An empty path creates a calendar without
+// a directory.
 func (s *Service) CreateWithPath(ctx context.Context, name, color, description, localPath string) (Calendar, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -109,6 +109,7 @@ func (s *Service) CreateWithPath(ctx context.Context, name, color, description, 
 		Name:        name,
 		Color:       color,
 		Description: storage.StringToNullable(description),
+		LocalPath:   localPath,
 	})
 	if err != nil {
 		if isUniqueViolation(err, "calendars.name") {
@@ -130,16 +131,6 @@ func (s *Service) CreateWithPath(ctx context.Context, name, color, description, 
 			return Calendar{}, fmt.Errorf("set default: %w", err)
 		}
 		r.IsDefault = 1
-	}
-
-	if localPath != "" {
-		if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{
-			LocalPath: localPath,
-			ID:        r.ID,
-		}); err != nil {
-			return Calendar{}, fmt.Errorf("set local path: %w", err)
-		}
-		r.LocalPath = localPath
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -395,7 +386,9 @@ func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error
 		if err != nil {
 			return err
 		}
-		if existing.AccountID != nil {
+		// fromStorage owns the "is remote" rule: a NULL or a 0 account
+		// ID both mean a local calendar.
+		if fromStorage(existing).AccountID != 0 {
 			return fmt.Errorf("calendar %q: %w", existing.Name, ErrRemoteLocalPath)
 		}
 	}

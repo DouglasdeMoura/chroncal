@@ -992,7 +992,7 @@ chroncal applies the entries on every launch:
 - It updates the stored `color`, `description`, or `path` when the entry gives a different value.
 - It keeps the stored value of a key that the entry omits, so a short entry does not reset a field that you set from the CLI or the TUI.
 - It never deletes a calendar. A declared calendar returns on the next launch, so a delete, a rename, or a link to a CalDAV account refuses a declared calendar in the CLI and in the TUI. Remove the entry from the file first.
-- It matches the `name` without case, like the `--calendar` flag, so `fastmail` adopts a stored `Fastmail`.
+- It matches the `name` like the `--calendar` flag: an exact match wins, then one match in another case, so `fastmail` adopts a stored `Fastmail`.
 - A declared `color`, `description`, or `path` returns on the next launch after a change from the CLI or the TUI. Change the value in the file.
 
 An entry without a `name`, two entries with one `name`, a `color` that is not `#RRGGBB`, or a relative `path` stops every command with an error. Fix the file, then run the command again.

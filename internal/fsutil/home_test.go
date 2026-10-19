@@ -1,6 +1,7 @@
 package fsutil
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,5 +58,19 @@ func TestContractHome(t *testing.T) {
 		if got := ContractHome(in); got != want {
 			t.Errorf("ContractHome(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestExpandHomeRejectsOtherUserHome(t *testing.T) {
+	if _, err := ExpandHome("~alice/calendars"); !errors.Is(err, ErrOtherUserHome) {
+		t.Fatalf("ExpandHome(~alice/...) error = %v, want ErrOtherUserHome", err)
+	}
+}
+
+func TestContractHomeWithTrailingSeparatorInHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home+string(os.PathSeparator))
+	if got := ContractHome(filepath.Join(home, "calendars")); got != "~/calendars" {
+		t.Errorf("ContractHome with a trailing separator in HOME = %q, want ~/calendars", got)
 	}
 }

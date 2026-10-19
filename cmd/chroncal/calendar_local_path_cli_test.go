@@ -514,3 +514,66 @@ func TestCalendarUpdateRefusesLinkBeforeOtherWrites(t *testing.T) {
 		t.Fatalf("the refused link changed the color: %q", got)
 	}
 }
+
+// TestCalendarUpdateDisconnectThenPathInOneCommand verifies the path lands
+// after the disconnect, so one command turns a server collection into a
+// directory-fed calendar. The reverse, --path "" next to --remote-url, also
+// works in one command.
+func TestCalendarUpdateDisconnectThenPathInOneCommand(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work",
+		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer"); err != nil {
+		t.Fatalf("calendar create remote: %v", err)
+	}
+	dir := t.TempDir()
+	// A path on a linked calendar without a disconnect is refused before
+	// any write.
+	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--name", "Deep", "--path", dir)
+	if err == nil || !strings.Contains(err.Error(), "cannot have a local directory") {
+		t.Fatalf("calendar update --path on a linked calendar: error = %v", err)
+	}
+	if calendarJSONByName(t, "Work").Name != "Work" {
+		t.Fatal("the refused update renamed the calendar")
+	}
+	if _, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--disconnect-remote", "--path", dir); err != nil {
+		t.Fatalf("calendar update --disconnect-remote --path: %v", err)
+	}
+	work := calendarJSONByName(t, "Work")
+	if work.AccountID != 0 || work.LocalPath != dir {
+		t.Fatalf("after disconnect+path = %+v, want local with the directory", work)
+	}
+	// --path "" clears the way for a link in the same command.
+	if _, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--path", "",
+		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer"); err != nil {
+		t.Fatalf("calendar update --path \"\" --remote-url: %v", err)
+	}
+	work = calendarJSONByName(t, "Work")
+	if work.AccountID == 0 || work.LocalPath != "" {
+		t.Fatalf("after clear+link = %+v, want linked without a directory", work)
+	}
+}
+
+// TestCalendarNameLookupPrefersExactMatch verifies the CLI resolves a name
+// the way Apply does: an exact match wins over a case variant.
+func TestCalendarNameLookupPrefersExactMatch(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	for _, name := range []string{"Work", "work"} {
+		if _, _, err := runChroncalCommand(t, "calendar", "create", name); err != nil {
+			t.Fatalf("calendar create %q: %v", name, err)
+		}
+	}
+	if _, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--description", "exact"); err != nil {
+		t.Fatalf("calendar update with an exact name: %v", err)
+	}
+	if got := calendarJSONByName(t, "Work").Description; got != "exact" {
+		t.Fatalf("exact match not preferred: Work description = %q", got)
+	}
+	if got := calendarJSONByName(t, "work").Description; got != "" {
+		t.Fatalf("the case variant changed: %q", got)
+	}
+	_, _, err := runChroncalCommand(t, "calendar", "update", "WORK", "--description", "x")
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("a name with two case variants and no exact match must be ambiguous: %v", err)
+	}
+}

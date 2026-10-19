@@ -276,7 +276,7 @@ func TestApplyWarnsOnAmbiguousCaseVariants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], ErrAmbiguousDeclaredName.Error()) {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], ErrAmbiguousName.Error()) {
 		t.Fatalf("warnings = %v, want one ambiguity warning", warnings)
 	}
 	cals, _ := svc.List(ctx)

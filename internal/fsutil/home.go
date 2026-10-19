@@ -1,6 +1,8 @@
 package fsutil
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,12 @@ import (
 func hasHomePrefix(path string) bool {
 	return path == "~" || strings.HasPrefix(path, "~/")
 }
+
+// ErrOtherUserHome reports the "~user/dir" form. chroncal does not look up
+// another user's home directory, and a quoted value reaches the program
+// with the tilde intact, so a silent resolve would name a directory that
+// does not exist.
+var ErrOtherUserHome = errors.New(`the "~user" form is not supported; use an absolute path or one that starts with ~/`)
 
 // IsAbsOrHome reports whether path does not depend on the working
 // directory: it is absolute, or ExpandHome resolves its start to the home
@@ -33,6 +41,8 @@ func ContractHome(path string) string {
 	if err != nil || home == "" {
 		return path
 	}
+	// A HOME with a trailing separator must still match.
+	home = filepath.Clean(home)
 	if path == home {
 		return "~"
 	}
@@ -50,6 +60,9 @@ func ExpandHome(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", nil
+	}
+	if strings.HasPrefix(path, "~") && !hasHomePrefix(path) {
+		return "", fmt.Errorf("%s: %w", path, ErrOtherUserHome)
 	}
 	if hasHomePrefix(path) {
 		home, err := os.UserHomeDir()
