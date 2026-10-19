@@ -219,6 +219,57 @@ func TestIcalImportWithoutPathUsesCalendarDirectories(t *testing.T) {
 	if !strings.Contains(stderr, "Work") || !strings.Contains(stdout, "Fastmail (") {
 		t.Fatalf("batch with a missing directory: stdout=%q stderr=%q", stdout, stderr)
 	}
+
+	// The JSON array still names the failed calendar with its error.
+	stdout, _, err = runChroncalCommand(t, "ical", "import", "--output", "json")
+	if err == nil {
+		t.Fatalf("ical import --output json with a missing directory succeeded:\n%s", stdout)
+	}
+	runs = nil
+	if err := json.Unmarshal([]byte(stdout), &runs); err != nil {
+		t.Fatalf("decode batch json with a failure: %v\n%s", err, stdout)
+	}
+	if len(runs) != 2 || runs[1]["calendar"] != "Work" || runs[1]["error"] == nil || runs[1]["failed"] != float64(1) {
+		t.Fatalf("batch json with a failure = %v", runs)
+	}
+}
+
+// TestConfigCalendarsDeclaredRefusesDeleteAndRename verifies the CLI
+// refuses to delete or rename a calendar that config.toml declares, since
+// Apply would create it again on the next launch (issue #809).
+func TestConfigCalendarsDeclaredRefusesDeleteAndRename(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	configDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "chroncal")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	content := "[[calendars]]\nname = \"Fastmail\"\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	fm := calendarJSONByName(t, "Fastmail")
+
+	_, _, err := runChroncalCommand(t, "calendar", "delete", jsonInt(fm.ID), "--yes")
+	if err == nil || !strings.Contains(err.Error(), "remove the entry first") {
+		t.Fatalf("calendar delete of a declared calendar: error = %v", err)
+	}
+	_, _, err = runChroncalCommand(t, "calendar", "update", "Fastmail", "--name", "Mail")
+	if err == nil || !strings.Contains(err.Error(), "remove the entry first") {
+		t.Fatalf("calendar update --name of a declared calendar: error = %v", err)
+	}
+	// Other updates of a declared calendar still work.
+	if _, _, err := runChroncalCommand(t, "calendar", "update", "Fastmail", "--description", "Synced"); err != nil {
+		t.Fatalf("calendar update --description of a declared calendar: %v", err)
+	}
+	calendarJSONByName(t, "Fastmail")
+
+	// After the entry goes away, the delete works.
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(""), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t, "calendar", "delete", jsonInt(fm.ID), "--yes"); err != nil {
+		t.Fatalf("calendar delete after the entry is removed: %v", err)
+	}
 }
 
 // TestIcalImportRejectsTwoPaths keeps the argument contract: at most one

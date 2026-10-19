@@ -97,8 +97,10 @@ again updates existing items instead of blindly duplicating them.`,
 					}
 					// A batch run reports the calendar that failed and
 					// continues, so one missing directory does not stop
-					// the other calendars.
+					// the other calendars. The JSON array carries the
+					// failed run with its error, so a script sees it too.
 					fmt.Fprintf(os.Stderr, "chroncal: %s: %v\n", safeText(target.calendarName), err)
+					outcomes = append(outcomes, icalImportOutcome{target: target, err: err})
 					failed++
 					continue
 				}
@@ -136,7 +138,7 @@ again updates existing items instead of blindly duplicating them.`,
 			// summary above still reports exactly what landed so the caller
 			// can retry only the failed components.
 			if failed > 0 {
-				return fmt.Errorf("%d component(s) or calendar(s) failed to import; see warnings", failed)
+				return fmt.Errorf("%d component(s) or calendar(s) failed to import; see the warnings and errors above", failed)
 			}
 			return nil
 		},
@@ -203,6 +205,9 @@ type icalImportOutcome struct {
 	// freeBusy counts the VFREEBUSY components that the parse found. The
 	// import does not store them.
 	freeBusy int
+	// err is set when the run did not start: the parse or the destination
+	// check failed. The summary is then empty.
+	err error
 }
 
 func (o icalImportOutcome) landed() int {
@@ -210,6 +215,15 @@ func (o icalImportOutcome) landed() int {
 }
 
 func (o icalImportOutcome) json() map[string]any {
+	if o.err != nil {
+		return map[string]any{
+			"calendar_id": o.target.calendarID,
+			"calendar":    o.target.calendarName,
+			"path":        o.target.path,
+			"error":       o.err.Error(),
+			"failed":      1,
+		}
+	}
 	return map[string]any{
 		"calendar_id":      o.target.calendarID,
 		"calendar":         o.target.calendarName,
@@ -265,7 +279,7 @@ func printImportWarnings(warnings []string) {
 // names the calendar first, so the user can tell the runs apart.
 func printImportSummary(w io.Writer, o icalImportOutcome, named bool) {
 	if named {
-		fmt.Fprintf(w, "%s (%s): ", safeText(o.target.calendarName), o.target.path)
+		fmt.Fprintf(w, "%s (%s): ", safeText(o.target.calendarName), safeText(o.target.path))
 	}
 	fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos, %d journals).\n",
 		o.summary.NewEvents+o.summary.NewTodos+o.summary.NewJournals,

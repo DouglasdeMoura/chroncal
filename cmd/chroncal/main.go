@@ -124,10 +124,21 @@ func rejectUnknownSubcommand(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// exactOneArg is cobra.ExactArgs(1) but re-tags the error as "invalid_input".
-// Then --output json consumers see a uniform code field for arg-count
-// failures instead of the catch-all "error". Every command with positional
-// args takes exactly one today. Generalize if that changes.
+// declaredCalendarError refuses a CLI delete or rename of a calendar that
+// a [[calendars]] entry of config.toml declares (issue #809). Apply runs
+// on every launch, so the next command would create the calendar again
+// with the declared name. The user removes the entry first.
+func declaredCalendarError(name, action string) error {
+	for _, c := range cfg.Calendars {
+		if c.Name == name {
+			return errInvalidInputf(
+				"cannot %s calendar %q: a [[calendars]] entry in config.toml declares it, so the next launch would create it again; remove the entry first",
+				action, name)
+		}
+	}
+	return nil
+}
+
 // atMostOneArg is cobra.MaximumNArgs(1) with the same "invalid_input" tag
 // as exactOneArg. "ical import" takes an optional path (issue #809).
 func atMostOneArg(cmd *cobra.Command, args []string) error {
@@ -137,6 +148,10 @@ func atMostOneArg(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// exactOneArg is cobra.ExactArgs(1) but re-tags the error as "invalid_input".
+// Then --output json consumers see a uniform code field for arg-count
+// failures instead of the catch-all "error". atMostOneArg is the variant
+// for an optional argument.
 func exactOneArg(cmd *cobra.Command, args []string) error {
 	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 		return &cliError{Code: "invalid_input", Msg: err.Error()}
