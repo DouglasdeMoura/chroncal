@@ -101,6 +101,11 @@ func (s *Service) MigrateCalendarToAccount(
 	if s.isDeclared(source.Name) {
 		return MigrateResult{}, fmt.Errorf("calendar %q: %w", source.Name, calendar.ErrDeclaredCalendar)
 	}
+	// A calendar that a local directory feeds cannot become a server
+	// collection, the same rule that Connect enforces (ErrLocalPathLink).
+	if source.LocalPath != "" {
+		return MigrateResult{}, fmt.Errorf("calendar %q: %w", source.Name, calendar.ErrLocalPathLink)
+	}
 	if source.AccountID != nil && *source.AccountID != 0 {
 		return MigrateResult{}, ErrCannotMigrateRemoteCalendar
 	}

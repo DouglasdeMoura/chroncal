@@ -180,6 +180,12 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
 			continue
 		}
+		if ok && cal.AccountID != 0 && cal.Name != name {
+			// A case variant that a CalDAV account owns is not a match.
+			// The exact name is free, so the entry creates its own local
+			// calendar, as "calendar create" would.
+			ok = false
+		}
 		if ok && cal.AccountID != 0 {
 			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, ErrDeclaredRemote))
 			continue
@@ -193,8 +199,19 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			if errors.Is(err, ErrDuplicateName) {
 				// Two launches at one moment (the TUI and a timer that
 				// runs "ical import") both see the calendar missing. The
-				// loser adopts the row that the winner created.
+				// loser adopts the row that the winner created. The row
+				// passes the same checks as a row from the first lookup:
+				// a remote row or an ambiguous name is a warning, not a
+				// failed launch.
 				created, err = s.getByName(ctx, name)
+				if err == nil && created.AccountID != 0 {
+					warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, ErrDeclaredRemote))
+					continue
+				}
+				if errors.Is(err, ErrAmbiguousName) {
+					warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
+					continue
+				}
 			}
 			if err != nil {
 				return warnings, fmt.Errorf("create calendar %q: %w", name, err)

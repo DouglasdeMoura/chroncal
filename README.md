@@ -997,7 +997,11 @@ chroncal applies the entries on every launch:
 
 An entry without a `name`, two entries with one `name`, a `color` that is not `#RRGGBB`, or a relative `path` stops every command with an error. Fix the file, then run the command again.
 
-The table declares local calendars only. chroncal skips an entry whose `name` belongs to a calendar of a CalDAV account, or whose `name` matches several calendars in another case. The skip gives a warning on stderr and a line in the log file. A calendar with a `path` cannot take a CalDAV link. A CalDAV account holds a credential, so it stays in `chroncal account add`. For a CalDAV server, sync the collections to a directory with a tool such as [pimsync](https://pimsync.whynothugo.nl/), declare the directory with `path`, and run `chroncal ical import` after each sync pass.
+The table declares local calendars only. chroncal skips an entry whose `name` belongs to a calendar of a CalDAV account, or whose `name` matches several calendars in another case. The skip gives a warning on stderr and a line in the log file. A calendar with a `path` cannot take a CalDAV link. A CalDAV account holds a credential, so it stays in `chroncal account add`. To feed a calendar from a CalDAV server through the table:
+
+1. Sync the collections to a directory with a tool such as [pimsync](https://pimsync.whynothugo.nl/).
+2. Declare the directory with `path`.
+3. Run `chroncal ical import` after each sync pass.
 
 ### TUI themes
 

@@ -295,3 +295,49 @@ func TestApplyWarnsOnAmbiguousCaseVariants(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyDoesNotAdoptRemoteCaseVariant(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	// The seed calendar "Personal" becomes a remote calendar.
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: 1, AccountID: &account.ID, RemoteUrl: storage.StringToNullable("https://example.com/cal/personal"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "personal", Path: "/p"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a remote case variant must not block the entry: %v", warnings)
+	}
+	got, err := svc.getByName(ctx, "personal")
+	if err != nil || got.Name != "personal" || got.AccountID != 0 || got.LocalPath != "/p" {
+		t.Fatalf("Apply did not create the local calendar: %+v, %v", got, err)
+	}
+}
+
+func TestLinkToAccountRefusesDirectoryFedCalendar(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	cal, err := svc.CreateWithPath(ctx, "Fastmail", "#111111", "", "/p")
+	if err != nil {
+		t.Fatalf("CreateWithPath: %v", err)
+	}
+	if err := svc.LinkToAccount(ctx, cal.ID, account.ID, "https://example.com/cal/fm"); !errors.Is(err, ErrLocalPathLink) {
+		t.Fatalf("LinkToAccount on a directory-fed calendar: error = %v, want ErrLocalPathLink", err)
+	}
+}
