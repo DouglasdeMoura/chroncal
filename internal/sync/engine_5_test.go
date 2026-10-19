@@ -1062,3 +1062,141 @@ END:VCALENDAR
 		t.Fatalf("known misses = %+v, want one unparseable row for /calendar/bad.ics with ETag e2", rows)
 	}
 }
+
+// TestEnginePullFullSnapshotSurvivesBadBodies covers issue #853. The server
+// has no sync-collection, so the pull takes a full snapshot. One known
+// href returns a body the ical decoder rejects, and one known href returns
+// no calendar-data. Both local rows stay and take one known miss each, the
+// good resource still imports, and the user gets a warning that names the
+// unparseable href.
+func TestEnginePullFullSnapshotSurvivesBadBodies(t *testing.T) {
+	t.Parallel()
+
+	engine, db, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+
+	for _, row := range []struct{ uid, href string }{
+		{"garbage-uid", "/calendar/garbage.ics"},
+		{"nodata-uid", "/calendar/nodata.ics"},
+	} {
+		insertTestEvent(t, db, calendarID, row.uid)
+		if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+			CalendarID: calendarID, Uid: row.uid, OwnerType: "event",
+			RemoteUrl: row.href, Etag: "e1", Dirty: 0, SyncStrategy: "sync-token",
+		}); err != nil {
+			t.Fatalf("UpsertSyncResource(%s): %v", row.uid, err)
+		}
+	}
+
+	client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(raw), "sync-collection") {
+			return &http.Response{
+				StatusCode: http.StatusUnprocessableEntity,
+				Status:     "422 Unprocessable Entity",
+				Header:     http.Header{"Content-Type": []string{"application/xml"}},
+				Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><error xmlns="DAV:"/>`)),
+				Request:    r,
+			}, nil
+		}
+		queryBody := `<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendar/garbage.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;e2&quot;</d:getetag>
+        <cal:calendar-data>this is not an ical body at all</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/calendar/nodata.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;e3&quot;</d:getetag>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/calendar/good.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>&quot;g1&quot;</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//chroncal//tests//EN
+BEGIN:VEVENT
+UID:good-uid
+DTSTAMP:20260606T120000Z
+DTSTART:20260606T120000Z
+DTEND:20260606T130000Z
+SUMMARY:Good
+END:VEVENT
+END:VCALENDAR
+</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`
+		return &http.Response{
+			StatusCode: http.StatusMultiStatus,
+			Status:     "207 Multi-Status",
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(queryBody)),
+			Request:    r,
+		}, nil
+	})
+
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	if err != nil {
+		t.Fatalf("pull (full snapshot): %v", err)
+	}
+	if len(result.errors) != 0 {
+		t.Fatalf("pull errors = %v, want none", result.errors)
+	}
+	if result.pulled != 1 {
+		t.Fatalf("pulled = %d, want 1 (good.ics)", result.pulled)
+	}
+	for _, uid := range []string{"garbage-uid", "nodata-uid", "good-uid"} {
+		if _, err := q.GetEventByUID(ctx, uid); err != nil {
+			t.Fatalf("event %s: %v", uid, err)
+		}
+	}
+
+	rows, err := q.ListSyncKnownMissesByCalendar(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListSyncKnownMissesByCalendar: %v", err)
+	}
+	got := map[string]storage.SyncKnownMiss{}
+	for _, row := range rows {
+		got[row.Href] = row
+	}
+	if len(got) != 2 {
+		t.Fatalf("known misses = %+v, want two rows", rows)
+	}
+	if row := got["/calendar/garbage.ics"]; row.Uid != "garbage-uid" || row.Reason != knownMissReasonUnparseable || row.Etag != "e2" {
+		t.Fatalf("garbage.ics row = %+v, want unparseable for garbage-uid with ETag e2", row)
+	}
+	if row := got["/calendar/nodata.ics"]; row.Uid != "nodata-uid" || row.Reason != knownMissReasonMissing || row.Etag != "e3" {
+		t.Fatalf("nodata.ics row = %+v, want missing for nodata-uid with ETag e3", row)
+	}
+
+	var warned bool
+	for _, w := range result.warnings {
+		if w.Path == "/calendar/garbage.ics" && w.UID == "garbage-uid" && strings.Contains(w.Message, "server body unparseable") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("warnings = %+v, want one that names /calendar/garbage.ics as unparseable", result.warnings)
+	}
+}

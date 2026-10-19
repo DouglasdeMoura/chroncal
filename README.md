@@ -593,7 +593,7 @@ Conflict handling:
 
 Stuck resources:
 
-- Sometimes the server keeps a body that chroncal cannot import for a resource that chroncal already synced. The multiget returns 404, or the body does not parse. Sync then keeps the local copy and tries again on the next run.
+- Sometimes the server keeps a body that chroncal cannot import for a resource that chroncal already synced. The multiget returns 404, or the body does not parse. Sync then keeps the local copy and tries again on the next run. The full snapshot of a server without `sync-collection` follows the same rule: one bad body does not stop the import of the other resources.
 - Sync stops the retries after three failed runs, when at least one hour has gone by since the first failure. A frequent background sync then cannot use up the retries on a short server problem. The calendar is then no longer marked as failing. The local copy stays, and the server changes to that resource are not imported.
 - After the stop, a new version of the resource on the server (a new ETag) gets one more attempt. When that attempt fails, the retries stay stopped, and sync does not warn again.
 - `chroncal sync status` lists each such resource on a `stuck href=...` line below its calendar. The `-o json` output lists it under `stuck_hrefs`. Correct the resource on the server. The next good fetch removes the entry.
