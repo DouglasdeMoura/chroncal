@@ -604,7 +604,7 @@ func TestCalendarPathOverlapCode(t *testing.T) {
 		t.Fatalf("calendar create: %v", err)
 	}
 	_, stderr, err := runChroncalCommand(t, "calendar", "create", "Work", "--path", filepath.Join(parent, "work"), "--output", "json")
-	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") || !strings.Contains(stderr, "its own tree") {
+	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") || !strings.Contains(stderr, "its own directory tree") {
 		t.Fatalf("calendar create inside another tree: err=%v stderr=%q", err, stderr)
 	}
 }
@@ -644,10 +644,32 @@ func TestCalendarUpdateRefusesOverlapBeforeOtherWrites(t *testing.T) {
 		}
 	}
 	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--color", "#222222", "--path", filepath.Join(parent, "work"))
-	if err == nil || !strings.Contains(err.Error(), "its own tree") {
+	if err == nil || !strings.Contains(err.Error(), "its own directory tree") {
 		t.Fatalf("calendar update with an overlapping path: error = %v", err)
 	}
 	if got := calendarJSONByName(t, "Work").Color; got != "#111111" {
 		t.Fatalf("the refused update changed the color: %q", got)
+	}
+}
+
+// TestCalendarUpdateRefusesRenameBeforePathWrite verifies a refused rename
+// of a declared calendar leaves the path as it was, although the path
+// would land first on its own.
+func TestCalendarUpdateRefusesRenameBeforePathWrite(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	configDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "chroncal")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[[calendars]]\nname = \"Fastmail\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	calendarJSONByName(t, "Fastmail")
+	_, _, err := runChroncalCommand(t, "calendar", "update", "Fastmail", "--name", "Other", "--path", tempDir(t))
+	if err == nil || !strings.Contains(err.Error(), "remove the entry first") {
+		t.Fatalf("rename of a declared calendar with a path: error = %v", err)
+	}
+	if got := calendarJSONByName(t, "Fastmail").LocalPath; got != "" {
+		t.Fatalf("the refused rename wrote the path: %q", got)
 	}
 }

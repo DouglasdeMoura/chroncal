@@ -427,12 +427,23 @@ func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange) error
 			return fmt.Errorf("clear path of calendar %q: %w", c.Name, err)
 		}
 	}
+	// One list after the clears serves every check. Each set lands in the
+	// list as it lands in the database.
+	cals, err := listWith(ctx, qtx)
+	if err != nil {
+		return fmt.Errorf("list calendars: %w", err)
+	}
 	for _, c := range changes {
-		if err := s.checkPathFreeTx(ctx, qtx, c.ID, c.To); err != nil {
+		if err := checkPathFree(cals, c.ID, c.To); err != nil {
 			return err
 		}
 		if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{LocalPath: c.To, ID: c.ID}); err != nil {
 			return fmt.Errorf("set path of calendar %q: %w", c.Name, err)
+		}
+		for i := range cals {
+			if cals[i].ID == c.ID {
+				cals[i].LocalPath = c.To
+			}
 		}
 	}
 	return tx.Commit()
