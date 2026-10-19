@@ -18,6 +18,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/config"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
@@ -127,6 +128,15 @@ func rejectUnknownSubcommand(cmd *cobra.Command, args []string) error {
 // Then --output json consumers see a uniform code field for arg-count
 // failures instead of the catch-all "error". Every command with positional
 // args takes exactly one today. Generalize if that changes.
+// atMostOneArg is cobra.MaximumNArgs(1) with the same "invalid_input" tag
+// as exactOneArg. "ical import" takes an optional path (issue #809).
+func atMostOneArg(cmd *cobra.Command, args []string) error {
+	if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
+		return &cliError{Code: "invalid_input", Msg: err.Error()}
+	}
+	return nil
+}
+
 func exactOneArg(cmd *cobra.Command, args []string) error {
 	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 		return &cliError{Code: "invalid_input", Msg: err.Error()}
@@ -349,6 +359,24 @@ func initApp() (*app.App, error) {
 		Triggers:   triggers,
 		SkipAllDay: cfg.Alarms.SkipAllDay,
 	})
+	// Apply the [[calendars]] entries (issue #809). config.Load validated
+	// each entry and resolved each path. The apply is idempotent, so it
+	// runs on every launch and keeps the database in step with the file.
+	if len(cfg.Calendars) > 0 {
+		declared := make([]calendarpkg.Declared, 0, len(cfg.Calendars))
+		for _, c := range cfg.Calendars {
+			declared = append(declared, calendarpkg.Declared{
+				Name:        c.Name,
+				Color:       c.Color,
+				Description: c.Description,
+				Path:        c.Path,
+			})
+		}
+		if err := a.Calendars.Apply(context.Background(), declared); err != nil {
+			a.Close()
+			return nil, fmt.Errorf("apply [[calendars]] from config: %w", err)
+		}
+	}
 	return a, nil
 }
 

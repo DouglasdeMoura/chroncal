@@ -296,6 +296,7 @@ func (m Model) handleCalendarManagerRequested(msg CalendarManagerRequestedMsg) (
 				Description:   info.Description,
 				OwnerEmail:    info.OwnerEmail,
 				RemoteLinked:  info.AccountID != 0,
+				LocalPath:     info.LocalPath,
 				LastSyncAt:    info.LastSyncAt,
 				LastSyncError: info.LastSyncError,
 				IsDefault:     info.IsDefault,

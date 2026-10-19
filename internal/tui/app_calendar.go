@@ -65,6 +65,7 @@ func buildCalendarInfoMap(
 			OwnerEmail:          c.OwnerEmail,
 			Description:         c.Description,
 			EventCount:          count,
+			LocalPath:           c.LocalPath,
 			DisplayOrder:        c.DisplayOrder,
 			Synced:              c.AccountID != 0,
 			AccountServerURL:    accountServerURLs[c.AccountID],

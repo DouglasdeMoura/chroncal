@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
@@ -119,7 +120,7 @@ func NewCalendarDialogModel(params CalendarDialogParams, theme Theme) CalendarDi
 				staticLine("To remove it, open Account › Manage Calendars.", note),
 			)
 		} else {
-			items = append(items, FormItem{Label: "Location", Field: NewStaticField("Local", nil)})
+			items = append(items, FormItem{Label: "Location", Field: NewStaticField(localLocationLabel(params.LocalPath), nil)})
 		}
 	}
 
@@ -436,4 +437,23 @@ func newCalDAVConnectionForm(theme Theme, usernamePrefill string) Form {
 		return func() tea.Msg { return msg }
 	})
 	return form
+}
+
+// localLocationLabel is the value of the Location row of a local calendar.
+// A calendar that a directory of .ics files feeds (issue #809) shows that
+// directory after "Local", so the user can see where the events come from.
+// The home directory shortens to "~" to keep the row short.
+func localLocationLabel(localPath string) string {
+	path := strings.TrimSpace(localPath)
+	if path == "" {
+		return "Local"
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if path == home {
+			path = "~"
+		} else if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+			path = "~" + path[len(home):]
+		}
+	}
+	return "Local: " + path
 }

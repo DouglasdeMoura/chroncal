@@ -32,6 +32,13 @@ type Calendar struct {
 
 	IsDefault bool // True when this is the default calendar
 
+	// LocalPath is the directory of .ics files that feeds this calendar
+	// (issue #809). A sync tool such as vdirsyncer or pimsync writes one
+	// .ics file for each event into that directory. "chroncal ical import"
+	// without a path reads every calendar that has a LocalPath. An empty
+	// value means the calendar has no directory.
+	LocalPath string
+
 	// DefaultAlarms holds the per-calendar default-alarm setting
 	// (issue #815). It is a comma-separated spec list
 	// ("-PT15M,AUDIO:-PT5M"). A nil value inherits the global [alarms]

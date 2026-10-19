@@ -340,7 +340,18 @@ func fromStorage(r storage.Calendar) Calendar {
 		RemoteMissing:       r.RemoteMissing != 0,
 		IsDefault:           r.IsDefault != 0,
 		DefaultAlarms:       r.DefaultAlarms,
+		LocalPath:           r.LocalPath,
 	}
+}
+
+// SetLocalPath stores the directory of .ics files that feeds the calendar
+// (issue #809). An empty path removes the directory. The caller resolves
+// the path first (see fsutil.ExpandHome), so the stored value is absolute.
+func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error {
+	return s.q.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{
+		LocalPath: path,
+		ID:        id,
+	})
 }
 
 // isUniqueViolation returns true when the error is a SQLite UNIQUE constraint

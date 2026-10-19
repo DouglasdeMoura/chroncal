@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
@@ -42,7 +44,7 @@ func icalImportCmd() *cobra.Command {
 		calendarName string
 	)
 	cmd := &cobra.Command{
-		Use:   "import <path>",
+		Use:   "import [path]",
 		Short: "Import events, todos, and journal entries from an iCal (.ics) file or directory",
 		Long: `Read an .ics file and upsert its events, todos, and journal entries
 into a local calendar.
@@ -54,13 +56,20 @@ import at the collection directory. chroncal skips every name that starts
 with a dot. A file that fails to parse becomes a warning, and the rest of
 the directory still lands.
 
+Without a path, the command imports every calendar that has a directory
+(issue #809). Set the directory with "calendar create --path", "calendar
+update --path", or a [[calendars]] entry in config.toml. With --calendar,
+the command imports only that calendar from its directory.
+
 Entries are matched by UID when possible, so importing the same path
 again updates existing items instead of blindly duplicating them.`,
 		Example: `  chroncal ical import ./calendar.ics
   chroncal ical import ~/.calendars/work --calendar Work
   chroncal ical import ~/.calendars --calendar Personal
-  chroncal ical import ./dump.ics --output json`,
-		Args: exactOneArg,
+  chroncal ical import ./dump.ics --output json
+  chroncal ical import                      # every calendar with a directory
+  chroncal ical import --calendar Fastmail  # one calendar from its directory`,
+		Args: atMostOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
 			if err != nil {
@@ -70,80 +79,201 @@ again updates existing items instead of blindly duplicating them.`,
 			ctx, cancel := context.WithTimeout(context.Background(), icalImportTimeout)
 			defer cancel()
 
-			preview, err := icaltransfer.ParsePath(args[0])
+			targets, err := icalImportTargets(ctx, a, args, calendarName)
 			if err != nil {
 				return err
-			}
-
-			calID, err := resolveCalendarID(ctx, a, calendarName)
-			if err != nil {
-				return err
-			}
-			if err := icaltransfer.ValidateDestination(ctx, a, calID, preview); err != nil {
-				return err
-			}
-
-			summary := icaltransfer.Import(ctx, a, calID, &preview.Result)
-			warnings := summary.Warnings
-
-			if len(warnings) > 0 {
-				fmt.Fprintf(os.Stderr, "chroncal: %d warning(s) during import:\n", len(warnings))
-				limit := min(5, len(warnings))
-				for _, w := range warnings[:limit] {
-					fmt.Fprintf(os.Stderr, "  - %s\n", safeText(w))
-				}
-				if len(warnings) > 5 {
-					fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(warnings)-5)
-				}
 			}
 
 			w := cmd.OutOrStdout()
-			if outputFmt != "text" {
-				out := map[string]any{
-					"events":           toJSONEvents(summary.Events),
-					"todos":            toJSONTodos(summary.Todos),
-					"journals":         toJSONJournals(summary.Journals),
-					"freebusy":         preview.Result.FreeBusy,
-					"new_events":       summary.NewEvents,
-					"updated_events":   summary.UpdatedEvents,
-					"new_todos":        summary.NewTodos,
-					"updated_todos":    summary.UpdatedTodos,
-					"new_journals":     summary.NewJournals,
-					"updated_journals": summary.UpdatedJournals,
-					"failed":           summary.Failed,
-					"warnings":         warnings,
+			var (
+				outcomes []icalImportOutcome
+				failed   int
+			)
+			for _, target := range targets {
+				outcome, err := importIntoCalendar(ctx, a, target)
+				if err != nil {
+					if len(targets) == 1 {
+						return err
+					}
+					// A batch run reports the calendar that failed and
+					// continues, so one missing directory does not stop
+					// the other calendars.
+					fmt.Fprintf(os.Stderr, "chroncal: %s: %v\n", safeText(target.calendarName), err)
+					failed++
+					continue
 				}
-				if err := printOutput(w, out); err != nil {
-					return err
+				outcomes = append(outcomes, outcome)
+				printImportWarnings(outcome.summary.Warnings)
+				if outputFmt == "text" {
+					printImportSummary(w, outcome, len(targets) > 1)
 				}
-			} else {
-				fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos, %d journals).\n",
-					summary.NewEvents+summary.NewTodos+summary.NewJournals,
-					summary.UpdatedEvents+summary.UpdatedTodos+summary.UpdatedJournals,
-					len(summary.Events), len(summary.Todos), len(summary.Journals))
-				if len(preview.Result.FreeBusy) > 0 {
-					fmt.Fprintf(w, "Parsed %d VFREEBUSY component(s); they were not imported into local storage.\n", len(preview.Result.FreeBusy))
+				// Opportunistically push whatever landed to a CalDAV-linked
+				// calendar, mirroring the event/todo/journal write paths, so an
+				// import doesn't wait for the next ` + "`service run`" + ` tick (issue #115).
+				if outcome.landed() > 0 {
+					opportunisticPush(a, target.calendarID, cmd)
 				}
+				failed += outcome.summary.Failed
 			}
 
-			// Opportunistically push whatever landed to a CalDAV-linked
-			// calendar, mirroring the event/todo/journal write paths, so an
-			// import doesn't wait for the next `service run` tick (issue #115).
-			if len(summary.Events)+len(summary.Todos)+len(summary.Journals) > 0 {
-				opportunisticPush(a, calID, cmd)
+			if outputFmt != "text" {
+				if len(targets) == 1 && len(outcomes) == 1 {
+					if err := printOutput(w, outcomes[0].json()); err != nil {
+						return err
+					}
+				} else {
+					items := make([]map[string]any, 0, len(outcomes))
+					for _, outcome := range outcomes {
+						items = append(items, outcome.json())
+					}
+					if err := printOutput(w, items); err != nil {
+						return err
+					}
+				}
 			}
 
 			// A non-zero exit signals that the import was partial, but the
 			// summary above still reports exactly what landed so the caller
 			// can retry only the failed components.
-			if summary.Failed > 0 {
-				return fmt.Errorf("%d component(s) failed to import; see warnings", summary.Failed)
+			if failed > 0 {
+				return fmt.Errorf("%d component(s) or calendar(s) failed to import; see warnings", failed)
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar to import into (default: first available)")
 	return cmd
+}
+
+// icalImportTarget is one import run: a source path and the calendar that
+// receives it.
+type icalImportTarget struct {
+	path         string
+	calendarID   int64
+	calendarName string
+}
+
+// icalImportTargets resolves the import runs of one command. With a path
+// argument there is one run into the --calendar (or the default calendar).
+// Without a path, each calendar that has a directory is one run (issue
+// #809). With --calendar and no path, that calendar must have a directory.
+func icalImportTargets(ctx context.Context, a *app.App, args []string, calendarName string) ([]icalImportTarget, error) {
+	if len(args) == 1 {
+		calID, err := resolveCalendarID(ctx, a, calendarName)
+		if err != nil {
+			return nil, err
+		}
+		cal, err := a.Calendars.Get(ctx, calID)
+		if err != nil {
+			return nil, fmt.Errorf("get calendar: %w", err)
+		}
+		return []icalImportTarget{{path: args[0], calendarID: calID, calendarName: cal.Name}}, nil
+	}
+	cals, err := a.Calendars.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list calendars: %w", err)
+	}
+	if calendarName != "" {
+		cal, err := findCalendarByRef(cals, calendarName)
+		if err != nil {
+			return nil, err
+		}
+		if cal.LocalPath == "" {
+			return nil, errInvalidInputf("calendar %q has no directory; pass a path, or set one with 'chroncal calendar update %q --path DIR'", cal.Name, cal.Name)
+		}
+		return []icalImportTarget{{path: cal.LocalPath, calendarID: cal.ID, calendarName: cal.Name}}, nil
+	}
+	var targets []icalImportTarget
+	for _, cal := range cals {
+		if cal.LocalPath == "" {
+			continue
+		}
+		targets = append(targets, icalImportTarget{path: cal.LocalPath, calendarID: cal.ID, calendarName: cal.Name})
+	}
+	if len(targets) == 0 {
+		return nil, errInvalidInputf("no calendar has a directory; pass a path, or set one with 'chroncal calendar update NAME --path DIR'")
+	}
+	return targets, nil
+}
+
+// icalImportOutcome is the result of one import run.
+type icalImportOutcome struct {
+	target  icalImportTarget
+	summary icaltransfer.Summary
+	// freeBusy counts the VFREEBUSY components that the parse found. The
+	// import does not store them.
+	freeBusy int
+}
+
+func (o icalImportOutcome) landed() int {
+	return len(o.summary.Events) + len(o.summary.Todos) + len(o.summary.Journals)
+}
+
+func (o icalImportOutcome) json() map[string]any {
+	return map[string]any{
+		"calendar_id":      o.target.calendarID,
+		"calendar":         o.target.calendarName,
+		"path":             o.target.path,
+		"events":           toJSONEvents(o.summary.Events),
+		"todos":            toJSONTodos(o.summary.Todos),
+		"journals":         toJSONJournals(o.summary.Journals),
+		"freebusy":         o.freeBusy,
+		"new_events":       o.summary.NewEvents,
+		"updated_events":   o.summary.UpdatedEvents,
+		"new_todos":        o.summary.NewTodos,
+		"updated_todos":    o.summary.UpdatedTodos,
+		"new_journals":     o.summary.NewJournals,
+		"updated_journals": o.summary.UpdatedJournals,
+		"failed":           o.summary.Failed,
+		"warnings":         o.summary.Warnings,
+	}
+}
+
+// importIntoCalendar parses the source of one target and imports it into
+// the calendar of that target.
+func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget) (icalImportOutcome, error) {
+	preview, err := icaltransfer.ParsePath(target.path)
+	if err != nil {
+		return icalImportOutcome{}, err
+	}
+	if err := icaltransfer.ValidateDestination(ctx, a, target.calendarID, preview); err != nil {
+		return icalImportOutcome{}, err
+	}
+	summary := icaltransfer.Import(ctx, a, target.calendarID, &preview.Result)
+	return icalImportOutcome{
+		target:   target,
+		summary:  summary,
+		freeBusy: len(preview.Result.FreeBusy),
+	}, nil
+}
+
+func printImportWarnings(warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "chroncal: %d warning(s) during import:\n", len(warnings))
+	limit := min(5, len(warnings))
+	for _, w := range warnings[:limit] {
+		fmt.Fprintf(os.Stderr, "  - %s\n", safeText(w))
+	}
+	if len(warnings) > 5 {
+		fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(warnings)-5)
+	}
+}
+
+// printImportSummary prints the text summary of one run. A batch run
+// names the calendar first, so the user can tell the runs apart.
+func printImportSummary(w io.Writer, o icalImportOutcome, named bool) {
+	if named {
+		fmt.Fprintf(w, "%s (%s): ", safeText(o.target.calendarName), o.target.path)
+	}
+	fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos, %d journals).\n",
+		o.summary.NewEvents+o.summary.NewTodos+o.summary.NewJournals,
+		o.summary.UpdatedEvents+o.summary.UpdatedTodos+o.summary.UpdatedJournals,
+		len(o.summary.Events), len(o.summary.Todos), len(o.summary.Journals))
+	if o.freeBusy > 0 {
+		fmt.Fprintf(w, "Parsed %d VFREEBUSY component(s); they were not imported into local storage.\n", o.freeBusy)
+	}
 }
 
 func icalExportCmd() *cobra.Command {

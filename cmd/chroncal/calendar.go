@@ -18,6 +18,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/app"
 	calendarpkg "github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/config"
+	"github.com/douglasdemoura/chroncal/internal/fsutil"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
@@ -304,6 +305,7 @@ func calendarCreateCmd() *cobra.Command {
 		oauthClientID   string
 		allowInsecure   bool
 		defaultAlarms   []string
+		localPath       string
 	)
 	cmd := &cobra.Command{
 		Use:   `create "<name>"`,
@@ -317,9 +319,16 @@ behavior.
 flag is repeatable, and each value is a trigger duration ("-PT15M") or an
 action-prefixed trigger ("AUDIO:-PT5M"). The special value "none" turns
 default alarms off for this calendar. Without the flag, the calendar
-inherits the global [alarms] default from config.toml.`,
+inherits the global [alarms] default from config.toml.
+
+--path names a directory of .ics files that feeds the calendar (issue
+#809). A sync tool such as vdirsyncer or pimsync writes one .ics file for
+each event there. "chroncal ical import" without a path argument then
+imports every calendar that has a directory. The [[calendars]] table in
+config.toml sets the same fields declaratively.`,
 		Example: `  chroncal calendar create "Work"
   chroncal calendar create "Family" --color "#0F766E" --description "Shared family schedule"
+  chroncal calendar create "Fastmail" --path ~/calendars/fastmail
   chroncal calendar create "Holidays" --default-alarm none
   chroncal calendar create "Work" --default-alarm -PT15M --default-alarm AUDIO:-PT5M
   chroncal calendar create "Work" --remote-url https://cal.example.com/dav/calendars/work/ --username alice --auth bearer`,
@@ -338,6 +347,10 @@ inherits the global [alarms] default from config.toml.`,
 					return err
 				}
 			}
+			resolvedPath, err := resolveCalendarPathFlag(localPath)
+			if err != nil {
+				return err
+			}
 
 			a, err := initApp()
 			if err != nil {
@@ -349,6 +362,13 @@ inherits the global [alarms] default from config.toml.`,
 			c, err := a.Calendars.Create(ctx, args[0], color, description)
 			if err != nil {
 				return fmt.Errorf("create calendar: %w", err)
+			}
+
+			if resolvedPath != "" {
+				if err := a.Calendars.SetLocalPath(ctx, c.ID, resolvedPath); err != nil {
+					return fmt.Errorf("set calendar path: %w", err)
+				}
+				c.LocalPath = resolvedPath
 			}
 
 			if email != "" {
@@ -407,7 +427,19 @@ inherits the global [alarms] default from config.toml.`,
 	cmd.Flags().StringVar(&oauthClientID, "oauth-client-id", "", "OAuth 2.0 client ID")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "Allow HTTP (non-HTTPS) remote URLs")
 	cmd.Flags().StringSliceVar(&defaultAlarms, "default-alarm", nil, "default alarm for this calendar, repeatable (e.g. -PT15M, AUDIO:-PT5M); 'none' turns default alarms off")
+	cmd.Flags().StringVar(&localPath, "path", "", "directory of .ics files that feeds this calendar (used by 'ical import' without a path)")
 	return cmd
+}
+
+// resolveCalendarPathFlag turns the --path value into the stored form: an
+// absolute, clean path with "~" resolved. An empty flag stays empty, which
+// on update means "remove the directory".
+func resolveCalendarPathFlag(raw string) (string, error) {
+	resolved, err := fsutil.ExpandHome(raw)
+	if err != nil {
+		return "", errInvalidInputf("--path: %v", err)
+	}
+	return resolved, nil
 }
 
 func calendarUpdateCmd() *cobra.Command {
@@ -425,6 +457,7 @@ func calendarUpdateCmd() *cobra.Command {
 		disconnectRemote   bool
 		defaultAlarms      []string
 		clearDefaultAlarms bool
+		localPath          string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id|name>",
@@ -438,8 +471,12 @@ flag is repeatable, and each value is a trigger duration ("-PT15M") or an
 action-prefixed trigger ("AUDIO:-PT5M"). The special value "none" turns
 default alarms off for this calendar (useful for a holidays calendar).
 --clear-default-alarms removes the per-calendar setting, so the calendar
-inherits the global [alarms] default from config.toml again.`,
+inherits the global [alarms] default from config.toml again.
+
+--path names a directory of .ics files that feeds the calendar (issue
+#809). Pass --path "" to remove the directory.`,
 		Example: `  chroncal calendar update 1 --name "Deep Work"
+  chroncal calendar update Fastmail --path ~/calendars/fastmail
   chroncal calendar update Work --color "#2563EB" --description "Focus blocks and deadlines"
   chroncal calendar update Work --default-alarm -PT15M --default-alarm AUDIO:-PT5M
   chroncal calendar update Holidays --default-alarm none
@@ -507,6 +544,17 @@ inherits the global [alarms] default from config.toml again.`,
 				}
 			}
 
+			if cmd.Flags().Changed("path") {
+				resolvedPath, err := resolveCalendarPathFlag(localPath)
+				if err != nil {
+					return err
+				}
+				if err := a.Calendars.SetLocalPath(ctx, c.ID, resolvedPath); err != nil {
+					return fmt.Errorf("set calendar path: %w", err)
+				}
+				c.LocalPath = resolvedPath
+			}
+
 			if cmd.Flags().Changed("default-alarm") || cmd.Flags().Changed("clear-default-alarms") {
 				if err := writeCalendarDefaultAlarms(ctx, a, c.ID, defaultAlarms,
 					cmd.Flags().Changed("default-alarm"), clearDefaultAlarms); err != nil {
@@ -568,6 +616,7 @@ inherits the global [alarms] default from config.toml again.`,
 	cmd.Flags().BoolVar(&disconnectRemote, "disconnect-remote", false, "Remove the remote CalDAV link from this calendar")
 	cmd.Flags().StringSliceVar(&defaultAlarms, "default-alarm", nil, "default alarm for this calendar, repeatable (e.g. -PT15M, AUDIO:-PT5M); 'none' turns default alarms off")
 	cmd.Flags().BoolVar(&clearDefaultAlarms, "clear-default-alarms", false, "remove the per-calendar default alarms, so the calendar inherits the global [alarms] default")
+	cmd.Flags().StringVar(&localPath, "path", "", "directory of .ics files that feeds this calendar; pass \"\" to remove it")
 	mutuallyExclusive(cmd, "default-alarm", "clear-default-alarms")
 	return cmd
 }

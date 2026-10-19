@@ -200,3 +200,9 @@ WHERE id = ?;
 
 -- name: UpdateCalendarDefaultAlarms :exec
 UPDATE calendars SET default_alarms = ? WHERE id = ?;
+
+-- name: UpdateCalendarLocalPath :exec
+UPDATE calendars SET
+    local_path = ?,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ?;

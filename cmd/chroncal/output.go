@@ -143,6 +143,9 @@ type jsonCalendar struct {
 	LastSyncAt    string `json:"last_sync_at,omitempty"`
 	LastSyncError string `json:"last_sync_error,omitempty"`
 	Hidden        bool   `json:"hidden,omitempty"`
+	// LocalPath is the directory of .ics files that feeds the calendar
+	// (issue #809). Empty when the calendar has no directory.
+	LocalPath string `json:"local_path,omitempty"`
 	// DefaultAlarms is the raw per-calendar default-alarm setting
 	// (issue #815). A nil value inherits the global [alarms] default. An
 	// empty string means default alarms are off for the calendar.
@@ -221,6 +224,7 @@ func toJSONCalendar(c calendar.Calendar) jsonCalendar {
 		LastSyncAt:    c.LastSyncAt,
 		LastSyncError: c.LastSyncError,
 		DefaultAlarms: c.DefaultAlarms,
+		LocalPath:     c.LocalPath,
 		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:     c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -413,6 +417,11 @@ func printCalendar(w io.Writer, c calendar.Calendar) {
 	printDetailField(w, labelWidth, "color", c.Color)
 	printDetailField(w, labelWidth, "description", c.Description)
 	printDetailInt(w, labelWidth, "id", c.ID)
+	// The directory of .ics files that feeds the calendar (issue #809).
+	// The row appears only when the calendar has one.
+	if c.LocalPath != "" {
+		printDetailField(w, labelWidth, "path", c.LocalPath)
+	}
 	// The tri-state default-alarm setting (issue #815): an explicit list,
 	// "off", or the inherited global default.
 	switch {

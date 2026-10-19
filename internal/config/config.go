@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/douglasdemoura/chroncal/internal/fsutil"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/secretcmd"
 	"github.com/spf13/viper"
@@ -102,6 +103,24 @@ type AlarmsConfig struct {
 	SkipAllDay bool `mapstructure:"skip_all_day"`
 }
 
+// CalendarConfig is one [[calendars]] entry (issue #809). It declares a
+// local calendar, so a tool such as home-manager can write the calendar
+// list into config.toml. Name is the key: chroncal creates a calendar with
+// that name when none exists. Color, Description, and Path update the
+// stored calendar when they have a value. An empty field keeps the stored
+// value. The config never deletes a calendar.
+type CalendarConfig struct {
+	Name        string `mapstructure:"name"`
+	Color       string `mapstructure:"color"`
+	Description string `mapstructure:"description"`
+	// Path is the directory of .ics files that feeds the calendar. A sync
+	// tool such as vdirsyncer or pimsync writes one .ics file for each
+	// event there. "chroncal ical import" without a path argument imports
+	// every calendar that has one. Load resolves a leading "~" and makes
+	// the path absolute.
+	Path string `mapstructure:"path"`
+}
+
 type Config struct {
 	DB         string           `mapstructure:"db"`
 	ProductID  string           `mapstructure:"product_id"`
@@ -117,6 +136,9 @@ type Config struct {
 	// value, so a value of the wrong type does not stop the CLI, sync, or
 	// the alarm daemon. tui.Run reads it with ParseKeys and ValidateKeys.
 	Keys any `mapstructure:"keys"`
+	// Calendars is the [[calendars]] array. Only the config file sets it.
+	// initApp applies it to the database on every launch.
+	Calendars []CalendarConfig `mapstructure:"calendars"`
 }
 
 // DefaultSoftDeletePurgeDays is applied by Load when the purge_days key is
@@ -202,10 +224,50 @@ func Load() (Config, error) {
 	if err := cfg.SMTP.Validate(); err != nil {
 		return Config{}, err
 	}
+	if err := validateCalendars(cfg.Calendars); err != nil {
+		return Config{}, err
+	}
 	// Load does not validate the [keys] table. Only the TUI reads it, so a
 	// bad remap must not stop the CLI, sync, or the alarm daemon. The TUI
 	// calls ValidateKeys when it starts (see tui.Run).
 	return cfg, nil
+}
+
+// validateCalendars checks the [[calendars]] entries and resolves each
+// path in place. An entry without a name stops the load, because the name
+// is the key that ties the entry to a stored calendar. Two entries with one
+// name stop the load, because the second entry would undo the first on
+// every launch. A relative path stops the load, because the working
+// directory of a launch is not stable.
+func validateCalendars(entries []CalendarConfig) error {
+	seen := make(map[string]bool, len(entries))
+	for i := range entries {
+		e := &entries[i]
+		e.Name = strings.TrimSpace(e.Name)
+		if e.Name == "" {
+			return fmt.Errorf("calendars[%d]: name is required", i)
+		}
+		if seen[e.Name] {
+			return fmt.Errorf("calendars[%d]: duplicate name %q", i, e.Name)
+		}
+		seen[e.Name] = true
+		e.Color = strings.TrimSpace(e.Color)
+		e.Description = strings.TrimSpace(e.Description)
+		raw := strings.TrimSpace(e.Path)
+		if raw == "" {
+			e.Path = ""
+			continue
+		}
+		if raw != "~" && !strings.HasPrefix(raw, "~/") && !filepath.IsAbs(raw) {
+			return fmt.Errorf("calendars[%d] (%s): path %q must be absolute or start with ~/", i, e.Name, raw)
+		}
+		resolved, err := fsutil.ExpandHome(raw)
+		if err != nil {
+			return fmt.Errorf("calendars[%d] (%s): resolve path %q: %w", i, e.Name, raw, err)
+		}
+		e.Path = resolved
+	}
+	return nil
 }
 
 // ErrSMTPPasswordSourceConflict reports a config that sets both an SMTP

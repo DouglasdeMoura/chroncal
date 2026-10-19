@@ -681,6 +681,7 @@ func calendarDialogParamsFor(id int64, info CalendarInfo, hidden bool) CalendarD
 		Description:     info.Description,
 		OwnerEmail:      info.OwnerEmail,
 		RemoteLinked:    info.AccountID != 0,
+		LocalPath:       info.LocalPath,
 		IsDefault:       info.IsDefault,
 		LastSyncAt:      info.LastSyncAt,
 		LastSyncError:   info.LastSyncError,
