@@ -29,6 +29,19 @@ func IsAbsOrHome(path string) bool {
 	return hasHomePrefix(path) || filepath.IsAbs(path)
 }
 
+// SameTree reports whether two clean absolute directories are one tree:
+// equal, or one inside the other. An empty path is in no tree.
+func SameTree(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	sep := string(filepath.Separator)
+	return strings.HasPrefix(a, b+sep) || strings.HasPrefix(b, a+sep)
+}
+
 // ContractHome is the inverse of ExpandHome for display. A path inside the
 // home directory starts with "~", so a long path stays short on screen. A
 // path outside the home directory, and an empty path, stay as they are.

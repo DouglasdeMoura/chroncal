@@ -15,7 +15,7 @@ import (
 var ErrLastCalendar = errors.New("cannot delete the last calendar")
 
 // ErrDuplicateName is returned when a calendar name already exists.
-var ErrDuplicateName = errors.New("a calendar with this name already exists")
+var ErrDuplicateName = newInputError("a calendar with this name already exists")
 
 // ErrDefaultCalendarRequiresPromotion is returned when the current default
 // calendar is among those being deleted but no replacement that survives was
@@ -105,6 +105,11 @@ func (s *Service) CreateWithPath(ctx context.Context, name, color, description, 
 	defer tx.Rollback()
 
 	qtx := s.q.WithTx(tx)
+	if localPath != "" {
+		if err := s.checkPathFreeTx(ctx, qtx, 0, localPath); err != nil {
+			return Calendar{}, err
+		}
+	}
 	r, err := qtx.CreateCalendar(ctx, storage.CreateCalendarParams{
 		Name:        name,
 		Color:       color,
@@ -307,7 +312,8 @@ func (s *Service) UpdateSyncState(ctx context.Context, id int64, ctag, syncToken
 
 // LinkToAccount attaches a calendar to an account. It refuses a declared
 // calendar and a calendar with a local directory (CheckLinkable), like
-// Connect does.
+// Connect does. Tests use it as a fixture; the production link paths are
+// Connect and the account discovery.
 func (s *Service) LinkToAccount(ctx context.Context, id, accountID int64, remoteURL string) error {
 	existing, err := s.Get(ctx, id)
 	if err != nil {
@@ -377,6 +383,21 @@ func fromStorage(r storage.Calendar) Calendar {
 	}
 }
 
+// checkPathFreeTx reads the calendar list inside the transaction and
+// returns ErrOverlappingPath when another calendar than id already uses
+// path or a directory above or below it.
+func (s *Service) checkPathFreeTx(ctx context.Context, qtx *storage.Queries, id int64, path string) error {
+	rows, err := qtx.ListCalendars(ctx)
+	if err != nil {
+		return fmt.Errorf("list calendars: %w", err)
+	}
+	cals := make([]Calendar, len(rows))
+	for i, r := range rows {
+		cals[i] = fromStorage(r)
+	}
+	return checkPathFree(cals, id, path)
+}
+
 // SetLocalPath stores the directory of .ics files that feeds the calendar
 // (issue #809). An empty path removes the directory. The caller resolves
 // the path first (see fsutil.ExpandHome), so the stored value is absolute.
@@ -400,6 +421,9 @@ func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error
 		// ID both mean a local calendar.
 		if fromStorage(existing).AccountID != 0 {
 			return fmt.Errorf("calendar %q: %w", existing.Name, ErrRemoteLocalPath)
+		}
+		if err := s.checkPathFreeTx(ctx, qtx, id, path); err != nil {
+			return err
 		}
 	}
 	if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{

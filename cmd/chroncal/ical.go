@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -300,6 +301,15 @@ func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget
 			// A collection without events is a normal state for a sync
 			// directory. The run imports nothing and succeeds.
 			return icalImportOutcome{target: target}
+		}
+		if target.fromDirectory && errors.Is(err, fs.ErrNotExist) {
+			// The sync tool has not created the directory yet, or the
+			// mount is away. The run imports nothing, succeeds, and
+			// carries a warning, so a timer job does not fail on every
+			// tick before the first sync.
+			outcome := icalImportOutcome{target: target}
+			outcome.summary.Warnings = []string{fmt.Sprintf("the directory %s does not exist yet", target.path)}
+			return outcome
 		}
 		return icalImportOutcome{target: target, err: err}
 	}

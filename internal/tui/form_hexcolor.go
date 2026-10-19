@@ -50,7 +50,7 @@ func (f *HexColorField) Validate() string {
 	if hexVal == "" {
 		return "" // emptiness is handled by Required
 	}
-	if model.ValidateHexColor(hexVal) != nil {
+	if !model.IsHexColor(hexVal) {
 		return "Color must be #rrggbb"
 	}
 	return ""
@@ -59,7 +59,7 @@ func (f *HexColorField) Validate() string {
 func (f *HexColorField) View() string {
 	base := f.input.View()
 	hexVal := strings.TrimSpace(f.input.Value())
-	if model.ValidateHexColor(hexVal) != nil {
+	if !model.IsHexColor(hexVal) {
 		return base
 	}
 	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render(Glyphs["dot"])

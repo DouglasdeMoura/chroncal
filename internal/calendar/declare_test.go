@@ -324,20 +324,63 @@ func TestApplyDoesNotAdoptRemoteCaseVariant(t *testing.T) {
 	}
 }
 
-func TestLinkToAccountRefusesDirectoryFedCalendar(t *testing.T) {
-	svc, q, _ := newTestServiceWithDB(t)
+func TestSetLocalPathRefusesOverlap(t *testing.T) {
+	svc := newTestService(t)
 	ctx := context.Background()
-	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
-		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "user",
-	})
-	if err != nil {
-		t.Fatalf("CreateAccount: %v", err)
+	if _, err := svc.CreateWithPath(ctx, "Parent", "#111111", "", "/srv/cal"); err != nil {
+		t.Fatalf("CreateWithPath: %v", err)
 	}
-	cal, err := svc.CreateWithPath(ctx, "Fastmail", "#111111", "", "/p")
+	child, err := svc.Create(ctx, "Child", "#111111", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for _, path := range []string{"/srv/cal", "/srv/cal/work", "/srv"} {
+		if err := svc.SetLocalPath(ctx, child.ID, path); !errors.Is(err, ErrOverlappingPath) {
+			t.Errorf("SetLocalPath(%q) error = %v, want ErrOverlappingPath", path, err)
+		}
+	}
+	if err := svc.SetLocalPath(ctx, child.ID, "/srv/calendar"); err != nil {
+		t.Fatalf("SetLocalPath on a sibling with a shared prefix: %v", err)
+	}
+	if _, err := svc.CreateWithPath(ctx, "Twin", "#111111", "", "/srv/cal/other"); !errors.Is(err, ErrOverlappingPath) {
+		t.Fatalf("CreateWithPath inside another tree: error = %v, want ErrOverlappingPath", err)
+	}
+}
+
+func TestApplyWarnsWhenItResetsAStoredField(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	cal, err := svc.CreateWithPath(ctx, "Fastmail", "#111111", "", "/old")
 	if err != nil {
 		t.Fatalf("CreateWithPath: %v", err)
 	}
-	if err := svc.LinkToAccount(ctx, cal.ID, account.ID, "https://example.com/cal/fm"); !errors.Is(err, ErrLocalPathLink) {
-		t.Fatalf("LinkToAccount on a directory-fed calendar: error = %v, want ErrLocalPathLink", err)
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "Fastmail", Color: "#222222", Path: "/new"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "replaced the stored color, path") {
+		t.Fatalf("warnings = %v, want one reset warning for color and path", warnings)
+	}
+	got, _ := svc.Get(ctx, cal.ID)
+	if got.Color != "#222222" || got.LocalPath != "/new" {
+		t.Fatalf("Apply did not apply the entry: %+v", got)
+	}
+	// The second apply changes nothing and warns about nothing.
+	warnings, err = svc.Apply(ctx, []Declared{{Name: "Fastmail", Color: "#222222", Path: "/new"}})
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("second Apply: warnings = %v, err = %v", warnings, err)
+	}
+}
+
+func TestInputErrorsCarryTheMarker(t *testing.T) {
+	for _, err := range []error{ErrDuplicateName, ErrDeclaredCalendar, ErrDeclaredRemote, ErrRemoteLocalPath, ErrLocalPathLink, ErrAmbiguousName, ErrOverlappingPath} {
+		var input InputError
+		if !errors.As(err, &input) || !input.InvalidInput() {
+			t.Errorf("%v does not carry the InputError marker", err)
+		}
+	}
+	var input InputError
+	if errors.As(ErrLastCalendar, &input) {
+		t.Error("ErrLastCalendar must not carry the InputError marker")
 	}
 }

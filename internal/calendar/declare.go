@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/douglasdemoura/chroncal/internal/fsutil"
 )
 
 // DefaultColor is the color of a new calendar when the caller gives none.
@@ -23,42 +25,73 @@ type Declared struct {
 	Path        string
 }
 
-// ErrDeclaredCalendar reports a rename or a delete of a calendar that a
-// [[calendars]] entry of config.toml declares. Apply would create the
-// calendar again on the next launch, so the user removes the entry first.
-var ErrDeclaredCalendar = errors.New(
-	"a [[calendars]] entry in config.toml declares this calendar, so the next launch would create it again; remove the entry first")
+// InputError marks a service error that reports a request the user must
+// change, not a system failure. The CLI gives such an error the
+// "invalid_input" code. The marker lives on the error, so a new sentinel
+// needs no entry in a list elsewhere.
+type InputError interface {
+	error
+	InvalidInput() bool
+}
+
+type inputError struct{ msg string }
+
+func (e *inputError) Error() string      { return e.msg }
+func (e *inputError) InvalidInput() bool { return true }
+
+// newInputError returns a sentinel that satisfies InputError.
+func newInputError(msg string) error { return &inputError{msg: msg} }
+
+// ErrDeclaredCalendar reports a rename, a delete, a link, or a move of a
+// calendar that a [[calendars]] entry of config.toml declares. The entry
+// binds the calendar to its name and keeps it local. The user removes the
+// entry first.
+var ErrDeclaredCalendar = newInputError(
+	"a [[calendars]] entry in config.toml declares this calendar, so it keeps its name and stays local; remove the entry first")
 
 // ErrDeclaredRemote reports a [[calendars]] entry whose name matches a
 // calendar that a CalDAV account owns. The table declares local calendars
 // only. An apply would push the declared color to the server and feed the
 // remote calendar from a local directory.
-var ErrDeclaredRemote = errors.New(
+var ErrDeclaredRemote = newInputError(
 	"a CalDAV account owns a calendar with this name; the [[calendars]] table declares local calendars only")
-
-// ErrDeclaredLink reports a link of a declared calendar to a CalDAV
-// account. The table declares local calendars only, so the link is refused
-// up front.
-var ErrDeclaredLink = errors.New(
-	"a [[calendars]] entry in config.toml declares this calendar, and the table declares local calendars only; remove the entry first")
 
 // ErrRemoteLocalPath reports a local directory on a calendar that a CalDAV
 // account owns. An import from the directory would push the files to the
 // server, which already owns the collection.
-var ErrRemoteLocalPath = errors.New(
+var ErrRemoteLocalPath = newInputError(
 	"a CalDAV account owns this calendar, so it cannot have a local directory")
 
 // ErrLocalPathLink reports a link of a calendar that has a local directory
 // to a CalDAV account. The user removes the directory first.
-var ErrLocalPathLink = errors.New(
+var ErrLocalPathLink = newInputError(
 	"this calendar has a local directory; remove it with --path \"\" before you link it to a CalDAV account")
 
 // ErrAmbiguousName reports a name that matches several stored calendars
 // that differ only in case and none exactly. Apply skips such an entry
 // with a warning, and the CLI asks for the numeric ID. The user renames
 // one of the calendars.
-var ErrAmbiguousName = errors.New(
+var ErrAmbiguousName = newInputError(
 	"several calendars match this name in another case; rename one of them or use the numeric ID")
+
+// ErrOverlappingPath reports a local directory that another calendar
+// already uses, or that lies inside or above the directory of another
+// calendar. The import reads a directory and its subdirectories, so two
+// calendars on one tree would import the same files and move each todo
+// and journal between them on every run.
+var ErrOverlappingPath = newInputError(
+	"another calendar uses this directory or a directory above or below it; each calendar needs its own tree")
+
+// checkPathFree returns ErrOverlappingPath when another calendar than id
+// uses path or a directory above or below it.
+func checkPathFree(cals []Calendar, id int64, path string) error {
+	for _, c := range cals {
+		if c.ID != id && fsutil.SameTree(c.LocalPath, path) {
+			return fmt.Errorf("calendar %q: %w", c.Name, ErrOverlappingPath)
+		}
+	}
+	return nil
+}
 
 // IsDeclared reports whether Apply bound an entry to a stored calendar with
 // that exact name. Apply records the stored spelling, so a stray case
@@ -79,14 +112,14 @@ func (s *Service) refuseDeclared(name string) error {
 }
 
 // CheckLinkable reports whether a calendar can take a CalDAV link. A
-// declared calendar stays local (ErrDeclaredLink), and a calendar with a
+// declared calendar stays local (ErrDeclaredCalendar), and a calendar with a
 // local directory cannot also be a server collection (ErrLocalPathLink).
 // ConnectTarget and Connect call it, and the CLI calls it before it writes
 // any other field of the calendar, so a refusal costs no prompt, no network
 // request, and no partial update.
 func (s *Service) CheckLinkable(cal Calendar) error {
-	if s.IsDeclared(cal.Name) {
-		return fmt.Errorf("calendar %q: %w", cal.Name, ErrDeclaredLink)
+	if err := s.refuseDeclared(cal.Name); err != nil {
+		return err
 	}
 	if cal.LocalPath != "" {
 		return fmt.Errorf("calendar %q: %w", cal.Name, ErrLocalPathLink)
@@ -180,6 +213,9 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
 			continue
 		}
+		// adopted marks a row that existed before this apply. A reset of
+		// one of its fields gets a warning; a new row gets none.
+		adopted := ok
 		if ok && cal.AccountID != 0 && cal.Name != name {
 			// A case variant that a CalDAV account owns is not a match.
 			// The exact name is free, so the entry creates its own local
@@ -208,10 +244,14 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 					warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, ErrDeclaredRemote))
 					continue
 				}
-				if errors.Is(err, ErrAmbiguousName) {
+				if err != nil {
+					// An ambiguous name, or a row that went away again,
+					// is a transient state of a concurrent launch. The
+					// next launch applies the entry.
 					warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
 					continue
 				}
+				adopted = true
 			}
 			if err != nil {
 				return warnings, fmt.Errorf("create calendar %q: %w", name, err)
@@ -221,8 +261,18 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		}
 		// The guard binds to the stored spelling of the name.
 		s.declared[cal.Name] = true
-		if (d.Color != "" && !strings.EqualFold(d.Color, cal.Color)) ||
-			(d.Description != "" && d.Description != cal.Description) {
+		// A stored value that differs from the declared one comes from a
+		// CLI or TUI edit, or from an edit of the file. The entry wins,
+		// and a warning names the reset, so an edit never vanishes in
+		// silence.
+		var reset []string
+		if d.Color != "" && !strings.EqualFold(d.Color, cal.Color) {
+			reset = append(reset, "color")
+		}
+		if d.Description != "" && d.Description != cal.Description {
+			reset = append(reset, "description")
+		}
+		if len(reset) > 0 {
 			color, description := cal.Color, cal.Description
 			if d.Color != "" {
 				color = d.Color
@@ -236,8 +286,16 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		}
 		if d.Path != "" && d.Path != cal.LocalPath {
 			if err := s.SetLocalPath(ctx, cal.ID, d.Path); err != nil {
+				if errors.Is(err, ErrOverlappingPath) {
+					warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
+					continue
+				}
 				return warnings, fmt.Errorf("set path of calendar %q: %w", name, err)
 			}
+			reset = append(reset, "path")
+		}
+		if adopted && len(reset) > 0 {
+			warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored %s", name, strings.Join(reset, ", ")))
 		}
 	}
 	return warnings, nil

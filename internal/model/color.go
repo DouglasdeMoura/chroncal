@@ -10,11 +10,17 @@ import (
 // the config file, and the database use: "#" and six hex digits.
 var hexColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
+// IsHexColor reports whether color has the "#RRGGBB" form. The TUI views
+// call it on every frame, so it allocates nothing.
+func IsHexColor(color string) bool {
+	return hexColorPattern.MatchString(strings.TrimSpace(color))
+}
+
 // ValidateHexColor checks a calendar color. The CLI --color flag and the
 // config [[calendars]] entries share it. The package sits below config and
 // calendar, so both can import it without a cycle.
 func ValidateHexColor(color string) error {
-	if !hexColorPattern.MatchString(strings.TrimSpace(color)) {
+	if !IsHexColor(color) {
 		return fmt.Errorf("color %q must be a hex color such as #0F766E", color)
 	}
 	return nil

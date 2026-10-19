@@ -656,7 +656,11 @@ func createLinkedCalendarForTest(t *testing.T, dbPath string) (int64, int64) {
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	if err := a.Calendars.LinkToAccount(ctx, cal.ID, account.ID, "https://cal.example.com/dav/calendars/work/"); err != nil {
+	if err := a.Queries.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID:        cal.ID,
+		AccountID: &account.ID,
+		RemoteUrl: storage.StringToNullable("https://cal.example.com/dav/calendars/work/"),
+	}); err != nil {
 		t.Fatalf("link calendar: %v", err)
 	}
 

@@ -74,3 +74,21 @@ func TestContractHomeWithTrailingSeparatorInHome(t *testing.T) {
 		t.Errorf("ContractHome with a trailing separator in HOME = %q, want ~/calendars", got)
 	}
 }
+
+func TestSameTree(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"/srv/cal", "/srv/cal", true},
+		{"/srv/cal", "/srv/cal/work", true},
+		{"/srv/cal/work", "/srv/cal", true},
+		{"/srv/cal", "/srv/calendar", false},
+		{"", "/srv/cal", false},
+	}
+	for _, tc := range cases {
+		if got := SameTree(tc.a, tc.b); got != tc.want {
+			t.Errorf("SameTree(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}

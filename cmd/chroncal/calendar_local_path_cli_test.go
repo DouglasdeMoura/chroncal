@@ -208,22 +208,27 @@ func TestIcalImportWithoutPathUsesCalendarDirectories(t *testing.T) {
 		t.Fatalf("Fastmail events:\n%s", stdout)
 	}
 
-	// A missing directory in a batch run reports and continues.
+	// A missing directory in a batch run is a warning: the sync tool may
+	// not have created it yet. The command still exits zero.
 	if err := os.RemoveAll(workDir); err != nil {
 		t.Fatalf("remove work dir: %v", err)
 	}
 	stdout, stderr, err := runChroncalCommand(t, "ical", "import")
-	if err == nil {
-		t.Fatalf("ical import with a missing directory succeeded:\n%s", stdout)
+	if err != nil {
+		t.Fatalf("ical import with a missing directory must succeed: %v", err)
 	}
-	if !strings.Contains(stderr, "Work") || !strings.Contains(stdout, "Fastmail (") {
+	if !strings.Contains(stderr, "Work") || !strings.Contains(stderr, "does not exist yet") || !strings.Contains(stdout, "Fastmail (") {
 		t.Fatalf("batch with a missing directory: stdout=%q stderr=%q", stdout, stderr)
 	}
 
-	// The JSON array still names the failed calendar with its error.
+	// A directory that is a file is a real failure. The JSON array names
+	// the failed calendar with its error, and the exit is non-zero.
+	if err := os.WriteFile(workDir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write file at work dir: %v", err)
+	}
 	stdout, _, err = runChroncalCommand(t, "ical", "import", "--output", "json")
 	if err == nil {
-		t.Fatalf("ical import --output json with a missing directory succeeded:\n%s", stdout)
+		t.Fatalf("ical import --output json with a broken directory succeeded:\n%s", stdout)
 	}
 	runs = nil
 	if err := json.Unmarshal([]byte(stdout), &runs); err != nil {
@@ -425,7 +430,7 @@ func TestConfigCalendarsDeclaredRefusesRemoteLink(t *testing.T) {
 	calendarJSONByName(t, "Fastmail")
 	_, stderr, err := runChroncalCommand(t, "calendar", "update", "Fastmail",
 		"--remote-url", "https://cal.example.com/dav/calendars/fm/", "--username", "alice", "--auth", "bearer", "--output", "json")
-	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") || !strings.Contains(stderr, "declares local calendars only") {
+	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") || !strings.Contains(stderr, "remove the entry first") {
 		t.Fatalf("link of a declared calendar: err=%v stderr=%q", err, stderr)
 	}
 	// Every later command still works.
@@ -442,7 +447,7 @@ func TestCalendarUpdateRejectsPathWithRemote(t *testing.T) {
 	}
 	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--path", t.TempDir(),
 		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer")
-	if err == nil || !strings.Contains(err.Error(), "has a local directory") {
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("calendar update --path with --remote-url: error = %v", err)
 	}
 	if got := calendarJSONByName(t, "Work").LocalPath; got != "" {
@@ -575,5 +580,23 @@ func TestCalendarNameLookupPrefersExactMatch(t *testing.T) {
 	_, _, err := runChroncalCommand(t, "calendar", "update", "WORK", "--description", "x")
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("a name with two case variants and no exact match must be ambiguous: %v", err)
+	}
+}
+
+// TestCalendarPathOverlapAndDuplicateNameCodes covers the overlap rule on
+// the CLI and the invalid_input code of a duplicate name.
+func TestCalendarPathOverlapAndDuplicateNameCodes(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	parent := t.TempDir()
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "All", "--path", parent); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	_, stderr, err := runChroncalCommand(t, "calendar", "create", "Work", "--path", filepath.Join(parent, "work"), "--output", "json")
+	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") || !strings.Contains(stderr, "its own tree") {
+		t.Fatalf("calendar create inside another tree: err=%v stderr=%q", err, stderr)
+	}
+	_, stderr, err = runChroncalCommand(t, "calendar", "create", "All", "--output", "json")
+	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") {
+		t.Fatalf("duplicate calendar name must be invalid_input: err=%v stderr=%q", err, stderr)
 	}
 }

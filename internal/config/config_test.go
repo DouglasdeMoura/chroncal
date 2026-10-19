@@ -697,6 +697,14 @@ name = "ſync"
 [[calendars]]
 name = "Sync"
 `,
+		"nested paths": `
+[[calendars]]
+name = "All"
+path = "/srv/calendars"
+[[calendars]]
+name = "Work"
+path = "/srv/calendars/work"
+`,
 	}
 	for label, content := range cases {
 		t.Run(label, func(t *testing.T) {

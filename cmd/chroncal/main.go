@@ -40,25 +40,13 @@ type cliError struct {
 
 func (e *cliError) Error() string { return e.Msg }
 
-// invalidInputSentinels lists the service errors that report a request
-// the user must change, not a system failure. printCLIError gives them the
-// "invalid_input" code, so the TUI and every CLI command share one rule
-// without a pre-check in each command.
-var invalidInputSentinels = []error{
-	calendarpkg.ErrDeclaredCalendar,
-	calendarpkg.ErrDeclaredLink,
-	calendarpkg.ErrAmbiguousName,
-	calendarpkg.ErrRemoteLocalPath,
-	calendarpkg.ErrLocalPathLink,
-}
-
+// isInvalidInputSentinel reports a service error that marks itself as a
+// request the user must change (calendar.InputError). printCLIError gives
+// it the "invalid_input" code, so every command shares one rule and the
+// service owns the classification.
 func isInvalidInputSentinel(err error) bool {
-	for _, sentinel := range invalidInputSentinels {
-		if errors.Is(err, sentinel) {
-			return true
-		}
-	}
-	return false
+	var input calendarpkg.InputError
+	return errors.As(err, &input) && input.InvalidInput()
 }
 
 // notFoundErr wraps sql.ErrNoRows into a user-friendly message tagged with
