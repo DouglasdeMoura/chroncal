@@ -53,13 +53,23 @@ func SameResolvedTree(a, b string) bool {
 		return false
 	}
 	if caseInsensitivePaths {
+		// A simple case fold. The file system of macOS folds with its own
+		// tables, so two Unicode spellings of one directory can still pass
+		// as two trees. The fold catches the ASCII case, which is the
+		// common one.
 		a, b = strings.ToLower(a), strings.ToLower(b)
 	}
 	if a == b {
 		return true
 	}
+	return insideTree(a, b) || insideTree(b, a)
+}
+
+// insideTree reports whether path lies below dir. A root directory ends
+// with the separator already, so the prefix does not add a second one.
+func insideTree(path, dir string) bool {
 	sep := string(filepath.Separator)
-	return strings.HasPrefix(a, b+sep) || strings.HasPrefix(b, a+sep)
+	return strings.HasPrefix(path, strings.TrimSuffix(dir, sep)+sep)
 }
 
 // ResolveTree returns the path with the symbolic links of its longest

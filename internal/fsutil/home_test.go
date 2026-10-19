@@ -85,6 +85,8 @@ func TestSameTree(t *testing.T) {
 		{"/srv/cal/work", "/srv/cal", true},
 		{"/srv/cal", "/srv/calendar", false},
 		{"", "/srv/cal", false},
+		{"/", "/srv/cal", true},
+		{"/srv/cal", "/", true},
 	}
 	for _, tc := range cases {
 		if got := SameTree(tc.a, tc.b); got != tc.want {

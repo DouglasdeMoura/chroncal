@@ -549,6 +549,12 @@ inherits the global [alarms] default from config.toml again.
 					return err
 				}
 			}
+			// The alarm specs parse before any write too, as create does.
+			if cmd.Flags().Changed("default-alarm") {
+				if _, err := parseDefaultAlarmFlags(defaultAlarms); err != nil {
+					return err
+				}
+			}
 			// Refuse a link that the service would refuse before any other
 			// field changes, so the command never prompts for a secret or
 			// leaves a partial update behind a refusal. The check sees the

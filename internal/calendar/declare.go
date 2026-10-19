@@ -74,9 +74,22 @@ var ErrOverlappingPath = model.NewInputError(
 // launches. The candidate resolves once; each stored path resolves once
 // per call.
 func checkPathFree(cals []Calendar, id int64, path string) error {
+	resolved := make([]string, len(cals))
+	for i := range cals {
+		resolved[i] = fsutil.ResolveTree(cals[i].LocalPath)
+	}
+	return checkResolvedPathFree(cals, resolved, id, path)
+}
+
+// checkResolvedPathFree is checkPathFree with the stored paths already
+// resolved (resolved[i] belongs to cals[i]). The plan of Apply resolves
+// each path once and calls it in a loop. The planned path of id itself
+// is not a conflict: resolved[i] holds the new path of the change under
+// check.
+func checkResolvedPathFree(cals []Calendar, resolved []string, id int64, path string) error {
 	candidate := fsutil.ResolveTree(path)
-	for _, c := range cals {
-		if c.ID != id && fsutil.SameResolvedTree(fsutil.ResolveTree(c.LocalPath), candidate) {
+	for i, c := range cals {
+		if c.ID != id && fsutil.SameResolvedTree(resolved[i], candidate) {
 			return fmt.Errorf("path %s overlaps the directory of calendar %q: %w", path, c.Name, ErrOverlappingPath)
 		}
 	}
@@ -368,16 +381,26 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	// a change that passed before. The check repeats until no change is
 	// refused, so every conflict gets its own warning and every
 	// independent change lands.
+	// Each path resolves once. A revert reuses the resolved stored path.
+	resolved := make([]string, len(planned))
+	for i := range planned {
+		resolved[i] = fsutil.ResolveTree(planned[i].LocalPath)
+	}
+	resolvedFrom := make(map[int64]string, len(changes))
+	for _, c := range changes {
+		resolvedFrom[c.ID] = fsutil.ResolveTree(c.From)
+	}
 	accepted := append([]pathChange(nil), changes...)
 	for {
 		refused := false
 		kept := accepted[:0]
 		for _, c := range accepted {
-			if err := checkPathFree(planned, c.ID, c.To); err != nil {
+			if err := checkResolvedPathFree(planned, resolved, c.ID, c.To); err != nil {
 				warnings = append(warnings, fmt.Sprintf("calendar %q: %v", c.Name, err))
 				for i := range planned {
 					if planned[i].ID == c.ID {
 						planned[i].LocalPath = c.From
+						resolved[i] = resolvedFrom[c.ID]
 					}
 				}
 				refused = true
