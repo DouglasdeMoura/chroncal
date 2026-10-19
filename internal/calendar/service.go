@@ -384,8 +384,14 @@ func fromStorage(r storage.Calendar) Calendar {
 // (ErrRemoteLocalPath). An import from the directory would push the files
 // to the server, which already owns the collection.
 func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
 	if path != "" {
-		existing, err := s.q.GetCalendar(ctx, id)
+		existing, err := qtx.GetCalendar(ctx, id)
 		if err != nil {
 			return err
 		}
@@ -393,10 +399,13 @@ func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error
 			return fmt.Errorf("calendar %q: %w", existing.Name, ErrRemoteLocalPath)
 		}
 	}
-	return s.q.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{
+	if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{
 		LocalPath: path,
 		ID:        id,
-	})
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // isUniqueViolation returns true when the error is a SQLite UNIQUE constraint

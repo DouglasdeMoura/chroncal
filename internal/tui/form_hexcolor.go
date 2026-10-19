@@ -2,18 +2,17 @@ package tui
 
 import (
 	"image/color"
-	"regexp"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
+
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 // ---------------------------------------------------------------------------
 // HexColorField
 // ---------------------------------------------------------------------------
-
-var hexRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 // HexColorField wraps a TextField and appends a live color preview dot
 // and "(custom)" label when the value doesn't match any palette swatch.
@@ -51,7 +50,7 @@ func (f *HexColorField) Validate() string {
 	if hexVal == "" {
 		return "" // emptiness is handled by Required
 	}
-	if !hexRE.MatchString(hexVal) {
+	if model.ValidateHexColor(hexVal) != nil {
 		return "Color must be #rrggbb"
 	}
 	return ""
@@ -60,7 +59,7 @@ func (f *HexColorField) Validate() string {
 func (f *HexColorField) View() string {
 	base := f.input.View()
 	hexVal := strings.TrimSpace(f.input.Value())
-	if !hexRE.MatchString(hexVal) {
+	if model.ValidateHexColor(hexVal) != nil {
 		return base
 	}
 	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(hexVal)).Render(Glyphs["dot"])

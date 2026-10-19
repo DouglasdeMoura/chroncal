@@ -23,18 +23,6 @@ type Declared struct {
 	Path        string
 }
 
-// getByName returns the calendar with that name (see findByName).
-func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) {
-	cals, err := s.List(ctx)
-	if err != nil {
-		return Calendar{}, err
-	}
-	if c, ok := findByName(cals, name); ok {
-		return c, nil
-	}
-	return Calendar{}, fmt.Errorf("calendar %q not found", name)
-}
-
 // ErrDeclaredCalendar reports a rename or a delete of a calendar that a
 // [[calendars]] entry of config.toml declares. Apply would create the
 // calendar again on the next launch, so the user removes the entry first.
@@ -49,8 +37,8 @@ var ErrDeclaredRemote = errors.New(
 	"a CalDAV account owns a calendar with this name; the [[calendars]] table declares local calendars only")
 
 // ErrDeclaredLink reports a link of a declared calendar to a CalDAV
-// account. The next launch would then fail with ErrDeclaredRemote, so the
-// link is refused up front.
+// account. The table declares local calendars only, so the link is refused
+// up front.
 var ErrDeclaredLink = errors.New(
 	"a [[calendars]] entry in config.toml declares this calendar, and the table declares local calendars only; remove the entry first")
 
@@ -65,19 +53,21 @@ var ErrRemoteLocalPath = errors.New(
 var ErrLocalPathLink = errors.New(
 	"this calendar has a local directory; remove it with --path \"\" before you link it to a CalDAV account")
 
-// isDeclared reports whether Apply received an entry with that name. The
-// match ignores case, like the CLI calendar lookup.
+// ErrAmbiguousDeclaredName reports a declared name that matches several
+// stored calendars that differ only in case. Apply cannot pick one, so it
+// skips the entry with a warning. The user renames one of the calendars.
+var ErrAmbiguousDeclaredName = errors.New(
+	"several calendars match this name in another case; rename one of them")
+
+// isDeclared reports whether Apply bound an entry to a stored calendar with
+// that exact name. Apply records the stored spelling, so a stray case
+// variant of a declared calendar stays free to delete or rename.
 func (s *Service) isDeclared(name string) bool {
-	for declared := range s.declared {
-		if strings.EqualFold(declared, name) {
-			return true
-		}
-	}
-	return false
+	return s.declared[name]
 }
 
-// refuseDeclared returns ErrDeclaredCalendar when Apply received an entry
-// with that name.
+// refuseDeclared returns ErrDeclaredCalendar when Apply bound an entry to
+// a calendar with that name.
 func (s *Service) refuseDeclared(name string) error {
 	if s.isDeclared(name) {
 		return fmt.Errorf("calendar %q: %w", name, ErrDeclaredCalendar)
@@ -85,23 +75,52 @@ func (s *Service) refuseDeclared(name string) error {
 	return nil
 }
 
-// findByName returns the calendar with that name. An exact match wins. A
+// findByName returns the calendar with that name. An exact match wins. One
 // match that differs only in case comes next, so a declared "fastmail"
 // adopts a stored "Fastmail" instead of a second calendar. The CLI resolves
 // a name the same way, and a second calendar would make every name
-// reference ambiguous.
-func findByName(cals []Calendar, name string) (Calendar, bool) {
+// reference ambiguous. Several case variants and no exact match give
+// ErrAmbiguousDeclaredName.
+func findByName(cals []Calendar, name string) (Calendar, bool, error) {
 	for _, c := range cals {
 		if c.Name == name {
-			return c, true
+			return c, true, nil
 		}
 	}
+	var (
+		found Calendar
+		count int
+	)
 	for _, c := range cals {
 		if strings.EqualFold(c.Name, name) {
-			return c, true
+			found = c
+			count++
 		}
 	}
-	return Calendar{}, false
+	switch count {
+	case 0:
+		return Calendar{}, false, nil
+	case 1:
+		return found, true, nil
+	default:
+		return Calendar{}, false, ErrAmbiguousDeclaredName
+	}
+}
+
+// getByName returns the calendar with that name (see findByName).
+func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) {
+	cals, err := s.List(ctx)
+	if err != nil {
+		return Calendar{}, err
+	}
+	c, ok, err := findByName(cals, name)
+	if err != nil {
+		return Calendar{}, err
+	}
+	if !ok {
+		return Calendar{}, fmt.Errorf("calendar %q not found", name)
+	}
+	return c, nil
 }
 
 // Apply reconciles the declared calendars into the database. For each
@@ -109,34 +128,42 @@ func findByName(cals []Calendar, name string) (Calendar, bool) {
 // description, or path that differs from a non-empty declared value. It
 // never deletes a calendar: an entry that goes away from the config leaves
 // the calendar and its events in place. After Apply, Update refuses to
-// rename a declared calendar, and the delete methods refuse to delete one.
+// rename a declared calendar, the delete methods refuse to delete one, and
+// Connect refuses to link one to a CalDAV account.
 //
-// An entry whose name matches a calendar that a CalDAV account owns is an
-// error (ErrDeclaredRemote). The table declares local calendars only.
+// A conflict in one entry does not stop the launch. An entry whose name
+// matches a calendar that a CalDAV account owns (ErrDeclaredRemote), or
+// several case variants (ErrAmbiguousDeclaredName), becomes a warning, and
+// Apply skips that entry. A launch that fails on a config conflict would
+// also block the commands that resolve it. A database error stays an
+// error.
 //
 // Apply runs on every launch, so it must stay idempotent and cheap. It
 // reads the calendar list once and writes only the rows that differ.
-func (s *Service) Apply(ctx context.Context, declared []Declared) error {
+func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []string, err error) {
 	s.declared = make(map[string]bool, len(declared))
 	for _, d := range declared {
-		name := strings.TrimSpace(d.Name)
-		if name == "" {
-			return fmt.Errorf("calendars: an entry has no name")
+		if strings.TrimSpace(d.Name) == "" {
+			return nil, fmt.Errorf("calendars: an entry has no name")
 		}
-		s.declared[name] = true
 	}
 	if len(declared) == 0 {
-		return nil
+		return nil, nil
 	}
 	existing, err := s.List(ctx)
 	if err != nil {
-		return fmt.Errorf("list calendars: %w", err)
+		return nil, fmt.Errorf("list calendars: %w", err)
 	}
 	for _, d := range declared {
 		name := strings.TrimSpace(d.Name)
-		cal, ok := findByName(existing, name)
+		cal, ok, err := findByName(existing, name)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
+			continue
+		}
 		if ok && cal.AccountID != 0 {
-			return fmt.Errorf("calendar %q: %w", name, ErrDeclaredRemote)
+			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, ErrDeclaredRemote))
+			continue
 		}
 		if !ok {
 			color := d.Color
@@ -151,11 +178,14 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) error {
 				created, err = s.getByName(ctx, name)
 			}
 			if err != nil {
-				return fmt.Errorf("create calendar %q: %w", name, err)
+				return warnings, fmt.Errorf("create calendar %q: %w", name, err)
 			}
 			cal = created
 			existing = append(existing, cal)
-		} else if (d.Color != "" && !strings.EqualFold(d.Color, cal.Color)) ||
+		}
+		// The guard binds to the stored spelling of the name.
+		s.declared[cal.Name] = true
+		if (d.Color != "" && !strings.EqualFold(d.Color, cal.Color)) ||
 			(d.Description != "" && d.Description != cal.Description) {
 			color, description := cal.Color, cal.Description
 			if d.Color != "" {
@@ -165,14 +195,14 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) error {
 				description = d.Description
 			}
 			if _, err := s.Update(ctx, cal.ID, cal.Name, color, description); err != nil {
-				return fmt.Errorf("update calendar %q: %w", name, err)
+				return warnings, fmt.Errorf("update calendar %q: %w", name, err)
 			}
 		}
 		if d.Path != "" && d.Path != cal.LocalPath {
 			if err := s.SetLocalPath(ctx, cal.ID, d.Path); err != nil {
-				return fmt.Errorf("set path of calendar %q: %w", name, err)
+				return warnings, fmt.Errorf("set path of calendar %q: %w", name, err)
 			}
 		}
 	}
-	return nil
+	return warnings, nil
 }

@@ -3,6 +3,7 @@ package calendar
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -12,7 +13,7 @@ func TestApplyCreatesMissingCalendar(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	err := svc.Apply(ctx, []Declared{
+	_, err := svc.Apply(ctx, []Declared{
 		{Name: "Fastmail", Path: "/home/me/calendars/fastmail"},
 		{Name: "Work", Color: "#0F766E", Description: "Office"},
 	})
@@ -58,7 +59,7 @@ func TestApplyUpdatesOnlyDeclaredFields(t *testing.T) {
 	}
 
 	// An entry with a name only touches nothing.
-	if err := svc.Apply(ctx, []Declared{{Name: "Fastmail"}}); err != nil {
+	if _, err := svc.Apply(ctx, []Declared{{Name: "Fastmail"}}); err != nil {
 		t.Fatalf("Apply error: %v", err)
 	}
 	got, err := svc.Get(ctx, cal.ID)
@@ -71,7 +72,7 @@ func TestApplyUpdatesOnlyDeclaredFields(t *testing.T) {
 
 	// A declared color and path win over the stored values. The
 	// description stays because the entry does not set it.
-	if err := svc.Apply(ctx, []Declared{{Name: "Fastmail", Color: "#222222", Path: "/new/path"}}); err != nil {
+	if _, err := svc.Apply(ctx, []Declared{{Name: "Fastmail", Color: "#222222", Path: "/new/path"}}); err != nil {
 		t.Fatalf("Apply error: %v", err)
 	}
 	got, err = svc.Get(ctx, cal.ID)
@@ -95,7 +96,7 @@ func TestApplyIsIdempotent(t *testing.T) {
 	declared := []Declared{{Name: "Fastmail", Color: "#222222", Path: "/p"}}
 
 	for i := 0; i < 3; i++ {
-		if err := svc.Apply(ctx, declared); err != nil {
+		if _, err := svc.Apply(ctx, declared); err != nil {
 			t.Fatalf("Apply #%d error: %v", i, err)
 		}
 	}
@@ -110,14 +111,14 @@ func TestApplyIsIdempotent(t *testing.T) {
 
 func TestApplyRejectsEmptyName(t *testing.T) {
 	svc := newTestService(t)
-	if err := svc.Apply(context.Background(), []Declared{{Name: "  "}}); err == nil {
+	if _, err := svc.Apply(context.Background(), []Declared{{Name: "  "}}); err == nil {
 		t.Fatal("Apply accepted an entry without a name")
 	}
 }
 
 func TestApplyEmptyListIsNoop(t *testing.T) {
 	svc := newTestService(t)
-	if err := svc.Apply(context.Background(), nil); err != nil {
+	if _, err := svc.Apply(context.Background(), nil); err != nil {
 		t.Fatalf("Apply(nil) error: %v", err)
 	}
 }
@@ -137,9 +138,17 @@ func TestApplyRefusesRemoteCalendar(t *testing.T) {
 		t.Fatalf("LinkCalendarToAccount: %v", err)
 	}
 
-	err = svc.Apply(ctx, []Declared{{Name: "Personal", Color: "#222222", Path: "/p"}})
-	if !errors.Is(err, ErrDeclaredRemote) {
-		t.Fatalf("Apply on a remote calendar: error = %v, want ErrDeclaredRemote", err)
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "Personal", Color: "#222222", Path: "/p"}})
+	if err != nil {
+		t.Fatalf("Apply on a remote calendar must warn, not fail: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], ErrDeclaredRemote.Error()) {
+		t.Fatalf("Apply warnings = %v, want one ErrDeclaredRemote warning", warnings)
+	}
+	// The skipped entry does not bind the guard, so the calendar stays
+	// free to rename.
+	if _, err := svc.Update(ctx, 1, "Mine", "#111111", ""); err != nil {
+		t.Fatalf("rename of a skipped remote calendar: %v", err)
 	}
 	got, err := svc.Get(ctx, 1)
 	if err != nil {
@@ -153,7 +162,7 @@ func TestApplyRefusesRemoteCalendar(t *testing.T) {
 func TestApplyThenRenameAndDeleteRefused(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
-	if err := svc.Apply(ctx, []Declared{{Name: "Fastmail"}}); err != nil {
+	if _, err := svc.Apply(ctx, []Declared{{Name: "Fastmail"}}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	cals, _ := svc.List(ctx)
@@ -209,7 +218,7 @@ func TestApplyMatchesNameWithoutCase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := svc.Apply(ctx, []Declared{{Name: "fastmail", Path: "/p"}}); err != nil {
+	if _, err := svc.Apply(ctx, []Declared{{Name: "fastmail", Path: "/p"}}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	cals, err := svc.List(ctx)
@@ -252,5 +261,37 @@ func TestSetLocalPathRefusesRemoteCalendar(t *testing.T) {
 	// Removal of a path is always allowed.
 	if err := svc.SetLocalPath(ctx, 1, ""); err != nil {
 		t.Fatalf("SetLocalPath(\"\") on a remote calendar: %v", err)
+	}
+}
+
+func TestApplyWarnsOnAmbiguousCaseVariants(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	for _, name := range []string{"Work", "work"} {
+		if _, err := svc.Create(ctx, name, "#111111", ""); err != nil {
+			t.Fatalf("Create %q: %v", name, err)
+		}
+	}
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "WORK", Path: "/p"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], ErrAmbiguousDeclaredName.Error()) {
+		t.Fatalf("warnings = %v, want one ambiguity warning", warnings)
+	}
+	cals, _ := svc.List(ctx)
+	if len(cals) != 3 {
+		t.Fatalf("Apply created a calendar for an ambiguous entry: %v", cals)
+	}
+	for _, c := range cals {
+		if c.LocalPath != "" {
+			t.Fatalf("Apply set a path on an ambiguous match: %+v", c)
+		}
+		if c.Name != "Personal" {
+			// Neither variant is bound, so both stay free to delete.
+			if err := svc.Delete(ctx, c.ID); err != nil {
+				t.Fatalf("delete of an unbound variant %q: %v", c.Name, err)
+			}
+		}
 	}
 }

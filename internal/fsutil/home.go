@@ -21,6 +21,27 @@ func IsAbsOrHome(path string) bool {
 	return hasHomePrefix(path) || filepath.IsAbs(path)
 }
 
+// ContractHome is the inverse of ExpandHome for display. A path inside the
+// home directory starts with "~", so a long path stays short on screen. A
+// path outside the home directory, and an empty path, stay as they are.
+func ContractHome(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
 // ExpandHome resolves a path that a user wrote in a config file or on the
 // command line. A leading "~" or "~/" becomes the home directory. The result
 // is absolute and clean, so two spellings of one directory compare equal.

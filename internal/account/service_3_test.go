@@ -417,3 +417,16 @@ func TestUniqueUnlinkedByRemoteIdentity_DropsDuplicates(t *testing.T) {
 		t.Fatalf("unique key = %v, want id 3 at %q", got, other)
 	}
 }
+
+// TestUniqueUnlinkedByRemoteIdentitySkipsDirectoryFedCalendar verifies a
+// calendar that a local directory feeds (issue #809) is never a relink
+// candidate. The discovery creates a fresh row for the collection instead.
+func TestUniqueUnlinkedByRemoteIdentitySkipsDirectoryFedCalendar(t *testing.T) {
+	const server = "https://cal.example.test/"
+	rows := []storage.Calendar{
+		{ID: 7, RemoteUrl: storage.StringToNullable(server + "dav/work/"), LocalPath: "/home/me/cal/work"},
+	}
+	if got := uniqueUnlinkedByRemoteIdentity(rows, server); len(got) != 0 {
+		t.Fatalf("a directory-fed calendar was offered for relink: %v", got)
+	}
+}

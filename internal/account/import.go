@@ -111,6 +111,11 @@ func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string) m
 		if row.AccountID != nil {
 			continue
 		}
+		// A calendar that a local directory feeds stays local (issue
+		// #809). The discovery creates a fresh row for the collection.
+		if row.LocalPath != "" {
+			continue
+		}
 		key := remoteIdentityKey(storage.NullableToString(row.RemoteUrl), serverURL)
 		if key == "" {
 			continue
