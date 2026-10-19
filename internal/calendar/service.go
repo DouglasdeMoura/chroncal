@@ -46,7 +46,14 @@ func NewService(db *sql.DB, q *storage.Queries) *Service {
 }
 
 func (s *Service) List(ctx context.Context) ([]Calendar, error) {
-	rows, err := s.q.ListCalendars(ctx)
+	return listWith(ctx, s.q)
+}
+
+// listWith reads every calendar through q, which is the service queries or
+// a transaction (q.WithTx). List and the overlap check share it, so one
+// row conversion exists.
+func listWith(ctx context.Context, q *storage.Queries) ([]Calendar, error) {
+	rows, err := q.ListCalendars(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -387,15 +394,22 @@ func fromStorage(r storage.Calendar) Calendar {
 // returns ErrOverlappingPath when another calendar than id already uses
 // path or a directory above or below it.
 func (s *Service) checkPathFreeTx(ctx context.Context, qtx *storage.Queries, id int64, path string) error {
-	rows, err := qtx.ListCalendars(ctx)
+	cals, err := listWith(ctx, qtx)
 	if err != nil {
 		return fmt.Errorf("list calendars: %w", err)
 	}
-	cals := make([]Calendar, len(rows))
-	for i, r := range rows {
-		cals[i] = fromStorage(r)
-	}
 	return checkPathFree(cals, id, path)
+}
+
+// CheckPathFree reports ErrOverlappingPath when another calendar than id
+// uses path or a directory above or below it. The CLI calls it before it
+// writes any other field, so a refused path costs no write. SetLocalPath
+// runs the same check inside its transaction.
+func (s *Service) CheckPathFree(ctx context.Context, id int64, path string) error {
+	if path == "" {
+		return nil
+	}
+	return s.checkPathFreeTx(ctx, s.q, id, path)
 }
 
 // SetLocalPath stores the directory of .ics files that feeds the calendar

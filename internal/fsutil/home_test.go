@@ -92,3 +92,26 @@ func TestSameTree(t *testing.T) {
 		}
 	}
 }
+
+func TestExpandHomeResolvesLinksOfAnExistingDirectory(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	target := filepath.Join(base, "real")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	got, err := ExpandHome(link)
+	if err != nil || got != target {
+		t.Fatalf("ExpandHome(link) = %q, %v; want %q", got, err, target)
+	}
+	absent := filepath.Join(base, "absent")
+	if got, err := ExpandHome(absent); err != nil || got != absent {
+		t.Fatalf("ExpandHome(absent) = %q, %v; want the spelling kept", got, err)
+	}
+}

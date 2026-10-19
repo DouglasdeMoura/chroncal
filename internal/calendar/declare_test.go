@@ -358,8 +358,10 @@ func TestApplyWarnsWhenItResetsAStoredField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "replaced the stored color, path") {
-		t.Fatalf("warnings = %v, want one reset warning for color and path", warnings)
+	// The color resets in the first pass and the path in the second, so
+	// two warnings name the two fields.
+	if len(warnings) != 2 || !strings.Contains(warnings[0], "replaced the stored color") || !strings.Contains(warnings[1], "replaced the stored path") {
+		t.Fatalf("warnings = %v, want a color reset warning and a path reset warning", warnings)
 	}
 	got, _ := svc.Get(ctx, cal.ID)
 	if got.Color != "#222222" || got.LocalPath != "/new" {
@@ -382,5 +384,52 @@ func TestInputErrorsCarryTheMarker(t *testing.T) {
 	var input InputError
 	if errors.As(ErrLastCalendar, &input) {
 		t.Error("ErrLastCalendar must not carry the InputError marker")
+	}
+}
+
+func TestApplyConvergesOnAPathSwap(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.CreateWithPath(ctx, "A", "#111111", "", "/p1"); err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	if _, err := svc.CreateWithPath(ctx, "B", "#111111", "", "/p2"); err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "A", Path: "/p2"}, {Name: "B", Path: "/p1"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	a, _ := svc.getByName(ctx, "A")
+	b, _ := svc.getByName(ctx, "B")
+	if a.LocalPath != "/p2" || b.LocalPath != "/p1" {
+		t.Fatalf("paths after swap: A=%q B=%q, warnings=%v", a.LocalPath, b.LocalPath, warnings)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, ErrOverlappingPath.Error()) {
+			t.Fatalf("a swap must not warn about an overlap: %v", warnings)
+		}
+	}
+}
+
+func TestApplyCreatesWithoutAnOverlappingPath(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.CreateWithPath(ctx, "Old", "#111111", "", "/srv/cal"); err != nil {
+		t.Fatalf("create Old: %v", err)
+	}
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "New", Path: "/srv/cal/work"}})
+	if err != nil {
+		t.Fatalf("Apply must warn, not fail, on an overlap: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], ErrOverlappingPath.Error()) {
+		t.Fatalf("warnings = %v, want one overlap warning", warnings)
+	}
+	got, err := svc.getByName(ctx, "New")
+	if err != nil || got.LocalPath != "" {
+		t.Fatalf("New = %+v, %v; want a calendar without a path", got, err)
+	}
+	if !svc.IsDeclared("New") {
+		t.Fatal("the created calendar must still be bound to its entry")
 	}
 }

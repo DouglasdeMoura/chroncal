@@ -8,11 +8,23 @@ import (
 	"testing"
 )
 
+// tempDir is t.TempDir with its symbolic links resolved. The stored path of
+// a calendar resolves links too (fsutil.ExpandHome), and on macOS the temp
+// root is a link, so a test compares resolved paths.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	return dir
+}
+
 // writeTestICSDir creates a directory with one VEVENT .ics file in the
 // style of a vdirsyncer collection and returns the directory path.
 func writeTestICSDir(t *testing.T, uid, summary string) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "collection")
+	dir := filepath.Join(tempDir(t), "collection")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -31,7 +43,7 @@ func writeTestICSDir(t *testing.T, uid, summary string) string {
 // #809).
 func TestCalendarCreateWithPathStoresAndShowsIt(t *testing.T) {
 	setupCalendarCLITestEnv(t)
-	dir := t.TempDir()
+	dir := tempDir(t)
 
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "Fastmail", "--path", dir+string(os.PathSeparator)); err != nil {
 		t.Fatalf("calendar create --path: %v", err)
@@ -80,7 +92,7 @@ func TestConfigCalendarsAppliedOnLaunch(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	dir := t.TempDir()
+	dir := tempDir(t)
 	content := "[[calendars]]\nname = \"Fastmail\"\npath = " + jsonString(dir) + "\n\n" +
 		"[[calendars]]\nname = \"Work\"\ncolor = \"#0F766E\"\ndescription = \"Office\"\n"
 	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o600); err != nil {
@@ -292,7 +304,7 @@ func TestIcalImportRejectsTwoPaths(t *testing.T) {
 // empty stored directory imports nothing and succeeds.
 func TestIcalImportBatchShapeAndEmptyDirectory(t *testing.T) {
 	setupCalendarCLITestEnv(t)
-	emptyDir := t.TempDir()
+	emptyDir := tempDir(t)
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "Holidays", "--path", emptyDir); err != nil {
 		t.Fatalf("calendar create: %v", err)
 	}
@@ -365,7 +377,7 @@ func TestCalendarCreateRejectsBadColorAndPathWithRemote(t *testing.T) {
 	}
 
 	_, _, err = runChroncalCommand(t, "calendar", "create", "Mixed",
-		"--path", t.TempDir(),
+		"--path", tempDir(t),
 		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer")
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("calendar create --path with --remote-url: error = %v", err)
@@ -376,12 +388,12 @@ func TestCalendarCreateRejectsBadColorAndPathWithRemote(t *testing.T) {
 		"--remote-url", "https://cal.example.com/dav/calendars/remote/", "--username", "alice", "--auth", "bearer"); err != nil {
 		t.Fatalf("calendar create remote: %v", err)
 	}
-	_, stderr, err := runChroncalCommand(t, "calendar", "update", "Remote", "--path", t.TempDir(), "--output", "json")
+	_, stderr, err := runChroncalCommand(t, "calendar", "update", "Remote", "--path", tempDir(t), "--output", "json")
 	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") || !strings.Contains(stderr, "cannot have a local directory") {
 		t.Fatalf("calendar update --path on a remote calendar: err=%v stderr=%q", err, stderr)
 	}
 	// A link of a calendar that has a directory is refused too.
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "Dir", "--path", dir); err != nil {
 		t.Fatalf("calendar create --path: %v", err)
 	}
@@ -398,7 +410,7 @@ func TestCalendarCreateRejectsBadColorAndPathWithRemote(t *testing.T) {
 func TestIcalImportFollowsSymlinkedStoredDirectory(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	target := writeTestICSDir(t, "link-1", "Linked event")
-	link := filepath.Join(t.TempDir(), "calendars")
+	link := filepath.Join(tempDir(t), "calendars")
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink: %v", err)
 	}
@@ -445,7 +457,7 @@ func TestCalendarUpdateRejectsPathWithRemote(t *testing.T) {
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
 		t.Fatalf("calendar create: %v", err)
 	}
-	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--path", t.TempDir(),
+	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--path", tempDir(t),
 		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer")
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("calendar update --path with --remote-url: error = %v", err)
@@ -507,7 +519,7 @@ func TestCalendarPathFlagRejectsOtherUserHome(t *testing.T) {
 func TestCalendarUpdateRefusesLinkBeforeOtherWrites(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
-	if _, _, err := runChroncalCommand(t, "calendar", "create", "Dir", "--path", t.TempDir(), "--color", "#111111"); err != nil {
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Dir", "--path", tempDir(t), "--color", "#111111"); err != nil {
 		t.Fatalf("calendar create: %v", err)
 	}
 	_, _, err := runChroncalCommand(t, "calendar", "update", "Dir", "--color", "#222222",
@@ -531,7 +543,7 @@ func TestCalendarUpdateDisconnectThenPathInOneCommand(t *testing.T) {
 		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer"); err != nil {
 		t.Fatalf("calendar create remote: %v", err)
 	}
-	dir := t.TempDir()
+	dir := tempDir(t)
 	// A path on a linked calendar without a disconnect is refused before
 	// any write.
 	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--name", "Deep", "--path", dir)
@@ -587,7 +599,7 @@ func TestCalendarNameLookupPrefersExactMatch(t *testing.T) {
 // the CLI and the invalid_input code of a duplicate name.
 func TestCalendarPathOverlapAndDuplicateNameCodes(t *testing.T) {
 	setupCalendarCLITestEnv(t)
-	parent := t.TempDir()
+	parent := tempDir(t)
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "All", "--path", parent); err != nil {
 		t.Fatalf("calendar create: %v", err)
 	}
@@ -598,5 +610,48 @@ func TestCalendarPathOverlapAndDuplicateNameCodes(t *testing.T) {
 	_, stderr, err = runChroncalCommand(t, "calendar", "create", "All", "--output", "json")
 	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") {
 		t.Fatalf("duplicate calendar name must be invalid_input: err=%v stderr=%q", err, stderr)
+	}
+}
+
+// TestIcalImportDanglingSymlinkIsMissingDirectory verifies a stored path
+// that is a link to an absent target (an unmounted drive) gives the
+// "does not exist yet" warning, not a symbolic-link refusal.
+func TestIcalImportDanglingSymlinkIsMissingDirectory(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	link := filepath.Join(tempDir(t), "calendars")
+	if err := os.Symlink(filepath.Join(tempDir(t), "absent"), link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Usb", "--path", link); err != nil {
+		t.Fatalf("calendar create --path dangling link: %v", err)
+	}
+	_, stderr, err := runChroncalCommand(t, "ical", "import")
+	if err != nil {
+		t.Fatalf("ical import with a dangling link must succeed: %v", err)
+	}
+	if !strings.Contains(stderr, "does not exist yet") {
+		t.Fatalf("missing the not-there-yet warning: %q", stderr)
+	}
+}
+
+// TestCalendarUpdateRefusesOverlapBeforeOtherWrites verifies an overlap
+// refusal leaves the other fields as they were.
+func TestCalendarUpdateRefusesOverlapBeforeOtherWrites(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	parent := tempDir(t)
+	for _, args := range [][]string{
+		{"calendar", "create", "All", "--path", parent},
+		{"calendar", "create", "Work", "--color", "#111111"},
+	} {
+		if _, _, err := runChroncalCommand(t, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--color", "#222222", "--path", filepath.Join(parent, "work"))
+	if err == nil || !strings.Contains(err.Error(), "its own tree") {
+		t.Fatalf("calendar update with an overlapping path: error = %v", err)
+	}
+	if got := calendarJSONByName(t, "Work").Color; got != "#111111" {
+		t.Fatalf("the refused update changed the color: %q", got)
 	}
 }
