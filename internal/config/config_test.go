@@ -626,7 +626,7 @@ path = "~/calendars/fastmail"
 
 [[calendars]]
 name = " Work "
-color = "#0F766E"
+color = "#0f766e"
 description = "Office"
 `
 	os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0o644)
@@ -647,8 +647,10 @@ description = "Office"
 	if work.Name != "Work" {
 		t.Errorf("Calendars[1].Name = %q, want trimmed Work", work.Name)
 	}
+	// The color is stored in upper case, so it compares equal to the
+	// value that the CLI and the TUI store.
 	if work.Color != "#0F766E" || work.Description != "Office" || work.Path != "" {
-		t.Errorf("Calendars[1] = %+v, want color, description, no path", work)
+		t.Errorf("Calendars[1] = %+v, want normalized color, description, no path", work)
 	}
 }
 
@@ -682,6 +684,12 @@ path = "calendars/a"
 [[calendars]]
 name = "A"
 color = "teal"
+`,
+		"duplicate name in another case": `
+[[calendars]]
+name = "Work"
+[[calendars]]
+name = "work"
 `,
 	}
 	for label, content := range cases {

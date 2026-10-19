@@ -340,3 +340,94 @@ func TestIcalImportSinglePathJSONKeepsFreeBusyList(t *testing.T) {
 		t.Fatalf("freebusy = %#v, want a list or null", v)
 	}
 }
+
+// TestCalendarCreateRejectsBadColorAndPathWithRemote covers the --color
+// validation that the config entries share, and the refusal of --path next
+// to --remote-url.
+func TestCalendarCreateRejectsBadColorAndPathWithRemote(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+
+	_, _, err := runChroncalCommand(t, "calendar", "create", "Tinted", "--color", "teal")
+	if err == nil || !strings.Contains(err.Error(), "hex color") {
+		t.Fatalf("calendar create --color teal: error = %v", err)
+	}
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Tinted", "--color", "#0f766e"); err != nil {
+		t.Fatalf("calendar create --color #0f766e: %v", err)
+	}
+	if got := calendarJSONByName(t, "Tinted").Color; got != "#0F766E" {
+		t.Fatalf("stored color = %q, want the normalized #0F766E", got)
+	}
+
+	_, _, err = runChroncalCommand(t, "calendar", "create", "Mixed",
+		"--path", t.TempDir(),
+		"--remote-url", "https://cal.example.com/dav/calendars/work/", "--username", "alice", "--auth", "bearer")
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("calendar create --path with --remote-url: error = %v", err)
+	}
+
+	// --path on a calendar that an account owns is refused by the service.
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Remote",
+		"--remote-url", "https://cal.example.com/dav/calendars/remote/", "--username", "alice", "--auth", "bearer"); err != nil {
+		t.Fatalf("calendar create remote: %v", err)
+	}
+	_, stderr, err := runChroncalCommand(t, "calendar", "update", "Remote", "--path", t.TempDir(), "--output", "json")
+	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") || !strings.Contains(stderr, "cannot have a local directory") {
+		t.Fatalf("calendar update --path on a remote calendar: err=%v stderr=%q", err, stderr)
+	}
+	// A link of a calendar that has a directory is refused too.
+	dir := t.TempDir()
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Dir", "--path", dir); err != nil {
+		t.Fatalf("calendar create --path: %v", err)
+	}
+	_, _, err = runChroncalCommand(t, "calendar", "update", "Dir",
+		"--remote-url", "https://cal.example.com/dav/calendars/dir/", "--username", "alice", "--auth", "bearer")
+	if err == nil || !strings.Contains(err.Error(), "has a local directory") {
+		t.Fatalf("calendar update --remote-url on a calendar with a directory: error = %v", err)
+	}
+}
+
+// TestIcalImportFollowsSymlinkedStoredDirectory verifies a stored directory
+// that is a symbolic link imports in batch mode. A vdirsyncer layout often
+// links the collection root to a mounted directory.
+func TestIcalImportFollowsSymlinkedStoredDirectory(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	real := writeTestICSDir(t, "link-1", "Linked event")
+	link := filepath.Join(t.TempDir(), "calendars")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Linked", "--path", link); err != nil {
+		t.Fatalf("calendar create --path: %v", err)
+	}
+	stdout, _, err := runChroncalCommand(t, "ical", "import", "--calendar", "Linked")
+	if err != nil {
+		t.Fatalf("ical import through a symlinked directory: %v", err)
+	}
+	if !strings.Contains(stdout, "Imported 1 new") {
+		t.Fatalf("symlinked import output:\n%s", stdout)
+	}
+}
+
+// TestConfigCalendarsDeclaredRefusesRemoteLink verifies a declared calendar
+// cannot be linked to a CalDAV account, which would make every later launch
+// fail in Apply.
+func TestConfigCalendarsDeclaredRefusesRemoteLink(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	configDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "chroncal")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[[calendars]]\nname = \"Fastmail\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	calendarJSONByName(t, "Fastmail")
+	_, stderr, err := runChroncalCommand(t, "calendar", "update", "Fastmail",
+		"--remote-url", "https://cal.example.com/dav/calendars/fm/", "--username", "alice", "--auth", "bearer", "--output", "json")
+	if err == nil || !strings.Contains(stderr, "\"code\": \"invalid_input\"") || !strings.Contains(stderr, "declares local calendars only") {
+		t.Fatalf("link of a declared calendar: err=%v stderr=%q", err, stderr)
+	}
+	// Every later command still works.
+	calendarJSONByName(t, "Fastmail")
+}

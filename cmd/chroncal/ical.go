@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -115,9 +116,10 @@ again updates existing items instead of blindly duplicating them.`,
 				if outputFmt == "text" {
 					printImportSummary(w, outcome, batch)
 				}
-				// Opportunistically push whatever landed to a CalDAV-linked
-				// calendar, mirroring the event/todo/journal write paths, so an
-				// import doesn't wait for the next "service run" tick (issue #115).
+				// Push what landed to a CalDAV-linked calendar at once, as
+				// the event, todo, and journal write paths do. The import
+				// then does not wait for the next "service run" tick
+				// (issue #115).
 				if outcome.landed() > 0 {
 					opportunisticPush(a, target.calendarID, cmd)
 				}
@@ -187,24 +189,16 @@ func importOneTarget(a *app.App, target icalImportTarget) (icalImportOutcome, er
 // #809). With --calendar and no path, that calendar must have a directory.
 func icalImportTargets(ctx context.Context, a *app.App, args []string, calendarName string) ([]icalImportTarget, error) {
 	if len(args) == 1 {
-		calID, err := resolveCalendarID(ctx, a, calendarName)
+		cal, err := resolveCalendar(ctx, a, calendarName)
 		if err != nil {
 			return nil, err
 		}
-		cal, err := a.Calendars.Get(ctx, calID)
-		if err != nil {
-			return nil, fmt.Errorf("get calendar: %w", err)
-		}
-		return []icalImportTarget{{path: args[0], calendarID: calID, calendarName: cal.Name}}, nil
+		return []icalImportTarget{{path: args[0], calendarID: cal.ID, calendarName: cal.Name}}, nil
 	}
 	if calendarName != "" {
-		calID, err := resolveCalendarID(ctx, a, calendarName)
+		cal, err := resolveCalendar(ctx, a, calendarName)
 		if err != nil {
 			return nil, err
-		}
-		cal, err := a.Calendars.Get(ctx, calID)
-		if err != nil {
-			return nil, fmt.Errorf("get calendar: %w", err)
 		}
 		if cal.LocalPath == "" {
 			return nil, errInvalidInputf("calendar %q has no directory; pass a path, or set one with 'chroncal calendar update %q --path DIR'", cal.Name, cal.Name)
@@ -217,7 +211,10 @@ func icalImportTargets(ctx context.Context, a *app.App, args []string, calendarN
 	}
 	var targets []icalImportTarget
 	for _, cal := range cals {
-		if cal.LocalPath == "" {
+		// A calendar that a CalDAV account owns never takes a directory
+		// (SetLocalPath refuses it). The check here guards a row from an
+		// older database.
+		if cal.LocalPath == "" || cal.AccountID != 0 {
 			continue
 		}
 		targets = append(targets, icalImportTarget{path: cal.LocalPath, calendarID: cal.ID, calendarName: cal.Name, fromDirectory: true})
@@ -277,7 +274,18 @@ func (o icalImportOutcome) json() map[string]any {
 // importIntoCalendar parses the source of one target and imports it into
 // the calendar of that target.
 func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget) (icalImportOutcome, error) {
-	preview, err := icaltransfer.ParsePath(target.path)
+	path := target.path
+	if target.fromDirectory {
+		// The stored directory is the user's own setting, so a symbolic
+		// link at that path is fine to follow. A vdirsyncer layout often
+		// links ~/.calendars to a mounted directory. ParsePath refuses a
+		// link, so resolve it first. A path that does not exist keeps its
+		// spelling and gets the usual error from ParsePath.
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			path = resolved
+		}
+	}
+	preview, err := icaltransfer.ParsePath(path)
 	if err != nil {
 		if target.fromDirectory && errors.Is(err, icaltransfer.ErrNoICSFiles) {
 			// A collection without events is a normal state for a sync

@@ -971,7 +971,7 @@ The `[[calendars]]` table in `config.toml` declares the local calendars. A tool 
 | Key | Description |
 |-----|-------------|
 | `name` | The calendar name. Required. It ties the entry to the stored calendar. |
-| `color` | The hex color of the calendar. |
+| `color` | The hex color of the calendar, as `#RRGGBB`. |
 | `description` | The calendar description. |
 | `path` | The directory of `.ics` files that feeds the calendar. The value must be absolute or start with `~/`. |
 
@@ -991,11 +991,12 @@ chroncal applies the entries on every launch:
 - It creates a calendar when no calendar with that name exists.
 - It updates the stored `color`, `description`, or `path` when the entry gives a different value.
 - It keeps the stored value of a key that the entry omits, so a short entry does not reset a field that you set from the CLI or the TUI.
-- It never deletes a calendar. A declared calendar returns on the next launch, so `calendar delete` and `calendar update --name` refuse a declared calendar. Remove the entry from the file first.
+- It never deletes a calendar. A declared calendar returns on the next launch, so a delete, a rename, or a link to a CalDAV account refuses a declared calendar in the CLI and in the TUI. Remove the entry from the file first.
+- It matches the `name` without case, like the `--calendar` flag, so `fastmail` adopts a stored `Fastmail`.
 
-An entry without a `name`, two entries with one `name`, or a relative `path` stops every command with an error. Fix the file, then run the command again.
+An entry without a `name`, two entries with one `name`, a `color` that is not `#RRGGBB`, or a relative `path` stops every command with an error. Fix the file, then run the command again.
 
-The table declares local calendars only. A CalDAV account holds a credential, so it stays in `chroncal account add`. For a CalDAV server, sync the collections to a directory with a tool such as [pimsync](https://pimsync.whynothugo.nl/), declare the directory with `path`, and run `chroncal ical import` after each sync pass.
+The table declares local calendars only. An entry whose `name` belongs to a calendar of a CalDAV account stops every command, and a calendar with a `path` cannot take a CalDAV link. A CalDAV account holds a credential, so it stays in `chroncal account add`. For a CalDAV server, sync the collections to a directory with a tool such as [pimsync](https://pimsync.whynothugo.nl/), declare the directory with `path`, and run `chroncal ical import` after each sync pass.
 
 ### TUI themes
 

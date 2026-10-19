@@ -40,6 +40,27 @@ type cliError struct {
 
 func (e *cliError) Error() string { return e.Msg }
 
+// invalidInputSentinels lists the service errors that report a request
+// the user must change, not a system failure. printCLIError gives them the
+// "invalid_input" code, so the TUI and every CLI command share one rule
+// without a pre-check in each command.
+var invalidInputSentinels = []error{
+	calendarpkg.ErrDeclaredCalendar,
+	calendarpkg.ErrDeclaredRemote,
+	calendarpkg.ErrDeclaredLink,
+	calendarpkg.ErrRemoteLocalPath,
+	calendarpkg.ErrLocalPathLink,
+}
+
+func isInvalidInputSentinel(err error) bool {
+	for _, sentinel := range invalidInputSentinels {
+		if errors.Is(err, sentinel) {
+			return true
+		}
+	}
+	return false
+}
+
 // notFoundErr wraps sql.ErrNoRows into a user-friendly message tagged with
 // code "not_found" so machine consumers can dispatch on it.
 func notFoundErr(err error, resource string, id any) error {
@@ -81,6 +102,8 @@ func printCLIError(err error) {
 	if errors.As(err, &ce) {
 		code = ce.Code
 		msg = ce.Msg
+	} else if isInvalidInputSentinel(err) {
+		code = "invalid_input"
 	}
 
 	if outputFmt == "json" {
@@ -120,21 +143,6 @@ func groupRunE(cmd *cobra.Command, _ []string) error {
 func rejectUnknownSubcommand(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		return errInvalidInputf("unknown command %q for %q", args[0], cmd.CommandPath())
-	}
-	return nil
-}
-
-// declaredCalendarError refuses a CLI delete or rename of a calendar that
-// a [[calendars]] entry of config.toml declares (issue #809). Apply runs
-// on every launch, so the next command would create the calendar again
-// with the declared name. The user removes the entry first.
-func declaredCalendarError(name, action string) error {
-	for _, c := range cfg.Calendars {
-		if c.Name == name {
-			return errInvalidInputf(
-				"cannot %s calendar %q: a [[calendars]] entry in config.toml declares it, so the next launch would create it again; remove the entry first",
-				action, name)
-		}
 	}
 	return nil
 }
@@ -481,6 +489,17 @@ func resolveTodo(ctx context.Context, a *app.App, ref, recurrenceID string) (tod
 }
 
 func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, error) {
+	cal, err := resolveCalendar(ctx, a, name)
+	if err != nil {
+		return 0, err
+	}
+	return cal.ID, nil
+}
+
+// resolveCalendar returns the calendar that a --calendar value names. An
+// empty value gives the default calendar. See resolveCalendarID for the
+// ID-only form.
+func resolveCalendar(ctx context.Context, a *app.App, name string) (calendarpkg.Calendar, error) {
 	if name == "" {
 		// No calendar specified: use the database default. Fall back to
 		// the first calendar if the default row was deleted out of band.
@@ -488,26 +507,22 @@ func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, err
 		// calendar.
 		def, err := a.Calendars.GetDefault(ctx)
 		if err == nil {
-			return def.ID, nil
+			return def, nil
 		}
 		cals, listErr := a.Calendars.List(ctx)
 		if listErr != nil {
-			return 0, fmt.Errorf("list calendars: %w", listErr)
+			return calendarpkg.Calendar{}, fmt.Errorf("list calendars: %w", listErr)
 		}
 		if len(cals) == 0 {
-			return 0, fmt.Errorf("no calendars exist")
+			return calendarpkg.Calendar{}, fmt.Errorf("no calendars exist")
 		}
-		return cals[0].ID, nil
+		return cals[0], nil
 	}
 	cals, err := a.Calendars.List(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("list calendars: %w", err)
+		return calendarpkg.Calendar{}, fmt.Errorf("list calendars: %w", err)
 	}
-	cal, err := findCalendarByRef(cals, name)
-	if err != nil {
-		return 0, err
-	}
-	return cal.ID, nil
+	return findCalendarByRef(cals, name)
 }
 
 // resolveJournal looks up a journal by numeric ID, string UID, or UID + recurrence-id.

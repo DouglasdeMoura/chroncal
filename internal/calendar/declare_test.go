@@ -201,3 +201,56 @@ func TestCreateWithPathStoresPathInOneTransaction(t *testing.T) {
 		t.Fatalf("stored LocalPath = %q", got.LocalPath)
 	}
 }
+
+func TestApplyMatchesNameWithoutCase(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	stored, err := svc.Create(ctx, "Fastmail", "#111111", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Apply(ctx, []Declared{{Name: "fastmail", Path: "/p"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	cals, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(cals) != 2 {
+		t.Fatalf("Apply created a second calendar for a case variant: %v", cals)
+	}
+	got, err := svc.Get(ctx, stored.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Name != "Fastmail" || got.LocalPath != "/p" {
+		t.Fatalf("stored calendar after Apply = %+v, want the kept name and the declared path", got)
+	}
+	// The declared guard matches the stored spelling too.
+	if err := svc.Delete(ctx, stored.ID); !errors.Is(err, ErrDeclaredCalendar) {
+		t.Fatalf("delete of a case-variant declared calendar: error = %v", err)
+	}
+}
+
+func TestSetLocalPathRefusesRemoteCalendar(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: 1, AccountID: &account.ID, RemoteUrl: storage.StringToNullable("https://example.com/cal/personal"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	if err := svc.SetLocalPath(ctx, 1, "/p"); !errors.Is(err, ErrRemoteLocalPath) {
+		t.Fatalf("SetLocalPath on a remote calendar: error = %v, want ErrRemoteLocalPath", err)
+	}
+	// Removal of a path is always allowed.
+	if err := svc.SetLocalPath(ctx, 1, ""); err != nil {
+		t.Fatalf("SetLocalPath(\"\") on a remote calendar: %v", err)
+	}
+}
