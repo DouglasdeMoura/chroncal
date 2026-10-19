@@ -379,7 +379,20 @@ func fromStorage(r storage.Calendar) Calendar {
 // SetLocalPath stores the directory of .ics files that feeds the calendar
 // (issue #809). An empty path removes the directory. The caller resolves
 // the path first (see fsutil.ExpandHome), so the stored value is absolute.
+//
+// A calendar that a CalDAV account owns cannot take a directory
+// (ErrRemoteLocalPath). An import from the directory would push the files
+// to the server, which already owns the collection.
 func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error {
+	if path != "" {
+		existing, err := s.q.GetCalendar(ctx, id)
+		if err != nil {
+			return err
+		}
+		if existing.AccountID != nil {
+			return fmt.Errorf("calendar %q: %w", existing.Name, ErrRemoteLocalPath)
+		}
+	}
 	return s.q.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{
 		LocalPath: path,
 		ID:        id,

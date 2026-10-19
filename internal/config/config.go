@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 
@@ -234,10 +233,6 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// hexColorPattern matches the calendar color form that the CLI, the TUI,
-// and the database use: "#" and six hex digits.
-var hexColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
-
 // validateCalendars checks the [[calendars]] entries and resolves each
 // path in place. An entry without a name stops the load, because the name
 // is the key that ties the entry to a stored calendar. Two entries with one
@@ -245,6 +240,8 @@ var hexColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 // every launch. A relative path stops the load, because the working
 // directory of a launch is not stable.
 func validateCalendars(entries []CalendarConfig) error {
+	// Names compare without case, like the CLI calendar lookup. Two
+	// entries that differ only in case would both resolve to one row.
 	seen := make(map[string]bool, len(entries))
 	for i := range entries {
 		e := &entries[i]
@@ -252,13 +249,16 @@ func validateCalendars(entries []CalendarConfig) error {
 		if e.Name == "" {
 			return fmt.Errorf("calendars[%d]: name is required", i)
 		}
-		if seen[e.Name] {
+		if seen[strings.ToLower(e.Name)] {
 			return fmt.Errorf("calendars[%d]: duplicate name %q", i, e.Name)
 		}
-		seen[e.Name] = true
+		seen[strings.ToLower(e.Name)] = true
 		e.Color = strings.TrimSpace(e.Color)
-		if e.Color != "" && !hexColorPattern.MatchString(e.Color) {
-			return fmt.Errorf("calendars[%d] (%s): color %q must be a hex color such as #0F766E", i, e.Name, e.Color)
+		if e.Color != "" {
+			if err := model.ValidateHexColor(e.Color); err != nil {
+				return fmt.Errorf("calendars[%d] (%s): %w", i, e.Name, err)
+			}
+			e.Color = model.NormalizeHexColor(e.Color)
 		}
 		e.Description = strings.TrimSpace(e.Description)
 		raw := strings.TrimSpace(e.Path)

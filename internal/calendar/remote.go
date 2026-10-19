@@ -145,6 +145,15 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	defer release()
 	cal = lockedCal
 
+	// A declared calendar stays local (issue #809), and a calendar with a
+	// local directory cannot also be a server collection.
+	if s.isDeclared(cal.Name) {
+		return fmt.Errorf("calendar %q: %w", cal.Name, ErrDeclaredLink)
+	}
+	if cal.LocalPath != "" {
+		return fmt.Errorf("calendar %q: %w", cal.Name, ErrLocalPathLink)
+	}
+
 	link.AuthType = NormalizeAuthType(link.AuthType)
 
 	serverURL, err := DeriveServerURL(link.RemoteURL, link.AllowInsecure)

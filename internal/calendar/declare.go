@@ -23,16 +23,14 @@ type Declared struct {
 	Path        string
 }
 
-// getByName returns the calendar with that exact name.
+// getByName returns the calendar with that name (see findByName).
 func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) {
 	cals, err := s.List(ctx)
 	if err != nil {
 		return Calendar{}, err
 	}
-	for _, c := range cals {
-		if c.Name == name {
-			return c, nil
-		}
+	if c, ok := findByName(cals, name); ok {
+		return c, nil
 	}
 	return Calendar{}, fmt.Errorf("calendar %q not found", name)
 }
@@ -50,13 +48,60 @@ var ErrDeclaredCalendar = errors.New(
 var ErrDeclaredRemote = errors.New(
 	"a CalDAV account owns a calendar with this name; the [[calendars]] table declares local calendars only")
 
+// ErrDeclaredLink reports a link of a declared calendar to a CalDAV
+// account. The next launch would then fail with ErrDeclaredRemote, so the
+// link is refused up front.
+var ErrDeclaredLink = errors.New(
+	"a [[calendars]] entry in config.toml declares this calendar, and the table declares local calendars only; remove the entry first")
+
+// ErrRemoteLocalPath reports a local directory on a calendar that a CalDAV
+// account owns. An import from the directory would push the files to the
+// server, which already owns the collection.
+var ErrRemoteLocalPath = errors.New(
+	"a CalDAV account owns this calendar, so it cannot have a local directory")
+
+// ErrLocalPathLink reports a link of a calendar that has a local directory
+// to a CalDAV account. The user removes the directory first.
+var ErrLocalPathLink = errors.New(
+	"this calendar has a local directory; remove it with --path \"\" before you link it to a CalDAV account")
+
+// isDeclared reports whether Apply received an entry with that name. The
+// match ignores case, like the CLI calendar lookup.
+func (s *Service) isDeclared(name string) bool {
+	for declared := range s.declared {
+		if strings.EqualFold(declared, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // refuseDeclared returns ErrDeclaredCalendar when Apply received an entry
 // with that name.
 func (s *Service) refuseDeclared(name string) error {
-	if s.declared[name] {
+	if s.isDeclared(name) {
 		return fmt.Errorf("calendar %q: %w", name, ErrDeclaredCalendar)
 	}
 	return nil
+}
+
+// findByName returns the calendar with that name. An exact match wins. A
+// match that differs only in case comes next, so a declared "fastmail"
+// adopts a stored "Fastmail" instead of a second calendar. The CLI resolves
+// a name the same way, and a second calendar would make every name
+// reference ambiguous.
+func findByName(cals []Calendar, name string) (Calendar, bool) {
+	for _, c := range cals {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	for _, c := range cals {
+		if strings.EqualFold(c.Name, name) {
+			return c, true
+		}
+	}
+	return Calendar{}, false
 }
 
 // Apply reconciles the declared calendars into the database. For each
@@ -87,13 +132,9 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) error {
 	if err != nil {
 		return fmt.Errorf("list calendars: %w", err)
 	}
-	byName := make(map[string]Calendar, len(existing))
-	for _, c := range existing {
-		byName[c.Name] = c
-	}
 	for _, d := range declared {
 		name := strings.TrimSpace(d.Name)
-		cal, ok := byName[name]
+		cal, ok := findByName(existing, name)
 		if ok && cal.AccountID != 0 {
 			return fmt.Errorf("calendar %q: %w", name, ErrDeclaredRemote)
 		}
@@ -113,8 +154,8 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) error {
 				return fmt.Errorf("create calendar %q: %w", name, err)
 			}
 			cal = created
-			byName[name] = cal
-		} else if (d.Color != "" && d.Color != cal.Color) ||
+			existing = append(existing, cal)
+		} else if (d.Color != "" && !strings.EqualFold(d.Color, cal.Color)) ||
 			(d.Description != "" && d.Description != cal.Description) {
 			color, description := cal.Color, cal.Description
 			if d.Color != "" {
@@ -123,19 +164,14 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) error {
 			if d.Description != "" {
 				description = d.Description
 			}
-			updated, err := s.Update(ctx, cal.ID, cal.Name, color, description)
-			if err != nil {
+			if _, err := s.Update(ctx, cal.ID, cal.Name, color, description); err != nil {
 				return fmt.Errorf("update calendar %q: %w", name, err)
 			}
-			cal = updated
-			byName[name] = cal
 		}
 		if d.Path != "" && d.Path != cal.LocalPath {
 			if err := s.SetLocalPath(ctx, cal.ID, d.Path); err != nil {
 				return fmt.Errorf("set path of calendar %q: %w", name, err)
 			}
-			cal.LocalPath = d.Path
-			byName[name] = cal
 		}
 	}
 	return nil

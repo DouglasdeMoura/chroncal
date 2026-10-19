@@ -351,6 +351,15 @@ config.toml sets the same fields declaratively.`,
 			if err != nil {
 				return err
 			}
+			if resolvedPath != "" && strings.TrimSpace(remoteURL) != "" {
+				return errInvalidInputf("--path and --remote-url are mutually exclusive: a calendar is local or a server collection")
+			}
+			if cmd.Flags().Changed("color") {
+				if err := model.ValidateHexColor(color); err != nil {
+					return errInvalidInputf("--color: %v", err)
+				}
+				color = model.NormalizeHexColor(color)
+			}
 
 			a, err := initApp()
 			if err != nil {
@@ -519,14 +528,14 @@ inherits the global [alarms] default from config.toml again.
 			}
 
 			n, co, d := existing.Name, existing.Color, existing.Description
-			if cmd.Flags().Changed("name") && name != existing.Name {
-				if err := declaredCalendarError(existing.Name, "rename"); err != nil {
-					return err
-				}
+			if cmd.Flags().Changed("name") {
 				n = name
 			}
 			if cmd.Flags().Changed("color") {
-				co = color
+				if err := model.ValidateHexColor(color); err != nil {
+					return errInvalidInputf("--color: %v", err)
+				}
+				co = model.NormalizeHexColor(color)
 			}
 			if cmd.Flags().Changed("description") {
 				d = description
@@ -726,9 +735,6 @@ to stderr.`,
 			cal, getErr := a.Calendars.Get(ctx, id)
 			if getErr != nil {
 				return notFoundErr(getErr, "calendar", id)
-			}
-			if err := declaredCalendarError(cal.Name, "delete"); err != nil {
-				return err
 			}
 			eventCount, err := a.Queries.CountEventsByCalendar(ctx, id)
 			if err != nil {
