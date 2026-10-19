@@ -76,12 +76,17 @@ func New(dbPath string) (*App, error) {
 	eventSvc := event.NewService(db, queries)
 	todoSvc := todo.NewService(db, queries)
 	journalSvc := journal.NewService(db, queries)
+	calendarSvc := calendar.NewService(db, queries)
+	accountSvc := account.NewService(db, queries)
+	// A calendar move and a discovery relink respect the [[calendars]]
+	// entries that calendar.Service.Apply binds (issue #809).
+	accountSvc.SetDeclaredGuard(calendarSvc.IsDeclared)
 
 	return &App{
 		DB:                           db,
 		Queries:                      queries,
-		Accounts:                     account.NewService(db, queries),
-		Calendars:                    calendar.NewService(db, queries),
+		Accounts:                     accountSvc,
+		Calendars:                    calendarSvc,
 		Events:                       eventSvc,
 		Todos:                        todoSvc,
 		Journals:                     journalSvc,

@@ -8,6 +8,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
@@ -398,5 +399,28 @@ func TestMigrateCalendarToAccount_CountsSeriesOnce(t *testing.T) {
 	}
 	if got := dirtyCount(t, db, res.DestinationID); got != 1 {
 		t.Errorf("dirty sync_resources = %d, want 1 for the shared uid", got)
+	}
+}
+
+// TestMigrateRefusesDeclaredSource verifies a calendar move does not retire
+// a calendar that a [[calendars]] entry declares (issue #809). The next
+// launch would create an empty calendar with the declared name and feed it
+// from the directory again.
+func TestMigrateRefusesDeclaredSource(t *testing.T) {
+	svc, q, db, acct := newMigrationFixture(t)
+	ctx := context.Background()
+	source, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Fastmail", Color: "#111111"})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	insertEvent(t, db, source.ID, "fm-1", "Keep me")
+	svc.SetDeclaredGuard(func(name string) bool { return name == "Fastmail" })
+
+	_, err = svc.MigrateCalendarToAccount(ctx, source.ID, discoveryFor(acct, "/dav/fastmail/", "Fastmail remote"), "/dav/fastmail/")
+	if !errors.Is(err, calendar.ErrDeclaredCalendar) {
+		t.Fatalf("migrate of a declared source: error = %v, want ErrDeclaredCalendar", err)
+	}
+	if _, err := q.GetCalendar(ctx, source.ID); err != nil {
+		t.Fatalf("the refused move retired the source: %v", err)
 	}
 }

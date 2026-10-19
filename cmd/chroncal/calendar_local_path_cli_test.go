@@ -486,3 +486,31 @@ func TestConfigCalendarsConflictWarnsButRuns(t *testing.T) {
 		t.Fatalf("after the disconnect the entry must apply: color = %q", got)
 	}
 }
+
+// TestCalendarPathFlagRejectsOtherUserHome verifies "~alice/dir" is an
+// error, not a silent store of a directory below the working directory.
+func TestCalendarPathFlagRejectsOtherUserHome(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	_, _, err := runChroncalCommand(t, "calendar", "create", "Odd", "--path", "~alice/calendars")
+	if err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("calendar create --path ~alice/...: error = %v", err)
+	}
+}
+
+// TestCalendarUpdateRefusesLinkBeforeOtherWrites verifies a refused link
+// leaves every other field of the calendar as it was.
+func TestCalendarUpdateRefusesLinkBeforeOtherWrites(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Dir", "--path", t.TempDir(), "--color", "#111111"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	_, _, err := runChroncalCommand(t, "calendar", "update", "Dir", "--color", "#222222",
+		"--remote-url", "https://cal.example.com/dav/calendars/dir/", "--username", "alice", "--auth", "bearer")
+	if err == nil || !strings.Contains(err.Error(), "has a local directory") {
+		t.Fatalf("calendar update link of a directory calendar: error = %v", err)
+	}
+	if got := calendarJSONByName(t, "Dir").Color; got != "#111111" {
+		t.Fatalf("the refused link changed the color: %q", got)
+	}
+}

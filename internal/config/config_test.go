@@ -691,6 +691,12 @@ name = "Work"
 [[calendars]]
 name = "work"
 `,
+		"duplicate name under Unicode case folding": `
+[[calendars]]
+name = "ſync"
+[[calendars]]
+name = "Sync"
+`,
 	}
 	for label, content := range cases {
 		t.Run(label, func(t *testing.T) {

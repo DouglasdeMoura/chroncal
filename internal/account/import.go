@@ -56,7 +56,7 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 	for _, row := range allCalendars {
 		taken[row.Name] = struct{}{}
 	}
-	unlinkedByURL := uniqueUnlinkedByRemoteIdentity(allCalendars, discovery.Account.ServerURL)
+	unlinkedByURL := uniqueUnlinkedByRemoteIdentity(allCalendars, discovery.Account.ServerURL, s.declared)
 
 	result := ImportResult{}
 	selected := make(map[string]struct{}, len(selectedPaths))
@@ -103,17 +103,19 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 
 // uniqueUnlinkedByRemoteIdentity maps a remote identity to one unlinked local
 // calendar. Duplicate keys are dropped so Import and ReconcileSelection create
-// a fresh row. They must not pick an arbitrary snapshot.
-func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string) map[string]int64 {
+// a fresh row. They must not pick an arbitrary snapshot. A nil declared
+// function declares nothing.
+func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string, declared func(name string) bool) map[string]int64 {
 	byKey := make(map[string]int64)
 	ambiguous := make(map[string]struct{})
 	for _, row := range rows {
 		if row.AccountID != nil {
 			continue
 		}
-		// A calendar that a local directory feeds stays local (issue
-		// #809). The discovery creates a fresh row for the collection.
-		if row.LocalPath != "" {
+		// A calendar that a local directory feeds, or that a [[calendars]]
+		// entry declares, stays local (issue #809). The discovery creates
+		// a fresh row for the collection.
+		if row.LocalPath != "" || (declared != nil && declared(row.Name)) {
 			continue
 		}
 		key := remoteIdentityKey(storage.NullableToString(row.RemoteUrl), serverURL)

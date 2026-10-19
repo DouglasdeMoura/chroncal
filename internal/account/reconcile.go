@@ -155,7 +155,7 @@ func (s *Service) ReconcileSelection(
 			taken[row.Name] = struct{}{}
 		}
 	}
-	unlinkedByURL := uniqueUnlinkedByRemoteIdentity(allCalendars, discovery.Account.ServerURL)
+	unlinkedByURL := uniqueUnlinkedByRemoteIdentity(allCalendars, discovery.Account.ServerURL, s.declared)
 
 	result := SelectionResult{RemovedIDs: make([]int64, 0, len(removedRows))}
 	for _, row := range removedRows {

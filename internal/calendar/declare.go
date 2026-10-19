@@ -59,18 +59,36 @@ var ErrLocalPathLink = errors.New(
 var ErrAmbiguousDeclaredName = errors.New(
 	"several calendars match this name in another case; rename one of them")
 
-// isDeclared reports whether Apply bound an entry to a stored calendar with
+// IsDeclared reports whether Apply bound an entry to a stored calendar with
 // that exact name. Apply records the stored spelling, so a stray case
-// variant of a declared calendar stays free to delete or rename.
-func (s *Service) isDeclared(name string) bool {
+// variant of a declared calendar stays free to delete or rename. The
+// account service reads it through account.Service.SetDeclaredGuard, so a
+// calendar move and a discovery relink respect the same set.
+func (s *Service) IsDeclared(name string) bool {
 	return s.declared[name]
 }
 
 // refuseDeclared returns ErrDeclaredCalendar when Apply bound an entry to
 // a calendar with that name.
 func (s *Service) refuseDeclared(name string) error {
-	if s.isDeclared(name) {
+	if s.IsDeclared(name) {
 		return fmt.Errorf("calendar %q: %w", name, ErrDeclaredCalendar)
+	}
+	return nil
+}
+
+// CheckLinkable reports whether a calendar can take a CalDAV link. A
+// declared calendar stays local (ErrDeclaredLink), and a calendar with a
+// local directory cannot also be a server collection (ErrLocalPathLink).
+// ConnectTarget and Connect call it, and the CLI calls it before it writes
+// any other field of the calendar, so a refusal costs no prompt, no network
+// request, and no partial update.
+func (s *Service) CheckLinkable(cal Calendar) error {
+	if s.IsDeclared(cal.Name) {
+		return fmt.Errorf("calendar %q: %w", cal.Name, ErrDeclaredLink)
+	}
+	if cal.LocalPath != "" {
+		return fmt.Errorf("calendar %q: %w", cal.Name, ErrLocalPathLink)
 	}
 	return nil
 }

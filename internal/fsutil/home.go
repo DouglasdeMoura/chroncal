@@ -44,8 +44,8 @@ func ContractHome(path string) string {
 
 // ExpandHome resolves a path that a user wrote in a config file or on the
 // command line. A leading "~" or "~/" becomes the home directory. The result
-// is absolute and clean, so two spellings of one directory compare equal.
-// An empty path stays empty.
+// is absolute, and filepath.Abs cleans it, so two spellings of one
+// directory compare equal. An empty path stays empty.
 func ExpandHome(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -58,9 +58,5 @@ func ExpandHome(path string) (string, error) {
 		}
 		path = filepath.Join(home, path[1:])
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(abs), nil
+	return filepath.Abs(path)
 }

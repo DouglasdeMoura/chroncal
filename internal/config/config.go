@@ -240,19 +240,20 @@ func Load() (Config, error) {
 // every launch. A relative path stops the load, because the working
 // directory of a launch is not stable.
 func validateCalendars(entries []CalendarConfig) error {
-	// Names compare without case, like the CLI calendar lookup. Two
-	// entries that differ only in case would both resolve to one row.
-	seen := make(map[string]bool, len(entries))
+	// Names compare with strings.EqualFold, the same fold that the apply
+	// and the CLI calendar lookup use. Two entries that fold to one name
+	// would both bind to one row and undo each other on every launch.
 	for i := range entries {
 		e := &entries[i]
 		e.Name = strings.TrimSpace(e.Name)
 		if e.Name == "" {
 			return fmt.Errorf("calendars[%d]: name is required", i)
 		}
-		if seen[strings.ToLower(e.Name)] {
-			return fmt.Errorf("calendars[%d]: duplicate name %q", i, e.Name)
+		for _, earlier := range entries[:i] {
+			if strings.EqualFold(earlier.Name, e.Name) {
+				return fmt.Errorf("calendars[%d]: duplicate name %q", i, e.Name)
+			}
 		}
-		seen[strings.ToLower(e.Name)] = true
 		e.Color = strings.TrimSpace(e.Color)
 		if e.Color != "" {
 			if err := model.ValidateHexColor(e.Color); err != nil {
