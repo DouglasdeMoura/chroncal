@@ -82,11 +82,12 @@ again updates existing items instead of blindly duplicating them.`,
 				return err
 			}
 			defer a.Close()
-			// batch is the no-path mode: the calendars that have a
-			// directory are the targets. The output shape follows the
-			// mode, not the number of targets, so a script can rely on
-			// it: one object with a path, an array without one.
-			batch := len(args) == 0
+			// batch is the mode without a path and without --calendar:
+			// every calendar that has a directory is a target. The output
+			// shape follows the mode, not the number of targets, so a
+			// script can rely on it: one object when the command names a
+			// path or a calendar, an array in batch mode.
+			batch := len(args) == 0 && calendarName == ""
 			targets, err := icalImportTargets(context.Background(), a, args, calendarName)
 			if err != nil {
 				return err

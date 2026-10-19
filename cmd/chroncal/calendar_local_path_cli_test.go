@@ -673,3 +673,41 @@ func TestCalendarUpdateRefusesRenameBeforePathWrite(t *testing.T) {
 		t.Fatalf("the refused rename wrote the path: %q", got)
 	}
 }
+
+// TestCalendarUpdateRefusesBadAlarmBeforePathWrite verifies an invalid
+// --default-alarm value stops the command before the path lands.
+func TestCalendarUpdateRefusesBadAlarmBeforePathWrite(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	_, _, err := runChroncalCommand(t, "calendar", "update", "Work", "--path", tempDir(t), "--default-alarm", "bogus")
+	if err == nil {
+		t.Fatal("calendar update with a bad alarm spec succeeded")
+	}
+	if got := calendarJSONByName(t, "Work").LocalPath; got != "" {
+		t.Fatalf("the refused update wrote the path: %q", got)
+	}
+}
+
+// TestIcalImportNamedCalendarJSONIsOneObject verifies the JSON shape
+// follows how the command addresses the run: a named calendar is one
+// object, like an explicit path.
+func TestIcalImportNamedCalendarJSONIsOneObject(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	dir := writeTestICSDir(t, "named-1", "Named")
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Named", "--path", dir); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	stdout, _, err := runChroncalCommand(t, "ical", "import", "--calendar", "Named", "--output", "json")
+	if err != nil {
+		t.Fatalf("ical import --calendar: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("named import json must be one object: %v\n%s", err, stdout)
+	}
+	if out["calendar"] != "Named" {
+		t.Fatalf("named import json = %v", out)
+	}
+}
