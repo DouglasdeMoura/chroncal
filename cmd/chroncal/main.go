@@ -398,9 +398,9 @@ func initApp() (*app.App, error) {
 		// goes to the state-dir log always, and to stderr for a CLI
 		// command. The TUI owns the terminal, so it must not print.
 		for _, w := range warnings {
-			config.SharedStateDirLogger().Warn("config [[calendars]] entry skipped", "reason", w)
+			config.SharedStateDirLogger().Warn("config [[calendars]]", "warning", w)
 			if !tuiOwnsTerminal {
-				fmt.Fprintf(os.Stderr, "chroncal: warning: [[calendars]] entry skipped: %s\n", safeText(w))
+				fmt.Fprintf(os.Stderr, "chroncal: warning: [[calendars]]: %s\n", safeText(w))
 			}
 		}
 	}

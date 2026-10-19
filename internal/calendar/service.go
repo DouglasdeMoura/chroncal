@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
@@ -38,7 +39,8 @@ type Service struct {
 	// received (issue #809). Update and the delete methods refuse to
 	// rename or delete one of them, because Apply would create the
 	// calendar again on the next launch.
-	declared map[string]bool
+	declared   map[string]bool
+	declaredMu sync.RWMutex
 }
 
 func NewService(db *sql.DB, q *storage.Queries) *Service {
@@ -163,8 +165,10 @@ func (s *Service) Update(ctx context.Context, id int64, name, color, description
 	if err != nil {
 		return Calendar{}, err
 	}
+	rebind := false
 	if existing.Name != name {
-		if err := s.refuseDeclaredRename(existing.Name, name); err != nil {
+		rebind, err = s.checkDeclaredRename(existing.Name, name)
+		if err != nil {
 			return Calendar{}, err
 		}
 	}
@@ -193,6 +197,9 @@ func (s *Service) Update(ctx context.Context, id int64, name, color, description
 	}
 	if err := tx.Commit(); err != nil {
 		return Calendar{}, err
+	}
+	if rebind {
+		s.rebindDeclared(existing.Name, name)
 	}
 	return fromStorage(updated), nil
 }
@@ -399,6 +406,36 @@ func (s *Service) checkPathFreeTx(ctx context.Context, qtx *storage.Queries, id 
 		return fmt.Errorf("list calendars: %w", err)
 	}
 	return checkPathFree(cals, id, path)
+}
+
+// setLocalPaths applies a set of path changes in one transaction. It
+// clears every path that changes, then sets each new path after the
+// overlap check inside the transaction. A refused path rolls back every
+// change, so no calendar loses its directory to a half-done pass.
+func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	for _, c := range changes {
+		if c.From == "" {
+			continue
+		}
+		if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{ID: c.ID}); err != nil {
+			return fmt.Errorf("clear path of calendar %q: %w", c.Name, err)
+		}
+	}
+	for _, c := range changes {
+		if err := s.checkPathFreeTx(ctx, qtx, c.ID, c.To); err != nil {
+			return err
+		}
+		if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{LocalPath: c.To, ID: c.ID}); err != nil {
+			return fmt.Errorf("set path of calendar %q: %w", c.Name, err)
+		}
+	}
+	return tx.Commit()
 }
 
 // CheckPathFree reports ErrOverlappingPath when another calendar than id

@@ -499,3 +499,25 @@ func TestDeclaredCalendarAllowsACaseOnlyRename(t *testing.T) {
 		t.Fatalf("a real rename must still be refused: %v", err)
 	}
 }
+
+func TestDeclaredGuardStaysOnAFailedRename(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	work, err := svc.Create(ctx, "Work", "#111111", "")
+	if err != nil {
+		t.Fatalf("Create Work: %v", err)
+	}
+	if _, err := svc.Create(ctx, "WORK", "#111111", ""); err != nil {
+		t.Fatalf("Create WORK: %v", err)
+	}
+	if _, err := svc.Apply(ctx, []Declared{{Name: "Work"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	// The case-only rename collides with the other row and fails.
+	if _, err := svc.Update(ctx, work.ID, "WORK", "#111111", ""); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("rename onto an existing row: error = %v, want ErrDuplicateName", err)
+	}
+	if !svc.IsDeclared("Work") || svc.IsDeclared("WORK") {
+		t.Fatal("the guard moved although the rename failed")
+	}
+}

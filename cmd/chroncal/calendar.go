@@ -573,19 +573,23 @@ inherits the global [alarms] default from config.toml again.
 				d = description
 			}
 
+			// The path lands first when no remote flag is set, so a refused
+			// path (a tree that a concurrent write took) costs no other
+			// write. With a remote flag the order follows the flag: a
+			// cleared path lands before a link, so --path "" next to
+			// --remote-url frees the calendar for the link; a new path
+			// lands after a disconnect (see below).
+			remoteFlags := disconnectRemote || strings.TrimSpace(remoteURL) != ""
+			pathFirst := cmd.Flags().Changed("path") && (!remoteFlags || resolvedPath == "")
+			if pathFirst {
+				if err := a.Calendars.SetLocalPath(ctx, existing.ID, resolvedPath); err != nil {
+					return fmt.Errorf("set calendar path: %w", err)
+				}
+			}
+
 			c, err := a.Calendars.Update(ctx, existing.ID, n, co, d)
 			if err != nil {
 				return fmt.Errorf("update calendar: %w", err)
-			}
-
-			// A cleared path lands before a link, so --path "" next to
-			// --remote-url frees the calendar for the link in one command.
-			// A new path lands after a disconnect (see below).
-			if cmd.Flags().Changed("path") && resolvedPath == "" {
-				if err := a.Calendars.SetLocalPath(ctx, c.ID, ""); err != nil {
-					return fmt.Errorf("set calendar path: %w", err)
-				}
-				c.LocalPath = ""
 			}
 
 			if cmd.Flags().Changed("email") {
@@ -634,7 +638,7 @@ inherits the global [alarms] default from config.toml again.
 			// --path DIR" turns a server collection into a directory-fed
 			// calendar in one command. The checks above refused a new path
 			// next to a link.
-			if cmd.Flags().Changed("path") && resolvedPath != "" {
+			if cmd.Flags().Changed("path") && !pathFirst {
 				if err := a.Calendars.SetLocalPath(ctx, c.ID, resolvedPath); err != nil {
 					return fmt.Errorf("set calendar path: %w", err)
 				}

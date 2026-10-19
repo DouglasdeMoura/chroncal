@@ -310,6 +310,10 @@ func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget
 			// tool has not created yet. ParsePath would refuse the link
 			// with another message, so report the real state here.
 			return missingDirectoryOutcome(target)
+		default:
+			// A permission problem or a link loop. ParsePath would report
+			// a refused link, which hides the cause.
+			return icalImportOutcome{target: target, err: fmt.Errorf("resolve the directory: %w", err)}
 		}
 	}
 	preview, err := icaltransfer.ParsePath(path)

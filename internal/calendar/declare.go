@@ -68,10 +68,13 @@ var ErrOverlappingPath = model.NewInputError(
 	"another calendar uses this directory or a directory above or below it; each calendar needs its own tree")
 
 // checkPathFree returns ErrOverlappingPath when another calendar than id
-// uses path or a directory above or below it.
+// uses path or a directory above or below it. The list order decides which
+// calendar the error names, so the name is stable across launches. The
+// candidate resolves once; each stored path resolves once per call.
 func checkPathFree(cals []Calendar, id int64, path string) error {
+	candidate := fsutil.ResolveTree(path)
 	for _, c := range cals {
-		if c.ID != id && fsutil.SameTree(c.LocalPath, path) {
+		if c.ID != id && fsutil.SameResolvedTree(fsutil.ResolveTree(c.LocalPath), candidate) {
 			return fmt.Errorf("calendar %q: %w", c.Name, ErrOverlappingPath)
 		}
 	}
@@ -84,7 +87,16 @@ func checkPathFree(cals []Calendar, id int64, path string) error {
 // account service reads it through account.Service.SetDeclaredGuard, so a
 // calendar move and a discovery relink respect the same set.
 func (s *Service) IsDeclared(name string) bool {
+	s.declaredMu.RLock()
+	defer s.declaredMu.RUnlock()
 	return s.declared[name]
+}
+
+// setDeclared replaces the bound names.
+func (s *Service) setDeclared(names map[string]bool) {
+	s.declaredMu.Lock()
+	defer s.declaredMu.Unlock()
+	s.declared = names
 }
 
 // refuseDeclared returns ErrDeclaredCalendar when Apply bound an entry to
@@ -96,20 +108,28 @@ func (s *Service) refuseDeclared(name string) error {
 	return nil
 }
 
-// refuseDeclaredRename refuses a rename of a declared calendar, except a
+// checkDeclaredRename refuses a rename of a declared calendar, except a
 // change of case. FindByName still binds the entry to the row in another
 // case, so the rename cannot cause the re-create the guard exists to
-// prevent. The guard then follows the new spelling.
-func (s *Service) refuseDeclaredRename(from, to string) error {
+// prevent. rebind is true when the guard must follow the new spelling
+// once the rename commits (rebindDeclared). The guard moves only after
+// the commit, so a rename that fails leaves it on the stored name.
+func (s *Service) checkDeclaredRename(from, to string) (rebind bool, err error) {
 	if !s.IsDeclared(from) {
-		return nil
+		return false, nil
 	}
 	if strings.EqualFold(from, to) {
-		delete(s.declared, from)
-		s.declared[to] = true
-		return nil
+		return true, nil
 	}
-	return fmt.Errorf("calendar %q: %w", from, ErrDeclaredCalendar)
+	return false, fmt.Errorf("calendar %q: %w", from, ErrDeclaredCalendar)
+}
+
+// rebindDeclared moves the guard from one spelling to another.
+func (s *Service) rebindDeclared(from, to string) {
+	s.declaredMu.Lock()
+	defer s.declaredMu.Unlock()
+	delete(s.declared, from)
+	s.declared[to] = true
 }
 
 // CheckLinkable reports whether a calendar can take a CalDAV link. A
@@ -199,7 +219,8 @@ func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) 
 // Apply runs on every launch, so it must stay idempotent and cheap. It
 // reads the calendar list once and writes only the rows that differ.
 func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []string, err error) {
-	s.declared = make(map[string]bool, len(declared))
+	bound := make(map[string]bool, len(declared))
+	s.setDeclared(bound)
 	for _, d := range declared {
 		if strings.TrimSpace(d.Name) == "" {
 			return nil, fmt.Errorf("calendars: an entry has no name")
@@ -213,11 +234,6 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		return nil, fmt.Errorf("list calendars: %w", err)
 	}
 
-	// pathChange is a declared path that differs from the stored one.
-	type pathChange struct {
-		cal  Calendar
-		path string
-	}
 	var changes []pathChange
 
 	for _, d := range declared {
@@ -279,7 +295,9 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			existing = append(existing, cal)
 		}
 		// The guard binds to the stored spelling of the name.
-		s.declared[cal.Name] = true
+		s.declaredMu.Lock()
+		bound[cal.Name] = true
+		s.declaredMu.Unlock()
 		// A stored value that differs from the declared one comes from a
 		// CLI or TUI edit, or from an edit of the file. The entry wins,
 		// and a warning names the reset, so an edit never vanishes in
@@ -307,7 +325,7 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			}
 		}
 		if d.Path != "" && d.Path != cal.LocalPath {
-			changes = append(changes, pathChange{cal: cal, path: d.Path})
+			changes = append(changes, pathChange{ID: cal.ID, Name: cal.Name, From: cal.LocalPath, To: d.Path})
 		}
 	}
 
@@ -315,62 +333,55 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	// check each change against that state. A change that would share a
 	// tree with another calendar warns and keeps its stored path, so a
 	// conflict never leaves a calendar without a directory. The accepted
-	// changes clear first and set second, so two entries that exchange
-	// their paths converge in one apply.
-	planned := make(map[int64]string, len(existing))
-	for _, c := range existing {
-		planned[c.ID] = c.LocalPath
-	}
+	// changes land in one transaction, clear first and set second, so two
+	// entries that exchange their paths converge in one apply, and a
+	// concurrent write cannot land between the clear and the set.
+	planned := make([]Calendar, len(existing))
+	copy(planned, existing)
 	for _, c := range changes {
-		planned[c.cal.ID] = c.path
+		for i := range planned {
+			if planned[i].ID == c.ID {
+				planned[i].LocalPath = c.To
+			}
+		}
 	}
 	accepted := changes[:0]
 	for _, c := range changes {
-		conflict := ""
-		for id, path := range planned {
-			if id != c.cal.ID && fsutil.SameTree(path, c.path) {
-				conflict = nameOf(existing, id)
-				break
+		if err := checkPathFree(planned, c.ID, c.To); err != nil {
+			warnings = append(warnings, fmt.Sprintf("calendar %q: path %s: %v", c.Name, c.To, err))
+			for i := range planned {
+				if planned[i].ID == c.ID {
+					planned[i].LocalPath = c.From
+				}
 			}
-		}
-		if conflict != "" {
-			warnings = append(warnings, fmt.Sprintf("calendar %q: path %s: calendar %q: %v", c.cal.Name, c.path, conflict, ErrOverlappingPath))
-			planned[c.cal.ID] = c.cal.LocalPath
 			continue
 		}
 		accepted = append(accepted, c)
 	}
-	for _, c := range accepted {
-		if c.cal.LocalPath == "" {
-			continue
+	if len(accepted) == 0 {
+		return warnings, nil
+	}
+	if err := s.setLocalPaths(ctx, accepted); err != nil {
+		if errors.Is(err, ErrOverlappingPath) {
+			// A concurrent write took a tree between the plan and the
+			// transaction. No path changed. The next launch applies the
+			// entries.
+			warnings = append(warnings, fmt.Sprintf("[[calendars]] paths not applied: %v", err))
+			return warnings, nil
 		}
-		if err := s.SetLocalPath(ctx, c.cal.ID, ""); err != nil {
-			return warnings, fmt.Errorf("clear path of calendar %q: %w", c.cal.Name, err)
-		}
+		return warnings, err
 	}
 	for _, c := range accepted {
-		if err := s.SetLocalPath(ctx, c.cal.ID, c.path); err != nil {
-			if errors.Is(err, ErrOverlappingPath) {
-				// A concurrent write took the tree between the plan and
-				// the set. The next launch applies the entry.
-				warnings = append(warnings, fmt.Sprintf("calendar %q: path %s: %v", c.cal.Name, c.path, err))
-				continue
-			}
-			return warnings, fmt.Errorf("set path of calendar %q: %w", c.cal.Name, err)
-		}
-		if c.cal.LocalPath != "" {
-			warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored path", c.cal.Name))
+		if c.From != "" {
+			warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored path", c.Name))
 		}
 	}
 	return warnings, nil
 }
 
-// nameOf returns the name of the calendar with that ID.
-func nameOf(cals []Calendar, id int64) string {
-	for _, c := range cals {
-		if c.ID == id {
-			return c.Name
-		}
-	}
-	return fmt.Sprintf("#%d", id)
+// pathChange is a declared path that differs from the stored one.
+type pathChange struct {
+	ID       int64
+	Name     string
+	From, To string
 }
