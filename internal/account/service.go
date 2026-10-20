@@ -42,11 +42,6 @@ func (s *Service) SetDeclaredGuard(declared func(name string) bool) {
 	s.declared = declared
 }
 
-// isDeclared reports whether the guard binds the name.
-func (s *Service) isDeclared(name string) bool {
-	return s.declared != nil && s.declared(name)
-}
-
 func (s *Service) List(ctx context.Context) ([]Account, error) {
 	rows, err := s.q.ListAccounts(ctx)
 	if err != nil {
