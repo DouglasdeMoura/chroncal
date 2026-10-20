@@ -117,6 +117,29 @@ func (q *Queries) CountLiveEventOverridesInCalendar(ctx context.Context, arg Cou
 	return count, err
 }
 
+const countSeriesRowsInTrash = `-- name: CountSeriesRowsInTrash :one
+SELECT COUNT(*) FROM events
+WHERE events.deleted_at IS NOT NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
+`
+
+type CountSeriesRowsInTrashParams struct {
+	Uid        string
+	CalendarID int64
+}
+
+// Count the soft-deleted rows of the series of one UID in one calendar
+// (see SoftDeleteSeriesRowsInCalendar). A restore by UID reads it to
+// learn whether the series of the live master has rows to restore.
+func (q *Queries) CountSeriesRowsInTrash(ctx context.Context, arg CountSeriesRowsInTrashParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSeriesRowsInTrash, arg.Uid, arg.CalendarID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createEvent = `-- name: CreateEvent :one
 INSERT INTO events (
     uid, calendar_id, title, description, location,
@@ -706,18 +729,11 @@ func (q *Queries) ListDeletedOverrideRecurrenceIDs(ctx context.Context, uid stri
 
 const listDeletedSeriesOverrideRecurrenceIDs = `-- name: ListDeletedSeriesOverrideRecurrenceIDs :many
 SELECT events.recurrence_id FROM events
-WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.deleted_at IS NOT NULL
-  AND (events.calendar_id = ?2 OR (NOT EXISTS (
-    SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
-  AND EXISTS (
-    SELECT 1 FROM events AS c
-    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
-      AND NOT EXISTS (
-        SELECT 1 FROM events AS o
-        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
-          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
-ORDER BY recurrence_id
+WHERE events.recurrence_id != '' AND events.deleted_at IS NOT NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
+ORDER BY events.recurrence_id
 `
 
 type ListDeletedSeriesOverrideRecurrenceIDsParams struct {
@@ -1059,22 +1075,15 @@ func (q *Queries) ListLiveOverrideRecurrenceIDsAtOrAfter(ctx context.Context, ar
 
 const listLiveSeriesOverrideRecurrenceIDsAtOrAfter = `-- name: ListLiveSeriesOverrideRecurrenceIDsAtOrAfter :many
 SELECT events.recurrence_id FROM events
-WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.recurrence_id >= ?2 AND events.deleted_at IS NULL
-  AND (events.calendar_id = ?3 OR (NOT EXISTS (
-    SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
-  AND EXISTS (
-    SELECT 1 FROM events AS c
-    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?3
-      AND NOT EXISTS (
-        SELECT 1 FROM events AS o
-        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
-          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
+WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
 `
 
 type ListLiveSeriesOverrideRecurrenceIDsAtOrAfterParams struct {
-	Uid          string
 	RecurrenceID string
+	Uid          string
 	CalendarID   int64
 }
 
@@ -1084,7 +1093,7 @@ type ListLiveSeriesOverrideRecurrenceIDsAtOrAfterParams struct {
 // SoftDeleteSeriesOverridesAtOrAfter, so a restore shows only these rows
 // again (issue #287).
 func (q *Queries) ListLiveSeriesOverrideRecurrenceIDsAtOrAfter(ctx context.Context, arg ListLiveSeriesOverrideRecurrenceIDsAtOrAfterParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listLiveSeriesOverrideRecurrenceIDsAtOrAfter, arg.Uid, arg.RecurrenceID, arg.CalendarID)
+	rows, err := q.db.QueryContext(ctx, listLiveSeriesOverrideRecurrenceIDsAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -1219,19 +1228,9 @@ func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
 }
 
 const listSeriesCalendarIDs = `-- name: ListSeriesCalendarIDs :many
-SELECT DISTINCT events.calendar_id FROM events
-WHERE events.uid = ?1
-  AND (events.calendar_id = ?2 OR (events.recurrence_id != '' AND (NOT EXISTS (
-    SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
-  AND EXISTS (
-    SELECT 1 FROM events AS c
-    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
-      AND NOT EXISTS (
-        SELECT 1 FROM events AS o
-        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
-          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL))))))
-ORDER BY calendar_id
+SELECT DISTINCT s.calendar_id FROM event_series_rows AS s
+WHERE s.uid = ?1 AND s.owner_calendar_id = ?2
+ORDER BY s.calendar_id
 `
 
 type ListSeriesCalendarIDsParams struct {
@@ -1240,9 +1239,9 @@ type ListSeriesCalendarIDsParams struct {
 }
 
 // The calendars that hold a row of the series of one UID in one calendar:
-// that calendar, plus each calendar with a legacy override of the UID
-// (see ListSeriesOverridesInCalendar). Rows in the trash count. The
-// access guard of a series delete or restore reads it.
+// that calendar, plus each calendar with a legacy override that the
+// series owns (see ListSeriesOverridesInCalendar). Rows in the trash
+// count. The access guard of a series delete or restore reads it.
 func (q *Queries) ListSeriesCalendarIDs(ctx context.Context, arg ListSeriesCalendarIDsParams) ([]int64, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesCalendarIDs, arg.Uid, arg.CalendarID)
 	if err != nil {
@@ -1268,18 +1267,11 @@ func (q *Queries) ListSeriesCalendarIDs(ctx context.Context, arg ListSeriesCalen
 
 const listSeriesOverridesInCalendar = `-- name: ListSeriesOverridesInCalendar :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
-WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.deleted_at IS NULL
-  AND (events.calendar_id = ?2 OR (NOT EXISTS (
-    SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
-  AND EXISTS (
-    SELECT 1 FROM events AS c
-    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
-      AND NOT EXISTS (
-        SELECT 1 FROM events AS o
-        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
-          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
-ORDER BY recurrence_id
+WHERE events.recurrence_id != '' AND events.deleted_at IS NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
+ORDER BY events.recurrence_id
 `
 
 type ListSeriesOverridesInCalendarParams struct {
@@ -1289,17 +1281,10 @@ type ListSeriesOverridesInCalendarParams struct {
 
 // The live override rows of the series of one UID in one calendar: the
 // override rows of that calendar, plus the legacy overrides of the UID
-// that the series owns. Two calendars can hold the same UID, so the
-// override rows of the other master stay out (issue #842).
-//
-// The ownership rule of a legacy override (an override row in a calendar
-// with no master row of its UID, see storage.LegacyOverride) is
-// uidmove.LegacyOwner. This clause is its SQL form, and every series
-// query below repeats it: the row belongs to the series of the named
-// calendar when that calendar holds a master row of the UID (c), and no
-// other calendar holds a live master; when the master of c is in the
-// trash, no other calendar holds a master row at all. With no such
-// calendar, or with more than one, the row belongs to no series.
+// that the series owns (see the view event_series_rows in migration 057
+// and uidmove.LegacyOwner). Two calendars can hold the same UID, so the
+// override rows of the other master stay out (issue #842). Every series
+// query below takes its rows from the same view.
 func (q *Queries) ListSeriesOverridesInCalendar(ctx context.Context, arg ListSeriesOverridesInCalendarParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesOverridesInCalendar, arg.Uid, arg.CalendarID)
 	if err != nil {
@@ -1535,29 +1520,22 @@ UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.uid = ?1 AND events.recurrence_id = ?2 AND events.deleted_at IS NOT NULL
-  AND (events.calendar_id = ?3 OR (NOT EXISTS (
-    SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
-  AND EXISTS (
-    SELECT 1 FROM events AS c
-    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?3
-      AND NOT EXISTS (
-        SELECT 1 FROM events AS o
-        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
-          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
+WHERE events.recurrence_id = ?1 AND events.deleted_at IS NOT NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
 `
 
 type RestoreSeriesOverrideByRecurrenceIDParams struct {
-	Uid          string
 	RecurrenceID string
+	Uid          string
 	CalendarID   int64
 }
 
 // Un-hide the soft-deleted override of one occurrence of the series in one
 // calendar (see ListSeriesOverridesInCalendar).
 func (q *Queries) RestoreSeriesOverrideByRecurrenceID(ctx context.Context, arg RestoreSeriesOverrideByRecurrenceIDParams) error {
-	_, err := q.db.ExecContext(ctx, restoreSeriesOverrideByRecurrenceID, arg.Uid, arg.RecurrenceID, arg.CalendarID)
+	_, err := q.db.ExecContext(ctx, restoreSeriesOverrideByRecurrenceID, arg.RecurrenceID, arg.Uid, arg.CalendarID)
 	return err
 }
 
@@ -1566,29 +1544,22 @@ UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.recurrence_id >= ?2 AND events.deleted_at IS NOT NULL
-  AND (events.calendar_id = ?3 OR (NOT EXISTS (
-    SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
-  AND EXISTS (
-    SELECT 1 FROM events AS c
-    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?3
-      AND NOT EXISTS (
-        SELECT 1 FROM events AS o
-        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
-          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
+WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NOT NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
 `
 
 type RestoreSeriesOverridesAtOrAfterParams struct {
-	Uid          string
 	RecurrenceID string
+	Uid          string
 	CalendarID   int64
 }
 
 // Un-hide the soft-deleted overrides of the series in one calendar at or
 // after the cutoff (see ListSeriesOverridesInCalendar).
 func (q *Queries) RestoreSeriesOverridesAtOrAfter(ctx context.Context, arg RestoreSeriesOverridesAtOrAfterParams) error {
-	_, err := q.db.ExecContext(ctx, restoreSeriesOverridesAtOrAfter, arg.Uid, arg.RecurrenceID, arg.CalendarID)
+	_, err := q.db.ExecContext(ctx, restoreSeriesOverridesAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
 	return err
 }
 
@@ -1597,17 +1568,10 @@ UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.uid = ?1 AND events.deleted_at IS NOT NULL
-  AND (events.calendar_id = ?2 OR (events.recurrence_id != '' AND (NOT EXISTS (
-    SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
-  AND EXISTS (
-    SELECT 1 FROM events AS c
-    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
-      AND NOT EXISTS (
-        SELECT 1 FROM events AS o
-        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
-          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL))))))
+WHERE events.deleted_at IS NOT NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
 `
 
 type RestoreSeriesRowsInCalendarParams struct {
@@ -1623,6 +1587,35 @@ func (q *Queries) RestoreSeriesRowsInCalendar(ctx context.Context, arg RestoreSe
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const seriesOwnerCalendarIDs = `-- name: SeriesOwnerCalendarIDs :many
+SELECT s.owner_calendar_id FROM event_series_rows AS s WHERE s.id = ? ORDER BY s.owner_calendar_id
+`
+
+// The calendars whose series own one event row (see event_series_rows).
+// A test compares it with uidmove.LegacyOwner.
+func (q *Queries) SeriesOwnerCalendarIDs(ctx context.Context, id int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, seriesOwnerCalendarIDs, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var owner_calendar_id int64
+		if err := rows.Scan(&owner_calendar_id); err != nil {
+			return nil, err
+		}
+		items = append(items, owner_calendar_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const softDeleteEvent = `-- name: SoftDeleteEvent :exec
@@ -1691,29 +1684,22 @@ const softDeleteSeriesOverridesAtOrAfter = `-- name: SoftDeleteSeriesOverridesAt
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.recurrence_id >= ?2 AND events.deleted_at IS NULL
-  AND (events.calendar_id = ?3 OR (NOT EXISTS (
-    SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
-  AND EXISTS (
-    SELECT 1 FROM events AS c
-    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?3
-      AND NOT EXISTS (
-        SELECT 1 FROM events AS o
-        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
-          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
+WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
 `
 
 type SoftDeleteSeriesOverridesAtOrAfterParams struct {
-	Uid          string
 	RecurrenceID string
+	Uid          string
 	CalendarID   int64
 }
 
 // Soft-delete the live overrides of the series in one calendar at or
 // after the cutoff (see ListSeriesOverridesInCalendar).
 func (q *Queries) SoftDeleteSeriesOverridesAtOrAfter(ctx context.Context, arg SoftDeleteSeriesOverridesAtOrAfterParams) error {
-	_, err := q.db.ExecContext(ctx, softDeleteSeriesOverridesAtOrAfter, arg.Uid, arg.RecurrenceID, arg.CalendarID)
+	_, err := q.db.ExecContext(ctx, softDeleteSeriesOverridesAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
 	return err
 }
 
@@ -1721,17 +1707,10 @@ const softDeleteSeriesRowsInCalendar = `-- name: SoftDeleteSeriesRowsInCalendar 
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.uid = ?1 AND events.deleted_at IS NULL
-  AND (events.calendar_id = ?2 OR (events.recurrence_id != '' AND (NOT EXISTS (
-    SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
-  AND EXISTS (
-    SELECT 1 FROM events AS c
-    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
-      AND NOT EXISTS (
-        SELECT 1 FROM events AS o
-        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
-          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL))))))
+WHERE events.deleted_at IS NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
 `
 
 type SoftDeleteSeriesRowsInCalendarParams struct {
@@ -1740,8 +1719,9 @@ type SoftDeleteSeriesRowsInCalendarParams struct {
 }
 
 // Soft-delete every live row of the series of one UID in one calendar: the
-// rows of that calendar and the legacy overrides of the UID (see
-// ListSeriesOverridesInCalendar). A delete of a whole series uses it.
+// master, the overrides of that calendar, and the legacy overrides the
+// series owns (see ListSeriesOverridesInCalendar). A delete of a whole
+// series uses it.
 func (q *Queries) SoftDeleteSeriesRowsInCalendar(ctx context.Context, arg SoftDeleteSeriesRowsInCalendarParams) error {
 	_, err := q.db.ExecContext(ctx, softDeleteSeriesRowsInCalendar, arg.Uid, arg.CalendarID)
 	return err

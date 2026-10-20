@@ -10,10 +10,11 @@ func eventRestoreCmd() *cobra.Command {
 		long: `Restore clears the deletion marker on a soft-deleted event so it
 reappears in list and TUI views.
 
-The ID of a series master restores the series in its calendar: the master,
-its overrides in the trash, and the occurrences their deletes excluded. A
-UID restores the one series in the trash with that UID. When two calendars
-hold the UID in the trash, pass the ID of the master.
+The ID of a series master reverses the series delete: the master and the
+overrides that the series delete hid come back. An occurrence deleted on
+its own before stays deleted. A UID restores every row of the series of
+that UID in the trash. When two calendars hold the UID in the trash, pass
+the ID of the master.
 
 The event must have been deleted via chroncal (soft-delete, not purged).
 Use 'events list --include-deleted' to see deletable candidates.

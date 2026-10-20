@@ -38,7 +38,12 @@ var eventResource = resource{
 		return row{ID: e.ID, UID: e.UID, CalendarID: e.CalendarID, Summary: e.Title}, nil
 	},
 	delSeries: func(ctx context.Context, a *app.App, target row) error {
-		return a.Events.DeleteSeries(ctx, target.CalendarID, target.UID)
+		err := a.Events.DeleteSeries(ctx, target.CalendarID, target.UID)
+		if errors.Is(err, event.ErrSeriesInTrash) {
+			return errInvalidInputf("the series %s is in the trash in calendar %q; restore it first (chroncal event restore), or name the calendar of the live series with --calendar",
+				target.UID, calendarName(ctx, a, target.CalendarID))
+		}
+		return err
 	},
 	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Events.RestoreByID(ctx, id) },
 	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Events.RestoreByUID(ctx, uid) },
