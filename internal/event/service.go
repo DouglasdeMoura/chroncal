@@ -292,7 +292,6 @@ func (s *Service) distinctCalendarIDsByUID(ctx context.Context, uid string) ([]i
 	return ids, nil
 }
 
-
 // validateDurationValue applies the span rule that the todo service
 // applies in validateTiming. The import path drops a bad value with a
 // warning instead, so sync never reaches this error. The start time
