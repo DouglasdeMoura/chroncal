@@ -379,3 +379,26 @@ WHERE uid = sqlc.arg(uid)
     SELECT 1 FROM events AS m
     WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)))
 ORDER BY calendar_id;
+
+-- name: CountLiveEventOverridesInCalendar :one
+-- Count the live override rows of one UID in one calendar. The series
+-- rule reads it for a live edit: a calendar with a live legacy override
+-- and no master belongs to the series of the one live master. A legacy
+-- override in the trash does not count (see findSeriesMasterTx).
+SELECT COUNT(*) FROM events
+WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NULL;
+
+-- name: ListEventCalendarIDsByUID :many
+-- Every calendar that holds a row of one UID, live or in the trash. The
+-- access guard of a UID-wide delete or restore reads it.
+SELECT DISTINCT calendar_id FROM events WHERE uid = ? ORDER BY calendar_id;
+
+-- name: RestoreEventByCalendarUIDAndRecurrenceID :exec
+-- Un-hide the soft-deleted override of one occurrence in one calendar.
+-- The undo of a delete of a legacy override uses it: the row belongs to
+-- no single series, so the restore touches that row only.
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NOT NULL;

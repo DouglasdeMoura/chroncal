@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -71,5 +72,61 @@ func TestExportResource_ScopedToCalendar(t *testing.T) {
 	}
 	if idB != masterB.ID {
 		t.Errorf("lookupOwnerID(B) = %d, want the master of calendar B %d", idB, masterB.ID)
+	}
+}
+
+// TestExportResource_LegacyOverrideCalendarHasNoResource: a calendar that
+// holds legacy overrides of a UID only, while a live master of the UID is
+// in another calendar, exports no resource. A PUT of the overrides alone
+// would store an object with no master.
+func TestExportResource_LegacyOverrideCalendarHasNoResource(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	res, err := engine.db.ExecContext(ctx, `INSERT INTO calendars (name) VALUES ('Legacy')`)
+	if err != nil {
+		t.Fatalf("insert calendar: %v", err)
+	}
+	calC, _ := res.LastInsertId()
+
+	start := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	if _, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "legacy-series", CalendarID: calA, Title: "Standup A",
+		StartTime: start, EndTime: start.Add(30 * time.Minute), RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	}); err != nil {
+		t.Fatalf("upsert master A: %v", err)
+	}
+	if _, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "legacy-series", CalendarID: calC, Title: "Legacy late",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour),
+		RecurrenceID: second.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+
+	// One live master: the export of A carries the legacy override, and
+	// the export of C has no resource.
+	data, err := engine.exportResource(ctx, calA, "event", "legacy-series")
+	if err != nil {
+		t.Fatalf("exportResource(A): %v", err)
+	}
+	if !strings.Contains(string(data), "SUMMARY:Legacy late") {
+		t.Errorf("export of A lacks the legacy override:\n%s", data)
+	}
+	if _, err := engine.exportResource(ctx, calC, "event", "legacy-series"); !errors.Is(err, errResourceMissing) {
+		t.Errorf("exportResource(C) err = %v, want errResourceMissing", err)
+	}
+
+	// Two live masters: the export of C still has no resource.
+	if _, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "legacy-series", CalendarID: calB, Title: "Standup B",
+		StartTime: start, EndTime: start.Add(30 * time.Minute), RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	}); err != nil {
+		t.Fatalf("upsert master B: %v", err)
+	}
+	if _, err := engine.exportResource(ctx, calC, "event", "legacy-series"); !errors.Is(err, errResourceMissing) {
+		t.Errorf("exportResource(C) with two masters err = %v, want errResourceMissing", err)
 	}
 }

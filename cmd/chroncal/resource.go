@@ -40,6 +40,12 @@ type resource struct {
 	// resolves an override row by it.
 	resolve func(ctx context.Context, a *app.App, ref, recurrenceID string) (row, error)
 
+	// resolveIn maps a CLI reference to the target row in the named
+	// calendar. A domain whose UID can live in more than one calendar sets
+	// it (issue #842). The delete verb uses it when its context carries a
+	// calendar name (see withDeleteCalendar).
+	resolveIn func(ctx context.Context, a *app.App, ref, calendarName string) (row, error)
+
 	// del soft-deletes one row by ID. delSeries soft-deletes the master row
 	// of the resolved row and every override of its series. The row carries
 	// the calendar: two calendars can hold the same event UID (issue #842).
@@ -116,7 +122,12 @@ func newDeleteCmd(r resource, h verbHelp) *cobra.Command {
 				return errInvalidInputf("--series and --recurrence-id are mutually exclusive")
 			}
 
-			target, err := r.resolve(ctx, a, args[0], recurrenceID)
+			var target row
+			if name := deleteCalendar(cmd); name != "" && r.resolveIn != nil {
+				target, err = r.resolveIn(ctx, a, args[0], name)
+			} else {
+				target, err = r.resolve(ctx, a, args[0], recurrenceID)
+			}
 			if err != nil {
 				return fmt.Errorf("get %s: %w", r.name, err)
 			}
@@ -135,7 +146,7 @@ func newDeleteCmd(r resource, h verbHelp) *cobra.Command {
 			w := cmd.OutOrStdout()
 			if series {
 				if err := r.delSeries(ctx, a, target); err != nil {
-					return fmt.Errorf("delete series: %w", err)
+					return fmt.Errorf("delete series: %w", notFoundErr(err, r.name, target.UID))
 				}
 				return reportDeleted(cmd, a, w, target.CalendarID,
 					map[string]any{"deleted": true, "uid": target.UID, "series": true},
@@ -154,6 +165,32 @@ func newDeleteCmd(r resource, h verbHelp) *cobra.Command {
 	cmd.Flags().BoolVar(&series, "series", false, "delete the entire recurring series (master + all overrides)")
 	addConfirmFlag(cmd)
 	return cmd
+}
+
+// deleteCalendarKey is the context key of the calendar name that a
+// resource-specific delete wrapper passes to the shared delete verb.
+type deleteCalendarKey struct{}
+
+// withDeleteCalendar stores the calendar name of a delete on the context
+// of cmd, so the shared delete verb resolves the reference in that
+// calendar (resource.resolveIn).
+func withDeleteCalendar(cmd *cobra.Command, calendarName string) {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd.SetContext(context.WithValue(ctx, deleteCalendarKey{}, calendarName))
+}
+
+// deleteCalendar returns the calendar name that withDeleteCalendar stored,
+// or an empty string.
+func deleteCalendar(cmd *cobra.Command) string {
+	if ctx := cmd.Context(); ctx != nil {
+		if name, ok := ctx.Value(deleteCalendarKey{}).(string); ok {
+			return name
+		}
+	}
+	return ""
 }
 
 // newRestoreCmd builds the restore verb for one resource. A numeric
@@ -182,7 +219,7 @@ func newRestoreCmd(r resource, h verbHelp) *cobra.Command {
 					if errors.Is(err, r.errNotDeleted) {
 						return errNotFoundf("%s %d not found (may have been purged)", r.name, id)
 					}
-					return fmt.Errorf("restore %s: %w", r.name, err)
+					return fmt.Errorf("restore %s: %w", r.name, notFoundErr(err, r.name, id))
 				}
 				if outputFmt != "text" {
 					return printOutput(w, map[string]any{"restored": true, "id": id})
@@ -196,7 +233,7 @@ func newRestoreCmd(r resource, h verbHelp) *cobra.Command {
 				if errors.Is(err, r.errNotDeleted) {
 					return errNotFoundf("%s %q not found (may have been purged)", r.name, ref)
 				}
-				return fmt.Errorf("restore %s: %w", r.name, err)
+				return fmt.Errorf("restore %s: %w", r.name, notFoundErr(err, r.name, ref))
 			}
 			if outputFmt != "text" {
 				return printOutput(w, map[string]any{"restored": true, "uid": ref})

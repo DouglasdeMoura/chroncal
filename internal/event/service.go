@@ -292,21 +292,6 @@ func (s *Service) distinctCalendarIDsByUID(ctx context.Context, uid string) ([]i
 	return ids, nil
 }
 
-// ensureSeriesWritable enforces remote access/component policy on every
-// calendar the UID touches. A series delete or restore is then blocked even
-// when only orphaned overrides or series-tail rows remain after a master purge.
-func (s *Service) ensureSeriesWritable(ctx context.Context, uid string) error {
-	ids, err := s.distinctCalendarIDsByUID(ctx, uid)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if err := calendaraccess.EnsureWritable(ctx, s.q, id, "VEVENT"); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // validateDurationValue applies the span rule that the todo service
 // applies in validateTiming. The import path drops a bad value with a

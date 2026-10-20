@@ -69,28 +69,41 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if len(candidates) == 0 {
 		candidates = trashed
 	}
+	if len(candidates) == 0 {
+		return storage.Event{}, nil, sql.ErrNoRows
+	}
 	if calendarID != 0 {
 		// The calendar holds no master row of the UID. A legacy override
 		// in it belongs to the series of the one master. Any other
-		// calendar holds no row of the series.
-		n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
-			CalendarID: calendarID, Uid: uid,
-		})
-		if err != nil {
-			return storage.Event{}, nil, err
+		// calendar holds no row of the series. A live edit counts the
+		// live overrides only: a legacy override in the trash does not
+		// put the calendar into the series.
+		var overrides int64
+		if includeDeleted {
+			n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
+				CalendarID: calendarID, Uid: uid,
+			})
+			if err != nil {
+				return storage.Event{}, nil, err
+			}
+			overrides = n.Overrides
+		} else {
+			n, err := qtx.CountLiveEventOverridesInCalendar(ctx, storage.CountLiveEventOverridesInCalendarParams{
+				CalendarID: calendarID, Uid: uid,
+			})
+			if err != nil {
+				return storage.Event{}, nil, err
+			}
+			overrides = n
 		}
-		if n.Overrides == 0 {
+		if overrides == 0 {
 			return storage.Event{}, nil, sql.ErrNoRows
 		}
 	}
-	switch len(candidates) {
-	case 0:
-		return storage.Event{}, nil, sql.ErrNoRows
-	case 1:
+	if len(candidates) == 1 {
 		return candidates[0], masters, nil
-	default:
-		return storage.Event{}, nil, ErrAmbiguousUID
 	}
+	return storage.Event{}, nil, ErrAmbiguousUID
 }
 
 // wrapLookup keeps ErrAmbiguousUID bare, so a caller can match it, and
@@ -112,13 +125,21 @@ func wrapMasterLookup(err error) error {
 // that calendar and each calendar with a legacy override of the UID (see
 // storage.LegacyOverride). The other calendars that hold the UID stay
 // out, so a read-only copy of the UID in calendar A does not block a
-// delete or a restore of the series in calendar B.
+// delete or a restore of the series in calendar B. calendarID 0 names no
+// calendar: the guard then covers every calendar that holds a row of the
+// UID, live or in the trash.
 func ensureSeriesWritableIn(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error {
-	ids, err := q.ListSeriesCalendarIDs(ctx, storage.ListSeriesCalendarIDsParams{CalendarID: calendarID, Uid: uid})
+	var ids []int64
+	var err error
+	if calendarID == 0 {
+		ids, err = q.ListEventCalendarIDsByUID(ctx, uid)
+	} else {
+		ids, err = q.ListSeriesCalendarIDs(ctx, storage.ListSeriesCalendarIDsParams{CalendarID: calendarID, Uid: uid})
+	}
 	if err != nil {
 		return fmt.Errorf("list series calendars: %w", err)
 	}
-	if len(ids) == 0 {
+	if len(ids) == 0 && calendarID != 0 {
 		ids = []int64{calendarID}
 	}
 	for _, id := range ids {
