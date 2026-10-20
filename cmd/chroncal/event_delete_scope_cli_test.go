@@ -410,3 +410,95 @@ func TestEventUpdate_CalendarWithoutSeriesNamesIt(t *testing.T) {
 		t.Fatalf("stderr = %q, want the named calendar and the remedy", stderr)
 	}
 }
+
+// seedLegacyOverrideInHome stores a daily series in Work and an override
+// of its second occurrence in Home with no master there (a legacy
+// override). It returns the UID and the row ID of the legacy override.
+func seedLegacyOverrideInHome(t *testing.T) (string, int64) {
+	t.Helper()
+	for _, name := range []string{"Work", "Home"} {
+		if _, _, err := runChroncalCommand(t, "calendar", "create", name); err != nil {
+			t.Fatalf("calendar create %s: %v", name, err)
+		}
+	}
+	addDailySeries(t, "Standup", "2026-04-06")
+	got, _, err := runChroncalCommand(t, "event", "get", "1", "--output", "json")
+	if err != nil {
+		t.Fatalf("event get: %v", err)
+	}
+	var master map[string]any
+	if err := json.Unmarshal([]byte(got), &master); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	uid := stringFromJSON(master["uid"])
+	ics := filepath.Join(t.TempDir(), "legacy.ics")
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
+		"\r\nDTSTAMP:20260401T000000Z\r\nRECURRENCE-ID:20260407T090000Z\r\nDTSTART:20260407T100000Z\r\nDTEND:20260407T103000Z\r\n" +
+		"SUMMARY:Legacy late\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Home"); err != nil {
+		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	// An orphan override is not in the expanded list, so the row comes
+	// from a get by UID and recurrence ID.
+	out, _, err := runChroncalCommand(t, "event", "get", uid, "--recurrence-id", "2026-04-07T09:00:00Z", "--output", "json")
+	if err != nil {
+		t.Fatalf("event get legacy override: %v", err)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(out), &row); err != nil {
+		t.Fatalf("decode get: %v stdout=%q", err, out)
+	}
+	return uid, int64(row["id"].(float64))
+}
+
+// TestEventUpdate_CalendarOfLegacyOverrideNamesSeries: --calendar on the
+// calendar of a legacy override names the series of its master, so an
+// edit of another occurrence creates the override beside the master and
+// is not a move.
+func TestEventUpdate_CalendarOfLegacyOverrideNamesSeries(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid, _ := seedLegacyOverrideInHome(t)
+	day3 := "2026-04-08T09:00:00Z"
+	stdout, stderr, err := runChroncalCommand(t, "event", "update", uid, "--recurrence-id", day3, "--calendar", "Home", "--title", "Moved")
+	if err != nil {
+		t.Fatalf("update through the legacy calendar: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	out, _, err := runChroncalCommand(t, "event", "list", "--calendar", "Work", "--from", "2026-04-08", "--to", "2026-04-09", "--output", "json")
+	if err != nil {
+		t.Fatalf("event list Work: %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("decode list Work: %v stdout=%q", err, out)
+	}
+	var got string
+	for _, r := range rows {
+		if stringFromJSON(r["start_time"]) == day3 {
+			got = stringFromJSON(r["title"])
+		}
+	}
+	if got != "Moved" {
+		t.Errorf("Work occurrence of %s = %q, want the edit beside the master", day3, got)
+	}
+}
+
+// TestEventDelete_LegacyOverrideRowActsOnMaster: a delete of an occurrence
+// through the row ID of a legacy override acts on the master of its
+// series, in the calendar of the master.
+func TestEventDelete_LegacyOverrideRowActsOnMaster(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	_, legacyID := seedLegacyOverrideInHome(t)
+	stdout, stderr, err := runChroncalCommand(t, "event", "delete", strconv.FormatInt(legacyID, 10), "--recurrence-id", "2026-04-07T09:00:00Z", "--yes")
+	if err != nil {
+		t.Fatalf("delete through the legacy row: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	want := []string{"2026-04-06T09:00:00Z", "2026-04-08T09:00:00Z", "2026-04-09T09:00:00Z"}
+	if starts := listSeriesStartsIn(t, "Work", "2026-04-06", "2026-04-10"); strings.Join(starts, ",") != strings.Join(want, ",") {
+		t.Fatalf("Work starts after the delete = %v, want %v", starts, want)
+	}
+}

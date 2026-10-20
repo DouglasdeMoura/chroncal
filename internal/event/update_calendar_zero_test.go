@@ -22,7 +22,7 @@ func TestUpdateScopes_CalendarZeroKeepsTheCalendar(t *testing.T) {
 	t.Run("this event", func(t *testing.T) {
 		svc := newTestService(t)
 		master := newRecurringMaster(t, svc, "zero-cal-1", "FREQ=DAILY")
-		got, err := svc.UpdateInstance(ctx, master.UID, instance, p)
+		got, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, instance, p)
 		if err != nil {
 			t.Fatalf("UpdateInstance with CalendarID 0: %v", err)
 		}
@@ -30,7 +30,7 @@ func TestUpdateScopes_CalendarZeroKeepsTheCalendar(t *testing.T) {
 			t.Fatalf("override calendar = %d, want %d", got.CalendarID, master.CalendarID)
 		}
 		// A second edit updates the stored override.
-		if got, err = svc.UpdateInstance(ctx, master.UID, instance, p); err != nil {
+		if got, err = svc.UpdateInstance(ctx, master.CalendarID, master.UID, instance, p); err != nil {
 			t.Fatalf("second UpdateInstance with CalendarID 0: %v", err)
 		} else if got.CalendarID != master.CalendarID {
 			t.Fatalf("updated override calendar = %d, want %d", got.CalendarID, master.CalendarID)

@@ -272,22 +272,9 @@ func (s *Service) ensureEventWritable(ctx context.Context, eventID int64) error 
 // (the trash view supports series tails). A UID-keyed mutation must then
 // enforce policy on each of these calendars, not only the master's.
 func (s *Service) distinctCalendarIDsByUID(ctx context.Context, uid string) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT calendar_id FROM events WHERE uid = ?`, uid)
+	ids, err := s.q.ListEventCalendarIDsByUID(ctx, uid)
 	if err != nil {
 		return nil, fmt.Errorf("distinct calendar ids: %w", err)
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan calendar id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate calendar ids: %w", err)
 	}
 	return ids, nil
 }
@@ -536,65 +523,6 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 	}
 }
 
-// findInstanceMasterTx finds the master of an occurrence edit of move.UID.
-// recID is the recurrence ID of the occurrence. Two calendars can hold the
-// same UID. One live master is the only choice. With more live masters, the
-// one in calendarID wins. No live master gives sql.ErrNoRows. The second
-// result lists every master row of the UID, live and in the trash, for the
-// legacy-override rule (see storage.LegacyOverride).
-//
-// An edit that names a calendar with no live master of the UID cannot
-// choose a master. A legacy override of recID in that calendar can belong to any
-// master, so it gets ErrAmbiguousUID. With no such override, the
-// occurrence lives in the calendar of a master, and the shared rule
-// (uidmove.Rows.CheckOverrideMove) refuses the move for each master. An
-// edit that names no calendar gets ErrAmbiguousUID.
-func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmove.Rows, calendarID int64, recID string) (storage.Event, []uidmove.Master, error) {
-	uid := move.UID
-	rows, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
-	if err != nil {
-		return storage.Event{}, nil, err
-	}
-	masters := uidMasters(rows)
-	var live []storage.Event
-	for _, m := range rows {
-		if m.DeletedAt == nil {
-			live = append(live, m)
-		}
-	}
-	switch len(live) {
-	case 0:
-		return storage.Event{}, nil, sql.ErrNoRows
-	case 1:
-		return live[0], masters, nil
-	}
-	for _, m := range live {
-		if m.CalendarID == calendarID {
-			return m, masters, nil
-		}
-	}
-	if calendarID == 0 {
-		return storage.Event{}, nil, ErrAmbiguousUID
-	}
-	_, err = qtx.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
-		CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
-	})
-	found, err := storage.Found(err)
-	if err != nil {
-		return storage.Event{}, nil, err
-	}
-	if !found || uidmove.HasMasterIn(masters, calendarID) {
-		// The occurrence has no legacy override in calendarID, so it can
-		// belong to each master, and its calendar is not known. Calendar 0
-		// holds no master, so the shared rule refuses the move and names
-		// every live master.
-		if err := move.CheckOverrideMove(recID, 0, calendarID, masters); err != nil {
-			return storage.Event{}, nil, err
-		}
-	}
-	return storage.Event{}, nil, ErrAmbiguousUID
-}
-
 // findInstanceOverrideTx finds the stored override of recID for master. A
 // row in the calendar of the master wins. Else it takes a legacy override
 // (see storage.LegacyOverride) that the series of master owns. The view
@@ -777,7 +705,7 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 // RECURRENCE-ID). The new StartTime/EndTime in p reflect the user's edits and
 // may differ. For example, a move of Wednesday's standup from 9:00 to 9:30
 // sets RecurrenceID=2026-05-20T09:00:00Z but StartTime=2026-05-20T09:30:00Z.
-func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
+func (s *Service) UpdateInstance(ctx context.Context, calendarID int64, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
 	p.applyDefaults()
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -787,7 +715,7 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
+	e, err := updateInstanceTx(ctx, qtx, calendarID, uid, instanceTime, p)
 	if err != nil {
 		return Event{}, err
 	}
@@ -806,7 +734,7 @@ func (s *Service) UpdateInstance(ctx context.Context, uid string, instanceTime t
 // UpdateInstanceWithRelations is UpdateInstance plus an attendee/alarm write in
 // the same transaction, so the override row and its children commit atomically
 // (issue #87).
-func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
+func (s *Service) UpdateInstanceWithRelations(ctx context.Context, calendarID int64, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
 	// Reject a bad attendee or alarm before the transaction opens. See
@@ -826,7 +754,7 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, err := updateInstanceTx(ctx, qtx, uid, instanceTime, p)
+	e, err := updateInstanceTx(ctx, qtx, calendarID, uid, instanceTime, p)
 	if err != nil {
 		return Event{}, err
 	}
@@ -851,7 +779,7 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, uid string, i
 // sends the mark of a legacy override to the calendar of its master. It
 // opens no transaction, so callers can compose it with attendee/alarm
 // writes.
-func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
+func updateInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
@@ -859,12 +787,18 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	}
 	recID := instanceTime.UTC().Format(time.RFC3339)
 	move := uidMoveRows(qtx, uid)
-	master, masters, err := findInstanceMasterTx(ctx, qtx, move, p.CalendarID, recID)
-	if errors.Is(err, ErrAmbiguousUID) || errors.Is(err, ErrInstanceCalendarMove) {
-		return Event{}, err
-	}
+	// The series is the one of the calendar of the occurrence: the
+	// calendar of its row, or of its master (findSeriesMasterTx). The
+	// three edit scopes share that rule. p.CalendarID is the target of
+	// the edit only, and the move rule below refuses a move of one
+	// occurrence.
+	master, err := findSeriesMasterTx(ctx, qtx, calendarID, uid)
 	if err != nil {
-		return Event{}, fmt.Errorf("get master: %w", err)
+		return Event{}, wrapMasterLookup(err)
+	}
+	masters, err := move.Masters(ctx)
+	if err != nil {
+		return Event{}, fmt.Errorf("list masters: %w", err)
 	}
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
 		return Event{}, err

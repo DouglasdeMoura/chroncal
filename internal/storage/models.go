@@ -195,11 +195,11 @@ type EventResource struct {
 }
 
 type EventSeriesDelete struct {
-	ID              int64
-	CalendarID      int64
-	Uid             string
-	HiddenOverrides string
-	DeletedAt       string
+	ID         int64
+	CalendarID int64
+	Uid        string
+	HiddenIds  string
+	DeletedAt  string
 }
 
 type EventSeriesRow struct {

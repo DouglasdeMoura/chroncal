@@ -28,7 +28,9 @@ import (
 // resolveEventOccurrence looks up an event by ID, UID, or UID plus
 // recurrence-id. When no override row exists, it returns the generated
 // occurrence from the series master. createOverride is true in that case
-// so event update can call UpdateInstance.
+// so event update can call UpdateInstance. viaCalendar reports that the
+// lookup found the occurrence through calendarID, so that calendar names
+// the series and not a move target.
 //
 // Two calendars can hold the same UID (issue #842). calendarID names the
 // calendar of the series for a UID reference: the override or the master
@@ -37,43 +39,45 @@ import (
 // and the service refuses the move of one occurrence with its hint. When
 // that lookup cannot choose the series, the error names calendarName as
 // a calendar with no series of the UID.
-func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64, calendarName string) (event.Event, bool, error) {
+func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64, calendarName string) (e event.Event, createOverride, viaCalendar bool, err error) {
 	if recurrenceID == "" {
 		e, err := resolveEvent(ctx, a, ref, "")
-		return e, false, err
+		return e, false, false, err
 	}
 	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
 		e, err := resolveEvent(ctx, a, ref, recurrenceID)
-		return e, false, err
+		return e, false, false, err
 	}
 	if calendarID != 0 {
 		e, err := a.Events.GetByCalendarUIDAndRecurrenceID(ctx, calendarID, ref, recurrenceID)
 		if err == nil {
-			return e, false, nil
+			return e, false, true, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return event.Event{}, false, err
+			return event.Event{}, false, false, err
 		}
 		master, err := a.Events.SeriesMaster(ctx, calendarID, ref)
 		if err == nil {
-			return generatedOccurrence(master, ref, recurrenceID)
+			occ, create, err := generatedOccurrence(master, ref, recurrenceID)
+			return occ, create, true, err
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return event.Event{}, false, notFoundErr(err, "event", ref)
+			return event.Event{}, false, false, notFoundErr(err, "event", ref)
 		}
 	}
-	e, err := a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
+	e, err = a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
 	if err == nil {
-		return e, false, nil
+		return e, false, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return event.Event{}, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
+		return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
 	}
 	master, err := a.Events.GetByUID(ctx, ref)
 	if err != nil {
-		return event.Event{}, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
+		return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
 	}
-	return generatedOccurrence(master, ref, recurrenceID)
+	occ, create, err := generatedOccurrence(master, ref, recurrenceID)
+	return occ, create, false, err
 }
 
 // ambiguousSeriesErr maps a lookup error of a UID reference. With a

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -346,12 +347,13 @@ func (s *Service) restoreSeriesDelete(ctx context.Context, calendarID int64, uid
 }
 
 // restoreSeriesDeleteTx reverses a series delete in one calendar: it
-// un-hides the master and the overrides that the series delete hid. The
-// series-delete log row (event_series_deletes) lists those overrides, so
-// the restore touches exactly that set. An override that a sync prune,
-// an occurrence delete, or a truncation hid before stays in the trash,
-// with its EXDATE and its log row. The trash view then still lists an
-// occurrence delete on its own. The restore consumes the log row.
+// un-hides the master and the override rows that the series delete hid.
+// The series-delete log row (event_series_deletes) lists those rows by
+// ID, so the restore touches exactly that set, also when the owner of a
+// legacy override changed after the delete. An override that a sync
+// prune, an occurrence delete, or a truncation hid before stays in the
+// trash, with its EXDATE and its log row. The trash view then still lists
+// an occurrence delete on its own. The restore consumes the log row.
 //
 // A series in the trash from before the log (migration 057) has no log
 // row. The restore then un-hides every trashed override of the series
@@ -375,22 +377,29 @@ func restoreSeriesDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID
 	if err != nil {
 		return fmt.Errorf("get series delete log: %w", err)
 	}
-	var recurrenceIDs []string
 	if logged {
-		if log.HiddenOverrides != "" {
-			recurrenceIDs = strings.Split(log.HiddenOverrides, ",")
+		if log.HiddenIds != "" {
+			for _, field := range strings.Split(log.HiddenIds, ",") {
+				id, err := strconv.ParseInt(field, 10, 64)
+				if err != nil {
+					return fmt.Errorf("parse hidden row id %q: %w", field, err)
+				}
+				if err := qtx.RestoreEvent(ctx, id); err != nil {
+					return fmt.Errorf("restore override row %d: %w", id, err)
+				}
+			}
 		}
 	} else {
-		recurrenceIDs, err = unloggedHiddenOverridesTx(ctx, qtx, calendarID, uid)
+		recurrenceIDs, err := unloggedHiddenOverridesTx(ctx, qtx, calendarID, uid)
 		if err != nil {
 			return err
 		}
-	}
-	for _, recID := range recurrenceIDs {
-		if _, err := qtx.RestoreSeriesOverrideByRecurrenceID(ctx, storage.RestoreSeriesOverrideByRecurrenceIDParams{
-			CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
-		}); err != nil {
-			return fmt.Errorf("restore override %s: %w", recID, err)
+		for _, recID := range recurrenceIDs {
+			if _, err := qtx.RestoreSeriesOverrideByRecurrenceID(ctx, storage.RestoreSeriesOverrideByRecurrenceIDParams{
+				CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
+			}); err != nil {
+				return fmt.Errorf("restore override %s: %w", recID, err)
+			}
 		}
 	}
 	if err := qtx.DeleteEventSeriesDeletesByCalendarUID(ctx, storage.DeleteEventSeriesDeletesByCalendarUIDParams{
@@ -558,10 +567,12 @@ func (s *Service) restoreSingle(ctx context.Context, calendarID int64, uid, recu
 			}
 			return nil
 		}
-		// Master is live; an override was probably the thing deleted.
-		// Un-hide every deleted override of the series.
-		_, err := s.restoreSeriesRowsClearingExdates(ctx, r.CalendarID, uid)
-		return err
+		// The undo reverses a delete of the master row, and the master
+		// is live: a restore from the trash came first. The undo has
+		// nothing to do. It must not un-hide the other rows of the
+		// series: an occurrence deleted on its own stays deleted
+		// (issue #287).
+		return ErrNotDeleted
 	}
 	if err := s.q.RestoreEvent(ctx, r.ID); err != nil {
 		return err
@@ -1327,8 +1338,8 @@ func (s *Service) DeleteSeries(ctx context.Context, calendarID int64, uid string
 		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
 			return fmt.Errorf("create tombstone: %w", err)
 		}
-		// Record the live overrides that this delete hides, so a
-		// restore of the series brings back exactly those rows.
+		// Record the live override rows that this delete hides, by ID,
+		// so a restore of the series brings back exactly those rows.
 		live, err := qtx.ListSeriesOverridesInCalendar(ctx, storage.ListSeriesOverridesInCalendarParams{
 			CalendarID: master.CalendarID, Uid: uid,
 		})
@@ -1337,10 +1348,10 @@ func (s *Service) DeleteSeries(ctx context.Context, calendarID int64, uid string
 		}
 		hidden := make([]string, 0, len(live))
 		for _, o := range live {
-			hidden = append(hidden, o.RecurrenceID)
+			hidden = append(hidden, strconv.FormatInt(o.ID, 10))
 		}
 		if err := qtx.RecordEventSeriesDelete(ctx, storage.RecordEventSeriesDeleteParams{
-			CalendarID: master.CalendarID, Uid: uid, HiddenOverrides: strings.Join(hidden, ","),
+			CalendarID: master.CalendarID, Uid: uid, HiddenIds: strings.Join(hidden, ","),
 		}); err != nil {
 			return fmt.Errorf("record series delete: %w", err)
 		}

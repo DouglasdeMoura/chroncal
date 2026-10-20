@@ -75,7 +75,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 					return err
 				}
 			}
-			existing, createOverride, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID, calID, calendarName)
+			existing, createOverride, viaCalendar, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID, calID, calendarName)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
@@ -118,7 +118,12 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			if cmd.Flags().Changed("location") {
 				p.Location = location
 			}
-			if cmd.Flags().Changed("calendar") {
+			if cmd.Flags().Changed("calendar") && !viaCalendar {
+				// The flag names the move target. When the lookup found
+				// the series through the flag, the occurrence keeps the
+				// calendar of its row (p.CalendarID), so an edit of an
+				// occurrence of a series with a legacy override in the
+				// named calendar is not a move.
 				p.CalendarID = calID
 			}
 			if cmd.Flags().Changed("status") {
@@ -343,7 +348,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 
 			var e event.Event
 			if createOverride {
-				e, err = a.Events.UpdateInstance(ctx, existing.UID, instanceTime, p)
+				e, err = a.Events.UpdateInstance(ctx, existing.CalendarID, existing.UID, instanceTime, p)
 			} else {
 				e, err = a.Events.Update(ctx, existing.ID, p)
 			}

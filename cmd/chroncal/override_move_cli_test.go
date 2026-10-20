@@ -65,7 +65,7 @@ func TestOverrideCalendarMoveCLIError(t *testing.T) {
 		t.Fatalf("create event: %v", err)
 	}
 	inst := start.Add(24 * time.Hour)
-	evOverride, err := a.Events.UpdateInstance(ctx, evMaster.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)})
+	evOverride, err := a.Events.UpdateInstance(ctx, evMaster.CalendarID, evMaster.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("create event override: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestLegacyOverrideCalendarMoveCLIHint(t *testing.T) {
 	}
 	master := mkSeries(1)
 	inst := start.Add(24 * time.Hour)
-	override, err := a.Events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)})
+	override, err := a.Events.UpdateInstance(ctx, master.CalendarID, master.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("create override: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestOrphanOverrideCalendarMoveCLIHint(t *testing.T) {
 		t.Fatalf("create event: %v", err)
 	}
 	inst := start.Add(24 * time.Hour)
-	override, err := a.Events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)})
+	override, err := a.Events.UpdateInstance(ctx, master.CalendarID, master.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("create override: %v", err)
 	}

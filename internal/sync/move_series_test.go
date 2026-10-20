@@ -73,7 +73,7 @@ func createSeriesWithOverride(t *testing.T, engine *Engine, calID int64) (master
 	t.Helper()
 	master = createSeries(t, engine, calID)
 	inst = master.StartTime.Add(24 * time.Hour)
-	override, err := engine.events.UpdateInstance(context.Background(), master.UID, inst, event.UpdateParams{
+	override, err := engine.events.UpdateInstance(context.Background(), master.CalendarID, master.UID, inst, event.UpdateParams{
 		CalendarID: calID, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour),
 	})
 	if err != nil {
@@ -192,7 +192,7 @@ func TestMoveSingleInstanceToOtherCalendarIsRejected(t *testing.T) {
 
 	master := createSeries(t, engine, calA)
 	inst := master.StartTime.Add(24 * time.Hour)
-	_, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
+	_, err := engine.events.UpdateInstance(ctx, master.CalendarID, master.UID, inst, event.UpdateParams{
 		CalendarID: calB, Title: "Elsewhere", StartTime: inst, EndTime: inst.Add(time.Hour),
 	})
 	if !errors.Is(err, event.ErrInstanceCalendarMove) {
@@ -285,7 +285,7 @@ func TestEditLegacyOverrideInOtherCalendarKeepsCalendar(t *testing.T) {
 		t.Fatalf("move override row: %v", err)
 	}
 
-	if _, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
+	if _, err := engine.events.UpdateInstance(ctx, master.CalendarID, master.UID, inst, event.UpdateParams{
 		CalendarID: calB, Title: "Later", StartTime: inst, EndTime: inst.Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("UpdateInstance on the legacy override = %v, want nil", err)
@@ -343,7 +343,7 @@ func TestEditLegacyOverrideBackToMasterCalendarReunitesSeries(t *testing.T) {
 		t.Fatalf("seed sync row of B: %v", err)
 	}
 
-	if _, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
+	if _, err := engine.events.UpdateInstance(ctx, master.CalendarID, master.UID, inst, event.UpdateParams{
 		CalendarID: calA, Title: "Back", StartTime: inst, EndTime: inst.Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("UpdateInstance back to the master calendar = %v, want nil", err)
@@ -500,7 +500,7 @@ func TestUpdateInstanceFindsMasterInCalendarOfEdit(t *testing.T) {
 	sameUID(t, engine, masterB.ID, masterA.UID)
 
 	inst := masterA.StartTime.Add(24 * time.Hour)
-	if _, err := engine.events.UpdateInstance(ctx, masterA.UID, inst, event.UpdateParams{
+	if _, err := engine.events.UpdateInstance(ctx, calB, masterA.UID, inst, event.UpdateParams{
 		CalendarID: calB, Title: "Late in B", StartTime: inst, EndTime: inst.Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("UpdateInstance in B = %v, want nil", err)
@@ -520,7 +520,7 @@ func TestUpdateInstanceFindsMasterInCalendarOfEdit(t *testing.T) {
 		t.Fatalf("CreateCalendar: %v", err)
 	}
 	next := inst.Add(24 * time.Hour)
-	_, err = engine.events.UpdateInstance(ctx, masterA.UID, next, event.UpdateParams{
+	_, err = engine.events.UpdateInstance(ctx, masterA.CalendarID, masterA.UID, next, event.UpdateParams{
 		CalendarID: cal.ID, Title: "Where", StartTime: next, EndTime: next.Add(time.Hour),
 	})
 	if !errors.Is(err, event.ErrInstanceCalendarMove) {
@@ -540,7 +540,7 @@ func TestUpdateInstanceFindsMasterInCalendarOfEdit(t *testing.T) {
 		masterA.UID, next.Format(time.RFC3339), legacy.ID); err != nil {
 		t.Fatalf("seed legacy override: %v", err)
 	}
-	_, err = engine.events.UpdateInstance(ctx, masterA.UID, next, event.UpdateParams{
+	_, err = engine.events.UpdateInstance(ctx, cal.ID, masterA.UID, next, event.UpdateParams{
 		CalendarID: cal.ID, Title: "Where", StartTime: next, EndTime: next.Add(time.Hour),
 	})
 	if !errors.Is(err, event.ErrAmbiguousUID) {
@@ -867,7 +867,7 @@ func TestEditLegacyOverrideInReadOnlyCalendarIsRefused(t *testing.T) {
 	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read' WHERE id = ?`, calB); err != nil {
 		t.Fatalf("make B read-only: %v", err)
 	}
-	_, err := engine.events.UpdateInstance(ctx, master.UID, inst, event.UpdateParams{
+	_, err := engine.events.UpdateInstance(ctx, master.CalendarID, master.UID, inst, event.UpdateParams{
 		CalendarID: calA, Title: "Back", StartTime: inst, EndTime: inst.Add(time.Hour),
 	})
 	if !errors.Is(err, calendaraccess.ErrReadOnly) {
@@ -921,7 +921,7 @@ func TestOverrideBesideTrashedMasterIsNotLegacy(t *testing.T) {
 		t.Fatalf("trash the master of A: %v", err)
 	}
 
-	edited, err := engine.events.UpdateInstance(ctx, masterA.UID, inst, event.UpdateParams{
+	edited, err := engine.events.UpdateInstance(ctx, calB, masterA.UID, inst, event.UpdateParams{
 		CalendarID: calB, Title: "Late in B", StartTime: inst, EndTime: inst.Add(time.Hour),
 	})
 	if err != nil {
