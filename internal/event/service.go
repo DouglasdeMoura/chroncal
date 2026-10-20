@@ -598,9 +598,10 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 // findInstanceOverrideTx finds the stored override of recID for master. A
 // row in the calendar of the master wins. Else it takes a legacy override
 // (see storage.LegacyOverride): a row in a calendar with no master row of
-// the UID, live or in the trash. masters lists every master row of the
-// UID, live and in the trash. More than one legacy row gives
-// ErrAmbiguousUID. No row gives sql.ErrNoRows.
+// the UID, live or in the trash, when the series of master owns it
+// (uidmove.LegacyOwner). masters lists every master row of the UID, live
+// and in the trash. More than one legacy row gives ErrAmbiguousUID. No
+// row gives sql.ErrNoRows.
 func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, masters []uidmove.Master, recID string) (storage.Event, error) {
 	// One query reads every live row of (uid, recID). The pick runs in Go,
 	// so the common edit (no row, or a row with the master) needs no second
@@ -612,12 +613,14 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 	if err != nil {
 		return storage.Event{}, err
 	}
+	owner, ownsLegacy, _ := uidmove.LegacyOwner(masters)
+	ownsLegacy = ownsLegacy && owner == master.CalendarID
 	var legacy []storage.Event
 	for _, r := range rows {
 		if r.CalendarID == master.CalendarID {
 			return r, nil
 		}
-		if !uidmove.HasMasterIn(masters, r.CalendarID) {
+		if ownsLegacy && !uidmove.HasMasterIn(masters, r.CalendarID) {
 			legacy = append(legacy, r)
 		}
 	}

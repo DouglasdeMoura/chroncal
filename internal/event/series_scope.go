@@ -20,11 +20,12 @@ import (
 // A calendar with a live master of the UID gives that master. A calendar
 // with a master of the UID in the trash gives sql.ErrNoRows: the series is
 // not live there. A calendar with no master row of the UID holds a legacy
-// override at most (see storage.LegacyOverride). Such an override belongs
-// to the one live master of the UID, so one live master is the choice,
-// and more give ErrAmbiguousUID. A calendar with no row of the UID gives
-// sql.ErrNoRows. calendarID 0 names no calendar: one live master is then
-// the only choice, none gives sql.ErrNoRows, and more give ErrAmbiguousUID.
+// override at most (see storage.LegacyOverride). The owner of such a row
+// is the one live master of the UID (uidmove.LegacyOwner), so one live
+// master is the choice, and more give ErrAmbiguousUID. A calendar with no
+// live row of the UID gives sql.ErrNoRows. calendarID 0 names no
+// calendar: one live master is then the only choice, none gives
+// sql.ErrNoRows, and more give ErrAmbiguousUID.
 //
 // The second result lists every master row of the UID, live and in the
 // trash, for the override lookup (findInstanceOverrideTx).
@@ -35,10 +36,11 @@ func findSeriesMasterTx(ctx context.Context, qtx *storage.Queries, calendarID in
 // findSeriesMasterIncludingDeletedTx is findSeriesMasterTx for a restore.
 // The master can be in the trash, so a master row in the trash counts as
 // the master of its calendar. With calendarID 0, or for a legacy
-// override, the live masters of the UID come first: one live master is
-// the choice. With no live master, one master in the trash is the
-// choice. A copy of the UID in the trash of another calendar, for
-// example a purge-pending copy, then never blocks a restore.
+// override, the owner rule (uidmove.LegacyOwner) applies in full: one
+// live master is the choice, and with no live master one master in the
+// trash is the choice. A copy of the UID in the trash of another
+// calendar, for example a purge-pending copy, then never blocks a
+// restore.
 func findSeriesMasterIncludingDeletedTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (storage.Event, []uidmove.Master, error) {
 	return findSeriesMaster(ctx, qtx, calendarID, uid, true)
 }
@@ -49,7 +51,6 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 		return storage.Event{}, nil, err
 	}
 	masters := uidMasters(rows)
-	var candidates, trashed []storage.Event
 	for _, m := range rows {
 		if calendarID != 0 && m.CalendarID == calendarID {
 			if includeDeleted || m.DeletedAt == nil {
@@ -59,17 +60,8 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 			// series is not live there.
 			return storage.Event{}, nil, sql.ErrNoRows
 		}
-		switch {
-		case m.DeletedAt == nil:
-			candidates = append(candidates, m)
-		case includeDeleted:
-			trashed = append(trashed, m)
-		}
 	}
-	if len(candidates) == 0 {
-		candidates = trashed
-	}
-	if len(candidates) == 0 {
+	if len(masters) == 0 {
 		return storage.Event{}, nil, sql.ErrNoRows
 	}
 	if calendarID != 0 {
@@ -100,10 +92,24 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 			return storage.Event{}, nil, sql.ErrNoRows
 		}
 	}
-	if len(candidates) == 1 {
-		return candidates[0], masters, nil
+	owner, ok, ambiguous := uidmove.LegacyOwner(masters)
+	if ambiguous {
+		return storage.Event{}, nil, ErrAmbiguousUID
 	}
-	return storage.Event{}, nil, ErrAmbiguousUID
+	if !ok {
+		return storage.Event{}, nil, sql.ErrNoRows
+	}
+	var candidate storage.Event
+	for _, m := range rows {
+		if m.CalendarID == owner {
+			candidate = m
+		}
+	}
+	if candidate.DeletedAt != nil && !includeDeleted {
+		// The owner is in the trash, so no live series owns the row.
+		return storage.Event{}, nil, sql.ErrNoRows
+	}
+	return candidate, masters, nil
 }
 
 // wrapLookup keeps ErrAmbiguousUID bare, so a caller can match it, and

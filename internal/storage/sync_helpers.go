@@ -106,7 +106,8 @@ func (q *Queries) MarkResourceDirty(ctx context.Context, calendarID int64, uid, 
 // and the overrides together, and a restore brings them back together.
 //
 // This is the one definition of the term. dirtyCalendar, uidmove (the move
-// rule), and the override lookup of the event service use it.
+// rule), and the override lookup of the event service use it. The series
+// that owns a legacy override is the one that uidmove.LegacyOwner names.
 func LegacyOverride(ownMasterRows int64) bool {
 	return ownMasterRows == 0
 }

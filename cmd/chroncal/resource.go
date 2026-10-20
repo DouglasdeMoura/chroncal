@@ -42,8 +42,7 @@ type resource struct {
 
 	// resolveIn maps a CLI reference to the target row in the named
 	// calendar. A domain whose UID can live in more than one calendar sets
-	// it (issue #842). The delete verb uses it when its context carries a
-	// calendar name (see withDeleteCalendar).
+	// it (issue #842). runDelete uses it when deleteOpts names a calendar.
 	resolveIn func(ctx context.Context, a *app.App, ref, calendarName string) (row, error)
 
 	// del soft-deletes one row by ID. delSeries soft-deletes the master row
@@ -111,54 +110,7 @@ func newDeleteCmd(r resource, h verbHelp) *cobra.Command {
 		Example: h.example,
 		Args:    exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := initApp()
-			if err != nil {
-				return err
-			}
-			defer a.Close()
-			ctx := context.Background()
-
-			if series && recurrenceID != "" {
-				return errInvalidInputf("--series and --recurrence-id are mutually exclusive")
-			}
-
-			var target row
-			if name := deleteCalendar(cmd); name != "" && r.resolveIn != nil {
-				target, err = r.resolveIn(ctx, a, args[0], name)
-			} else {
-				target, err = r.resolve(ctx, a, args[0], recurrenceID)
-			}
-			if err != nil {
-				return fmt.Errorf("get %s: %w", r.name, err)
-			}
-
-			question := fmt.Sprintf("Delete %s %q?", r.name, safeText(target.Summary))
-			switch {
-			case series:
-				question = fmt.Sprintf("Delete the entire recurring series %q (master + all overrides)?", safeText(target.Summary))
-			case recurrenceID != "":
-				question = fmt.Sprintf("Delete override instance of %q at %s?", safeText(target.Summary), recurrenceID)
-			}
-			if err := confirmDestructive(cmd, question); err != nil {
-				return err
-			}
-
-			w := cmd.OutOrStdout()
-			if series {
-				if err := r.delSeries(ctx, a, target); err != nil {
-					return fmt.Errorf("delete series: %w", notFoundErr(err, r.name, target.UID))
-				}
-				return reportDeleted(cmd, a, w, target.CalendarID,
-					map[string]any{"deleted": true, "uid": target.UID, "series": true},
-					fmt.Sprintf("Deleted %s series %q.\n", r.name, safeText(target.UID)))
-			}
-
-			if err := r.del(ctx, a, target.ID); err != nil {
-				return fmt.Errorf("delete %s: %w", r.name, err)
-			}
-			return reportDeleted(cmd, a, w, target.CalendarID,
-				map[string]any{"deleted": true, "id": target.ID},
-				fmt.Sprintf("Deleted %s %d.\n", r.name, target.ID))
+			return runDelete(cmd, r, args, deleteOpts{RecurrenceID: recurrenceID, Series: series})
 		},
 	}
 	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
@@ -167,30 +119,67 @@ func newDeleteCmd(r resource, h verbHelp) *cobra.Command {
 	return cmd
 }
 
-// deleteCalendarKey is the context key of the calendar name that a
-// resource-specific delete wrapper passes to the shared delete verb.
-type deleteCalendarKey struct{}
-
-// withDeleteCalendar stores the calendar name of a delete on the context
-// of cmd, so the shared delete verb resolves the reference in that
-// calendar (resource.resolveIn).
-func withDeleteCalendar(cmd *cobra.Command, calendarName string) {
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	cmd.SetContext(context.WithValue(ctx, deleteCalendarKey{}, calendarName))
+// deleteOpts carries the flag values of one delete run. A resource that
+// wraps the verb with more flags passes them here, so no state lives on
+// the command between runs.
+type deleteOpts struct {
+	RecurrenceID string
+	Series       bool
+	// CalendarName names the calendar of the reference. runDelete then
+	// resolves the reference with resource.resolveIn (issue #842).
+	CalendarName string
 }
 
-// deleteCalendar returns the calendar name that withDeleteCalendar stored,
-// or an empty string.
-func deleteCalendar(cmd *cobra.Command) string {
-	if ctx := cmd.Context(); ctx != nil {
-		if name, ok := ctx.Value(deleteCalendarKey{}).(string); ok {
-			return name
-		}
+// runDelete is the body of the shared delete verb. See newDeleteCmd.
+func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) error {
+	a, err := initApp()
+	if err != nil {
+		return err
 	}
-	return ""
+	defer a.Close()
+	ctx := context.Background()
+
+	if opts.Series && opts.RecurrenceID != "" {
+		return errInvalidInputf("--series and --recurrence-id are mutually exclusive")
+	}
+
+	var target row
+	if opts.CalendarName != "" && r.resolveIn != nil {
+		target, err = r.resolveIn(ctx, a, args[0], opts.CalendarName)
+	} else {
+		target, err = r.resolve(ctx, a, args[0], opts.RecurrenceID)
+	}
+	if err != nil {
+		return fmt.Errorf("get %s: %w", r.name, err)
+	}
+
+	question := fmt.Sprintf("Delete %s %q?", r.name, safeText(target.Summary))
+	switch {
+	case opts.Series:
+		question = fmt.Sprintf("Delete the entire recurring series %q (master + all overrides)?", safeText(target.Summary))
+	case opts.RecurrenceID != "":
+		question = fmt.Sprintf("Delete override instance of %q at %s?", safeText(target.Summary), opts.RecurrenceID)
+	}
+	if err := confirmDestructive(cmd, question); err != nil {
+		return err
+	}
+
+	w := cmd.OutOrStdout()
+	if opts.Series {
+		if err := r.delSeries(ctx, a, target); err != nil {
+			return fmt.Errorf("delete series: %w", notFoundErr(err, r.name, target.UID))
+		}
+		return reportDeleted(cmd, a, w, target.CalendarID,
+			map[string]any{"deleted": true, "uid": target.UID, "series": true},
+			fmt.Sprintf("Deleted %s series %q.\n", r.name, safeText(target.UID)))
+	}
+
+	if err := r.del(ctx, a, target.ID); err != nil {
+		return fmt.Errorf("delete %s: %w", r.name, err)
+	}
+	return reportDeleted(cmd, a, w, target.CalendarID,
+		map[string]any{"deleted": true, "id": target.ID},
+		fmt.Sprintf("Deleted %s %d.\n", r.name, target.ID))
 }
 
 // newRestoreCmd builds the restore verb for one resource. A numeric

@@ -129,4 +129,15 @@ func TestExportResource_LegacyOverrideCalendarHasNoResource(t *testing.T) {
 	if _, err := engine.exportResource(ctx, calC, "event", "legacy-series"); !errors.Is(err, errResourceMissing) {
 		t.Errorf("exportResource(C) with two masters err = %v, want errResourceMissing", err)
 	}
+	// With two live masters the legacy row belongs to no series
+	// (uidmove.LegacyOwner), so no export carries it.
+	for _, cal := range []int64{calA, calB} {
+		data, err := engine.exportResource(ctx, cal, "event", "legacy-series")
+		if err != nil {
+			t.Fatalf("exportResource(%d) with two masters: %v", cal, err)
+		}
+		if strings.Contains(string(data), "Legacy late") {
+			t.Errorf("export of calendar %d with two masters carries the legacy override:\n%s", cal, data)
+		}
+	}
 }

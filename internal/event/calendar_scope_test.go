@@ -170,10 +170,14 @@ func TestDeleteSeries_ScopedToCalendar(t *testing.T) {
 		t.Errorf("live overrides in calendar B = %d, want 0 after the delete", len(overrides))
 	}
 
-	// RestoreByUID targets the one series in the trash, so the live copy
-	// in calendar A does not make the UID ambiguous.
-	if err := svc.RestoreByUID(ctx, masterB.UID); err != nil {
-		t.Fatalf("RestoreByUID: %v", err)
+	// RestoreByUID follows the series rule: the live master in calendar A
+	// names the series, and A has no row in the trash. The ID of the
+	// master of B names the series in the trash.
+	if err := svc.RestoreByUID(ctx, masterB.UID); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("RestoreByUID with a live copy in A err = %v, want ErrNotDeleted", err)
+	}
+	if err := svc.RestoreByID(ctx, masterB.ID); err != nil {
+		t.Fatalf("RestoreByID(master B): %v", err)
 	}
 	wantSeriesIntact(t, svc, masterB.CalendarID)
 	wantSeriesIntact(t, svc, 1)
@@ -487,8 +491,18 @@ func TestDeleteSeries_ReadOnlyCopyDoesNotBlock(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, "guarded-uid"); err != nil {
 		t.Fatalf("DeleteSeries(1): %v", err)
 	}
-	if err := svc.RestoreByUID(ctx, "guarded-uid"); err != nil {
-		t.Fatalf("RestoreByUID: %v", err)
+	// The live master in the read-only calendar names the series for a
+	// restore by UID, so that restore is refused. The ID of the master
+	// in calendar 1 names the series in the trash.
+	if err := svc.RestoreByUID(ctx, "guarded-uid"); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("RestoreByUID with a live read-only copy err = %v, want ErrReadOnly", err)
+	}
+	master1, err := svc.q.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: 1, Uid: "guarded-uid"})
+	if err != nil {
+		t.Fatalf("get master 1: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, master1.ID); err != nil {
+		t.Fatalf("RestoreByID(master 1): %v", err)
 	}
 }
 
@@ -783,5 +797,189 @@ func TestDeleteByID_LegacyOverrideGuardsMasterCalendar(t *testing.T) {
 	}
 	if got := storage.NullableToString(m.Exdates); got != "" {
 		t.Errorf("exdates of the read-only master = %q, want none", got)
+	}
+}
+
+// TestLegacyOverride_TwoLiveMastersOwnNothing is the owner rule
+// (uidmove.LegacyOwner) on each series path: with two live masters, a
+// legacy override belongs to no series. Once one master is in the trash,
+// the other owns it.
+func TestLegacyOverride_TwoLiveMastersOwnNothing(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	third := second.Add(24 * time.Hour)
+	legacy := legacyOverrideOfTwoMasters(t, svc, masterA, third)
+
+	for _, cal := range []int64{masterA.CalendarID, masterB.CalendarID} {
+		overrides, err := svc.ListSeriesOverrides(ctx, cal, masterA.UID)
+		if err != nil {
+			t.Fatalf("ListSeriesOverrides(%d): %v", cal, err)
+		}
+		if len(overrides) != 1 || overrides[0].CalendarID != cal {
+			t.Errorf("ListSeriesOverrides(%d) = %+v, want the own override only", cal, overrides)
+		}
+		if _, err := svc.SeriesOverride(ctx, cal, masterA.UID, third.Format(time.RFC3339)); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("SeriesOverride(%d, legacy occurrence) err = %v, want sql.ErrNoRows", cal, err)
+		}
+	}
+	if err := svc.DeleteSeries(ctx, masterA.CalendarID, masterA.UID); err != nil {
+		t.Fatalf("DeleteSeries(A): %v", err)
+	}
+	if r, err := svc.Get(ctx, legacy.ID); err != nil || r.DeletedAt != nil {
+		t.Fatalf("legacy row after DeleteSeries(A) = %+v, %v; want it live", r, err)
+	}
+	// B is the one live master now, so it owns the legacy row.
+	overrides, err := svc.ListSeriesOverrides(ctx, masterB.CalendarID, masterB.UID)
+	if err != nil {
+		t.Fatalf("ListSeriesOverrides(B): %v", err)
+	}
+	if len(overrides) != 2 {
+		t.Errorf("ListSeriesOverrides(B) with A in the trash = %d rows, want 2 (own and legacy)", len(overrides))
+	}
+}
+
+// TestRestoreSeries_LeavesLegacyOverrideOfLiveMaster: the restore of a
+// trashed series does not un-hide a legacy override that the live master
+// of another calendar owns and excluded.
+func TestRestoreSeries_LeavesLegacyOverrideOfLiveMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	third := second.Add(24 * time.Hour)
+	legacy := legacyOverrideOfTwoMasters(t, svc, masterA, third)
+
+	if err := svc.DeleteSeries(ctx, masterA.CalendarID, masterA.UID); err != nil {
+		t.Fatalf("DeleteSeries(A): %v", err)
+	}
+	// B owns the legacy row now: its occurrence delete hides the row.
+	if err := svc.DeleteInstance(ctx, masterB.CalendarID, masterB.UID, third); err != nil {
+		t.Fatalf("DeleteInstance(B, legacy occurrence): %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt == nil {
+		t.Fatalf("legacy row after DeleteInstance(B) = %+v, %v; want it in the trash", r, err)
+	}
+
+	if err := svc.RestoreByID(ctx, masterA.ID); err != nil {
+		t.Fatalf("RestoreByID(master A): %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("legacy row after the restore of A = %+v, %v; want it still in the trash", r, err)
+	}
+	mB, _ := seriesState(t, svc, masterB.CalendarID)
+	if got := storage.NullableToString(mB.Exdates); got == "" {
+		t.Errorf("exdates in calendar B = %q, want the legacy occurrence still excluded", got)
+	}
+}
+
+// TestRestoreByUID_PrefersLiveMaster: a stale trashed copy of the UID in
+// calendar A does not take the restore of a deleted override of the live
+// series in calendar B.
+func TestRestoreByUID_PrefersLiveMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	if err := svc.DeleteSeries(ctx, masterA.CalendarID, masterA.UID); err != nil {
+		t.Fatalf("DeleteSeries(A): %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, masterB.CalendarID, masterB.UID, second); err != nil {
+		t.Fatalf("DeleteInstance(B): %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, masterB.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	wantSeriesIntact(t, svc, masterB.CalendarID)
+	if mA, _ := seriesState(t, svc, masterA.CalendarID); mA.DeletedAt == nil {
+		t.Errorf("the stale copy in A is live after the restore of B, want it still in the trash")
+	}
+}
+
+// TestRestoreOverrideByID_ThenMaster: the restore of an override while its
+// master is in the trash clears the EXDATE on the trashed master, so the
+// restore of the master shows the occurrence.
+func TestRestoreOverrideByID_ThenMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "single-uid", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "single-uid", CalendarID: 1, Title: "Late",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert override: %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, 1, "single-uid", second); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, "single-uid"); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID(override): %v", err)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	m, err := svc.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "single-uid"})
+	if err != nil {
+		t.Fatalf("get master: %v", err)
+	}
+	if got := storage.NullableToString(m.Exdates); got != "" {
+		t.Errorf("exdates after both restores = %q, want none", got)
+	}
+	logs, err := svc.q.ListEventExdateDeletesByCalendar(ctx, 1)
+	if err != nil || len(logs) != 0 {
+		t.Errorf("exdate log rows after both restores = %v, %v; want none", logs, err)
+	}
+	if r, err := svc.Get(ctx, override.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("override after both restores = %+v, %v; want it live", r, err)
+	}
+}
+
+// TestRestoreLegacyOverride_GuardsMasterCalendar: the restore of a legacy
+// override rewrites the EXDATE of its master, so a read-only master
+// calendar refuses the undo and the restore by ID.
+func TestRestoreLegacyOverride_GuardsMasterCalendar(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	calB := insertCalendar(t, svc, "Master")
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "guarded-uid", CalendarID: calB, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	}); err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	second := start.Add(24 * time.Hour)
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "guarded-uid", CalendarID: 1, Title: "Legacy override",
+		StartTime: second, EndTime: second.Add(time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	meta, err := svc.DeleteWithUndo(ctx, legacy.ID)
+	if err != nil {
+		t.Fatalf("DeleteWithUndo(legacy): %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read', remote_components = 'VEVENT' WHERE id = ?`, calB); err != nil {
+		t.Fatalf("make the master calendar read-only: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Errorf("RestoreUndo(legacy of a read-only master) err = %v, want ErrReadOnly", err)
+	}
+	if err := svc.RestoreByID(ctx, legacy.ID); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Errorf("RestoreByID(legacy of a read-only master) err = %v, want ErrReadOnly", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("legacy row after the refused restores = %+v, %v; want it still in the trash", r, err)
 	}
 }

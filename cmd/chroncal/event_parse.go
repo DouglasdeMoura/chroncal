@@ -29,7 +29,13 @@ import (
 // recurrence-id. When no override row exists, it returns the generated
 // occurrence from the series master. createOverride is true in that case
 // so event update can call UpdateInstance.
-func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string) (event.Event, bool, error) {
+//
+// Two calendars can hold the same UID (issue #842). calendarID names the
+// calendar of the series for a UID reference: the override or the master
+// of that calendar is the target. A calendar that holds no series of the
+// UID names a move target instead, so the lookup then runs without it,
+// and the service refuses the move of one occurrence with its hint.
+func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64) (event.Event, bool, error) {
 	if recurrenceID == "" {
 		e, err := resolveEvent(ctx, a, ref, "")
 		return e, false, err
@@ -37,6 +43,22 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
 		e, err := resolveEvent(ctx, a, ref, recurrenceID)
 		return e, false, err
+	}
+	if calendarID != 0 {
+		e, err := a.Events.GetByCalendarUIDAndRecurrenceID(ctx, calendarID, ref, recurrenceID)
+		if err == nil {
+			return e, false, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return event.Event{}, false, err
+		}
+		master, err := a.Events.SeriesMaster(ctx, calendarID, ref)
+		if err == nil {
+			return generatedOccurrence(master, ref, recurrenceID)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return event.Event{}, false, notFoundErr(err, "event", ref)
+		}
 	}
 	e, err := a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
 	if err == nil {
@@ -49,6 +71,12 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 	if err != nil {
 		return event.Event{}, false, notFoundErr(err, "event", ref)
 	}
+	return generatedOccurrence(master, ref, recurrenceID)
+}
+
+// generatedOccurrence builds the occurrence of master at recurrenceID
+// for an edit that creates the override.
+func generatedOccurrence(master event.Event, ref, recurrenceID string) (event.Event, bool, error) {
 	at, err := parseRFC3339Flag("recurrence-id", recurrenceID)
 	if err != nil {
 		return event.Event{}, false, err

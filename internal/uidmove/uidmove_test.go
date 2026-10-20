@@ -254,3 +254,25 @@ func TestUpdateKeepsCalendarForZeroTarget(t *testing.T) {
 		t.Fatalf("write got calendar %d, want the calendar of the row %d", got, cal.ID)
 	}
 }
+
+func TestLegacyOwner(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		masters       []Master
+		want          int64
+		ok, ambiguous bool
+	}{
+		{name: "no master"},
+		{name: "one live", masters: []Master{{CalendarID: 1}}, want: 1, ok: true},
+		{name: "one live, one trashed", masters: []Master{{CalendarID: 1}, {CalendarID: 2, Trashed: true}}, want: 1, ok: true},
+		{name: "one trashed", masters: []Master{{CalendarID: 2, Trashed: true}}, want: 2, ok: true},
+		{name: "two live", masters: []Master{{CalendarID: 1}, {CalendarID: 2}}, ambiguous: true},
+		{name: "two trashed", masters: []Master{{CalendarID: 1, Trashed: true}, {CalendarID: 2, Trashed: true}}, ambiguous: true},
+	} {
+		got, ok, ambiguous := LegacyOwner(tc.masters)
+		if got != tc.want || ok != tc.ok || ambiguous != tc.ambiguous {
+			t.Errorf("%s: LegacyOwner = (%d, %v, %v), want (%d, %v, %v)", tc.name, got, ok, ambiguous, tc.want, tc.ok, tc.ambiguous)
+		}
+	}
+}
