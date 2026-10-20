@@ -652,7 +652,6 @@ func TestApplyAdoptsTheLocalVariantNextToARemoteOne(t *testing.T) {
 	}
 }
 
-
 func TestSetLocalPathReportsAMissingRowOnClear(t *testing.T) {
 	svc := newTestService(t)
 	if err := svc.SetLocalPath(context.Background(), 999, ""); err == nil {
