@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -320,5 +321,73 @@ func TestEventRestore_SeriesInTwoCalendarsByMasterID(t *testing.T) {
 	}
 	if starts := listSeriesStartsIn(t, "Work", "2026-04-06", "2026-04-10"); len(starts) != 0 {
 		t.Fatalf("Work starts after the restore of Home = %v, want none", starts)
+	}
+}
+
+// TestEventUpdate_RecurrenceIDNamesSeriesCalendar: with the UID in two
+// calendars, an occurrence edit by UID needs --calendar to name the
+// series, and the edit then touches that series only.
+func TestEventUpdate_RecurrenceIDNamesSeriesCalendar(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+	day2 := "2026-04-07T09:00:00Z"
+
+	_, stderr, err := runChroncalCommand(t, "event", "update", uid, "--recurrence-id", day2, "--title", "Moved")
+	if err == nil || !strings.Contains(stderr, "more than one calendar") || !strings.Contains(stderr, "--calendar") {
+		t.Fatalf("update by UID: err = %v, stderr = %q; want the --calendar hint", err, stderr)
+	}
+	stdout, stderr, err := runChroncalCommand(t, "event", "update", uid, "--recurrence-id", day2, "--calendar", "Home", "--title", "Moved")
+	if err != nil {
+		t.Fatalf("update in Home: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	for _, c := range []struct{ calendar, want string }{{"Home", "Moved"}, {"Work", "Standup"}} {
+		out, _, err := runChroncalCommand(t, "event", "list", "--calendar", c.calendar, "--from", "2026-04-07", "--to", "2026-04-08", "--output", "json")
+		if err != nil {
+			t.Fatalf("event list %s: %v", c.calendar, err)
+		}
+		var rows []map[string]any
+		if err := json.Unmarshal([]byte(out), &rows); err != nil {
+			t.Fatalf("decode list %s: %v stdout=%q", c.calendar, err, out)
+		}
+		var got string
+		for _, r := range rows {
+			if stringFromJSON(r["start_time"]) == day2 {
+				got = stringFromJSON(r["title"])
+			}
+		}
+		if got != c.want {
+			t.Errorf("%s occurrence title = %q, want %q", c.calendar, got, c.want)
+		}
+	}
+}
+
+// TestEventDelete_ReusedCommandTreeKeepsNoCalendar runs one command tree
+// twice in one process. The first run names --calendar; the second run
+// clears it, and the delete must not keep the first calendar.
+func TestEventDelete_ReusedCommandTreeKeepsNoCalendar(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+
+	// The root command loads the config (CHRONCAL_DB) in its persistent
+	// pre-run, so the in-process runs go through it. The tree is the one
+	// global tree, so the second run sees the flags of the first.
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
+	rootCmd.SetArgs([]string{"event", "delete", uid, "--series", "--calendar", "Home", "--yes"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("first run (Home): %v", err)
+	}
+	// The Work master has row ID 1. A stale Home calendar would refuse it.
+	rootCmd.SetArgs([]string{"event", "delete", "1", "--series", "--calendar", "", "--yes"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("second run (no calendar): %v", err)
+	}
+	for _, cal := range []string{"Work", "Home"} {
+		if starts := listSeriesStartsIn(t, cal, "2026-04-06", "2026-04-10"); len(starts) != 0 {
+			t.Errorf("%s starts after both deletes = %v, want none", cal, starts)
+		}
 	}
 }

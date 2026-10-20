@@ -183,7 +183,6 @@ any override at that time). --following truncates the series at that date.`,
 	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar of the event, when the UID is in more than one calendar")
 	cmd.Flags().Lookup("recurrence-id").Usage = "delete this occurrence (RFC 3339 timestamp)"
 
-	plainDelete := cmd.RunE
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		recurrenceID, err := cmd.Flags().GetString("recurrence-id")
 		if err != nil {
@@ -204,10 +203,7 @@ any override at that time). --following truncates the series at that date.`,
 			// The shared delete verb resolves a bare UID through the
 			// one-master rule. With --calendar, it resolves the reference
 			// in that calendar (eventResource.resolveIn).
-			if calendarName != "" {
-				withDeleteCalendar(cmd, calendarName)
-			}
-			return plainDelete(cmd, args)
+			return runDelete(cmd, eventResource, args, deleteOpts{Series: series, CalendarName: calendarName})
 		}
 
 		var followingAt, occurrenceAt time.Time

@@ -705,11 +705,18 @@ func (q *Queries) ListDeletedOverrideRecurrenceIDs(ctx context.Context, uid stri
 }
 
 const listDeletedSeriesOverrideRecurrenceIDs = `-- name: ListDeletedSeriesOverrideRecurrenceIDs :many
-SELECT recurrence_id FROM events
-WHERE uid = ?1 AND recurrence_id != '' AND deleted_at IS NOT NULL
-  AND (calendar_id = ?2 OR NOT EXISTS (
+SELECT events.recurrence_id FROM events
+WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.deleted_at IS NOT NULL
+  AND (events.calendar_id = ?2 OR (NOT EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id))
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
+  AND EXISTS (
+    SELECT 1 FROM events AS c
+    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
 ORDER BY recurrence_id
 `
 
@@ -1051,11 +1058,18 @@ func (q *Queries) ListLiveOverrideRecurrenceIDsAtOrAfter(ctx context.Context, ar
 }
 
 const listLiveSeriesOverrideRecurrenceIDsAtOrAfter = `-- name: ListLiveSeriesOverrideRecurrenceIDsAtOrAfter :many
-SELECT recurrence_id FROM events
-WHERE uid = ?1 AND recurrence_id != '' AND recurrence_id >= ?2 AND deleted_at IS NULL
-  AND (calendar_id = ?3 OR NOT EXISTS (
+SELECT events.recurrence_id FROM events
+WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.recurrence_id >= ?2 AND events.deleted_at IS NULL
+  AND (events.calendar_id = ?3 OR (NOT EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id))
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
+  AND EXISTS (
+    SELECT 1 FROM events AS c
+    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?3
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
 `
 
 type ListLiveSeriesOverrideRecurrenceIDsAtOrAfterParams struct {
@@ -1205,11 +1219,18 @@ func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
 }
 
 const listSeriesCalendarIDs = `-- name: ListSeriesCalendarIDs :many
-SELECT DISTINCT calendar_id FROM events
-WHERE uid = ?1
-  AND (calendar_id = ?2 OR (recurrence_id != '' AND NOT EXISTS (
+SELECT DISTINCT events.calendar_id FROM events
+WHERE events.uid = ?1
+  AND (events.calendar_id = ?2 OR (events.recurrence_id != '' AND (NOT EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)))
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
+  AND EXISTS (
+    SELECT 1 FROM events AS c
+    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL))))))
 ORDER BY calendar_id
 `
 
@@ -1247,10 +1268,17 @@ func (q *Queries) ListSeriesCalendarIDs(ctx context.Context, arg ListSeriesCalen
 
 const listSeriesOverridesInCalendar = `-- name: ListSeriesOverridesInCalendar :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
-WHERE uid = ?1 AND recurrence_id != '' AND deleted_at IS NULL
-  AND (calendar_id = ?2 OR NOT EXISTS (
+WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.deleted_at IS NULL
+  AND (events.calendar_id = ?2 OR (NOT EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id))
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
+  AND EXISTS (
+    SELECT 1 FROM events AS c
+    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
 ORDER BY recurrence_id
 `
 
@@ -1259,10 +1287,19 @@ type ListSeriesOverridesInCalendarParams struct {
 	CalendarID int64
 }
 
-// The live override rows of the series of one UID in one calendar. The
-// series holds the override rows of that calendar and the legacy overrides
-// of the UID (see storage.LegacyOverride). Two calendars can hold the same
-// UID, so the override rows of the other master stay out (issue #842).
+// The live override rows of the series of one UID in one calendar: the
+// override rows of that calendar, plus the legacy overrides of the UID
+// that the series owns. Two calendars can hold the same UID, so the
+// override rows of the other master stay out (issue #842).
+//
+// The ownership rule of a legacy override (an override row in a calendar
+// with no master row of its UID, see storage.LegacyOverride) is
+// uidmove.LegacyOwner. This clause is its SQL form, and every series
+// query below repeats it: the row belongs to the series of the named
+// calendar when that calendar holds a master row of the UID (c), and no
+// other calendar holds a live master; when the master of c is in the
+// trash, no other calendar holds a master row at all. With no such
+// calendar, or with more than one, the row belongs to no series.
 func (q *Queries) ListSeriesOverridesInCalendar(ctx context.Context, arg ListSeriesOverridesInCalendarParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesOverridesInCalendar, arg.Uid, arg.CalendarID)
 	if err != nil {
@@ -1498,10 +1535,17 @@ UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ?1 AND recurrence_id = ?2 AND deleted_at IS NOT NULL
-  AND (calendar_id = ?3 OR NOT EXISTS (
+WHERE events.uid = ?1 AND events.recurrence_id = ?2 AND events.deleted_at IS NOT NULL
+  AND (events.calendar_id = ?3 OR (NOT EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id))
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
+  AND EXISTS (
+    SELECT 1 FROM events AS c
+    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?3
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
 `
 
 type RestoreSeriesOverrideByRecurrenceIDParams struct {
@@ -1522,10 +1566,17 @@ UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ?1 AND recurrence_id != '' AND recurrence_id >= ?2 AND deleted_at IS NOT NULL
-  AND (calendar_id = ?3 OR NOT EXISTS (
+WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.recurrence_id >= ?2 AND events.deleted_at IS NOT NULL
+  AND (events.calendar_id = ?3 OR (NOT EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id))
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
+  AND EXISTS (
+    SELECT 1 FROM events AS c
+    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?3
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
 `
 
 type RestoreSeriesOverridesAtOrAfterParams struct {
@@ -1546,10 +1597,17 @@ UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ?1 AND deleted_at IS NOT NULL
-  AND (calendar_id = ?2 OR (recurrence_id != '' AND NOT EXISTS (
+WHERE events.uid = ?1 AND events.deleted_at IS NOT NULL
+  AND (events.calendar_id = ?2 OR (events.recurrence_id != '' AND (NOT EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)))
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
+  AND EXISTS (
+    SELECT 1 FROM events AS c
+    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL))))))
 `
 
 type RestoreSeriesRowsInCalendarParams struct {
@@ -1633,10 +1691,17 @@ const softDeleteSeriesOverridesAtOrAfter = `-- name: SoftDeleteSeriesOverridesAt
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ?1 AND recurrence_id != '' AND recurrence_id >= ?2 AND deleted_at IS NULL
-  AND (calendar_id = ?3 OR NOT EXISTS (
+WHERE events.uid = ?1 AND events.recurrence_id != '' AND events.recurrence_id >= ?2 AND events.deleted_at IS NULL
+  AND (events.calendar_id = ?3 OR (NOT EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id))
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
+  AND EXISTS (
+    SELECT 1 FROM events AS c
+    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?3
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))))
 `
 
 type SoftDeleteSeriesOverridesAtOrAfterParams struct {
@@ -1656,10 +1721,17 @@ const softDeleteSeriesRowsInCalendar = `-- name: SoftDeleteSeriesRowsInCalendar 
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ?1 AND deleted_at IS NULL
-  AND (calendar_id = ?2 OR (recurrence_id != '' AND NOT EXISTS (
+WHERE events.uid = ?1 AND events.deleted_at IS NULL
+  AND (events.calendar_id = ?2 OR (events.recurrence_id != '' AND (NOT EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)))
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)
+  AND EXISTS (
+    SELECT 1 FROM events AS c
+    WHERE c.uid = events.uid AND c.recurrence_id = '' AND c.calendar_id = ?2
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = events.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL))))))
 `
 
 type SoftDeleteSeriesRowsInCalendarParams struct {

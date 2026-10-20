@@ -65,7 +65,17 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 			defer a.Close()
 			ctx := context.Background()
 
-			existing, createOverride, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID)
+			// With --recurrence-id and a UID, the calendar names the
+			// series (see resolveEventOccurrence). Else it is the move
+			// target.
+			var calID int64
+			if cmd.Flags().Changed("calendar") {
+				calID, err = resolveCalendarID(ctx, a, calendarName)
+				if err != nil {
+					return err
+				}
+			}
+			existing, createOverride, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID, calID)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}
@@ -109,10 +119,6 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				p.Location = location
 			}
 			if cmd.Flags().Changed("calendar") {
-				calID, err := resolveCalendarID(ctx, a, calendarName)
-				if err != nil {
-					return err
-				}
 				p.CalendarID = calID
 			}
 			if cmd.Flags().Changed("status") {
@@ -432,7 +438,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 	cmd.Flags().StringVar(&endDateStr, "end-date", "", "new end date (YYYY-MM-DD or relative); all-day: last day inclusive, timed: pair with --end-time")
 	cmd.Flags().StringVar(&endTimeStr, "end-time", "", "new end time (HH:MM)")
 	cmd.Flags().StringVar(&durationStr, "duration", "", "new duration (e.g. 30m, 1h30m)")
-	cmd.Flags().StringVar(&calendarName, "calendar", "", "move to calendar (by name)")
+	cmd.Flags().StringVar(&calendarName, "calendar", "", "move to calendar (by name); with --recurrence-id and a UID, the calendar of the series")
 	cmd.Flags().StringVar(&location, "location", "", "new location")
 	cmd.Flags().StringVar(&description, "description", "", "new description")
 	cmd.Flags().StringVar(&status, "status", "", "new status (TENTATIVE, CONFIRMED, CANCELLED)")

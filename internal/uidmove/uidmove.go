@@ -300,3 +300,37 @@ func (r Rows) Record(ctx context.Context, fromCalendarID, toCalendarID int64) er
 		return r.MoveRows(ctx, fromCalendarID, toCalendarID)
 	})
 }
+
+// LegacyOwner names the calendar whose series owns a legacy override of
+// the UID: an override row in a calendar with no master row of its UID
+// (see storage.LegacyOverride). masters holds every master row of the
+// UID, live and in the trash, one per calendar.
+//
+// This is the one rule. The series queries of the event service repeat
+// it in SQL (see ListSeriesOverridesInCalendar in db/queries/events.sql),
+// and findSeriesMasterTx applies it in Go:
+//
+//   - One live master: its calendar owns the row.
+//   - No live master and one master in the trash: that calendar owns the
+//     row, so a restore of the series brings the row back.
+//   - Else the row belongs to no series: ok is false. ambiguous reports
+//     whether masters exist and the rule cannot choose, so a caller can
+//     tell "no master" from "more than one master".
+func LegacyOwner(masters []Master) (calendarID int64, ok, ambiguous bool) {
+	var live []Master
+	for _, m := range masters {
+		if !m.Trashed {
+			live = append(live, m)
+		}
+	}
+	switch {
+	case len(live) == 1:
+		return live[0].CalendarID, true, false
+	case len(live) == 0 && len(masters) == 1:
+		return masters[0].CalendarID, true, false
+	case len(masters) == 0:
+		return 0, false, false
+	default:
+		return 0, false, true
+	}
+}
