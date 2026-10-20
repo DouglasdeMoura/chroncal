@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -162,9 +163,22 @@ func TestDeleteSeries_ScopedToCalendar(t *testing.T) {
 		t.Errorf("live overrides in calendar B = %d, want 0 after the delete", len(overrides))
 	}
 
-	// RestoreByUID cannot choose the series, so the restore goes by ID.
+	// RestoreByUID targets the one series in the trash, so the live copy
+	// in calendar A does not make the UID ambiguous.
+	if err := svc.RestoreByUID(ctx, masterB.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	wantSeriesIntact(t, svc, masterB.CalendarID)
+	wantSeriesIntact(t, svc, 1)
+
+	// With both series in the trash, the UID names no single series.
+	for _, cal := range []int64{1, masterB.CalendarID} {
+		if err := svc.DeleteSeries(ctx, cal, masterB.UID); err != nil {
+			t.Fatalf("DeleteSeries(%d): %v", cal, err)
+		}
+	}
 	if err := svc.RestoreByUID(ctx, masterB.UID); !errors.Is(err, ErrAmbiguousUID) {
-		t.Fatalf("RestoreByUID err = %v, want ErrAmbiguousUID", err)
+		t.Fatalf("RestoreByUID with two trashed series err = %v, want ErrAmbiguousUID", err)
 	}
 	if err := svc.RestoreByID(ctx, masterB.ID); err != nil {
 		t.Fatalf("RestoreByID: %v", err)
@@ -373,5 +387,233 @@ func TestUndoRestore_ScopedToCalendar(t *testing.T) {
 	}
 	if len(overridesA) != 1 {
 		t.Errorf("live overrides in calendar A = %d, want 1", len(overridesA))
+	}
+}
+
+// TestUndo_SameOccurrenceDeletedInBothCalendars is the delete-log rule of
+// migration 057: each calendar keeps its own log row, so the undo of the
+// delete in B does not look up the row of A and does nothing.
+func TestUndo_SameOccurrenceDeletedInBothCalendars(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	third := second.Add(24 * time.Hour)
+
+	if _, err := svc.DeleteInstanceWithUndo(ctx, masterA.CalendarID, masterA.UID, second); err != nil {
+		t.Fatalf("DeleteInstanceWithUndo(A): %v", err)
+	}
+	metaB, err := svc.DeleteInstanceWithUndo(ctx, masterB.CalendarID, masterB.UID, second)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithUndo(B): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, metaB); err != nil {
+		t.Fatalf("RestoreUndo(B occurrence): %v", err)
+	}
+	wantSeriesIntact(t, svc, masterB.CalendarID)
+	mA, overridesA := seriesState(t, svc, masterA.CalendarID)
+	if got := storage.NullableToString(mA.Exdates); got == "" {
+		t.Errorf("exdates in calendar A = %q, want the deleted occurrence still excluded", got)
+	}
+	if len(overridesA) != 0 {
+		t.Errorf("live overrides in calendar A = %d, want 0", len(overridesA))
+	}
+
+	// The same cutoff in both calendars.
+	if _, err := svc.DeleteFromInstanceWithUndo(ctx, masterA.CalendarID, masterA.UID, third); err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo(A): %v", err)
+	}
+	metaB, err = svc.DeleteFromInstanceWithUndo(ctx, masterB.CalendarID, masterB.UID, third)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo(B): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, metaB); err != nil {
+		t.Fatalf("RestoreUndo(B tail): %v", err)
+	}
+	wantSeriesIntact(t, svc, masterB.CalendarID)
+	mA, _ = seriesState(t, svc, masterA.CalendarID)
+	if got := storage.NullableToString(mA.RecurrenceRule); !strings.Contains(got, "UNTIL=") {
+		t.Errorf("rule in calendar A = %q, want it still truncated", got)
+	}
+
+	// The trash of A still lists both log rows of A.
+	entries, err := svc.ListTrash(ctx, masterA.CalendarID)
+	if err != nil {
+		t.Fatalf("ListTrash(A): %v", err)
+	}
+	var logs int
+	for _, e := range entries {
+		if e.Kind == TrashKindInstance || e.Kind == TrashKindTruncation {
+			logs++
+		}
+	}
+	if logs != 2 {
+		t.Errorf("log entries in the trash of A = %d, want 2", logs)
+	}
+}
+
+// TestDeleteSeries_ReadOnlyCopyDoesNotBlock is the access rule: the guard
+// covers the calendars of the series only, so a read-only copy of the UID
+// in another calendar does not block the delete or the restore.
+func TestDeleteSeries_ReadOnlyCopyDoesNotBlock(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	readOnly := insertGuardedCalendar(t, svc.db, "Read-Only", "read", "VEVENT")
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	for _, cal := range []int64{1, readOnly} {
+		if _, err := svc.UpsertByUID(ctx, UpsertParams{
+			UID: "guarded-uid", CalendarID: cal, Title: "Series",
+			StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+		}); err != nil {
+			t.Fatalf("upsert in calendar %d: %v", cal, err)
+		}
+	}
+	if err := svc.DeleteSeries(ctx, readOnly, "guarded-uid"); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("DeleteSeries(read-only) err = %v, want ErrReadOnly", err)
+	}
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, "guarded-uid")
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo(1): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo(1): %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, "guarded-uid"); err != nil {
+		t.Fatalf("DeleteSeries(1): %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, "guarded-uid"); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+}
+
+// TestHasLiveOverrideFrom_ScopedToCalendar: an override after the cutoff in
+// calendar A does not make a truncation of calendar B meaningful.
+func TestHasLiveOverrideFrom_ScopedToCalendar(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	cutoff := second.Add(24 * time.Hour)
+	fourth := cutoff.Add(24 * time.Hour)
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: masterA.UID, CalendarID: masterA.CalendarID, Title: "A late",
+		StartTime: fourth.Add(time.Hour), EndTime: fourth.Add(2 * time.Hour),
+		RecurrenceID: fourth.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("upsert override in A: %v", err)
+	}
+	for _, c := range []struct {
+		cal  int64
+		want bool
+	}{{masterA.CalendarID, true}, {masterB.CalendarID, false}} {
+		got, err := svc.HasLiveOverrideFrom(ctx, c.cal, masterA.UID, cutoff)
+		if err != nil {
+			t.Fatalf("HasLiveOverrideFrom(%d): %v", c.cal, err)
+		}
+		if got != c.want {
+			t.Errorf("HasLiveOverrideFrom(%d) = %v, want %v", c.cal, got, c.want)
+		}
+	}
+}
+
+// TestSeriesOverride_ScopedAndLiveOnly: the override of an occurrence is
+// the row of the series in the named calendar. A row of the other
+// calendar, or a row in the trash, is not that override.
+func TestSeriesOverride_ScopedAndLiveOnly(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	recID := second.Format(time.RFC3339)
+
+	a, err := svc.SeriesOverride(ctx, masterA.CalendarID, masterA.UID, recID)
+	if err != nil {
+		t.Fatalf("SeriesOverride(A): %v", err)
+	}
+	if a.CalendarID != masterA.CalendarID {
+		t.Errorf("SeriesOverride(A) is in calendar %d, want %d", a.CalendarID, masterA.CalendarID)
+	}
+	b, err := svc.SeriesOverride(ctx, masterB.CalendarID, masterB.UID, recID)
+	if err != nil {
+		t.Fatalf("SeriesOverride(B): %v", err)
+	}
+	if err := svc.Delete(ctx, b.ID); err != nil {
+		t.Fatalf("Delete(B override): %v", err)
+	}
+	if _, err := svc.SeriesOverride(ctx, masterB.CalendarID, masterB.UID, recID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("SeriesOverride(B) after the delete err = %v, want sql.ErrNoRows", err)
+	}
+	if _, err := svc.SeriesOverride(ctx, masterA.CalendarID, masterA.UID, recID); err != nil {
+		t.Errorf("SeriesOverride(A) after the delete in B: %v", err)
+	}
+}
+
+// TestDeleteByID_LegacyOverrideWithTwoMasters: a legacy override of a UID
+// with two live masters belongs to no series. Its delete by ID and its
+// restore by ID work, and no master gets an EXDATE.
+func TestDeleteByID_LegacyOverrideWithTwoMasters(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	calC := insertCalendar(t, svc, "Legacy")
+	third := second.Add(24 * time.Hour)
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: masterA.UID, CalendarID: calC, Title: "Legacy",
+		StartTime: third, EndTime: third.Add(time.Hour), RecurrenceID: third.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	if err := svc.Delete(ctx, legacy.ID); err != nil {
+		t.Fatalf("Delete(legacy): %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt == nil {
+		t.Fatalf("legacy row after the delete = %+v, %v; want it in the trash", r, err)
+	}
+	wantSeriesIntact(t, svc, masterA.CalendarID)
+	wantSeriesIntact(t, svc, masterB.CalendarID)
+	if err := svc.RestoreByID(ctx, legacy.ID); err != nil {
+		t.Fatalf("RestoreByID(legacy): %v", err)
+	}
+	if r, err := svc.Get(ctx, legacy.ID); err != nil || r.DeletedAt != nil {
+		t.Fatalf("legacy row after the restore = %+v, %v; want it live", r, err)
+	}
+}
+
+// TestRestore_PrefersLiveMasterOverTrashedCopy: a purge-pending copy of the
+// UID in the trash of another calendar does not make a restore ambiguous.
+func TestRestore_PrefersLiveMasterOverTrashedCopy(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	if err := svc.DeleteSeries(ctx, masterB.CalendarID, masterB.UID); err != nil {
+		t.Fatalf("DeleteSeries(B): %v", err)
+	}
+	got, err := svc.SeriesMaster(ctx, 0, masterA.UID)
+	if err != nil {
+		t.Fatalf("SeriesMaster(0): %v", err)
+	}
+	if got.ID != masterA.ID {
+		t.Errorf("SeriesMaster(0) = row %d, want the live master %d", got.ID, masterA.ID)
+	}
+
+	meta, err := svc.DeleteInstanceWithUndo(ctx, masterA.CalendarID, masterA.UID, second)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithUndo(A): %v", err)
+	}
+	// A legacy UndoMeta without a calendar takes the live master.
+	meta.CalendarID = 0
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo(A, no calendar): %v", err)
+	}
+	wantSeriesIntact(t, svc, masterA.CalendarID)
+
+	// A restore by ID of the trashed override in B finds its master in
+	// the trash of B.
+	row, err := svc.q.GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams{
+		CalendarID: masterB.CalendarID, Uid: masterB.UID, RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("override row of B: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, row.ID); err != nil {
+		t.Fatalf("RestoreByID(B override): %v", err)
 	}
 }

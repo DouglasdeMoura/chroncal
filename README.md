@@ -388,7 +388,7 @@ Event flags: `--date`, `--time`, `--end-time`, `--duration`, `--timezone`, `--lo
 
 The three flags are mutually exclusive.
 
-Two calendars can hold a series with the same UID, for example after a sync of two collections. A bare UID then names no single series. Pass the numeric ID of the master, or pass `--calendar NAME` with `--recurrence-id` or `--following` to name the calendar of the series. `event restore <uid>` has the same rule: restore the series by the ID of its master.
+Two calendars can hold a series with the same UID, for example after a sync of two collections. A bare UID then names no single series. Pass the numeric ID of the master, or pass `--calendar NAME` to name the calendar of the event. The flag works with every scope, with `--series`, and with a plain delete. Chroncal refuses a numeric ID together with a `--calendar` that does not hold that row. `event restore <uid>` restores the series in the trash. When two calendars hold the UID in the trash, restore the series by the ID of its master.
 
 `event rsvp` sets your RSVP status on an event:
 

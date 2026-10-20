@@ -367,3 +367,15 @@ WHERE uid = sqlc.arg(uid) AND deleted_at IS NOT NULL
   AND (calendar_id = sqlc.arg(calendar_id) OR (recurrence_id != '' AND NOT EXISTS (
     SELECT 1 FROM events AS m
     WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)));
+
+-- name: ListSeriesCalendarIDs :many
+-- The calendars that hold a row of the series of one UID in one calendar:
+-- that calendar, plus each calendar with a legacy override of the UID
+-- (see ListSeriesOverridesInCalendar). Rows in the trash count. The
+-- access guard of a series delete or restore reads it.
+SELECT DISTINCT calendar_id FROM events
+WHERE uid = sqlc.arg(uid)
+  AND (calendar_id = sqlc.arg(calendar_id) OR (recurrence_id != '' AND NOT EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)))
+ORDER BY calendar_id;

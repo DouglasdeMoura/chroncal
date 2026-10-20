@@ -175,7 +175,16 @@ func (s *Service) DeleteSeriesWithUndo(ctx context.Context, calendarID int64, ui
 // dispatches by Kind. For FromInstance kinds, it also rewrites the master's
 // RRULE back to the pre-truncation value in the same transaction.
 func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
-	if err := s.ensureSeriesWritable(ctx, meta.UID); err != nil {
+	// The guard covers the calendars of the series only. A calendar
+	// without a row of the series, for example a read-only copy of the
+	// UID, does not block the restore (issue #842).
+	var err error
+	if meta.CalendarID != 0 {
+		err = ensureSeriesWritableIn(ctx, s.q, meta.CalendarID, meta.UID)
+	} else {
+		err = s.ensureSeriesWritable(ctx, meta.UID)
+	}
+	if err != nil {
 		return err
 	}
 	switch meta.Kind {
@@ -196,37 +205,69 @@ func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
 // unknown, or already purged). Callers can then report "not found" instead of
 // a false success.
 //
-// Two calendars can hold the same UID (issue #842). A UID with a master
-// row in more than one calendar gets ErrAmbiguousUID: restore the series
-// by the ID of its master instead.
+// Two calendars can hold the same UID (issue #842). The restore targets
+// the series in the trash: one master row in the trash is the choice.
+// With no master in the trash, the one live master names the series, and
+// the restore un-hides its overrides. More masters of either kind give
+// ErrAmbiguousUID: restore the series by the ID of its master instead.
 func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
-	master, _, err := findSeriesMasterIncludingDeletedTx(ctx, s.q, 0, uid)
-	if errors.Is(err, ErrAmbiguousUID) {
-		return err
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	rows, err := s.q.ListEventMastersByUIDIncludingDeleted(ctx, uid)
+	if err != nil {
 		return fmt.Errorf("get master: %w", err)
 	}
-	if err := s.ensureSeriesWritable(ctx, uid); err != nil {
+	var live, trashed []storage.Event
+	for _, m := range rows {
+		if m.DeletedAt == nil {
+			live = append(live, m)
+		} else {
+			trashed = append(trashed, m)
+		}
+	}
+	candidates := trashed
+	if len(candidates) == 0 {
+		candidates = live
+	}
+	if len(candidates) > 1 {
+		return ErrAmbiguousUID
+	}
+	if len(candidates) == 0 {
+		// No master row: the UID holds override rows only. Restore them
+		// all, and reconcile every calendar they live on.
+		if err := s.ensureSeriesWritable(ctx, uid); err != nil {
+			return err
+		}
+		n, err := s.restoreEventsByUIDClearingExdates(ctx, uid)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotDeleted
+		}
+		return s.reconcileRestoredCalendars(ctx, uid)
+	}
+	master := candidates[0]
+	if err := ensureSeriesWritableIn(ctx, s.q, master.CalendarID, uid); err != nil {
 		return err
 	}
-	n, restoreErr := s.restoreEventsByUIDClearingExdates(ctx, uid)
-	if restoreErr != nil {
-		return restoreErr
+	n, err := s.restoreSeriesRowsClearingExdates(ctx, master.CalendarID, uid)
+	if err != nil {
+		return err
 	}
 	if n == 0 {
 		return ErrNotDeleted
 	}
-	if err == nil {
-		return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid)
-	}
-	// The master row is gone (it was purged on its own). Reconcile on every
-	// calendar the restored rows live on. Without this, a pending tombstone
-	// survives the restore. The next sync would then DELETE the series from
-	// the server right after a successful restore.
-	ids, rErr := s.distinctCalendarIDsByUID(ctx, uid)
-	if rErr != nil {
-		return rErr
+	return s.reconcileSyncAfterRestore(ctx, master.CalendarID, uid)
+}
+
+// reconcileRestoredCalendars reconciles the sync state of every calendar
+// that holds a row of uid. The restore of a UID with no master row uses
+// it: without this, a pending tombstone survives the restore, and the
+// next sync would DELETE the series from the server right after a
+// successful restore.
+func (s *Service) reconcileRestoredCalendars(ctx context.Context, uid string) error {
+	ids, err := s.distinctCalendarIDsByUID(ctx, uid)
+	if err != nil {
+		return err
 	}
 	for _, id := range ids {
 		if err := s.reconcileSyncAfterRestore(ctx, id, uid); err != nil {
@@ -323,7 +364,8 @@ func (s *Service) restoreSingle(ctx context.Context, calendarID int64, uid, recu
 			// Might be an override-only delete where the master UID has no
 			// master row. Fall back to a restore of the rows of the UID in
 			// the calendar.
-			return s.restoreSeriesRowsClearingExdates(ctx, calendarID, uid)
+			_, err := s.restoreSeriesRowsClearingExdates(ctx, calendarID, uid)
+			return err
 		}
 		return err
 	}
@@ -336,7 +378,8 @@ func (s *Service) restoreSingle(ctx context.Context, calendarID int64, uid, recu
 		}
 		// Master is live; an override was probably the thing deleted.
 		// Un-hide every deleted override of the series.
-		return s.restoreSeriesRowsClearingExdates(ctx, r.CalendarID, uid)
+		_, err := s.restoreSeriesRowsClearingExdates(ctx, r.CalendarID, uid)
+		return err
 	}
 	if err := s.q.RestoreEvent(ctx, r.ID); err != nil {
 		return err
@@ -355,7 +398,7 @@ func (s *Service) restoreSeries(ctx context.Context, calendarID int64, uid strin
 	if err == nil {
 		calendarID = master.CalendarID
 	}
-	if err := s.restoreSeriesRowsClearingExdates(ctx, calendarID, uid); err != nil {
+	if _, err := s.restoreSeriesRowsClearingExdates(ctx, calendarID, uid); err != nil {
 		return err
 	}
 	if err == nil {
@@ -363,19 +406,7 @@ func (s *Service) restoreSeries(ctx context.Context, calendarID int64, uid strin
 	}
 	// The master row is gone (it was purged on its own). Reconcile on every
 	// calendar the restored rows live on, the same way RestoreByUID does.
-	// Without this, a pending tombstone survives the undo-series. The next
-	// sync would then DELETE the series from the server right after a
-	// successful undo.
-	ids, rErr := s.distinctCalendarIDsByUID(ctx, uid)
-	if rErr != nil {
-		return rErr
-	}
-	for _, id := range ids {
-		if err := s.reconcileSyncAfterRestore(ctx, id, uid); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.reconcileRestoredCalendars(ctx, uid)
 }
 
 func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) error {
@@ -391,10 +422,12 @@ func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) erro
 	}
 	// The master of the override is in the calendar of the row, or the
 	// row is a legacy override of the one master of the UID. No master
-	// leaves no EXDATE to clear.
+	// leaves no EXDATE to clear. A legacy override of a UID with more
+	// than one master belongs to no series (Delete recorded no EXDATE for
+	// it), so there is nothing to clear either.
 	master, _, err := findSeriesMasterIncludingDeletedTx(ctx, qtx, r.CalendarID, r.Uid)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return wrapMasterLookup(err)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrAmbiguousUID) {
+		return fmt.Errorf("get master: %w", err)
 	}
 	if err == nil {
 		if err := clearMasterEXDATE(ctx, qtx, master.CalendarID, r.Uid, r.RecurrenceID); err != nil {
@@ -438,16 +471,15 @@ func (s *Service) restoreEXDATEOnly(ctx context.Context, calendarID int64, uid, 
 // restoreSeriesRowsClearingExdates un-hides every soft-deleted row of the
 // series of uid in calendarID (see SoftDeleteSeriesRowsInCalendar) and
 // clears the master EXDATE of each override it un-hides, all in one
-// transaction. calendarID 0 names no calendar, so it un-hides every row of
-// the UID.
-func (s *Service) restoreSeriesRowsClearingExdates(ctx context.Context, calendarID int64, uid string) error {
+// transaction. It returns the number of rows it un-hides. calendarID 0
+// names no calendar, so it un-hides every row of the UID.
+func (s *Service) restoreSeriesRowsClearingExdates(ctx context.Context, calendarID int64, uid string) (int64, error) {
 	if calendarID == 0 {
-		_, err := s.restoreEventsByUIDClearingExdates(ctx, uid)
-		return err
+		return s.restoreEventsByUIDClearingExdates(ctx, uid)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
@@ -456,19 +488,23 @@ func (s *Service) restoreSeriesRowsClearingExdates(ctx context.Context, calendar
 		CalendarID: calendarID, Uid: uid,
 	})
 	if err != nil {
-		return fmt.Errorf("list deleted override recurrence ids: %w", err)
+		return 0, fmt.Errorf("list deleted override recurrence ids: %w", err)
 	}
-	if _, err := qtx.RestoreSeriesRowsInCalendar(ctx, storage.RestoreSeriesRowsInCalendarParams{
+	n, err := qtx.RestoreSeriesRowsInCalendar(ctx, storage.RestoreSeriesRowsInCalendarParams{
 		CalendarID: calendarID, Uid: uid,
-	}); err != nil {
-		return fmt.Errorf("restore series rows: %w", err)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("restore series rows: %w", err)
 	}
 	for _, recurrenceID := range recurrenceIDs {
 		if err := clearMasterEXDATE(ctx, qtx, calendarID, uid, recurrenceID); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // restoreEventsByUIDClearingExdates un-hides every soft-deleted row for uid and
@@ -487,13 +523,21 @@ func (s *Service) restoreEventsByUIDClearingExdates(ctx context.Context, uid str
 	if err != nil {
 		return 0, fmt.Errorf("list deleted override recurrence ids: %w", err)
 	}
+	// The delete log is per calendar (issue #842). Each master calendar
+	// of the UID clears the EXDATEs that its own log recorded.
+	masters, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
+	if err != nil {
+		return 0, fmt.Errorf("list masters: %w", err)
+	}
 	n, err := qtx.RestoreEventsByUID(ctx, uid)
 	if err != nil {
 		return 0, fmt.Errorf("restore by uid: %w", err)
 	}
-	for _, recurrenceID := range recurrenceIDs {
-		if err := clearMasterEXDATE(ctx, qtx, 0, uid, recurrenceID); err != nil {
-			return 0, err
+	for _, m := range masters {
+		for _, recurrenceID := range recurrenceIDs {
+			if err := clearMasterEXDATE(ctx, qtx, m.CalendarID, uid, recurrenceID); err != nil {
+				return 0, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -503,37 +547,22 @@ func (s *Service) restoreEventsByUIDClearingExdates(ctx context.Context, uid str
 }
 
 // clearMasterEXDATE reverses the EXDATE an instance-delete added for
-// recurrenceID on the master event with uid. The provenance contract lives in
-// softdelete.ClearMasterEXDATE; this wrapper only binds the event queries to
-// the active transaction so the override is never visible-but-excluded.
-// calendarID 0 reads the delete log and the master by UID in all
-// calendars. Another value reads them in that calendar only: two calendars
-// can hold the same UID, so a caller that knows the master gives it.
+// recurrenceID on the master event with uid in calendarID. The provenance
+// contract lives in softdelete.ClearMasterEXDATE; this wrapper only binds
+// the event queries to the active transaction so the override is never
+// visible-but-excluded. The delete log and the master are per calendar:
+// two calendars can hold the same UID (issue #842).
 func clearMasterEXDATE(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string) error {
-	getLog := func(ctx context.Context) (storage.EventExdateDelete, error) {
-		if calendarID == 0 {
-			return qtx.GetEventExdateDeleteByUIDRecurrence(ctx, storage.GetEventExdateDeleteByUIDRecurrenceParams{
-				Uid: uid, RecurrenceID: recurrenceID,
-			})
-		}
-		return qtx.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
-			CalendarID: calendarID, Uid: uid, RecurrenceID: recurrenceID,
-		})
-	}
-	getMaster := func(ctx context.Context) (storage.Event, error) {
-		if calendarID == 0 {
-			return qtx.GetEventByUID(ctx, uid)
-		}
-		return qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
-	}
 	return softdelete.ClearMasterEXDATE(ctx, softdelete.ExdateProvenance{
 		GetDeleteLog: func(ctx context.Context) (int64, bool, error) {
-			log, err := getLog(ctx)
+			log, err := qtx.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
+				CalendarID: calendarID, Uid: uid, RecurrenceID: recurrenceID,
+			})
 			found, err := storage.Found(err)
 			return log.ID, found, err
 		},
 		GetMaster: func(ctx context.Context) (int64, string, bool, error) {
-			master, err := getMaster(ctx)
+			master, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 			found, err := storage.Found(err)
 			return master.ID, storage.NullableToString(master.Exdates), found, err
 		},
@@ -678,15 +707,19 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		qtx := s.q.WithTx(tx)
 
 		// The master is in the calendar of the override, or the override
-		// is a legacy override of the one live master of the UID.
+		// is a legacy override of the one live master of the UID. A
+		// legacy override of a UID with more than one live master belongs
+		// to no series: the expansion keys the overrides by calendar, so
+		// no master shows it. The row goes without EXDATE bookkeeping,
+		// like a row with no master.
 		master, _, err := findSeriesMasterTx(ctx, qtx, evt.CalendarID, evt.UID)
 		// A genuine lookup error (e.g. SQLITE_BUSY) must not collapse into the
 		// "no master" path: that would soft-delete the override while skipping
 		// its EXDATE/provenance bookkeeping, resurrecting the occurrence via
 		// series expansion (issue #412). Only a missing master (ErrNoRows)
 		// legitimately skips the bookkeeping.
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return wrapMasterLookup(err)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrAmbiguousUID) {
+			return fmt.Errorf("get master: %w", err)
 		}
 		if err == nil {
 			existing := ParseTimeList(storage.NullableToString(master.Exdates))
@@ -788,10 +821,7 @@ func (s *Service) DeleteInstance(ctx context.Context, calendarID int64, uid stri
 	// visible through the override. This mirrors the master-lookup guard the
 	// Delete override path carries (issue #412).
 	if oErr != nil && !errors.Is(oErr, sql.ErrNoRows) {
-		if errors.Is(oErr, ErrAmbiguousUID) {
-			return oErr
-		}
-		return fmt.Errorf("get override: %w", oErr)
+		return wrapLookup("get override", oErr)
 	}
 	if oErr == nil {
 		if err := qtx.SoftDeleteEvent(ctx, override.ID); err != nil {
@@ -829,19 +859,21 @@ func (s *Service) DeleteFromInstance(ctx context.Context, calendarID int64, uid 
 	return err
 }
 
-// HasLiveOverrideFrom reports whether any live override of the series has a
-// RECURRENCE-ID at or after from. The --following scope guard uses it: a
-// truncation removes such overrides even when an imported EXDATE hides every
-// generated slot, so their presence keeps the scope meaningful.
-func (s *Service) HasLiveOverrideFrom(ctx context.Context, uid string, from time.Time) (bool, error) {
-	rows, err := s.q.ListOverridesByUIDs(ctx, []string{uid})
+// HasLiveOverrideFrom reports whether any live override of the series of
+// uid in calendarID has a RECURRENCE-ID at or after from. The --following
+// scope guard uses it: a truncation removes such overrides even when an
+// imported EXDATE hides every generated slot, so their presence keeps the
+// scope meaningful. The overrides of a master in another calendar stay
+// out (issue #842): the truncation does not hide them, so they do not
+// make the scope meaningful.
+func (s *Service) HasLiveOverrideFrom(ctx context.Context, calendarID int64, uid string, from time.Time) (bool, error) {
+	rows, err := s.q.ListSeriesOverridesInCalendar(ctx, storage.ListSeriesOverridesInCalendarParams{
+		CalendarID: calendarID, Uid: uid,
+	})
 	if err != nil {
 		return false, err
 	}
 	for _, r := range rows {
-		if r.DeletedAt != nil || r.RecurrenceID == "" {
-			continue
-		}
 		at, err := timeutil.ParseRecurrenceID(r.RecurrenceID)
 		if err != nil {
 			continue
@@ -1011,9 +1043,6 @@ func (s *Service) deleteFromInstance(ctx context.Context, calendarID int64, uid 
 // one live master is the only choice, and more give ErrAmbiguousUID. See
 // findSeriesMasterTx.
 func (s *Service) DeleteSeries(ctx context.Context, calendarID int64, uid string) error {
-	if err := s.ensureSeriesWritable(ctx, uid); err != nil {
-		return err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -1035,6 +1064,19 @@ func (s *Service) DeleteSeries(ctx context.Context, calendarID int64, uid string
 	}
 	if mErr == nil {
 		calendarID = master.CalendarID
+	}
+
+	// The access guard covers the calendars of the series only. A
+	// read-only copy of the UID in another calendar does not block the
+	// delete (issue #842).
+	if calendarID == 0 {
+		if err := s.ensureSeriesWritable(ctx, uid); err != nil {
+			return err
+		}
+	} else if err := ensureSeriesWritableIn(ctx, qtx, calendarID, uid); err != nil {
+		return err
+	}
+	if mErr == nil {
 		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
 			return fmt.Errorf("create tombstone: %w", err)
 		}

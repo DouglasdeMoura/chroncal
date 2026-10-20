@@ -1,8 +1,9 @@
 -- name: RecordEventExdateDelete :exec
--- Idempotent: deleting the same instance twice leaves exactly one log row.
+-- Idempotent: a second delete of the same occurrence in one calendar keeps
+-- one log row. Each calendar keeps its own row (issue #842).
 INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id)
 VALUES (?, ?, ?)
-ON CONFLICT(uid, recurrence_id) DO UPDATE SET
+ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
 
 -- name: ListEventExdateDeletesByCalendar :many
@@ -13,8 +14,6 @@ ORDER BY deleted_at DESC;
 -- name: GetEventExdateDelete :one
 SELECT * FROM event_exdate_deletes WHERE id = ?;
 
--- name: GetEventExdateDeleteByUIDRecurrence :one
-SELECT * FROM event_exdate_deletes WHERE uid = ? AND recurrence_id = ?;
 
 -- name: GetEventExdateDeleteByCalendarUIDRecurrence :one
 -- The delete log of one occurrence of the series in one calendar. Two

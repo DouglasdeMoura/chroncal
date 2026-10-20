@@ -1154,6 +1154,47 @@ func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
 	return items, nil
 }
 
+const listSeriesCalendarIDs = `-- name: ListSeriesCalendarIDs :many
+SELECT DISTINCT calendar_id FROM events
+WHERE uid = ?1
+  AND (calendar_id = ?2 OR (recurrence_id != '' AND NOT EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.uid = events.uid AND m.recurrence_id = '' AND m.calendar_id = events.calendar_id)))
+ORDER BY calendar_id
+`
+
+type ListSeriesCalendarIDsParams struct {
+	Uid        string
+	CalendarID int64
+}
+
+// The calendars that hold a row of the series of one UID in one calendar:
+// that calendar, plus each calendar with a legacy override of the UID
+// (see ListSeriesOverridesInCalendar). Rows in the trash count. The
+// access guard of a series delete or restore reads it.
+func (q *Queries) ListSeriesCalendarIDs(ctx context.Context, arg ListSeriesCalendarIDsParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listSeriesCalendarIDs, arg.Uid, arg.CalendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var calendar_id int64
+		if err := rows.Scan(&calendar_id); err != nil {
+			return nil, err
+		}
+		items = append(items, calendar_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSeriesOverridesInCalendar = `-- name: ListSeriesOverridesInCalendar :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
 WHERE uid = ?1 AND recurrence_id != '' AND deleted_at IS NULL

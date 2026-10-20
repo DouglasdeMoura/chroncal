@@ -60,11 +60,14 @@ func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at
 		return nil
 	}
 	// A live override at that RECURRENCE-ID is deletable even when an
-	// imported EXDATE hides the master slot; the override row is its own key.
-	if _, err := a.Events.GetByUIDAndRecurrenceID(ctx, master.UID, at.UTC().Format(time.RFC3339)); err == nil {
+	// imported EXDATE hides the master slot; the override row is its own
+	// key. The override must belong to this series: an override of the
+	// same UID in another calendar does not make the occurrence deletable
+	// here (issue #842).
+	if _, err := a.Events.SeriesOverride(ctx, master.CalendarID, master.UID, at.UTC().Format(time.RFC3339)); err == nil {
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("look up override: %w", err)
+		return fmt.Errorf("look up override: %w", notFoundErr(err, "event", master.UID))
 	}
 	return noSuchOccurrenceErr(master, at)
 }
@@ -82,7 +85,7 @@ func requireOccurrenceFrom(ctx context.Context, a *app.App, master event.Event, 
 	// Truncation also removes every live override at or after the cutoff,
 	// so one of those makes the scope meaningful even when an imported
 	// EXDATE hides every generated slot.
-	hasOverride, oErr := a.Events.HasLiveOverrideFrom(ctx, master.UID, at)
+	hasOverride, oErr := a.Events.HasLiveOverrideFrom(ctx, master.CalendarID, master.UID, at)
 	if oErr != nil && !errors.Is(oErr, sql.ErrNoRows) {
 		return fmt.Errorf("check overrides: %w", oErr)
 	}
@@ -105,20 +108,50 @@ func masterForScope(ctx context.Context, a *app.App, resolved event.Event) (even
 	return a.Events.SeriesMaster(ctx, resolved.CalendarID, resolved.UID)
 }
 
-// resolveSeriesMaster resolves the master row of a series for the
-// occurrence scopes of event delete. A numeric ref addresses one row by
-// ID. A UID ref addresses the live master of the UID. Two calendars can
-// hold the same UID (issue #842): calendarID names the calendar of the
-// series, and 0 accepts a UID with one live master only.
-func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID int64) (event.Event, error) {
+// resolveSeriesMaster resolves the row that event delete addresses. A
+// numeric ref addresses one row by ID. A UID ref addresses the live
+// master of the UID. Two calendars can hold the same UID (issue #842):
+// calendarID names the calendar of the series, and 0 accepts a UID with
+// one live master only. A calendar that holds the series through a legacy
+// override only names the master of that override (see
+// event.Service.SeriesMaster). A numeric ref with a calendar must be a
+// row of that calendar.
+func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID int64, wantCalendar string) (event.Event, error) {
 	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil || calendarID == 0 {
-		return resolveEvent(ctx, a, ref, "")
+		e, err := resolveEvent(ctx, a, ref, "")
+		if err != nil {
+			return event.Event{}, err
+		}
+		if calendarID != 0 && e.CalendarID != calendarID {
+			return event.Event{}, errInvalidInputf("event %d is in calendar %q, not in --calendar %q", e.ID, calendarName(ctx, a, e.CalendarID), wantCalendar)
+		}
+		return e, nil
 	}
-	e, err := a.Events.GetByCalendarUID(ctx, calendarID, ref)
+	e, err := a.Events.SeriesMaster(ctx, calendarID, ref)
 	if err != nil {
 		return event.Event{}, notFoundErr(err, "event", ref)
 	}
 	return e, nil
+}
+
+// seriesRowID resolves ref in the named calendar and returns the row ID
+// of the master as a CLI reference (see resolveSeriesMaster).
+func seriesRowID(ref, calendarName string) (string, error) {
+	a, err := initApp()
+	if err != nil {
+		return "", err
+	}
+	defer a.Close()
+	ctx := context.Background()
+	calendarID, err := resolveCalendarID(ctx, a, calendarName)
+	if err != nil {
+		return "", err
+	}
+	e, err := resolveSeriesMaster(ctx, a, ref, calendarID, calendarName)
+	if err != nil {
+		return "", fmt.Errorf("get event: %w", err)
+	}
+	return strconv.FormatInt(e.ID, 10), nil
 }
 
 func noSuchOccurrenceErr(master event.Event, at time.Time) error {
@@ -156,7 +189,7 @@ any override at that time). --following truncates the series at that date.`,
 
 	var following, calendarName string
 	cmd.Flags().StringVar(&following, "following", "", "delete this occurrence and every following one (RFC 3339 timestamp)")
-	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar of the series, when the UID is in more than one calendar")
+	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar of the event, when the UID is in more than one calendar")
 	cmd.Flags().Lookup("recurrence-id").Usage = "delete this occurrence (RFC 3339 timestamp)"
 
 	plainDelete := cmd.RunE
@@ -177,10 +210,18 @@ any override at that time). --following truncates the series at that date.`,
 			return errInvalidInputf("--recurrence-id and --following are mutually exclusive")
 		}
 		if recurrenceID == "" && following == "" {
-			if calendarName != "" {
-				return errInvalidInputf("--calendar applies to --recurrence-id and --following only")
+			if calendarName == "" {
+				return plainDelete(cmd, args)
 			}
-			return plainDelete(cmd, args)
+			// The shared delete verb resolves a bare UID through the
+			// one-master rule. With --calendar, resolve the master of
+			// that calendar here, and hand its row ID to the verb. The
+			// verb opens its own app, so this one closes first.
+			id, err := seriesRowID(args[0], calendarName)
+			if err != nil {
+				return err
+			}
+			return plainDelete(cmd, []string{id})
 		}
 
 		var followingAt, occurrenceAt time.Time
@@ -213,7 +254,7 @@ any override at that time). --following truncates the series at that date.`,
 		}
 
 		// Occurrence scopes address the series through its master row.
-		e, err := resolveSeriesMaster(ctx, a, args[0], calendarID)
+		e, err := resolveSeriesMaster(ctx, a, args[0], calendarID, calendarName)
 		if err != nil {
 			return fmt.Errorf("get event: %w", err)
 		}

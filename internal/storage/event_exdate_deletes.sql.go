@@ -60,28 +60,6 @@ func (q *Queries) GetEventExdateDeleteByCalendarUIDRecurrence(ctx context.Contex
 	return i, err
 }
 
-const getEventExdateDeleteByUIDRecurrence = `-- name: GetEventExdateDeleteByUIDRecurrence :one
-SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE uid = ? AND recurrence_id = ?
-`
-
-type GetEventExdateDeleteByUIDRecurrenceParams struct {
-	Uid          string
-	RecurrenceID string
-}
-
-func (q *Queries) GetEventExdateDeleteByUIDRecurrence(ctx context.Context, arg GetEventExdateDeleteByUIDRecurrenceParams) (EventExdateDelete, error) {
-	row := q.db.QueryRowContext(ctx, getEventExdateDeleteByUIDRecurrence, arg.Uid, arg.RecurrenceID)
-	var i EventExdateDelete
-	err := row.Scan(
-		&i.ID,
-		&i.CalendarID,
-		&i.Uid,
-		&i.RecurrenceID,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
 const listEventExdateDeletesByCalendar = `-- name: ListEventExdateDeletesByCalendar :many
 SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes
 WHERE calendar_id = ?
@@ -150,7 +128,7 @@ func (q *Queries) PurgeOldEventExdateDeletes(ctx context.Context, deletedAt stri
 const recordEventExdateDelete = `-- name: RecordEventExdateDelete :exec
 INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id)
 VALUES (?, ?, ?)
-ON CONFLICT(uid, recurrence_id) DO UPDATE SET
+ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 `
 
@@ -160,7 +138,8 @@ type RecordEventExdateDeleteParams struct {
 	RecurrenceID string
 }
 
-// Idempotent: deleting the same instance twice leaves exactly one log row.
+// Idempotent: a second delete of the same occurrence in one calendar keeps
+// one log row. Each calendar keeps its own row (issue #842).
 func (q *Queries) RecordEventExdateDelete(ctx context.Context, arg RecordEventExdateDeleteParams) error {
 	_, err := q.db.ExecContext(ctx, recordEventExdateDelete, arg.CalendarID, arg.Uid, arg.RecurrenceID)
 	return err
