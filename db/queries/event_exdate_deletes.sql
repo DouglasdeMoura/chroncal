@@ -31,3 +31,12 @@ DELETE FROM event_exdate_deletes WHERE deleted_at < ?;
 -- another. A local calendar move of a resource calls it. See issue #828.
 UPDATE event_exdate_deletes SET calendar_id = sqlc.arg(to_calendar_id)
 WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
+
+-- name: ListEventExdateDeletesByCalendarUID :many
+SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id;
+
+-- name: DeleteEventExdateDeletesByCalendarUID :exec
+-- Drop the log rows of one series in one calendar. A purge of the master
+-- drops them, and a calendar move clears stale rows in the target
+-- calendar before the move (the keys are per calendar).
+DELETE FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ?;

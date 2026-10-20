@@ -18,6 +18,23 @@ func (q *Queries) DeleteEventExdateDelete(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteEventExdateDeletesByCalendarUID = `-- name: DeleteEventExdateDeletesByCalendarUID :exec
+DELETE FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ?
+`
+
+type DeleteEventExdateDeletesByCalendarUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Drop the log rows of one series in one calendar. A purge of the master
+// drops them, and a calendar move clears stale rows in the target
+// calendar before the move (the keys are per calendar).
+func (q *Queries) DeleteEventExdateDeletesByCalendarUID(ctx context.Context, arg DeleteEventExdateDeletesByCalendarUIDParams) error {
+	_, err := q.db.ExecContext(ctx, deleteEventExdateDeletesByCalendarUID, arg.CalendarID, arg.Uid)
+	return err
+}
+
 const getEventExdateDelete = `-- name: GetEventExdateDelete :one
 SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE id = ?
 `
@@ -68,6 +85,44 @@ ORDER BY deleted_at DESC
 
 func (q *Queries) ListEventExdateDeletesByCalendar(ctx context.Context, calendarID int64) ([]EventExdateDelete, error) {
 	rows, err := q.db.QueryContext(ctx, listEventExdateDeletesByCalendar, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventExdateDelete
+	for rows.Next() {
+		var i EventExdateDelete
+		if err := rows.Scan(
+			&i.ID,
+			&i.CalendarID,
+			&i.Uid,
+			&i.RecurrenceID,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventExdateDeletesByCalendarUID = `-- name: ListEventExdateDeletesByCalendarUID :many
+SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id
+`
+
+type ListEventExdateDeletesByCalendarUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) ListEventExdateDeletesByCalendarUID(ctx context.Context, arg ListEventExdateDeletesByCalendarUIDParams) ([]EventExdateDelete, error) {
+	rows, err := q.db.QueryContext(ctx, listEventExdateDeletesByCalendarUID, arg.CalendarID, arg.Uid)
 	if err != nil {
 		return nil, err
 	}

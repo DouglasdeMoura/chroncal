@@ -162,7 +162,7 @@ END:VCALENDAR
 		t.Fatalf("deleted = %d, want 0 (server rewrote path, not a deletion)", result.deleted)
 	}
 
-	if _, err := q.GetEventByUID(ctx, "rewritten"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "rewritten"}); err != nil {
 		t.Fatalf("GetEventByUID err = %v, event was unexpectedly deleted", err)
 	}
 
@@ -765,7 +765,7 @@ END:VCALENDAR
 	if result.Pulled != 1 {
 		t.Fatalf("Pulled = %d, want 1", result.Pulled)
 	}
-	evt, err := q.GetEventByUID(ctx, "color-403-event")
+	evt, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "color-403-event"})
 	if err != nil {
 		t.Fatalf("GetEventByUID: %v", err)
 	}
@@ -926,11 +926,11 @@ END:VCALENDAR
 	}
 
 	// The page-two event must survive the initial-snapshot deletion sweep.
-	if _, err := q.GetEventByUID(ctx, "survivor"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "survivor"}); err != nil {
 		t.Fatalf("survivor was deleted by the partial-page sweep: %v", err)
 	}
 	// The genuinely-absent event must still be removed.
-	if _, err := q.GetEventByUID(ctx, "gone-uid"); err == nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "gone-uid"}); err == nil {
 		t.Fatal("gone-uid should have been soft-deleted")
 	}
 	// The FINAL page's token is the one stored.

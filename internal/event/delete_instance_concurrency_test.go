@@ -71,7 +71,7 @@ func TestDeleteInstance_ConcurrentNoLostUpdate(t *testing.T) {
 		}
 	}
 
-	got, err := q.GetEventByUID(ctx, master.UID)
+	got, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: master.UID})
 	if err != nil {
 		t.Fatalf("reload master: %v", err)
 	}

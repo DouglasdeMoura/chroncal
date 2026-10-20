@@ -246,7 +246,7 @@ func TestEnginePullUnknownMultigetMissAdvancesToken(t *testing.T) {
 	if len(result.errors) != 0 {
 		t.Fatalf("errors = %v, want none (unknown miss must not mark the pull incomplete)", result.errors)
 	}
-	if _, err := q.GetEventByUID(ctx, "alive-uid"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "alive-uid"}); err != nil {
 		t.Fatalf("alive event missing: %v", err)
 	}
 	if tok := calendarToken(t, q, calendarID); tok != "https://example.com/sync/after-phantoms" {
@@ -290,7 +290,7 @@ func TestEnginePullUnknownMultigetMissAllowsAbsenceDeletion(t *testing.T) {
 	if result.deleted != 1 {
 		t.Fatalf("deleted = %d, want 1 (unknown miss must not withhold absence deletion)", result.deleted)
 	}
-	if _, err := q.GetEventByUID(ctx, "gone"); err == nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "gone"}); err == nil {
 		t.Fatal("gone row survived a complete snapshot that did not list it")
 	}
 	if tok := calendarToken(t, q, calendarID); tok != "https://example.com/sync/t1" {
@@ -331,7 +331,7 @@ func TestEnginePullRetriesUnknownMultigetMissAfterTokenAdvance(t *testing.T) {
 	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
 		t.Fatalf("first pull: %v", err)
 	}
-	if _, err := q.GetEventByUID(ctx, "late-invite"); err == nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "late-invite"}); err == nil {
 		t.Fatal("late-invite imported on the first pull; the 404 was ignored")
 	}
 	if tok := calendarToken(t, q, calendarID); tok != "https://example.com/sync/t1" {
@@ -345,7 +345,7 @@ func TestEnginePullRetriesUnknownMultigetMissAfterTokenAdvance(t *testing.T) {
 	if result.pulled != 1 {
 		t.Fatalf("second pull pulled = %d, want 1", result.pulled)
 	}
-	if _, err := q.GetEventByUID(ctx, "late-invite"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "late-invite"}); err != nil {
 		t.Fatalf("late-invite missing after retry: %v", err)
 	}
 	if rows := listPendingHrefs(t, q, calendarID); len(rows) != 0 {
@@ -513,11 +513,11 @@ func TestEnginePullUncanonicalMultigetMissAdvancesToken(t *testing.T) {
 					t.Fatalf("pending hrefs = %+v, want one row for %s with miss_count 1", rows, phantom)
 				}
 			}
-			if _, err := q.GetEventByUID(ctx, "alive-uid"); err != nil {
+			if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "alive-uid"}); err != nil {
 				t.Fatalf("alive event missing: %v", err)
 			}
 			if tc.seedLocal != "" {
-				if _, err := q.GetEventByUID(ctx, tc.seedLocal); err != nil {
+				if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: tc.seedLocal}); err != nil {
 					t.Fatalf("%s row (known miss) was wrongly deleted: %v", tc.seedLocal, err)
 				}
 			}
@@ -568,10 +568,10 @@ func TestEnginePullMixedKnownAndUnknownMultigetMissWithholdsToken(t *testing.T) 
 	if len(result.errors) == 0 {
 		t.Fatal("known miss must surface an incomplete pull")
 	}
-	if _, err := q.GetEventByUID(ctx, "gone"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "gone"}); err != nil {
 		t.Fatalf("gone row was wrongly deleted: %v", err)
 	}
-	if _, err := q.GetEventByUID(ctx, "racey"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "racey"}); err != nil {
 		t.Fatalf("racey row (known miss) was wrongly deleted: %v", err)
 	}
 	if tok := calendarToken(t, q, calendarID); tok != "" {

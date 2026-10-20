@@ -731,7 +731,7 @@ END:VCALENDAR
 		t.Fatalf("pulled = %d, want 0", result.pulled)
 	}
 
-	evt, err := q.GetEventByUID(ctx, uid)
+	evt, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: uid})
 	if err != nil {
 		t.Fatalf("GetEventByUID: %v", err)
 	}

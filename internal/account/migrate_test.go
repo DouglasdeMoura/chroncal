@@ -105,9 +105,13 @@ func calendarExists(t *testing.T, q *storage.Queries, id int64) bool {
 
 func eventCalendarID(t *testing.T, q *storage.Queries, uid string) int64 {
 	t.Helper()
-	row, err := q.GetEventByUID(context.Background(), uid)
-	if err != nil {
-		t.Fatalf("GetEventByUID %q: %v", uid, err)
+	rows, err := q.ListEventMastersByUIDIncludingDeleted(context.Background(), uid)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListEventMastersByUIDIncludingDeleted %q: %v, %d rows", uid, err, len(rows))
+	}
+	row := rows[0]
+	if row.DeletedAt != nil {
+		t.Fatalf("event %q is in the trash", uid)
 	}
 	return row.CalendarID
 }
@@ -172,10 +176,11 @@ func TestMigrateCalendarToAccount_MovesContentsAndRetiresSource(t *testing.T) {
 			t.Errorf("event %q calendar_id = %d, want %d", uid, got, res.DestinationID)
 		}
 	}
-	deleted, err := q.GetEventByUIDIncludingDeleted(ctx, "evt-deleted")
-	if err != nil {
-		t.Fatalf("get soft-deleted event: %v", err)
+	deletedRows, err := q.ListEventMastersByUIDIncludingDeleted(ctx, "evt-deleted")
+	if err != nil || len(deletedRows) != 1 {
+		t.Fatalf("get soft-deleted event: %v, %d rows", err, len(deletedRows))
 	}
+	deleted := deletedRows[0]
 	if deleted.CalendarID != res.DestinationID {
 		t.Errorf("soft-deleted event calendar_id = %d, want %d", deleted.CalendarID, res.DestinationID)
 	}

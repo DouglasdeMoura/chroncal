@@ -34,3 +34,11 @@ WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
 -- The truncation log row of one cutoff of the series in one calendar. Two
 -- calendars can hold the same UID (issue #842).
 SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? AND cutoff_time = ?;
+
+-- name: ListEventTruncateDeletesByCalendarUID :many
+SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY cutoff_time;
+
+-- name: DeleteEventTruncateDeletesByCalendarUID :exec
+-- Drop the log rows of one series in one calendar (see
+-- DeleteEventExdateDeletesByCalendarUID).
+DELETE FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ?;

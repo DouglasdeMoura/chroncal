@@ -204,6 +204,9 @@ func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCount
 			return counts, fmt.Errorf("purge event truncation logs: %w", err)
 		}
 		counts.EventTruncateLogs = n
+		if _, err := s.events.PurgeOldSeriesDeletes(ctx, olderThan); err != nil {
+			return counts, fmt.Errorf("purge event series logs: %w", err)
+		}
 	}
 	if s.todos != nil {
 		n, err := s.todos.PurgeDeleted(ctx, olderThan)

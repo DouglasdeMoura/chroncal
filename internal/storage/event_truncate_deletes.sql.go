@@ -18,6 +18,22 @@ func (q *Queries) DeleteEventTruncateDelete(ctx context.Context, id int64) error
 	return err
 }
 
+const deleteEventTruncateDeletesByCalendarUID = `-- name: DeleteEventTruncateDeletesByCalendarUID :exec
+DELETE FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ?
+`
+
+type DeleteEventTruncateDeletesByCalendarUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Drop the log rows of one series in one calendar (see
+// DeleteEventExdateDeletesByCalendarUID).
+func (q *Queries) DeleteEventTruncateDeletesByCalendarUID(ctx context.Context, arg DeleteEventTruncateDeletesByCalendarUIDParams) error {
+	_, err := q.db.ExecContext(ctx, deleteEventTruncateDeletesByCalendarUID, arg.CalendarID, arg.Uid)
+	return err
+}
+
 const getEventTruncateDelete = `-- name: GetEventTruncateDelete :one
 SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE id = ?
 `
@@ -74,6 +90,47 @@ ORDER BY deleted_at DESC
 
 func (q *Queries) ListEventTruncateDeletesByCalendar(ctx context.Context, calendarID int64) ([]EventTruncateDelete, error) {
 	rows, err := q.db.QueryContext(ctx, listEventTruncateDeletesByCalendar, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventTruncateDelete
+	for rows.Next() {
+		var i EventTruncateDelete
+		if err := rows.Scan(
+			&i.ID,
+			&i.CalendarID,
+			&i.Uid,
+			&i.CutoffTime,
+			&i.PreviousRrule,
+			&i.DeletedAt,
+			&i.HiddenOverrides,
+			&i.RemovedRdates,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventTruncateDeletesByCalendarUID = `-- name: ListEventTruncateDeletesByCalendarUID :many
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY cutoff_time
+`
+
+type ListEventTruncateDeletesByCalendarUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) ListEventTruncateDeletesByCalendarUID(ctx context.Context, arg ListEventTruncateDeletesByCalendarUIDParams) ([]EventTruncateDelete, error) {
+	rows, err := q.db.QueryContext(ctx, listEventTruncateDeletesByCalendarUID, arg.CalendarID, arg.Uid)
 	if err != nil {
 		return nil, err
 	}

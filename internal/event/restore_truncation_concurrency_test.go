@@ -124,7 +124,7 @@ func TestRestoreTruncation_ConcurrentPurgeNoSilentLoss(t *testing.T) {
 	restoreErr := raceSvc.RestoreTrash(ctx, trunc)
 
 	masterGone := false
-	if _, err := q.GetEventByUID(ctx, master.UID); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); err != nil {
 		masterGone = true
 	}
 

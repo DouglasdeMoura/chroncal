@@ -144,7 +144,7 @@ END:VCALENDAR
 
 	// The "racey-deleted" event must still exist locally — multiget 404 is
 	// not enough evidence to remove user data.
-	if _, err := q.GetEventByUID(ctx, "racey-deleted"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "racey-deleted"}); err != nil {
 		t.Fatalf("racey-deleted was unexpectedly deleted: %v", err)
 	}
 	res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "racey-deleted"})
@@ -935,7 +935,7 @@ func TestEnginePushLocalEditsRefreshesOpenConflict(t *testing.T) {
 	if res.Dirty != 1 {
 		t.Fatalf("Dirty = %d, want 1 (opportunistic push never adopts the server body)", res.Dirty)
 	}
-	evt, err := q.GetEventByUID(ctx, "conflict-event")
+	evt, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "conflict-event"})
 	if err != nil {
 		t.Fatalf("GetEventByUID: %v", err)
 	}

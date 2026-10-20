@@ -667,10 +667,28 @@ func TestMigration057UpDown(t *testing.T) {
 	); err == nil {
 		t.Errorf("the per-calendar key accepted a second row of one occurrence in one calendar")
 	}
+	// The series-delete log keeps one row per series and calendar, and
+	// the view lists the rows of a series.
+	mustExec(`INSERT INTO event_series_deletes (calendar_id, uid, hidden_overrides) VALUES (1, 'mig057', '')`)
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO event_series_deletes (calendar_id, uid, hidden_overrides) VALUES (1, 'mig057', 'x')`,
+	); err == nil {
+		t.Errorf("the series-delete log accepted a second row of one series in one calendar")
+	}
+	mustExec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time)
+		VALUES (1, 'mig057', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
+	if n := count(`SELECT COUNT(*) FROM event_series_rows WHERE uid = 'mig057' AND owner_calendar_id = 1`); n != 1 {
+		t.Errorf("event_series_rows of the master = %d, want 1", n)
+	}
 
 	provider := migProvider(t, conn)
 	if _, err := provider.DownTo(ctx, 56); err != nil {
 		t.Fatalf("down to 56: %v", err)
+	}
+	for _, object := range []string{"event_series_deletes", "event_series_rows"} {
+		if n := count(`SELECT COUNT(*) FROM sqlite_master WHERE name = '` + object + `'`); n != 0 {
+			t.Errorf("%s exists after Down", object)
+		}
 	}
 	for _, table := range []string{"event_exdate_deletes", "event_truncate_deletes"} {
 		if n := count(`SELECT COUNT(*) FROM ` + table); n != 1 {
