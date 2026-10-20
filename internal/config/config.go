@@ -267,14 +267,18 @@ func validateCalendars(entries []CalendarConfig) error {
 			e.Path = ""
 			continue
 		}
-		// ExpandHome names the "~user" form in its own error, so it runs
-		// before the generic rule.
-		resolved, err := fsutil.ExpandHome(raw)
-		if err != nil {
-			return fmt.Errorf("calendars[%d] (%s): path %q: %w", i, e.Name, raw, err)
+		// The rule runs before the resolution, so a relative path gets
+		// the rule's message and no working-directory lookup. The "~user"
+		// form gets its own message.
+		if strings.HasPrefix(raw, "~") && !fsutil.IsAbsOrHome(raw) {
+			return fmt.Errorf("calendars[%d] (%s): path %q: %w", i, e.Name, raw, fsutil.ErrOtherUserHome)
 		}
 		if !fsutil.IsAbsOrHome(raw) {
 			return fmt.Errorf("calendars[%d] (%s): path %q must be absolute, or be ~ or start with ~/", i, e.Name, raw)
+		}
+		resolved, err := fsutil.ExpandHome(raw)
+		if err != nil {
+			return fmt.Errorf("calendars[%d] (%s): path %q: %w", i, e.Name, raw, err)
 		}
 		// The import reads a directory and its subdirectories, so two
 		// entries on one tree would import the same files. The check

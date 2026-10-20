@@ -83,12 +83,9 @@ func (c treeCache) tree(path string) string {
 	return tree
 }
 
-// resolveTrees resolves the stored path of each calendar once. A non-nil
-// cache serves and records the resolved trees.
+// resolveTrees resolves the stored path of each calendar once through the
+// cache, which must not be nil.
 func resolveTrees(cals []Calendar, cache treeCache) []string {
-	if cache == nil {
-		cache = treeCache{}
-	}
 	resolved := make([]string, len(cals))
 	for i := range cals {
 		resolved[i] = cache.tree(cals[i].LocalPath)
@@ -297,6 +294,16 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	if err != nil {
 		return nil, fmt.Errorf("list calendars: %w", err)
 	}
+	// pathCache serves every path resolution of this apply.
+	pathCache := treeCache{}
+	// declaredPaths maps a declared name to its path, so the pre-check of
+	// a new entry ignores a stored path that another entry moves away.
+	declaredPaths := make(map[string]string, len(declared))
+	for _, d := range declared {
+		if d.Path != "" {
+			declaredPaths[strings.ToLower(strings.TrimSpace(d.Name))] = d.Path
+		}
+	}
 
 	var changes []pathChange
 
@@ -320,6 +327,24 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		// one of its fields gets a warning; a new row gets none.
 		adopted := ok
 		if !ok {
+			// A new entry whose path shares a tree with a stored path is
+			// skipped before the create. A created row would be bound and
+			// undeletable, with no directory to show for it. A stored path
+			// that another entry moves away does not count, so a new entry
+			// can take that path over in the same apply.
+			if d.Path != "" {
+				kept := make([]Calendar, 0, len(existing))
+				for _, c := range existing {
+					if moved, ok := declaredPaths[strings.ToLower(c.Name)]; ok && moved != c.LocalPath {
+						continue
+					}
+					kept = append(kept, c)
+				}
+				if err := checkResolvedPathFree(kept, resolveTrees(kept, pathCache), 0, d.Path, pathCache.tree(d.Path)); err != nil {
+					warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
+					continue
+				}
+			}
 			color := d.Color
 			if color == "" {
 				color = DefaultColor
@@ -412,7 +437,7 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	// transaction as plain overwrites, so two entries that exchange their
 	// paths converge in one apply, and a concurrent write cannot land
 	// between two of them.
-	cache := treeCache{}
+	cache := pathCache
 	refused := make(map[int64]bool, len(changes))
 	var accepted []pathChange
 	for {

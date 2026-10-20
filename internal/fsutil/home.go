@@ -10,9 +10,10 @@ import (
 )
 
 // hasHomePrefix reports whether ExpandHome resolves the start of path to
-// the home directory: a bare "~" or a "~/" prefix.
+// the home directory: a bare "~", a "~/" prefix, or "~" with the native
+// separator on a platform where that differs.
 func hasHomePrefix(path string) bool {
-	return path == "~" || strings.HasPrefix(path, "~/")
+	return path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~"+string(filepath.Separator))
 }
 
 // ErrOtherUserHome reports the "~user/dir" form. chroncal does not look up
