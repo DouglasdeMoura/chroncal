@@ -571,7 +571,7 @@ Directory rules:
 - chroncal skips every file without an `.ics` extension, for example the `displayname` and `color` files that vdirsyncer writes.
 - A file that fails to parse becomes a warning. The rest of the directory still lands.
 - chroncal reads at most 10000 `.ics` files in one run.
-- The import does not follow a symbolic link.
+- The import does not follow a symbolic link that the path names. It also skips a symbolic link inside the directory. A stored directory is an exception. See the batch rules below.
 
 Entries are matched by UID, so a second import of the same path updates the existing items.
 
@@ -579,7 +579,9 @@ Without a path, the command imports every calendar that has a directory. Set the
 
 The JSON output is one object when the command names a path or a calendar. It is an array in the batch mode without both. The batch text output names each calendar.
 
-A directory that does not exist yet imports nothing and gives a warning. A directory that holds no `.ics` file does the same. A timer job then does not fail before the first sync. Another failure in one calendar becomes an error on stderr, and the other calendars still land.
+The command follows a symbolic link at the root of a stored directory. A vdirsyncer layout often links the collection directory to a mounted drive. A stored directory that holds no `.ics` file imports nothing and succeeds without a warning.
+
+In the batch mode, a stored directory that does not exist yet imports nothing and gives a warning. A timer job then does not fail before the first sync. With `--calendar`, a missing directory is an error. Another failure in one calendar becomes an error on stderr, and the other calendars still land.
 
 Examples:
 
