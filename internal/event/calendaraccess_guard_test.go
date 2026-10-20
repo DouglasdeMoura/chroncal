@@ -245,7 +245,7 @@ func TestEventAccessGuard_RecurrenceRejected(t *testing.T) {
 		t.Fatalf("override rows after rejected DeleteInstance = %d, want 0", n)
 	}
 
-	if _, err := svc.UpdateInstance(ctx, master.UID, firstOccurrence, UpdateParams{
+	if _, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, firstOccurrence, UpdateParams{
 		Title:      "Moved Instance",
 		CalendarID: readOnly,
 		StartTime:  time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),

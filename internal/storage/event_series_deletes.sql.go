@@ -27,7 +27,7 @@ func (q *Queries) DeleteEventSeriesDeletesByCalendarUID(ctx context.Context, arg
 }
 
 const getEventSeriesDeleteByCalendarUID = `-- name: GetEventSeriesDeleteByCalendarUID :one
-SELECT id, calendar_id, uid, hidden_overrides, deleted_at FROM event_series_deletes WHERE calendar_id = ? AND uid = ?
+SELECT id, calendar_id, uid, hidden_ids, deleted_at FROM event_series_deletes WHERE calendar_id = ? AND uid = ?
 `
 
 type GetEventSeriesDeleteByCalendarUIDParams struct {
@@ -42,7 +42,7 @@ func (q *Queries) GetEventSeriesDeleteByCalendarUID(ctx context.Context, arg Get
 		&i.ID,
 		&i.CalendarID,
 		&i.Uid,
-		&i.HiddenOverrides,
+		&i.HiddenIds,
 		&i.DeletedAt,
 	)
 	return i, err
@@ -79,22 +79,22 @@ func (q *Queries) PurgeOldEventSeriesDeletes(ctx context.Context, deletedAt stri
 }
 
 const recordEventSeriesDelete = `-- name: RecordEventSeriesDelete :exec
-INSERT INTO event_series_deletes (calendar_id, uid, hidden_overrides)
+INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids)
 VALUES (?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET
-    hidden_overrides = excluded.hidden_overrides,
+    hidden_ids = excluded.hidden_ids,
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 `
 
 type RecordEventSeriesDeleteParams struct {
-	CalendarID      int64
-	Uid             string
-	HiddenOverrides string
+	CalendarID int64
+	Uid        string
+	HiddenIds  string
 }
 
 // One log row per series in one calendar. A second series delete replaces
 // the list: the first restore consumed the first row.
 func (q *Queries) RecordEventSeriesDelete(ctx context.Context, arg RecordEventSeriesDeleteParams) error {
-	_, err := q.db.ExecContext(ctx, recordEventSeriesDelete, arg.CalendarID, arg.Uid, arg.HiddenOverrides)
+	_, err := q.db.ExecContext(ctx, recordEventSeriesDelete, arg.CalendarID, arg.Uid, arg.HiddenIds)
 	return err
 }

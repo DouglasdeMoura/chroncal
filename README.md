@@ -388,7 +388,9 @@ Event flags: `--date`, `--time`, `--end-time`, `--duration`, `--timezone`, `--lo
 
 The three flags are mutually exclusive.
 
-Two calendars can hold a series with the same UID, for example after a sync of two collections. A bare UID then names no single series. Pass the numeric ID of the master, or pass `--calendar NAME` to name the calendar of the event. The flag works with every scope, with `--series`, and with a plain delete. Chroncal refuses a numeric ID together with a `--calendar` that does not hold that row. `event restore <id>` with the ID of a master reverses the series delete. The master and the overrides that the series delete hid come back. An occurrence that you deleted on its own before stays deleted. `event restore <uid>` restores the rows of the series in the trash. The live series of the UID comes first. When that series has no row in the trash, the command restores the one series of the UID in the trash of another calendar. When two calendars hold the UID in the trash, restore the series by the ID of its master.
+Two calendars can hold a series with the same UID, for example after a sync of two collections. A bare UID then names no single series. Pass the numeric ID of the master, or pass `--calendar NAME` to name the calendar of the event. The flag works with every scope, with `--series`, and with a plain delete. Chroncal refuses a numeric ID together with a `--calendar` that does not hold that row.
+
+`event restore <id>` with the ID of a master reverses the series delete. The master and the overrides that the series delete hid come back. An occurrence that you deleted on its own before stays deleted. `event restore <uid>` restores the rows of the series in the trash, and the live series of the UID comes first. When that series has no row in the trash, the command restores the one series of the UID in the trash of another calendar. When two calendars hold the UID in the trash, restore the series by the ID of its master.
 
 `event rsvp` sets your RSVP status on an event:
 

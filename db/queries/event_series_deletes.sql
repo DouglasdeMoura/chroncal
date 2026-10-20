@@ -1,10 +1,10 @@
 -- name: RecordEventSeriesDelete :exec
 -- One log row per series in one calendar. A second series delete replaces
 -- the list: the first restore consumed the first row.
-INSERT INTO event_series_deletes (calendar_id, uid, hidden_overrides)
+INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids)
 VALUES (?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET
-    hidden_overrides = excluded.hidden_overrides,
+    hidden_ids = excluded.hidden_ids,
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
 
 -- name: GetEventSeriesDeleteByCalendarUID :one

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -669,9 +670,9 @@ func TestMigration057UpDown(t *testing.T) {
 	}
 	// The series-delete log keeps one row per series and calendar, and
 	// the view lists the rows of a series.
-	mustExec(`INSERT INTO event_series_deletes (calendar_id, uid, hidden_overrides) VALUES (1, 'mig057', '')`)
+	mustExec(`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids) VALUES (1, 'mig057', '')`)
 	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO event_series_deletes (calendar_id, uid, hidden_overrides) VALUES (1, 'mig057', 'x')`,
+		`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids) VALUES (1, 'mig057', 'x')`,
 	); err == nil {
 		t.Errorf("the series-delete log accepted a second row of one series in one calendar")
 	}
@@ -718,4 +719,85 @@ func TestMigration057UpDown(t *testing.T) {
 			t.Errorf("%s rows of the deleted calendar = %d, want 0 (cascade recreated)", table, n)
 		}
 	}
+}
+
+// seriesViewStatement reads the CREATE VIEW statement of event_series_rows
+// from migration 057, so the rebuild test runs the statement that the
+// migrations README tells a rebuild to copy.
+func seriesViewStatement(t *testing.T) string {
+	t.Helper()
+	src, err := dbembed.Migrations.ReadFile("migrations/057_delete_logs_uid_unique_per_calendar.sql")
+	if err != nil {
+		t.Fatalf("read migration 057: %v", err)
+	}
+	start := strings.Index(string(src), "CREATE VIEW event_series_rows AS")
+	if start < 0 {
+		t.Fatal("migration 057 has no CREATE VIEW event_series_rows")
+	}
+	end := strings.Index(string(src[start:]), ";")
+	if end < 0 {
+		t.Fatal("the CREATE VIEW statement has no end")
+	}
+	return string(src[start : start+end+1])
+}
+
+// rebuildEvents runs the table-rebuild pattern of migration 050 on a
+// test database: drop the triggers on events, copy events into
+// events_new, drop events, rename.
+func rebuildEvents(ctx context.Context, conn *sql.DB) error {
+	for _, stmt := range []string{
+		`PRAGMA foreign_keys = OFF`,
+		`DROP TRIGGER IF EXISTS events_fts_ai`,
+		`DROP TRIGGER IF EXISTS events_fts_au`,
+		`DROP TRIGGER IF EXISTS events_fts_bd`,
+		`DROP TRIGGER IF EXISTS events_x_properties_ad`,
+		`DROP TRIGGER IF EXISTS event_alarms_x_properties_ad`,
+		`DROP TRIGGER IF EXISTS x_properties_event_owner_exists`,
+		`DROP TRIGGER IF EXISTS event_categories_fts_ai`,
+		`DROP TRIGGER IF EXISTS event_categories_fts_ad`,
+		`CREATE TABLE events_new AS SELECT * FROM events`,
+		`DROP TABLE events`,
+		`ALTER TABLE events_new RENAME TO events`,
+	} {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("%s: %w", stmt, err)
+		}
+	}
+	return nil
+}
+
+// TestEventsRebuildKeepsSeriesView proves the sequence that the migrations
+// README gives for a rebuild of the events table: SQLite refuses the
+// rename while the view event_series_rows reads events, and the rebuild
+// works with the view dropped first and created again after.
+func TestEventsRebuildKeepsSeriesView(t *testing.T) {
+	ctx := context.Background()
+	t.Run("rename fails with the view in place", func(t *testing.T) {
+		conn, _, err := Open(t.TempDir() + "/rebuild-view.db")
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer conn.Close()
+		if err := rebuildEvents(ctx, conn); err == nil {
+			t.Fatal("the rebuild succeeded with the view in place, want the rename to fail")
+		}
+	})
+	t.Run("drop, rebuild, create again", func(t *testing.T) {
+		conn, _, err := Open(t.TempDir() + "/rebuild-ok.db")
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer conn.Close()
+		mustExec, count := migHelpers(t, ctx, conn)
+		mustExec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time)
+			VALUES (1, 'rebuild', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
+		mustExec(`DROP VIEW IF EXISTS event_series_rows`)
+		if err := rebuildEvents(ctx, conn); err != nil {
+			t.Fatalf("rebuild with the view dropped: %v", err)
+		}
+		mustExec(seriesViewStatement(t))
+		if n := count(`SELECT COUNT(*) FROM event_series_rows WHERE uid = 'rebuild' AND owner_calendar_id = 1`); n != 1 {
+			t.Errorf("event_series_rows after the rebuild = %d, want 1", n)
+		}
+	})
 }

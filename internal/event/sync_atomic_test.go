@@ -363,7 +363,7 @@ func TestUpdatePaths_SyncMarkIsAtomic(t *testing.T) {
 		{
 			name: "UpdateInstance",
 			call: func(svc *Service, master Event) error {
-				_, err := svc.UpdateInstance(context.Background(), master.UID,
+				_, err := svc.UpdateInstance(context.Background(), master.CalendarID, master.UID,
 					instanceAt, editTitle())
 				return err
 			},
@@ -373,7 +373,7 @@ func TestUpdatePaths_SyncMarkIsAtomic(t *testing.T) {
 			name: "UpdateInstanceWithRelations",
 			call: func(svc *Service, master Event) error {
 				_, err := svc.UpdateInstanceWithRelations(context.Background(),
-					master.UID, instanceAt, editTitle(), attendees, nil)
+					master.CalendarID, master.UID, instanceAt, editTitle(), attendees, nil)
 				return err
 			},
 			verify: noOverride,

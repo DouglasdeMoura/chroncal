@@ -86,7 +86,7 @@ func (m Model) dispatchEditScope(editID int64, choice int, save EventFormSaveMsg
 	// back. It does not leave a half-updated row (issue #87).
 	switch choice {
 	case 0: // This event only
-		_, err = m.app.Events.UpdateInstanceWithRelations(ctx, master.UID, save.InstanceTime, params, save.Attendees, save.Alarms)
+		_, err = m.app.Events.UpdateInstanceWithRelations(ctx, fromCalendarID, master.UID, save.InstanceTime, params, save.Attendees, save.Alarms)
 	case 1: // This and following
 		_, err = m.app.Events.UpdateFromInstanceWithRelations(ctx, fromCalendarID, master.UID, save.InstanceTime, params, save.Attendees, save.Alarms)
 	default: // All events

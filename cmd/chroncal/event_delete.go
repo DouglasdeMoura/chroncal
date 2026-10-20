@@ -241,9 +241,16 @@ any override at that time). --following truncates the series at that date.`,
 		}
 
 		// Occurrence scopes address the series through its master row.
+		// A reference to a legacy override resolves to the master of its
+		// series: the delete writes the master, and the push after the
+		// delete must reach the calendar of the master.
 		e, err := resolveSeriesMaster(ctx, a, args[0], calendarID, calendarName)
 		if err != nil {
 			return fmt.Errorf("get event: %w", err)
+		}
+		e, err = masterForScope(ctx, a, e)
+		if err != nil {
+			return fmt.Errorf("get series master: %w", notFoundErr(err, "event", args[0]))
 		}
 
 		if following != "" {

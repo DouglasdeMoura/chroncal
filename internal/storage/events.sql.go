@@ -96,27 +96,6 @@ func (q *Queries) CountEventsByCalendar(ctx context.Context, calendarID int64) (
 	return count, err
 }
 
-const countLiveEventOverridesInCalendar = `-- name: CountLiveEventOverridesInCalendar :one
-SELECT COUNT(*) FROM events
-WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NULL
-`
-
-type CountLiveEventOverridesInCalendarParams struct {
-	CalendarID int64
-	Uid        string
-}
-
-// Count the live override rows of one UID in one calendar. The series
-// rule reads it for a live edit: a calendar with a live legacy override
-// and no master belongs to the series of the one live master. A legacy
-// override in the trash does not count (see findSeriesMasterTx).
-func (q *Queries) CountLiveEventOverridesInCalendar(ctx context.Context, arg CountLiveEventOverridesInCalendarParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countLiveEventOverridesInCalendar, arg.CalendarID, arg.Uid)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countSeriesRowsInTrash = `-- name: CountSeriesRowsInTrash :one
 SELECT COUNT(*) FROM events
 WHERE events.deleted_at IS NOT NULL

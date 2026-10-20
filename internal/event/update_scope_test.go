@@ -33,7 +33,7 @@ func TestUpdateInstance_CreatesOverrideAndLeavesMasterIntact(t *testing.T) {
 	master := newRecurringMaster(t, svc, "scope-uid-1", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH")
 
 	instance := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC) // Wed instance
-	_, err := svc.UpdateInstance(ctx, master.UID, instance, UpdateParams{
+	_, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, instance, UpdateParams{
 		CalendarID: master.CalendarID,
 		Title:      "Standup (moved)",
 		StartTime:  time.Date(2026, 5, 20, 9, 30, 0, 0, time.UTC),
@@ -80,7 +80,7 @@ func TestUpdateInstance_UpdatesExistingOverride(t *testing.T) {
 	instance := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
 
 	// First edit creates the override.
-	if _, err := svc.UpdateInstance(ctx, master.UID, instance, UpdateParams{
+	if _, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, instance, UpdateParams{
 		CalendarID: master.CalendarID,
 		Title:      "First edit",
 		StartTime:  time.Date(2026, 5, 20, 9, 30, 0, 0, time.UTC),
@@ -90,7 +90,7 @@ func TestUpdateInstance_UpdatesExistingOverride(t *testing.T) {
 	}
 
 	// Second edit reuses the same override row.
-	if _, err := svc.UpdateInstance(ctx, master.UID, instance, UpdateParams{
+	if _, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, instance, UpdateParams{
 		CalendarID: master.CalendarID,
 		Title:      "Second edit",
 		StartTime:  time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC),
@@ -163,7 +163,7 @@ func TestUpdateFromInstance_SoftDeletesFutureOverrides(t *testing.T) {
 
 	// Override before cutoff — should survive.
 	pastInstance := time.Date(2026, 5, 19, 9, 0, 0, 0, time.UTC) // Tue
-	if _, err := svc.UpdateInstance(ctx, master.UID, pastInstance, UpdateParams{
+	if _, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, pastInstance, UpdateParams{
 		CalendarID: master.CalendarID,
 		Title:      "Tue override (kept)",
 		StartTime:  pastInstance,
@@ -174,7 +174,7 @@ func TestUpdateFromInstance_SoftDeletesFutureOverrides(t *testing.T) {
 
 	// Override at/after cutoff — should be soft-deleted.
 	futureInstance := time.Date(2026, 5, 28, 9, 0, 0, 0, time.UTC) // Thu next week
-	if _, err := svc.UpdateInstance(ctx, master.UID, futureInstance, UpdateParams{
+	if _, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, futureInstance, UpdateParams{
 		CalendarID: master.CalendarID,
 		Title:      "Thu override (dropped)",
 		StartTime:  futureInstance,
@@ -272,7 +272,7 @@ func TestUpdateInstance_EmptyCategoriesClearsOverrideTags(t *testing.T) {
 	}
 
 	instance := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
-	override, err := svc.UpdateInstance(ctx, master.UID, instance, UpdateParams{
+	override, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, instance, UpdateParams{
 		CalendarID: master.CalendarID,
 		Title:      "Standup (moved)",
 		StartTime:  time.Date(2026, 5, 20, 9, 30, 0, 0, time.UTC),
@@ -310,7 +310,7 @@ func TestUpdateInstance_NonEmptyCategoriesHonored(t *testing.T) {
 	}
 
 	instance := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
-	override, err := svc.UpdateInstance(ctx, master.UID, instance, UpdateParams{
+	override, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, instance, UpdateParams{
 		CalendarID: master.CalendarID,
 		Title:      "Standup (moved)",
 		StartTime:  time.Date(2026, 5, 20, 9, 30, 0, 0, time.UTC),
@@ -382,7 +382,7 @@ func TestUpdateInstance_RevivesDeletedOverride(t *testing.T) {
 	}
 
 	edit := func(title string) (Event, error) {
-		return svc.UpdateInstance(ctx, master.UID, inst, UpdateParams{
+		return svc.UpdateInstance(ctx, master.CalendarID, master.UID, inst, UpdateParams{
 			CalendarID: master.CalendarID, Title: title, StartTime: inst, EndTime: inst.Add(time.Hour),
 		})
 	}
@@ -424,7 +424,7 @@ func TestUpdateInstance_RevivedOverrideStartsWithoutOldRelations(t *testing.T) {
 	inst := master.StartTime.Add(24 * time.Hour)
 	params := UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: inst, EndTime: inst.Add(time.Hour)}
 
-	first, err := svc.UpdateInstanceWithRelations(ctx, master.UID, inst, params,
+	first, err := svc.UpdateInstanceWithRelations(ctx, master.CalendarID, master.UID, inst, params,
 		[]model.Attendee{{Email: "a@example.com"}},
 		[]model.Alarm{{Action: "DISPLAY", TriggerValue: "-PT5M", Description: "soon"}})
 	if err != nil {
@@ -436,7 +436,7 @@ func TestUpdateInstance_RevivedOverrideStartsWithoutOldRelations(t *testing.T) {
 	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, inst); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
-	second, err := svc.UpdateInstance(ctx, master.UID, inst, params)
+	second, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, inst, params)
 	if err != nil {
 		t.Fatalf("second UpdateInstance: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestUpdateInstance_RevivesOverrideOfItsOwnSeries(t *testing.T) {
 		t.Fatalf("seed delete log: %v", err)
 	}
 
-	if _, err := svc.UpdateInstance(ctx, work.UID, inst, UpdateParams{
+	if _, err := svc.UpdateInstance(ctx, home.ID, work.UID, inst, UpdateParams{
 		CalendarID: home.ID, Title: "Back", StartTime: inst, EndTime: inst.Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("UpdateInstance in Home: %v", err)
@@ -519,7 +519,7 @@ func TestUpdateInstance_DoesNotReviveOverrideHiddenBySplit(t *testing.T) {
 	params := func(at time.Time) UpdateParams {
 		return UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: at, EndTime: at.Add(time.Hour)}
 	}
-	if _, err := svc.UpdateInstance(ctx, master.UID, later, params(later)); err != nil {
+	if _, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, later, params(later)); err != nil {
 		t.Fatalf("UpdateInstance before the split: %v", err)
 	}
 	split := params(cut)
@@ -528,7 +528,7 @@ func TestUpdateInstance_DoesNotReviveOverrideHiddenBySplit(t *testing.T) {
 		t.Fatalf("UpdateFromInstance: %v", err)
 	}
 
-	_, err := svc.UpdateInstance(ctx, master.UID, later, params(later))
+	_, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, later, params(later))
 	if !errors.Is(err, ErrOccurrenceOutsideSeries) {
 		t.Fatalf("UpdateInstance past the split = %v, want ErrOccurrenceOutsideSeries", err)
 	}
@@ -551,7 +551,7 @@ func TestUpdateInstance_RevivesOverrideAfterMasterRestore(t *testing.T) {
 	master := newRecurringMaster(t, svc, "revive-uid-5", "FREQ=DAILY;COUNT=5")
 	inst := master.StartTime.Add(24 * time.Hour)
 	params := UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: inst, EndTime: inst.Add(time.Hour)}
-	first, err := svc.UpdateInstance(ctx, master.UID, inst, params)
+	first, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, inst, params)
 	if err != nil {
 		t.Fatalf("first UpdateInstance: %v", err)
 	}
@@ -563,7 +563,7 @@ func TestUpdateInstance_RevivesOverrideAfterMasterRestore(t *testing.T) {
 	}
 
 	params.Title = "Again"
-	second, err := svc.UpdateInstance(ctx, master.UID, inst, params)
+	second, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, inst, params)
 	if err != nil {
 		t.Fatalf("UpdateInstance after the master restore = %v, want nil", err)
 	}
@@ -585,7 +585,7 @@ func TestUpdateInstance_RevivesOverrideAfterUntilRemoved(t *testing.T) {
 	params := func(at time.Time) UpdateParams {
 		return UpdateParams{CalendarID: master.CalendarID, Title: "Edit", StartTime: at, EndTime: at.Add(time.Hour)}
 	}
-	first, err := svc.UpdateInstance(ctx, master.UID, later, params(later))
+	first, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, later, params(later))
 	if err != nil {
 		t.Fatalf("UpdateInstance before the split: %v", err)
 	}
@@ -605,7 +605,7 @@ func TestUpdateInstance_RevivesOverrideAfterUntilRemoved(t *testing.T) {
 		t.Fatalf("remove UNTIL: %v", err)
 	}
 
-	second, err := svc.UpdateInstance(ctx, master.UID, later, params(later))
+	second, err := svc.UpdateInstance(ctx, master.CalendarID, master.UID, later, params(later))
 	if err != nil {
 		t.Fatalf("UpdateInstance after the UNTIL removal = %v, want nil", err)
 	}

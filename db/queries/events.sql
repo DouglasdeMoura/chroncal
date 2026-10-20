@@ -354,14 +354,6 @@ ORDER BY s.calendar_id;
 -- A test compares it with uidmove.LegacyOwner.
 SELECT s.owner_calendar_id FROM event_series_rows AS s WHERE s.id = ? ORDER BY s.owner_calendar_id;
 
--- name: CountLiveEventOverridesInCalendar :one
--- Count the live override rows of one UID in one calendar. The series
--- rule reads it for a live edit: a calendar with a live legacy override
--- and no master belongs to the series of the one live master. A legacy
--- override in the trash does not count (see findSeriesMasterTx).
-SELECT COUNT(*) FROM events
-WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NULL;
-
 -- name: ListEventCalendarIDsByUID :many
 -- Every calendar that holds a row of one UID, live or in the trash. The
 -- access guard of a UID-wide delete or restore reads it.

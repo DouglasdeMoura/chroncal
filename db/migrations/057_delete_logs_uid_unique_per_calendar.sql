@@ -43,15 +43,17 @@ ALTER TABLE event_truncate_deletes_new RENAME TO event_truncate_deletes;
 CREATE INDEX idx_event_truncate_deletes_calendar ON event_truncate_deletes(calendar_id);
 CREATE INDEX idx_event_truncate_deletes_deleted_at ON event_truncate_deletes(deleted_at);
 
--- The log of a series delete. The row lists the overrides that the
--- series delete hid (hidden_overrides, comma-separated recurrence IDs).
--- A restore of the series un-hides exactly those overrides. An override
--- that a sync prune or an occurrence delete hid before stays hidden.
+-- The log of a series delete. The row lists the override rows that the
+-- series delete hid (hidden_ids, comma-separated event row IDs). A
+-- restore of the series un-hides exactly those rows, by ID, so a change
+-- of the series owner after the delete does not strand a row. An
+-- override that a sync prune or an occurrence delete hid before stays
+-- hidden.
 CREATE TABLE event_series_deletes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
     uid TEXT NOT NULL,
-    hidden_overrides TEXT NOT NULL DEFAULT '',
+    hidden_ids TEXT NOT NULL DEFAULT '',
     deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE (calendar_id, uid)
 );
