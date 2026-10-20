@@ -170,6 +170,10 @@ type icalImportTarget struct {
 	calendarID    int64
 	calendarName  string
 	fromDirectory bool
+	// lenient marks a batch run: a stored directory that is not there
+	// yet gives a warning, not an error. A named calendar reports it as
+	// an error, because a typo in --path is then the likely cause.
+	lenient bool
 }
 
 // batchLabel names the calendar of one run on stderr in batch mode, so
@@ -222,7 +226,7 @@ func icalImportTargets(ctx context.Context, a *app.App, args []string, calendarN
 		if cal.LocalPath == "" || cal.AccountID != 0 {
 			continue
 		}
-		targets = append(targets, icalImportTarget{path: cal.LocalPath, calendarID: cal.ID, calendarName: cal.Name, fromDirectory: true})
+		targets = append(targets, icalImportTarget{path: cal.LocalPath, calendarID: cal.ID, calendarName: cal.Name, fromDirectory: true, lenient: true})
 	}
 	if len(targets) == 0 {
 		return nil, errInvalidInputf("no calendar has a directory; pass a path, or set one with 'chroncal calendar update NAME --path DIR'")
@@ -306,7 +310,10 @@ func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget
 			// A link to an unmounted drive, or a directory that the sync
 			// tool has not created yet. ParsePath would refuse the link
 			// with another message, so report the real state here.
-			return missingDirectoryOutcome(target)
+			if target.lenient {
+				return missingDirectoryOutcome(target)
+			}
+			return icalImportOutcome{target: target, err: fmt.Errorf("the directory %s does not exist", target.path)}
 		default:
 			// A permission problem or a link loop. ParsePath would report
 			// a refused link, which hides the cause.

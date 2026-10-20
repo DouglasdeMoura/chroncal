@@ -75,7 +75,7 @@ func TestContractHomeWithTrailingSeparatorInHome(t *testing.T) {
 	}
 }
 
-func TestSameTree(t *testing.T) {
+func TestSameResolvedTree(t *testing.T) {
 	cases := []struct {
 		a, b string
 		want bool
@@ -89,8 +89,8 @@ func TestSameTree(t *testing.T) {
 		{"/srv/cal", "/", true},
 	}
 	for _, tc := range cases {
-		if got := SameTree(tc.a, tc.b); got != tc.want {
-			t.Errorf("SameTree(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		if got := SameResolvedTree(ResolveTree(tc.a), ResolveTree(tc.b)); got != tc.want {
+			t.Errorf("SameResolvedTree(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
 	}
 }
@@ -113,7 +113,8 @@ func TestExpandHomeKeepsTheSpellingOfALink(t *testing.T) {
 	if got, err := ExpandHome(link); err != nil || got != link {
 		t.Fatalf("ExpandHome(link) = %q, %v; want the link kept", got, err)
 	}
-	if !SameTree(link, target) || !SameTree(filepath.Join(link, "work"), target) {
-		t.Fatal("SameTree does not see through the link")
+	if !SameResolvedTree(ResolveTree(link), ResolveTree(target)) ||
+		!SameResolvedTree(ResolveTree(filepath.Join(link, "work")), ResolveTree(target)) {
+		t.Fatal("ResolveTree does not see through the link")
 	}
 }

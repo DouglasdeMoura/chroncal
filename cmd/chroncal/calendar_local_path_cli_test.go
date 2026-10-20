@@ -711,3 +711,40 @@ func TestIcalImportNamedCalendarJSONIsOneObject(t *testing.T) {
 		t.Fatalf("named import json = %v", out)
 	}
 }
+
+// TestIcalImportNamedCalendarMissingDirectoryIsAnError verifies a missing
+// directory is an error when the command names the calendar, because a
+// typo in --path is then the likely cause. The batch mode stays lenient.
+func TestIcalImportNamedCalendarMissingDirectoryIsAnError(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	missing := filepath.Join(tempDir(t), "absent")
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Typo", "--path", missing); err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	_, _, err := runChroncalCommand(t, "ical", "import", "--calendar", "Typo")
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("named import of a missing directory: error = %v", err)
+	}
+	if _, _, err := runChroncalCommand(t, "ical", "import"); err != nil {
+		t.Fatalf("batch import of a missing directory must succeed: %v", err)
+	}
+}
+
+// TestCalendarDeleteRefusesDeclaredBeforePrompt verifies the refusal of a
+// declared calendar comes before the confirm prompt: with --yes absent the
+// command still fails on the guard, not on a missing confirmation.
+func TestCalendarDeleteRefusesDeclaredBeforePrompt(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	configDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "chroncal")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[[calendars]]\nname = \"Fastmail\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	fm := calendarJSONByName(t, "Fastmail")
+	_, _, err := runChroncalCommand(t, "calendar", "delete", jsonInt(fm.ID))
+	if err == nil || !strings.Contains(err.Error(), "remove the entry first") {
+		t.Fatalf("calendar delete of a declared calendar without --yes: error = %v", err)
+	}
+}

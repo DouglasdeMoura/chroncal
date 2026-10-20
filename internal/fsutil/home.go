@@ -30,17 +30,6 @@ func IsAbsOrHome(path string) bool {
 	return hasHomePrefix(path) || filepath.IsAbs(path)
 }
 
-// SameTree reports whether two clean absolute directories are one tree:
-// equal, or one inside the other. An empty path is in no tree. A directory
-// that exists compares through its resolved symbolic links, so a linked
-// spelling of one tree does not pass as a second tree.
-func SameTree(a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	return SameResolvedTree(ResolveTree(a), ResolveTree(b))
-}
-
 // caseInsensitivePaths is true on the platforms whose default file system
 // folds case (macOS and Windows). Two spellings of one directory are then
 // one tree.
