@@ -391,3 +391,22 @@ func TestEventDelete_ReusedCommandTreeKeepsNoCalendar(t *testing.T) {
 		}
 	}
 }
+
+// TestEventUpdate_CalendarWithoutSeriesNamesIt: with --calendar on a
+// calendar that holds no series of the UID, the error names that calendar
+// instead of the generic "pass --calendar" hint.
+func TestEventUpdate_CalendarWithoutSeriesNamesIt(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Empty"); err != nil {
+		t.Fatalf("calendar create Empty: %v", err)
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "update", uid, "--recurrence-id", "2026-04-07T09:00:00Z", "--calendar", "Empty", "--title", "Moved")
+	if err == nil {
+		t.Fatal("update with a calendar that holds no series succeeded")
+	}
+	if !strings.Contains(stderr, `calendar "Empty" holds no series`) || !strings.Contains(stderr, "name the calendar of the series") {
+		t.Fatalf("stderr = %q, want the named calendar and the remedy", stderr)
+	}
+}

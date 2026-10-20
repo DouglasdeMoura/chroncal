@@ -141,3 +141,45 @@ func TestExportResource_LegacyOverrideCalendarHasNoResource(t *testing.T) {
 		}
 	}
 }
+
+// TestExportResource_OrphanRowsBesideTrashedMaster: a calendar whose rows
+// of a UID are live legacy overrides, while the one master of the UID is
+// in the trash of another calendar, exports those rows as orphan
+// instances. A row that a restore by ID brought back then reaches the
+// server.
+func TestExportResource_OrphanRowsBesideTrashedMaster(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	start := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	master, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "orphan-series", CalendarID: calA, Title: "Standup A",
+		StartTime: start, EndTime: start.Add(30 * time.Minute), RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("upsert master A: %v", err)
+	}
+	legacy, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "orphan-series", CalendarID: calB, Title: "Legacy late",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour),
+		RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	if err := engine.events.DeleteSeries(ctx, calA, master.UID); err != nil {
+		t.Fatalf("DeleteSeries(A): %v", err)
+	}
+	if err := engine.events.RestoreByID(ctx, legacy.ID); err != nil {
+		t.Fatalf("RestoreByID(legacy): %v", err)
+	}
+	data, err := engine.exportResource(ctx, calB, "event", master.UID)
+	if err != nil {
+		t.Fatalf("exportResource(B): %v", err)
+	}
+	if !strings.Contains(string(data), "SUMMARY:Legacy late") {
+		t.Errorf("export of B lacks the restored orphan row:\n%s", data)
+	}
+}

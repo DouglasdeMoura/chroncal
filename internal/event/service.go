@@ -597,54 +597,69 @@ func findInstanceMasterTx(ctx context.Context, qtx *storage.Queries, move uidmov
 
 // findInstanceOverrideTx finds the stored override of recID for master. A
 // row in the calendar of the master wins. Else it takes a legacy override
-// (see storage.LegacyOverride): a row in a calendar with no master row of
-// the UID, live or in the trash, when the series of master owns it
-// (uidmove.LegacyOwner). masters lists every master row of the UID, live
-// and in the trash. More than one legacy row gives ErrAmbiguousUID. No
-// row gives sql.ErrNoRows.
-func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, masters []uidmove.Master, recID string) (storage.Event, error) {
-	// One query reads every live row of (uid, recID). The pick runs in Go,
-	// so the common edit (no row, or a row with the master) needs no second
-	// query.
-	rows, err := qtx.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
+// (see storage.LegacyOverride) that the series of master owns. The view
+// event_series_rows holds the rule. More than one legacy row gives
+// ErrAmbiguousUID. No row gives sql.ErrNoRows.
+func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, recID string) (storage.Event, error) {
+	rows, err := qtx.ListSeriesOverridesAtRecurrenceID(ctx, storage.ListSeriesOverridesAtRecurrenceIDParams{
+		CalendarID:   master.CalendarID,
 		Uid:          master.Uid,
 		RecurrenceID: recID,
 	})
 	if err != nil {
 		return storage.Event{}, err
 	}
-	owner, ownsLegacy, _ := uidmove.LegacyOwner(masters)
-	ownsLegacy = ownsLegacy && owner == master.CalendarID
-	var legacy []storage.Event
 	for _, r := range rows {
 		if r.CalendarID == master.CalendarID {
 			return r, nil
 		}
-		if ownsLegacy && !uidmove.HasMasterIn(masters, r.CalendarID) {
-			legacy = append(legacy, r)
-		}
 	}
-	switch len(legacy) {
+	switch len(rows) {
 	case 0:
 		return storage.Event{}, sql.ErrNoRows
 	case 1:
-		return legacy[0], nil
+		return rows[0], nil
 	default:
 		return storage.Event{}, ErrAmbiguousUID
 	}
 }
 
 // moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
-// another calendar. uidmove.Rows.Record calls it.
+// another calendar. uidmove.Rows.Record calls it. The log keys are per
+// calendar (migration 057). The target calendar holds no event row of the
+// UID (uidmove.Rows.CheckTarget), so a log row of the UID in it is a
+// stale row, for example one that a purge of the master left. The move
+// drops those rows first, so the moved rows take their keys.
 func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams) error {
 	if err := qtx.MoveEventUIDToCalendar(ctx, arg); err != nil {
 		return fmt.Errorf("move events: %w", err)
+	}
+	if err := deleteLogRowsTx(ctx, qtx, arg.ToCalendarID, arg.Uid); err != nil {
+		return err
 	}
 	if err := qtx.MoveEventExdateDeletesUIDToCalendar(ctx, storage.MoveEventExdateDeletesUIDToCalendarParams(arg)); err != nil {
 		return fmt.Errorf("move event_exdate_deletes: %w", err)
 	}
 	if err := qtx.MoveEventTruncateDeletesUIDToCalendar(ctx, storage.MoveEventTruncateDeletesUIDToCalendarParams(arg)); err != nil {
 		return fmt.Errorf("move event_truncate_deletes: %w", err)
+	}
+	if err := qtx.MoveEventSeriesDeletesUIDToCalendar(ctx, storage.MoveEventSeriesDeletesUIDToCalendarParams(arg)); err != nil {
+		return fmt.Errorf("move event_series_deletes: %w", err)
+	}
+	return nil
+}
+
+// deleteLogRowsTx drops the delete-log rows of one UID in one calendar:
+// the occurrence log, the truncation log, and the series log.
+func deleteLogRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) error {
+	if err := qtx.DeleteEventExdateDeletesByCalendarUID(ctx, storage.DeleteEventExdateDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
+		return fmt.Errorf("delete event_exdate_deletes: %w", err)
+	}
+	if err := qtx.DeleteEventTruncateDeletesByCalendarUID(ctx, storage.DeleteEventTruncateDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
+		return fmt.Errorf("delete event_truncate_deletes: %w", err)
+	}
+	if err := qtx.DeleteEventSeriesDeletesByCalendarUID(ctx, storage.DeleteEventSeriesDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
+		return fmt.Errorf("delete event_series_deletes: %w", err)
 	}
 	return nil
 }
@@ -854,7 +869,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, ins
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
 		return Event{}, err
 	}
-	existing, existErr := findInstanceOverrideTx(ctx, qtx, master, masters, recID)
+	existing, existErr := findInstanceOverrideTx(ctx, qtx, master, recID)
 	if existErr != nil && !errors.Is(existErr, sql.ErrNoRows) {
 		if errors.Is(existErr, ErrAmbiguousUID) {
 			return Event{}, existErr
@@ -1200,7 +1215,7 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID 
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
 		return Event{}, 0, err
 	}
-	master, _, err := findSeriesMasterTx(ctx, qtx, calendarID, uid)
+	master, err := findSeriesMasterTx(ctx, qtx, calendarID, uid)
 	if err != nil {
 		return Event{}, 0, wrapMasterLookup(err)
 	}

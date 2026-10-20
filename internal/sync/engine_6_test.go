@@ -285,7 +285,7 @@ func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
 	}
 
 	// The stale override should be soft-deleted (not hard-deleted).
-	deletedRIDs, err := q.ListDeletedOverrideRecurrenceIDs(ctx, uid)
+	deletedRIDs, err := q.ListDeletedSeriesOverrideRecurrenceIDs(ctx, storage.ListDeletedSeriesOverrideRecurrenceIDsParams{CalendarID: 1, Uid: uid})
 	if err != nil {
 		t.Fatalf("ListDeletedOverrideRecurrenceIDs: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
 	}
 
 	// The master should still exist with the EXDATE.
-	master, err := q.GetEventByUID(ctx, uid)
+	master, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: uid})
 	if err != nil {
 		t.Fatalf("GetEventByUID after second import: %v", err)
 	}
@@ -944,7 +944,7 @@ func TestPersistImportedDropsInvalidAlarm(t *testing.T) {
 		t.Fatalf("revs = %v, want an entry for the persisted event", revs)
 	}
 
-	saved, err := q.GetEventByUID(ctx, "bad-alarm-uid")
+	saved, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "bad-alarm-uid"})
 	if err != nil {
 		t.Fatalf("GetEventByUID: the event must persist: %v", err)
 	}

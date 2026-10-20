@@ -149,7 +149,7 @@ func TestEngineKnownHrefStopsBlockingAfterBudget(t *testing.T) {
 				}
 			}
 
-			if _, err := q.GetEventByUID(ctx, "stuck"); err != nil {
+			if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "stuck"}); err != nil {
 				t.Fatalf("local row was deleted: %v", err)
 			}
 			rows := listKnownMisses(t, q, calendarID)

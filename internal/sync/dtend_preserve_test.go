@@ -97,7 +97,7 @@ func TestPushServerWinsRepullPreservesDTEND(t *testing.T) {
 		t.Fatalf("errors = %d, want 0: %v", len(result.errors), result.errors)
 	}
 
-	evt, err := q.GetEventByUID(ctx, "srv-wins-dtend")
+	evt, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "srv-wins-dtend"})
 	if err != nil {
 		t.Fatalf("GetEventByUID: %v", err)
 	}

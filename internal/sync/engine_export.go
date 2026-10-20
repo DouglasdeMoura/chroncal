@@ -66,7 +66,7 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 		export: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error) {
 			data, _, err := exportResourceFor(ctx, e, calendarID, uid, ownerTypeEvent,
-				e.eventMasterForExport, e.events.ListSeriesOverrides, hydrateEvent, icalPkg.ExportEvents)
+				e.eventMasterForExport, e.eventOverridesForExport, hydrateEvent, icalPkg.ExportEvents)
 			return data, err
 		},
 	},
@@ -130,6 +130,28 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 	return event.Event{}, err
 }
 
+// eventOverridesForExport lists the override rows of the export of uid in
+// calendarID. The series rule (ListSeriesOverrides) gives the overrides
+// of the series of the calendar. A calendar whose rows of the UID are
+// orphan instances gets those rows: the UID has no live master anywhere,
+// so no series owns them, and the documented orphan-instance export
+// carries them. A row that a restore by ID brought back beside a master
+// in the trash then still reaches the server.
+func (e *Engine) eventOverridesForExport(ctx context.Context, calendarID int64, uid string) ([]event.Event, error) {
+	rows, err := e.events.ListSeriesOverrides(ctx, calendarID, uid)
+	if err != nil || len(rows) > 0 {
+		return rows, err
+	}
+	n, err := e.q.EventUIDMasterCalendars(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	if n.Calendars > 0 {
+		return nil, nil
+	}
+	return e.events.ListLiveOverridesInCalendar(ctx, calendarID, uid)
+}
+
 // exportResourceFor bundles a UID's master row plus its override rows into an
 // iCal payload. CalDAV tracks one resource per UID. Recurring resources are
 // stored as a master row plus override rows that share the UID. We normally
@@ -145,11 +167,13 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 // had to drop; the caller owns the decision to send the incomplete payload.
 //
 // Google sometimes serves a single orphan instance under a UID like
-// `<master>_R<recurrence-id>@google.com` with a RECURRENCE-ID property and no
-// master in the same iCal stream. We import those as override rows with no
-// master sibling. The master lookup then fails. We therefore append every
-// live row under the UID and export the non-empty result. We return
-// errResourceMissing only when nothing remains.
+// `<master>_R<recurrence-id>@google.com`. The instance has a RECURRENCE-ID
+// property and no master in the same iCal stream. The import stores such
+// an instance as an override row with no master sibling. The master
+// lookup then gives sql.ErrNoRows, and the export takes the override rows
+// of the calendar (see eventOverridesForExport). The result holds the
+// live rows of the bundle. The function returns errResourceMissing when
+// the bundle is empty.
 func exportResourceFor[T any](
 	ctx context.Context,
 	e *Engine,

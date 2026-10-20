@@ -163,7 +163,7 @@ END:VCALENDAR
 		t.Fatalf("errors = %d, want 0", len(result.errors))
 	}
 
-	evt, err := q.GetEventByUID(ctx, "server-wins-event")
+	evt, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "server-wins-event"})
 	if err != nil {
 		t.Fatalf("GetEventByUID: %v", err)
 	}
@@ -534,7 +534,7 @@ END:VCALENDAR
 		t.Fatalf("pulled = %d, want 0", pullResult.pulled)
 	}
 
-	if _, err := q.GetEventByUID(ctx, "tombstoned-event"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "tombstoned-event"}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetEventByUID err = %v, want sql.ErrNoRows", err)
 	}
 
@@ -890,7 +890,7 @@ func TestEnginePullDeletesLocalResourceWhenServerRemovesIt(t *testing.T) {
 		t.Fatalf("pulled = %d, want 0", pullResult.pulled)
 	}
 
-	if _, err := q.GetEventByUID(ctx, "remote-deleted"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "remote-deleted"}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetEventByUID err = %v, want sql.ErrNoRows", err)
 	}
 	if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{

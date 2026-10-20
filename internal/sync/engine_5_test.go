@@ -194,10 +194,10 @@ func TestEnginePullMultigetMissWithholdsAbsenceDeletions(t *testing.T) {
 		t.Fatalf("deleted = %d, want 0 (incomplete inventory must withhold ALL absence deletions)", result.deleted)
 	}
 	// Both rows must still exist — neither the missed one nor the absent one.
-	if _, err := q.GetEventByUID(ctx, "absent"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "absent"}); err != nil {
 		t.Errorf("absent row was wrongly deleted against a partial inventory: %v", err)
 	}
-	if _, err := q.GetEventByUID(ctx, "racey"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "racey"}); err != nil {
 		t.Errorf("racey row (multiget miss) was wrongly deleted: %v", err)
 	}
 	// Token must not advance on an incomplete pull.
@@ -293,10 +293,10 @@ END:VCALENDAR
 	if result.deleted != 1 {
 		t.Fatalf("deleted = %d, want 1 (gone-uid absent from QueryAll)", result.deleted)
 	}
-	if _, err := q.GetEventByUID(ctx, "gone-uid"); err == nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "gone-uid"}); err == nil {
 		t.Error("gone-uid should be deleted (absent from complete QueryAll inventory)")
 	}
-	if _, err := q.GetEventByUID(ctx, "local-only"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "local-only"}); err != nil {
 		t.Errorf("never-pushed local-only row must survive: %v", err)
 	}
 }
@@ -344,7 +344,7 @@ END:VCALENDAR
 		t.Fatalf("persistImported (with alarm): %v", err)
 	}
 
-	saved, err := q.GetEventByUID(ctx, "alarm-removal-uid")
+	saved, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "alarm-removal-uid"})
 	if err != nil {
 		t.Fatalf("GetEventByUID: %v", err)
 	}
@@ -1050,7 +1050,7 @@ END:VCALENDAR
 	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
 		t.Fatalf("pull (fullsnapshot): %v", err)
 	}
-	if _, err := q.GetEventByUID(ctx, "bad-uid"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "bad-uid"}); err != nil {
 		t.Fatalf("local row was deleted: %v", err)
 	}
 	rows, err := q.ListSyncKnownMissesByCalendar(ctx, calendarID)
@@ -1167,7 +1167,7 @@ END:VCALENDAR
 		t.Fatalf("pulled = %d, want 1 (good.ics)", result.pulled)
 	}
 	for _, uid := range []string{"garbage-uid", "nodata-uid", "good-uid"} {
-		if _, err := q.GetEventByUID(ctx, uid); err != nil {
+		if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: uid}); err != nil {
 			t.Fatalf("event %s: %v", uid, err)
 		}
 	}

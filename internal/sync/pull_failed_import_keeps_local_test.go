@@ -83,7 +83,7 @@ END:VCALENDAR
 	if result.deleted != 0 {
 		t.Fatalf("deleted = %d, want 0", result.deleted)
 	}
-	if _, err := q.GetEventByUID(ctx, "kept"); err != nil {
+	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "kept"}); err != nil {
 		t.Fatalf("local row was deleted after a failed import: %v", err)
 	}
 }

@@ -194,6 +194,14 @@ type EventResource struct {
 	Text    string
 }
 
+type EventSeriesDelete struct {
+	ID              int64
+	CalendarID      int64
+	Uid             string
+	HiddenOverrides string
+	DeletedAt       string
+}
+
 type EventSeriesRow struct {
 	ID              int64
 	Uid             string

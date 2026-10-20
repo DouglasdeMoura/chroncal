@@ -242,6 +242,18 @@ func (s *Service) PurgeOldTruncationDeletes(ctx context.Context, olderThan time.
 	return int(n), nil
 }
 
+// PurgeOldSeriesDeletes drops event_series_deletes rows older than
+// olderThan. Returns the number of rows purged. A restore of the series
+// then un-hides the overrides that no other log names.
+func (s *Service) PurgeOldSeriesDeletes(ctx context.Context, olderThan time.Time) (int, error) {
+	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
+	n, err := s.q.PurgeOldEventSeriesDeletes(ctx, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // PurgeTrashEntry hard-removes entry from the trash. For TrashKindEvent it
 // drops the events row. For TrashKindInstance and TrashKindTruncation it
 // drops the log row only. The EXDATE (or truncated RRULE plus deleted
@@ -402,7 +414,7 @@ func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log st
 		return nil
 	}
 	for _, recID := range strings.Split(*log.HiddenOverrides, ",") {
-		if err := qtx.RestoreSeriesOverrideByRecurrenceID(ctx, storage.RestoreSeriesOverrideByRecurrenceIDParams{
+		if _, err := qtx.RestoreSeriesOverrideByRecurrenceID(ctx, storage.RestoreSeriesOverrideByRecurrenceIDParams{
 			CalendarID:   log.CalendarID,
 			Uid:          log.Uid,
 			RecurrenceID: recID,

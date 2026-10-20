@@ -452,7 +452,7 @@ func TestDoctorPushRefusesOpenConflict(t *testing.T) {
 	ctx := context.Background()
 	seedWedgedEvent(t, engine, db, q, cal.ID, "wedged-conflict")
 
-	evt, err := q.GetEventByUID(ctx, "wedged-conflict")
+	evt, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: cal.ID, Uid: "wedged-conflict"})
 	if err != nil {
 		t.Fatalf("GetEventByUID: %v", err)
 	}

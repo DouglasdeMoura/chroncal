@@ -34,8 +34,10 @@ import (
 // calendar of the series for a UID reference: the override or the master
 // of that calendar is the target. A calendar that holds no series of the
 // UID names a move target instead, so the lookup then runs without it,
-// and the service refuses the move of one occurrence with its hint.
-func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64) (event.Event, bool, error) {
+// and the service refuses the move of one occurrence with its hint. When
+// that lookup cannot choose the series, the error names calendarName as
+// a calendar with no series of the UID.
+func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64, calendarName string) (event.Event, bool, error) {
 	if recurrenceID == "" {
 		e, err := resolveEvent(ctx, a, ref, "")
 		return e, false, err
@@ -65,13 +67,24 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 		return e, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return event.Event{}, false, notFoundErr(err, "event", ref)
+		return event.Event{}, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
 	}
 	master, err := a.Events.GetByUID(ctx, ref)
 	if err != nil {
-		return event.Event{}, false, notFoundErr(err, "event", ref)
+		return event.Event{}, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
 	}
 	return generatedOccurrence(master, ref, recurrenceID)
+}
+
+// ambiguousSeriesErr maps a lookup error of a UID reference. With a
+// --calendar that holds no series of the UID, the generic hint ("pass
+// --calendar NAME") would repeat what the user did, so the error names
+// that calendar instead.
+func ambiguousSeriesErr(err error, ref string, calendarID int64, calendarName string) error {
+	if calendarID != 0 && errors.Is(err, event.ErrAmbiguousUID) {
+		return errInvalidInputf("calendar %q holds no series of event %s, and the UID is in more than one calendar; use the ID of the row, or name the calendar of the series with --calendar", calendarName, ref)
+	}
+	return notFoundErr(err, "event", ref)
 }
 
 // generatedOccurrence builds the occurrence of master at recurrenceID

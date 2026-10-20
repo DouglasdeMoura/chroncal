@@ -43,19 +43,39 @@ ALTER TABLE event_truncate_deletes_new RENAME TO event_truncate_deletes;
 CREATE INDEX idx_event_truncate_deletes_calendar ON event_truncate_deletes(calendar_id);
 CREATE INDEX idx_event_truncate_deletes_deleted_at ON event_truncate_deletes(deleted_at);
 
+-- The log of a series delete. The row lists the overrides that the
+-- series delete hid (hidden_overrides, comma-separated recurrence IDs).
+-- A restore of the series un-hides exactly those overrides. An override
+-- that a sync prune or an occurrence delete hid before stays hidden.
+CREATE TABLE event_series_deletes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+    uid TEXT NOT NULL,
+    hidden_overrides TEXT NOT NULL DEFAULT '',
+    deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE (calendar_id, uid)
+);
+CREATE INDEX idx_event_series_deletes_calendar ON event_series_deletes(calendar_id);
+CREATE INDEX idx_event_series_deletes_deleted_at ON event_series_deletes(deleted_at);
+
 -- The rows of each event series. One row of the view pairs an event row
 -- (id, live or in the trash) with the calendar whose series owns it
--- (owner_calendar_id). A row in a calendar with a master row of its UID
--- belongs to the series of that calendar. A legacy override (a row in a
--- calendar with no master row of its UID) belongs to the series of the
--- master row c when no other calendar holds a live master, and, when c
--- is in the trash, when no other calendar holds a master row at all.
--- uidmove.LegacyOwner is the Go form of that rule. A row of a UID with
--- no master row in any calendar (an orphan override, for example a
--- Google instance under its own UID) belongs to the series of its own
--- calendar, so the export of that calendar still carries it. A legacy
--- override with no owner is not in the view. Drop the view before a
--- rebuild of the events table, and create it again after.
+-- (owner_calendar_id). The rule has four parts:
+--
+-- 1. A row in a calendar with a master row of its UID belongs to the
+--    series of that calendar.
+-- 2. A legacy override is a row in a calendar with no master row of its
+--    UID. It belongs to the series of the master row c when no other
+--    calendar holds a live master. When c is in the trash, no other
+--    calendar can hold a master row at all.
+-- 3. A legacy override with no such master has no owner. It is not in
+--    the view.
+-- 4. A row of a UID with no master row in any calendar belongs to the
+--    series of its own calendar. Google serves such an orphan instance
+--    under its own UID, and the export of the calendar still carries it.
+--
+-- uidmove.LegacyOwner is the Go form of part 2 and part 3. Drop the view
+-- before a rebuild of the events table. Create it again after.
 CREATE VIEW event_series_rows AS
 SELECT
     e.id AS id,
@@ -88,6 +108,9 @@ WHERE NOT EXISTS (
 
 -- +goose Down
 DROP VIEW IF EXISTS event_series_rows;
+DROP INDEX IF EXISTS idx_event_series_deletes_deleted_at;
+DROP INDEX IF EXISTS idx_event_series_deletes_calendar;
+DROP TABLE IF EXISTS event_series_deletes;
 -- The old keys hold one row per UID. A second calendar's row of the same
 -- occurrence or cutoff does not fit, so the copy keeps the first row.
 CREATE TABLE event_exdate_deletes_old (
