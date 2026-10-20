@@ -794,10 +794,10 @@ func TestEngineSyncCalendarSerializesWholeCycle(t *testing.T) {
 func TestExportResourceFor_HydrateErrorAbortsExport(t *testing.T) {
 	t.Parallel()
 
-	get := func(context.Context, string) (event.Event, error) {
+	get := func(context.Context, int64, string) (event.Event, error) {
 		return event.Event{UID: "uid-1", ID: 1}, nil
 	}
-	listOverrides := func(context.Context, string) ([]event.Event, error) {
+	listOverrides := func(context.Context, int64, string) ([]event.Event, error) {
 		return nil, nil
 	}
 	marker := errors.New("db busy")
@@ -810,7 +810,7 @@ func TestExportResourceFor_HydrateErrorAbortsExport(t *testing.T) {
 		return []byte("BEGIN:VCALENDAR"), nil
 	}
 
-	_, _, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
+	_, _, err := exportResourceFor(context.Background(), nil, 1, "uid-1", "event",
 		get, listOverrides, hydrate, hydrated)
 	if err == nil {
 		t.Fatal("expected hydration error to propagate, got nil")
@@ -832,10 +832,10 @@ func TestExportResourceFor_MasterReadErrorAbortsExport(t *testing.T) {
 	t.Parallel()
 
 	marker := errors.New("database is locked")
-	get := func(context.Context, string) (event.Event, error) {
+	get := func(context.Context, int64, string) (event.Event, error) {
 		return event.Event{}, marker
 	}
-	listOverrides := func(context.Context, string) ([]event.Event, error) {
+	listOverrides := func(context.Context, int64, string) ([]event.Event, error) {
 		return []event.Event{{UID: "uid-1", ID: 2, RecurrenceID: "20260401T100000Z"}}, nil
 	}
 	hydrate := func(context.Context, *Engine, *event.Event) ([]string, error) { return nil, nil }
@@ -845,7 +845,7 @@ func TestExportResourceFor_MasterReadErrorAbortsExport(t *testing.T) {
 		return []byte("BEGIN:VCALENDAR"), nil
 	}
 
-	_, _, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
+	_, _, err := exportResourceFor(context.Background(), nil, 1, "uid-1", "event",
 		get, listOverrides, hydrate, export)
 	if err == nil {
 		t.Fatal("expected the master read error to propagate, got nil")
@@ -863,10 +863,10 @@ func TestExportResourceFor_MasterReadErrorAbortsExport(t *testing.T) {
 func TestExportResourceFor_MissingMasterExportsOverrides(t *testing.T) {
 	t.Parallel()
 
-	get := func(context.Context, string) (event.Event, error) {
+	get := func(context.Context, int64, string) (event.Event, error) {
 		return event.Event{}, sql.ErrNoRows
 	}
-	listOverrides := func(context.Context, string) ([]event.Event, error) {
+	listOverrides := func(context.Context, int64, string) ([]event.Event, error) {
 		return []event.Event{{UID: "uid-1", ID: 2, RecurrenceID: "20260401T100000Z"}}, nil
 	}
 	hydrate := func(context.Context, *Engine, *event.Event) ([]string, error) { return nil, nil }
@@ -876,7 +876,7 @@ func TestExportResourceFor_MissingMasterExportsOverrides(t *testing.T) {
 		return []byte("BEGIN:VCALENDAR"), nil
 	}
 
-	if _, _, err := exportResourceFor(context.Background(), nil, "uid-1", "event",
+	if _, _, err := exportResourceFor(context.Background(), nil, 1, "uid-1", "event",
 		get, listOverrides, hydrate, export); err != nil {
 		t.Fatalf("orphan instance must still export: %v", err)
 	}

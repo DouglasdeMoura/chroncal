@@ -665,7 +665,7 @@ func TestLookupOwnerIDUnknownTypeErrors(t *testing.T) {
 	engine, _, _ := newTestEngine(t)
 	ctx := context.Background()
 
-	id, err := engine.lookupOwnerID(ctx, "bogus", "some-uid")
+	id, err := engine.lookupOwnerID(ctx, 1, "bogus", "some-uid")
 	if !errors.Is(err, errUnknownOwnerType) {
 		t.Fatalf("lookupOwnerID(bogus) err = %v, want errUnknownOwnerType", err)
 	}
@@ -690,7 +690,7 @@ func TestLookupOwnerIDResolvesByType(t *testing.T) {
 		t.Fatalf("GetByUID: %v", err)
 	}
 
-	got, err := engine.lookupOwnerID(ctx, "event", uid)
+	got, err := engine.lookupOwnerID(ctx, 1, "event", uid)
 	if err != nil {
 		t.Fatalf("lookupOwnerID(event): %v", err)
 	}
@@ -698,7 +698,7 @@ func TestLookupOwnerIDResolvesByType(t *testing.T) {
 		t.Fatalf("lookupOwnerID(event) = %d, want %d", got, want.ID)
 	}
 
-	if _, err := engine.lookupOwnerID(ctx, "event", "missing-uid"); err == nil {
+	if _, err := engine.lookupOwnerID(ctx, 1, "event", "missing-uid"); err == nil {
 		t.Fatal("lookupOwnerID(event, missing-uid) err = nil, want lookup error")
 	}
 }
@@ -715,10 +715,10 @@ func TestOwnerDispatchRejectsUnknownTypeUniformly(t *testing.T) {
 	if err := engine.deleteLocalResourceByUID(ctx, 1, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
 		t.Fatalf("deleteLocalResourceByUID err = %v, want errUnknownOwnerType", err)
 	}
-	if _, err := engine.lookupOwnerID(ctx, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
+	if _, err := engine.lookupOwnerID(ctx, 1, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
 		t.Fatalf("lookupOwnerID err = %v, want errUnknownOwnerType", err)
 	}
-	if _, err := engine.exportResource(ctx, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
+	if _, err := engine.exportResource(ctx, 1, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
 		t.Fatalf("exportResource err = %v, want errUnknownOwnerType", err)
 	}
 }

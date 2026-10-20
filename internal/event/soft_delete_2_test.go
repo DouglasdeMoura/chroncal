@@ -97,7 +97,7 @@ func TestDeleteSeries_MasterLookupError(t *testing.T) {
 		t.Fatalf("corrupt master sequence: %v", err)
 	}
 
-	if err := svc.DeleteSeries(ctx, master.UID); err == nil {
+	if err := svc.DeleteSeries(ctx, master.CalendarID, master.UID); err == nil {
 		t.Fatal("DeleteSeries should propagate a non-ErrNoRows master-lookup error, got nil")
 	}
 
@@ -156,7 +156,7 @@ func TestDeleteInstance_OverrideLookupError(t *testing.T) {
 		t.Fatalf("corrupt override sequence: %v", err)
 	}
 
-	err = svc.DeleteInstance(ctx, master.UID, instanceAt)
+	err = svc.DeleteInstance(ctx, master.CalendarID, master.UID, instanceAt)
 	if err == nil {
 		t.Fatal("DeleteInstance should propagate a non-ErrNoRows override-lookup error, got nil")
 	}
@@ -277,7 +277,7 @@ func TestSoftDelete_FromInstanceUndo_ReAddsRDates(t *testing.T) {
 	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
 	master := newRDateOnlyMaster(t, svc, "rdate-undo-readds", []time.Time{rdate1, rdate2})
 
-	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, rdate2)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.CalendarID, master.UID, rdate2)
 	if err != nil {
 		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestSoftDelete_FromInstanceUndo_KeepsIndependentlyDeletedOverride(t *testin
 	}
 
 	// User deletes that single customized instance on its own.
-	if err := svc.DeleteInstance(ctx, master.UID, overrideTime); err != nil {
+	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, overrideTime); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
 	if _, err := svc.Get(ctx, override.ID); err == nil {
@@ -358,7 +358,7 @@ func TestSoftDelete_FromInstanceUndo_KeepsIndependentlyDeletedOverride(t *testin
 
 	// Later, user truncates "this and following" from an earlier cutoff (Apr 8).
 	cutoff := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
-	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, cutoff)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.CalendarID, master.UID, cutoff)
 	if err != nil {
 		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
 	}

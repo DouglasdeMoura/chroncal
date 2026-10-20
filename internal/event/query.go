@@ -2,6 +2,7 @@ package event
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"time"
@@ -87,16 +88,6 @@ func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, 
 	return events, nil
 }
 
-func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Event, error) {
-	rows, err := s.q.ListOverridesByUID(ctx, uid)
-	if err != nil {
-		return nil, err
-	}
-	events := fromStorageSlice(rows)
-	s.populateCategories(ctx, events)
-	return events, nil
-}
-
 func (s *Service) Get(ctx context.Context, id int64) (Event, error) {
 	r, err := s.q.GetEvent(ctx, id)
 	if err != nil {
@@ -107,14 +98,12 @@ func (s *Service) Get(ctx context.Context, id int64) (Event, error) {
 	return e, nil
 }
 
+// GetByUID returns the live master of uid. Two calendars can hold the
+// same UID (issue #842). With one live master, that master is the result.
+// With more, the lookup cannot choose, so it returns ErrAmbiguousUID. Use
+// GetByCalendarUID or SeriesMaster with the calendar of the series.
 func (s *Service) GetByUID(ctx context.Context, uid string) (Event, error) {
-	r, err := s.q.GetEventByUID(ctx, uid)
-	if err != nil {
-		return Event{}, err
-	}
-	e := FromStorage(r)
-	s.populateSingleCategories(ctx, &e)
-	return e, nil
+	return s.SeriesMaster(ctx, 0, uid)
 }
 
 func (s *Service) GetByCalendarUID(ctx context.Context, calendarID int64, uid string) (Event, error) {
@@ -130,15 +119,27 @@ func (s *Service) GetByCalendarUID(ctx context.Context, calendarID int64, uid st
 	return e, nil
 }
 
+// GetByUIDAndRecurrenceID returns the live override row of one occurrence
+// of uid. Two calendars can hold the same UID (issue #842). With one row,
+// that row is the result. With more, the lookup cannot choose, so it
+// returns ErrAmbiguousUID. Use GetByCalendarUIDAndRecurrenceID with the
+// calendar of the series.
 func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID string) (Event, error) {
-	r, err := s.q.GetEventByUIDAndRecurrenceID(ctx, storage.GetEventByUIDAndRecurrenceIDParams{
+	rows, err := s.q.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
 		Uid:          uid,
 		RecurrenceID: recurrenceID,
 	})
 	if err != nil {
 		return Event{}, err
 	}
-	e := FromStorage(r)
+	switch len(rows) {
+	case 0:
+		return Event{}, sql.ErrNoRows
+	case 1:
+	default:
+		return Event{}, ErrAmbiguousUID
+	}
+	e := FromStorage(rows[0])
 	s.populateSingleCategories(ctx, &e)
 	return e, nil
 }

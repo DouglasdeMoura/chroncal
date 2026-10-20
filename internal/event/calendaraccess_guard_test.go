@@ -235,7 +235,7 @@ func TestEventAccessGuard_RecurrenceRejected(t *testing.T) {
 	}
 	firstOccurrence := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
 
-	if err := svc.DeleteInstance(ctx, master.UID, firstOccurrence); !errors.Is(err, calendaraccess.ErrReadOnly) {
+	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, firstOccurrence); !errors.Is(err, calendaraccess.ErrReadOnly) {
 		t.Fatalf("DeleteInstance on read-only calendar: error = %v, want ErrReadOnly", err)
 	}
 	if after, _ := svc.GetByUID(ctx, master.UID); after.ExDates != "" {
@@ -257,7 +257,7 @@ func TestEventAccessGuard_RecurrenceRejected(t *testing.T) {
 		t.Fatalf("override rows after rejected UpdateInstance = %d, want 0 (no persisted mutation)", n)
 	}
 
-	if err := svc.DeleteSeries(ctx, master.UID); !errors.Is(err, calendaraccess.ErrReadOnly) {
+	if err := svc.DeleteSeries(ctx, master.CalendarID, master.UID); !errors.Is(err, calendaraccess.ErrReadOnly) {
 		t.Fatalf("DeleteSeries on read-only calendar: error = %v, want ErrReadOnly", err)
 	}
 	got, err := svc.GetByUID(ctx, master.UID)
@@ -347,7 +347,7 @@ func TestEventAccessGuard_DeleteSeriesOrphanTailRejected(t *testing.T) {
 	readOnly := insertGuardedCalendar(t, db, "Read-Only Cal", "read", "VEVENT")
 	override := seedOrphanOverride(t, svc, readOnly, "orphan-delete-series-uid")
 
-	if err := svc.DeleteSeries(ctx, override.UID); !errors.Is(err, calendaraccess.ErrReadOnly) {
+	if err := svc.DeleteSeries(ctx, override.CalendarID, override.UID); !errors.Is(err, calendaraccess.ErrReadOnly) {
 		t.Fatalf("DeleteSeries orphan tail: error = %v, want ErrReadOnly", err)
 	}
 	got, err := svc.Get(ctx, override.ID)

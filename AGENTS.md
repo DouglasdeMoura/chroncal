@@ -147,7 +147,8 @@ Three rules keep the suite fast. Follow them in every new test.
 
 ```go
 evt, err := svc.Get(ctx, id)                                        // numeric ID
-evt, err := svc.GetByUID(ctx, uid)                                  // string UID
+evt, err := svc.GetByUID(ctx, uid)                                  // string UID; ErrAmbiguousUID when two calendars hold a live master
+evt, err := svc.SeriesMaster(ctx, calendarID, uid)                  // master of the series in one calendar (0 = the one live master)
 evt, err := svc.GetByCalendarUID(ctx, calendarID, uid)              // UID on one calendar
 evt, err := svc.GetByUIDAndRecurrenceID(ctx, uid, recurrenceID)     // override instance
 ```
@@ -223,11 +224,13 @@ Events, todos, and journals share the same reversible-delete contract. `Delete` 
 ```go
 // Soft-delete: the Delete methods already do this.
 err := svc.Delete(ctx, id)        // sets deleted_at, keeps row
-err := svc.DeleteSeries(ctx, uid) // soft-deletes master + overrides
+err := svc.DeleteSeries(ctx, calendarID, uid) // soft-deletes master + overrides (event service: in one calendar)
 
-// Recurring delete scopes (event service only):
-err := svc.DeleteInstance(ctx, uid, at)     // one occurrence: EXDATE on the master + override soft-delete
-err := svc.DeleteFromInstance(ctx, uid, at) // truncates the series (RRULE UNTIL) at that time
+// Recurring delete scopes (event service only). calendarID names the
+// calendar of the series, because two calendars can hold the same UID
+// (issue #842). 0 picks the one live master, or returns ErrAmbiguousUID.
+err := svc.DeleteInstance(ctx, calendarID, uid, at)     // one occurrence: EXDATE on the master + override soft-delete
+err := svc.DeleteFromInstance(ctx, calendarID, uid, at) // truncates the series (RRULE UNTIL) at that time
 
 // Restore:
 err := svc.RestoreByID(ctx, id)    // un-hides one row

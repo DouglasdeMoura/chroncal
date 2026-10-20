@@ -40,7 +40,7 @@ func TestUpdateScopes_CalendarZeroKeepsTheCalendar(t *testing.T) {
 	t.Run("this and following", func(t *testing.T) {
 		svc := newTestService(t)
 		master := newRecurringMaster(t, svc, "zero-cal-2", "FREQ=DAILY")
-		got, err := svc.UpdateFromInstance(ctx, master.UID, instance, p)
+		got, err := svc.UpdateFromInstance(ctx, master.CalendarID, master.UID, instance, p)
 		if err != nil {
 			t.Fatalf("UpdateFromInstance with CalendarID 0: %v", err)
 		}

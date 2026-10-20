@@ -42,7 +42,7 @@ func (e *Engine) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]Wedg
 	}
 	var wedged []WedgedResource
 	for _, res := range dirty {
-		rels, ok := e.diagnoseWedge(ctx, res.OwnerType, res.Uid)
+		rels, ok := e.diagnoseWedge(ctx, calendarID, res.OwnerType, res.Uid)
 		if !ok {
 			continue
 		}
@@ -63,12 +63,12 @@ func (e *Engine) DiagnoseCalendar(ctx context.Context, calendarID int64) ([]Wedg
 // the collector like a corrupt row does. The retry separates a transient
 // load failure from a deterministic one, so the destructive confirmation
 // never fires on a false diagnosis.
-func (e *Engine) diagnoseWedge(ctx context.Context, ownerType, uid string) ([]string, bool) {
-	_, err := e.exportResource(ctx, ownerType, uid)
+func (e *Engine) diagnoseWedge(ctx context.Context, calendarID int64, ownerType, uid string) ([]string, bool) {
+	_, err := e.exportResource(ctx, calendarID, ownerType, uid)
 	if !wedgeShaped(err) {
 		return nil, false
 	}
-	_, err = e.exportResource(ctx, ownerType, uid)
+	_, err = e.exportResource(ctx, calendarID, ownerType, uid)
 	if !wedgeShaped(err) {
 		return nil, false
 	}
@@ -164,7 +164,7 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string, d
 		return nil, fmt.Errorf("uid %s has an open sync conflict; resolve it first with chroncal sync resolve", uid)
 	}
 
-	icalData, dropped, err := e.exportResourceBestEffortFor(ctx, res.OwnerType, res.Uid)
+	icalData, dropped, err := e.exportResourceBestEffortFor(ctx, calendarID, res.OwnerType, res.Uid)
 	if err != nil {
 		return nil, fmt.Errorf("best-effort export %s: %w", uid, err)
 	}
@@ -273,17 +273,17 @@ func droppedRelations(err error) ([]string, error) {
 // exportResourceBestEffortFor dispatches on owner type. It runs the shared
 // bundling path in exportResourceFor with the best-effort hydrators, so the
 // doctor's payload assembly cannot drift from the regular push's.
-func (e *Engine) exportResourceBestEffortFor(ctx context.Context, ownerType, uid string) ([]byte, []string, error) {
+func (e *Engine) exportResourceBestEffortFor(ctx context.Context, calendarID int64, ownerType, uid string) ([]byte, []string, error) {
 	switch ownerType {
 	case ownerTypeEvent:
-		return exportResourceFor(ctx, e, uid, ownerTypeEvent,
-			e.events.GetByUID, e.events.ListOverridesByUID, hydrateEventBestEffort, icalPkg.ExportEvents)
+		return exportResourceFor(ctx, e, calendarID, uid, ownerTypeEvent,
+			e.events.GetByCalendarUID, e.events.ListSeriesOverrides, hydrateEventBestEffort, icalPkg.ExportEvents)
 	case ownerTypeTodo:
-		return exportResourceFor(ctx, e, uid, ownerTypeTodo,
-			e.todos.GetByUID, e.todos.ListOverridesByUID, hydrateTodoBestEffort, icalPkg.ExportTodos)
+		return exportResourceFor(ctx, e, calendarID, uid, ownerTypeTodo,
+			byUID(e.todos.GetByUID), byUID(e.todos.ListOverridesByUID), hydrateTodoBestEffort, icalPkg.ExportTodos)
 	case ownerTypeJournal:
-		return exportResourceFor(ctx, e, uid, ownerTypeJournal,
-			e.journals.GetByUID, e.journals.ListOverridesByUID, hydrateJournalBestEffort, icalPkg.ExportJournals)
+		return exportResourceFor(ctx, e, calendarID, uid, ownerTypeJournal,
+			byUID(e.journals.GetByUID), byUID(e.journals.ListOverridesByUID), hydrateJournalBestEffort, icalPkg.ExportJournals)
 	default:
 		return nil, nil, fmt.Errorf("%w: %q", errUnknownOwnerType, ownerType)
 	}

@@ -115,25 +115,33 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 	// UID so the trash dialog can show full context: title, location,
 	// description, status. The user does not need a second view.
 	// Fetch each distinct master once, then batch category population into a
-	// single query rather than one per master.
-	masters := make(map[string]*Event, len(instLogs)+len(truncLogs))
+	// single query rather than one per master. A log row names the
+	// calendar of its master: two calendars can hold the same UID.
+	type masterKey struct {
+		calendarID int64
+		uid        string
+	}
+	masters := make(map[masterKey]*Event, len(instLogs)+len(truncLogs))
 	for _, l := range instLogs {
-		masters[l.Uid] = nil
+		masters[masterKey{l.CalendarID, l.Uid}] = nil
 	}
 	for _, l := range truncLogs {
-		masters[l.Uid] = nil
+		masters[masterKey{l.CalendarID, l.Uid}] = nil
 	}
 	masterList := make([]Event, 0, len(masters))
-	for uid := range masters {
-		if r, err := s.q.GetEventByUIDIncludingDeleted(ctx, uid); err == nil {
+	for key := range masters {
+		r, err := s.q.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{
+			CalendarID: key.calendarID, Uid: key.uid,
+		})
+		if err == nil {
 			masterList = append(masterList, FromStorage(r))
 		}
 	}
 	s.populateCategories(ctx, masterList)
 	for i := range masterList {
-		masters[masterList[i].UID] = &masterList[i]
+		masters[masterKey{masterList[i].CalendarID, masterList[i].UID}] = &masterList[i]
 	}
-	lookupMaster := func(uid string) *Event { return masters[uid] }
+	lookupMaster := func(calendarID int64, uid string) *Event { return masters[masterKey{calendarID, uid}] }
 
 	for _, l := range instLogs {
 		inst, _ := time.Parse(time.RFC3339, l.RecurrenceID)
@@ -145,7 +153,7 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 			InstanceTime: inst,
 			DeletedAt:    parseStorageTime(l.DeletedAt),
 		}
-		if m := lookupMaster(l.Uid); m != nil {
+		if m := lookupMaster(l.CalendarID, l.Uid); m != nil {
 			entry.Title = m.Title
 			entry.AllDay = m.AllDay
 			entry.Location = m.Location
@@ -173,7 +181,7 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 			PreviousRRule: l.PreviousRrule,
 			DeletedAt:     parseStorageTime(l.DeletedAt),
 		}
-		if m := lookupMaster(l.Uid); m != nil {
+		if m := lookupMaster(l.CalendarID, l.Uid); m != nil {
 			entry.Title = m.Title
 			entry.AllDay = m.AllDay
 			entry.Location = m.Location
@@ -272,8 +280,11 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 
 	// Read the master inside the transaction so the EXDATE list we rewrite
 	// reflects a concurrent writer's changes rather than a pre-transaction
-	// snapshot (issue #116).
-	master, err := qtx.GetEventByUID(ctx, log.Uid)
+	// snapshot (issue #116). The log row names the calendar of the
+	// master: two calendars can hold the same UID (issue #842).
+	master, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{
+		CalendarID: log.CalendarID, Uid: log.Uid,
+	})
 	if err != nil {
 		return fmt.Errorf("get master: %w", err)
 	}
@@ -323,8 +334,11 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	// soft-delete between the read and the in-tx UPDATE cannot make
 	// UpdateEventRecurrenceRule match 0 rows while we still consume the log
 	// row. That would drop the RRULE restore in silence (issue #413, mirrors
-	// restoreInstanceByLogID / #116).
-	master, err := qtx.GetEventByUID(ctx, log.Uid)
+	// restoreInstanceByLogID / #116). The log row names the calendar of
+	// the master: two calendars can hold the same UID (issue #842).
+	master, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{
+		CalendarID: log.CalendarID, Uid: log.Uid,
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("get master: %w", ErrNotDeleted)
@@ -374,10 +388,12 @@ func restoreTruncatedRDates(ctx context.Context, qtx *storage.Queries, master st
 // only those specific overrides. An override the user deleted on its own
 // before the truncation then stays deleted (issue #287). Pre-#287 log rows
 // store NULL provenance. For those it falls back to un-hiding every
-// soft-deleted override at or after the cutoff.
+// soft-deleted override at or after the cutoff. The overrides are the
+// rows of the series in the calendar of the log row (issue #842).
 func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log storage.EventTruncateDelete) error {
 	if log.HiddenOverrides == nil {
-		return qtx.RestoreOverridesAtOrAfter(ctx, storage.RestoreOverridesAtOrAfterParams{
+		return qtx.RestoreSeriesOverridesAtOrAfter(ctx, storage.RestoreSeriesOverridesAtOrAfterParams{
+			CalendarID:   log.CalendarID,
 			Uid:          log.Uid,
 			RecurrenceID: log.CutoffTime,
 		})
@@ -386,7 +402,8 @@ func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log st
 		return nil
 	}
 	for _, recID := range strings.Split(*log.HiddenOverrides, ",") {
-		if err := qtx.RestoreEventByUIDAndRecurrenceID(ctx, storage.RestoreEventByUIDAndRecurrenceIDParams{
+		if err := qtx.RestoreSeriesOverrideByRecurrenceID(ctx, storage.RestoreSeriesOverrideByRecurrenceIDParams{
+			CalendarID:   log.CalendarID,
 			Uid:          log.Uid,
 			RecurrenceID: recID,
 		}); err != nil {

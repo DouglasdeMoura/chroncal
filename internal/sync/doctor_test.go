@@ -63,7 +63,7 @@ func TestExportResourceNamesUnreadableRelations(t *testing.T) {
 	}
 	seedWedgedEvent(t, engine, db, q, cals[0].ID, "wedged-export")
 
-	_, err = engine.exportResource(ctx, "event", "wedged-export")
+	_, err = engine.exportResource(ctx, cals[0].ID, "event", "wedged-export")
 	if err == nil {
 		t.Fatal("exportResource succeeded on an unreadable relation")
 	}

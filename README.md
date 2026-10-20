@@ -368,7 +368,7 @@ chroncal event search         <query> [--calendar NAME] [--from DATE] [--to DATE
 chroncal event add            "<title>" [flags]
 chroncal event update         <id|uid> [flags] [--recurrence-id ID]
 chroncal event rsvp           <id|uid> --status ACCEPTED|DECLINED|TENTATIVE
-chroncal event delete         <id|uid> [--recurrence-id RFC3339] [--following RFC3339] [--series] [--yes]
+chroncal event delete         <id|uid> [--recurrence-id RFC3339] [--following RFC3339] [--calendar NAME] [--series] [--yes]
 chroncal event restore        <id|uid>
 chroncal event purge          <id> [--yes]
 chroncal event purge-deleted  [--older-than DURATION] [--yes]
@@ -387,6 +387,8 @@ Event flags: `--date`, `--time`, `--end-time`, `--duration`, `--timezone`, `--lo
 - `--series` deletes the master and all overrides.
 
 The three flags are mutually exclusive.
+
+Two calendars can hold a series with the same UID, for example after a sync of two collections. A bare UID then names no single series. Pass the numeric ID of the master, or pass `--calendar NAME` with `--recurrence-id` or `--following` to name the calendar of the series. `event restore <uid>` has the same rule: restore the series by the ID of its master.
 
 `event rsvp` sets your RSVP status on an event:
 

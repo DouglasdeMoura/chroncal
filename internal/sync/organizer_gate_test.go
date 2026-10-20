@@ -18,7 +18,7 @@ func TestUserOrganizesEvent_MissingRowIsNoOrganizer(t *testing.T) {
 	e := NewEngine(db, q, nil, nil, nil, nil, nil, nil)
 	ctx := context.Background()
 
-	got, err := e.userOrganizesEvent(ctx, "no-such-uid", "owner@example.com")
+	got, err := e.userOrganizesEvent(ctx, 1, "no-such-uid", "owner@example.com")
 	if err != nil {
 		t.Fatalf("userOrganizesEvent: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestUserOrganizesEvent_LookupFailurePropagates(t *testing.T) {
 		t.Fatalf("close db: %v", err)
 	}
 
-	_, err := e.userOrganizesEvent(ctx, "some-uid", "owner@example.com")
+	_, err := e.userOrganizesEvent(ctx, 1, "some-uid", "owner@example.com")
 	if err == nil {
 		t.Fatal("userOrganizesEvent returned no error on a failed lookup, want error")
 	}

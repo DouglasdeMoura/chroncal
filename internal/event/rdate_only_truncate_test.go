@@ -53,7 +53,7 @@ func TestDeleteFromInstance_RDateOnlyMasterNotCorrupted(t *testing.T) {
 	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
 	master := newRDateOnlyMaster(t, svc, "rdate-only-del", []time.Time{rdate1, rdate2})
 
-	if err := svc.DeleteFromInstance(ctx, master.UID, rdate2); err != nil {
+	if err := svc.DeleteFromInstance(ctx, master.CalendarID, master.UID, rdate2); err != nil {
 		t.Fatalf("DeleteFromInstance: %v", err)
 	}
 
@@ -78,7 +78,7 @@ func TestDeleteFromInstance_TrimsRDatesPastCutoff(t *testing.T) {
 	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
 	master := newRDateOnlyMaster(t, svc, "rdate-only-trim", []time.Time{rdate1, rdate2})
 
-	if err := svc.DeleteFromInstance(ctx, master.UID, rdate2); err != nil {
+	if err := svc.DeleteFromInstance(ctx, master.CalendarID, master.UID, rdate2); err != nil {
 		t.Fatalf("DeleteFromInstance: %v", err)
 	}
 
@@ -108,7 +108,7 @@ func TestUpdateFromInstance_TrimsRDatesPastCutoff(t *testing.T) {
 	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
 	master := newRDateOnlyMaster(t, svc, "rdate-only-split-trim", []time.Time{rdate1, rdate2})
 
-	if _, err := svc.UpdateFromInstance(ctx, master.UID, rdate2, UpdateParams{
+	if _, err := svc.UpdateFromInstance(ctx, master.CalendarID, master.UID, rdate2, UpdateParams{
 		CalendarID: master.CalendarID,
 		Title:      "Irregular Meeting (changed)",
 		StartTime:  rdate2,
@@ -138,7 +138,7 @@ func TestRestoreTruncation_ReAddsRDates(t *testing.T) {
 	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
 	master := newRDateOnlyMaster(t, svc, "rdate-only-restore", []time.Time{rdate1, rdate2})
 
-	if err := svc.DeleteFromInstance(ctx, master.UID, rdate2); err != nil {
+	if err := svc.DeleteFromInstance(ctx, master.CalendarID, master.UID, rdate2); err != nil {
 		t.Fatalf("DeleteFromInstance: %v", err)
 	}
 
@@ -189,7 +189,7 @@ func TestUpdateFromInstance_RDateOnlyMasterNotCorrupted(t *testing.T) {
 	rdate2 := time.Date(2026, 4, 22, 9, 0, 0, 0, time.UTC)
 	master := newRDateOnlyMaster(t, svc, "rdate-only-upd", []time.Time{rdate1, rdate2})
 
-	_, err := svc.UpdateFromInstance(ctx, master.UID, rdate2, UpdateParams{
+	_, err := svc.UpdateFromInstance(ctx, master.CalendarID, master.UID, rdate2, UpdateParams{
 		CalendarID: master.CalendarID,
 		Title:      "Irregular Meeting (changed)",
 		StartTime:  rdate2,

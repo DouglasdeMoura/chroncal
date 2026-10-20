@@ -78,7 +78,7 @@ func TestRestoreTruncation_ConcurrentPurgeNoSilentLoss(t *testing.T) {
 	}
 
 	cutoff := time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC)
-	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err != nil {
+	if err := svc.DeleteFromInstance(ctx, master.CalendarID, master.UID, cutoff); err != nil {
 		t.Fatalf("DeleteFromInstance: %v", err)
 	}
 
