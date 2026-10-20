@@ -277,7 +277,7 @@ func (e *Engine) exportResourceBestEffortFor(ctx context.Context, calendarID int
 	switch ownerType {
 	case ownerTypeEvent:
 		return exportResourceFor(ctx, e, calendarID, uid, ownerTypeEvent,
-			e.events.GetByCalendarUID, e.events.ListSeriesOverrides, hydrateEventBestEffort, icalPkg.ExportEvents)
+			e.eventMasterForExport, e.events.ListSeriesOverrides, hydrateEventBestEffort, icalPkg.ExportEvents)
 	case ownerTypeTodo:
 		return exportResourceFor(ctx, e, calendarID, uid, ownerTypeTodo,
 			byUID(e.todos.GetByUID), byUID(e.todos.ListOverridesByUID), hydrateTodoBestEffort, icalPkg.ExportTodos)

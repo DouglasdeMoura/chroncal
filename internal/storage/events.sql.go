@@ -96,6 +96,27 @@ func (q *Queries) CountEventsByCalendar(ctx context.Context, calendarID int64) (
 	return count, err
 }
 
+const countLiveEventOverridesInCalendar = `-- name: CountLiveEventOverridesInCalendar :one
+SELECT COUNT(*) FROM events
+WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NULL
+`
+
+type CountLiveEventOverridesInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Count the live override rows of one UID in one calendar. The series
+// rule reads it for a live edit: a calendar with a live legacy override
+// and no master belongs to the series of the one live master. A legacy
+// override in the trash does not count (see findSeriesMasterTx).
+func (q *Queries) CountLiveEventOverridesInCalendar(ctx context.Context, arg CountLiveEventOverridesInCalendarParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveEventOverridesInCalendar, arg.CalendarID, arg.Uid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createEvent = `-- name: CreateEvent :one
 INSERT INTO events (
     uid, calendar_id, title, description, location,
@@ -712,6 +733,35 @@ func (q *Queries) ListDeletedSeriesOverrideRecurrenceIDs(ctx context.Context, ar
 			return nil, err
 		}
 		items = append(items, recurrence_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventCalendarIDsByUID = `-- name: ListEventCalendarIDsByUID :many
+SELECT DISTINCT calendar_id FROM events WHERE uid = ? ORDER BY calendar_id
+`
+
+// Every calendar that holds a row of one UID, live or in the trash. The
+// access guard of a UID-wide delete or restore reads it.
+func (q *Queries) ListEventCalendarIDsByUID(ctx context.Context, uid string) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listEventCalendarIDsByUID, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var calendar_id int64
+		if err := rows.Scan(&calendar_id); err != nil {
+			return nil, err
+		}
+		items = append(items, calendar_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -1366,6 +1416,28 @@ WHERE id = ? AND deleted_at IS NOT NULL
 
 func (q *Queries) RestoreEvent(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, restoreEvent, id)
+	return err
+}
+
+const restoreEventByCalendarUIDAndRecurrenceID = `-- name: RestoreEventByCalendarUIDAndRecurrenceID :exec
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NOT NULL
+`
+
+type RestoreEventByCalendarUIDAndRecurrenceIDParams struct {
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+}
+
+// Un-hide the soft-deleted override of one occurrence in one calendar.
+// The undo of a delete of a legacy override uses it: the row belongs to
+// no single series, so the restore touches that row only.
+func (q *Queries) RestoreEventByCalendarUIDAndRecurrenceID(ctx context.Context, arg RestoreEventByCalendarUIDAndRecurrenceIDParams) error {
+	_, err := q.db.ExecContext(ctx, restoreEventByCalendarUIDAndRecurrenceID, arg.CalendarID, arg.Uid, arg.RecurrenceID)
 	return err
 }
 

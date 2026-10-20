@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -277,5 +278,47 @@ func TestEventDelete_NumericIDMustMatchCalendar(t *testing.T) {
 	}
 	if starts := listSeriesStartsIn(t, "Work", "2026-04-06", "2026-04-10"); len(starts) != 2 {
 		t.Fatalf("Work starts after the truncation = %v, want 2", starts)
+	}
+}
+
+// TestEventRestore_SeriesInTwoCalendarsByMasterID: with the UID in the
+// trash of two calendars, the restore by UID names no series, and the ID
+// of a master restores that series.
+func TestEventRestore_SeriesInTwoCalendarsByMasterID(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+
+	stdout, _, err := runChroncalCommand(t, "event", "list", "--calendar", "Home", "--from", "2026-04-06", "--to", "2026-04-07", "--output", "json")
+	if err != nil {
+		t.Fatalf("event list Home: %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &rows); err != nil || len(rows) == 0 {
+		t.Fatalf("decode list: %v stdout=%q", err, stdout)
+	}
+	homeID := int64(rows[0]["id"].(float64))
+
+	for _, args := range [][]string{
+		{"event", "delete", "1", "--series", "--yes"},
+		{"event", "delete", uid, "--series", "--calendar", "Home", "--yes"},
+	} {
+		if stdout, stderr, err := runChroncalCommand(t, args...); err != nil {
+			t.Fatalf("%v: %v (stdout=%q stderr=%q)", args, err, stdout, stderr)
+		}
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "restore", uid)
+	if err == nil || !strings.Contains(stderr, "more than one calendar") || !strings.Contains(stderr, "master") {
+		t.Fatalf("restore by UID: err = %v, stderr = %q; want the master-ID hint", err, stderr)
+	}
+	stdout, stderr, err = runChroncalCommand(t, "event", "restore", strconv.FormatInt(homeID, 10))
+	if err != nil {
+		t.Fatalf("restore Home master: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	if starts := listSeriesStartsIn(t, "Home", "2026-04-06", "2026-04-10"); len(starts) != 4 {
+		t.Fatalf("Home starts after the restore = %v, want 4", starts)
+	}
+	if starts := listSeriesStartsIn(t, "Work", "2026-04-06", "2026-04-10"); len(starts) != 0 {
+		t.Fatalf("Work starts after the restore of Home = %v, want none", starts)
 	}
 }

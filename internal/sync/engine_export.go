@@ -66,7 +66,7 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 		export: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error) {
 			data, _, err := exportResourceFor(ctx, e, calendarID, uid, ownerTypeEvent,
-				e.events.GetByCalendarUID, e.events.ListSeriesOverrides, hydrateEvent, icalPkg.ExportEvents)
+				e.eventMasterForExport, e.events.ListSeriesOverrides, hydrateEvent, icalPkg.ExportEvents)
 			return data, err
 		},
 	},
@@ -104,6 +104,30 @@ var ownerOpsByType = map[string]ownerOps{
 			return data, err
 		},
 	},
+}
+
+// eventMasterForExport finds the live master of uid in calendarID for the
+// export. With no master there, the override rows of the calendar are
+// legacy overrides (see storage.LegacyOverride) when the UID has a live
+// master in another calendar. They belong to the series of that master,
+// and the export of its calendar carries them, so the export of this
+// calendar has no resource (errResourceMissing). A PUT of the overrides
+// alone would store an object with no master. A UID with no live master
+// anywhere keeps the orphan-instance path: sql.ErrNoRows, and the
+// override rows export on their own.
+func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid string) (event.Event, error) {
+	master, err := e.events.GetByCalendarUID(ctx, calendarID, uid)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return master, err
+	}
+	n, qErr := e.q.EventUIDMasterCalendars(ctx, uid)
+	if qErr != nil {
+		return event.Event{}, qErr
+	}
+	if n.Calendars > 0 {
+		return event.Event{}, fmt.Errorf("%w: event uid %s has its master in another calendar", errResourceMissing, uid)
+	}
+	return event.Event{}, err
 }
 
 // exportResourceFor bundles a UID's master row plus its override rows into an
