@@ -246,8 +246,14 @@ func TestIcalImportWithoutPathUsesCalendarDirectories(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &runs); err != nil {
 		t.Fatalf("decode batch json with a failure: %v\n%s", err, stdout)
 	}
-	if len(runs) != 2 || runs[1]["calendar"] != "Work" || runs[1]["error"] == nil || runs[1]["failed"] != float64(1) {
+	if len(runs) != 2 || runs[1]["calendar"] != "Work" || runs[1]["error"] == nil || runs[1]["failed"] != float64(0) {
 		t.Fatalf("batch json with a failure = %v", runs)
+	}
+	// The failed run carries the same keys as a run that landed.
+	for _, key := range []string{"events", "todos", "journals", "warnings", "new_events"} {
+		if _, ok := runs[1][key]; !ok {
+			t.Fatalf("failed run lacks the %q key: %v", key, runs[1])
+		}
 	}
 }
 

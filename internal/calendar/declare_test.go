@@ -423,7 +423,7 @@ func TestApplyConvergesOnAPathSwap(t *testing.T) {
 	}
 }
 
-func TestApplyCreatesWithoutAnOverlappingPath(t *testing.T) {
+func TestApplySkipsANewEntryWithAnOverlappingPath(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	if _, err := svc.CreateWithPath(ctx, "Old", "#111111", "", "/srv/cal"); err != nil {
@@ -436,12 +436,13 @@ func TestApplyCreatesWithoutAnOverlappingPath(t *testing.T) {
 	if len(warnings) != 1 || !strings.Contains(warnings[0], ErrOverlappingPath.Error()) {
 		t.Fatalf("warnings = %v, want one overlap warning", warnings)
 	}
-	got, err := svc.getByName(ctx, "New")
-	if err != nil || got.LocalPath != "" {
-		t.Fatalf("New = %+v, %v; want a calendar without a path", got, err)
+	// No phantom calendar lands: a bound row without a directory could
+	// not be deleted and would show nothing for the entry.
+	if _, err := svc.getByName(ctx, "New"); err == nil {
+		t.Fatal("Apply created a calendar for an entry whose path overlaps")
 	}
-	if !svc.IsDeclared("New") {
-		t.Fatal("the created calendar must still be bound to its entry")
+	if svc.IsDeclared("New") {
+		t.Fatal("a skipped entry must not bind the guard")
 	}
 }
 

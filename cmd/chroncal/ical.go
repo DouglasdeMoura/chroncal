@@ -253,16 +253,10 @@ func (o icalImportOutcome) landed() int {
 }
 
 func (o icalImportOutcome) json() map[string]any {
-	if o.err != nil {
-		return map[string]any{
-			"calendar_id": o.target.calendarID,
-			"calendar":    o.target.calendarName,
-			"path":        o.target.path,
-			"error":       o.err.Error(),
-			"failed":      1,
-		}
-	}
-	return map[string]any{
+	// A failed run carries the same keys as a run that landed, with empty
+	// values, plus "error". "failed" stays a component count, so a script
+	// can tell a failed calendar from a failed component.
+	out := map[string]any{
 		"calendar_id":      o.target.calendarID,
 		"calendar":         o.target.calendarName,
 		"path":             o.target.path,
@@ -279,6 +273,10 @@ func (o icalImportOutcome) json() map[string]any {
 		"failed":           o.summary.Failed,
 		"warnings":         o.summary.Warnings,
 	}
+	if o.err != nil {
+		out["error"] = o.err.Error()
+	}
+	return out
 }
 
 // missingDirectoryOutcome is the run of a stored directory that is not
