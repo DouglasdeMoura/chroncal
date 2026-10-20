@@ -502,3 +502,57 @@ func TestEventDelete_LegacyOverrideRowActsOnMaster(t *testing.T) {
 		t.Fatalf("Work starts after the delete = %v, want %v", starts, want)
 	}
 }
+
+// TestEventGet_UIDTrashedInTwoCalendarsIsNotFound: a UID whose series are
+// in the trash of two calendars is not found by a live lookup.
+func TestEventGet_UIDTrashedInTwoCalendarsIsNotFound(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+	for _, args := range [][]string{
+		{"event", "delete", "1", "--series", "--yes"},
+		{"event", "delete", uid, "--series", "--calendar", "Home", "--yes"},
+	} {
+		if stdout, stderr, err := runChroncalCommand(t, args...); err != nil {
+			t.Fatalf("%v: %v (stdout=%q stderr=%q)", args, err, stdout, stderr)
+		}
+	}
+	for _, args := range [][]string{
+		{"event", "get", uid},
+		{"event", "update", uid, "--title", "x"},
+		{"event", "rsvp", uid, "--status", "ACCEPTED"},
+	} {
+		_, stderr, err := runChroncalCommand(t, args...)
+		if err == nil || !strings.Contains(stderr, "not found") || strings.Contains(stderr, "more than one calendar") {
+			t.Errorf("%v: err = %v, stderr = %q; want not found", args, err, stderr)
+		}
+	}
+}
+
+// TestEventDelete_TwoLegacyOverridesNameTheRows: two orphan imports of one
+// occurrence into two calendars give an error that names the rows.
+func TestEventDelete_TwoLegacyOverridesNameTheRows(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid, legacyID := seedLegacyOverrideInHome(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Other"); err != nil {
+		t.Fatalf("calendar create Other: %v", err)
+	}
+	ics := filepath.Join(t.TempDir(), "legacy2.ics")
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
+		"\r\nDTSTAMP:20260401T000000Z\r\nRECURRENCE-ID:20260407T090000Z\r\nDTSTART:20260407T110000Z\r\nDTEND:20260407T113000Z\r\n" +
+		"SUMMARY:Legacy other\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Other"); err != nil {
+		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "delete", "1", "--recurrence-id", "2026-04-07T09:00:00Z", "--yes")
+	if err == nil {
+		t.Fatal("delete with two override rows of one occurrence succeeded")
+	}
+	if !strings.Contains(stderr, "more than one override row") || !strings.Contains(stderr, strconv.FormatInt(legacyID, 10)) || strings.Contains(stderr, "--calendar") {
+		t.Fatalf("stderr = %q, want the override rows named and no --calendar hint", stderr)
+	}
+}

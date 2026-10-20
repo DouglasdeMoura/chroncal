@@ -25,10 +25,8 @@ import (
 // master is the choice, and more give ErrAmbiguousUID. A calendar with no
 // live row of the UID gives sql.ErrNoRows. calendarID 0 names no
 // calendar: one live master is then the only choice, none gives
-// sql.ErrNoRows, and more give ErrAmbiguousUID.
-//
-// The second result lists every master row of the UID, live and in the
-// trash, for the override lookup (findInstanceOverrideTx).
+// sql.ErrNoRows, and more give ErrAmbiguousUID. The view
+// event_series_rows answers the rule for a calendar in one query.
 func findSeriesMasterTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (storage.Event, error) {
 	return findSeriesMaster(ctx, qtx, calendarID, uid, false)
 }
@@ -75,13 +73,28 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if _, _, ambiguous := uidmove.LegacyOwner(uidMasters(rows)); !ambiguous {
 		return storage.Event{}, sql.ErrNoRows
 	}
-	n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
-		CalendarID: calendarID, Uid: uid,
-	})
-	if err != nil {
-		return storage.Event{}, err
+	// A live edit counts the live rows of the calendar only: a calendar
+	// whose rows of the UID are all in the trash holds no live series,
+	// so it gets sql.ErrNoRows, not the ambiguity.
+	var held int64
+	if includeDeleted {
+		n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
+			CalendarID: calendarID, Uid: uid,
+		})
+		if err != nil {
+			return storage.Event{}, err
+		}
+		held = n.Masters + n.Overrides
+	} else {
+		n, err := qtx.CountLiveEventUIDRowsInCalendar(ctx, storage.CountLiveEventUIDRowsInCalendarParams{
+			CalendarID: calendarID, Uid: uid,
+		})
+		if err != nil {
+			return storage.Event{}, err
+		}
+		held = n
 	}
-	if n.Masters == 0 && n.Overrides == 0 {
+	if held == 0 {
 		return storage.Event{}, sql.ErrNoRows
 	}
 	return storage.Event{}, ErrAmbiguousUID
@@ -95,7 +108,22 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 	if err != nil {
 		return storage.Event{}, err
 	}
-	owner, ok, ambiguous := uidmove.LegacyOwner(uidMasters(rows))
+	masters := uidMasters(rows)
+	if !includeDeleted {
+		// A live lookup wants a live master. With none, the UID is not
+		// found, also when two calendars hold it in the trash.
+		var live []uidmove.Master
+		for _, m := range masters {
+			if !m.Trashed {
+				live = append(live, m)
+			}
+		}
+		if len(live) == 0 {
+			return storage.Event{}, sql.ErrNoRows
+		}
+		masters = live
+	}
+	owner, ok, ambiguous := uidmove.LegacyOwner(masters)
 	if ambiguous {
 		return storage.Event{}, ErrAmbiguousUID
 	}
@@ -115,10 +143,10 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 	return storage.Event{}, sql.ErrNoRows
 }
 
-// wrapLookup keeps ErrAmbiguousUID bare, so a caller can match it, and
-// wraps every other lookup error with prefix.
+// wrapLookup keeps ErrAmbiguousUID and ErrAmbiguousOverride bare, so a
+// caller can match them, and wraps every other lookup error with prefix.
 func wrapLookup(prefix string, err error) error {
-	if errors.Is(err, ErrAmbiguousUID) {
+	if errors.Is(err, ErrAmbiguousUID) || errors.Is(err, ErrAmbiguousOverride) {
 		return err
 	}
 	return fmt.Errorf("%s: %w", prefix, err)

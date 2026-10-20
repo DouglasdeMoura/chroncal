@@ -797,7 +797,7 @@ func TestExportResourceFor_HydrateErrorAbortsExport(t *testing.T) {
 	get := func(context.Context, int64, string) (event.Event, error) {
 		return event.Event{UID: "uid-1", ID: 1}, nil
 	}
-	listOverrides := func(context.Context, int64, string) ([]event.Event, error) {
+	listOverrides := func(context.Context, int64, string, bool) ([]event.Event, error) {
 		return nil, nil
 	}
 	marker := errors.New("db busy")
@@ -835,7 +835,7 @@ func TestExportResourceFor_MasterReadErrorAbortsExport(t *testing.T) {
 	get := func(context.Context, int64, string) (event.Event, error) {
 		return event.Event{}, marker
 	}
-	listOverrides := func(context.Context, int64, string) ([]event.Event, error) {
+	listOverrides := func(context.Context, int64, string, bool) ([]event.Event, error) {
 		return []event.Event{{UID: "uid-1", ID: 2, RecurrenceID: "20260401T100000Z"}}, nil
 	}
 	hydrate := func(context.Context, *Engine, *event.Event) ([]string, error) { return nil, nil }
@@ -866,7 +866,7 @@ func TestExportResourceFor_MissingMasterExportsOverrides(t *testing.T) {
 	get := func(context.Context, int64, string) (event.Event, error) {
 		return event.Event{}, sql.ErrNoRows
 	}
-	listOverrides := func(context.Context, int64, string) ([]event.Event, error) {
+	listOverrides := func(context.Context, int64, string, bool) ([]event.Event, error) {
 		return []event.Event{{UID: "uid-1", ID: 2, RecurrenceID: "20260401T100000Z"}}, nil
 	}
 	hydrate := func(context.Context, *Engine, *event.Event) ([]string, error) { return nil, nil }

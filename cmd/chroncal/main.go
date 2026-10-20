@@ -55,6 +55,9 @@ func notFoundErr(err error, resource string, id any) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return &cliError{Code: "not_found", Msg: fmt.Sprintf("%s %v not found", resource, id)}
 	}
+	if errors.Is(err, event.ErrAmbiguousOverride) {
+		return errInvalidInputf("%s %v: %v", resource, id, err)
+	}
 	if errors.Is(err, event.ErrAmbiguousUID) {
 		// Two calendars can hold the same UID (issue #842). A bare UID
 		// cannot name one series, so the command needs the row ID or the

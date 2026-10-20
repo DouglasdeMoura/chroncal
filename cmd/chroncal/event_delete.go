@@ -280,7 +280,7 @@ any override at that time). --following truncates the series at that date.`,
 		}
 
 		if err := a.Events.DeleteInstance(ctx, e.CalendarID, e.UID, occurrenceAt); err != nil {
-			return fmt.Errorf("delete occurrence: %w", err)
+			return fmt.Errorf("delete occurrence: %w", notFoundErr(err, "event", e.UID))
 		}
 		return reportDeleted(cmd, a, w, e.CalendarID,
 			map[string]any{"deleted": true, "uid": e.UID, "recurrence_id": occurrenceAt.UTC().Format(time.RFC3339)},

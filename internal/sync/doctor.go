@@ -276,15 +276,14 @@ func droppedRelations(err error) ([]string, error) {
 func (e *Engine) exportResourceBestEffortFor(ctx context.Context, calendarID int64, ownerType, uid string) ([]byte, []string, error) {
 	switch ownerType {
 	case ownerTypeEvent:
-		get, listOverrides := e.eventExportLookups()
 		return exportResourceFor(ctx, e, calendarID, uid, ownerTypeEvent,
-			get, listOverrides, hydrateEventBestEffort, icalPkg.ExportEvents)
+			e.eventMasterForExport, e.eventOverridesForExport, hydrateEventBestEffort, icalPkg.ExportEvents)
 	case ownerTypeTodo:
 		return exportResourceFor(ctx, e, calendarID, uid, ownerTypeTodo,
-			byUID(e.todos.GetByUID), byUID(e.todos.ListOverridesByUID), hydrateTodoBestEffort, icalPkg.ExportTodos)
+			byUID(e.todos.GetByUID), overridesByUID(e.todos.ListOverridesByUID), hydrateTodoBestEffort, icalPkg.ExportTodos)
 	case ownerTypeJournal:
 		return exportResourceFor(ctx, e, calendarID, uid, ownerTypeJournal,
-			byUID(e.journals.GetByUID), byUID(e.journals.ListOverridesByUID), hydrateJournalBestEffort, icalPkg.ExportJournals)
+			byUID(e.journals.GetByUID), overridesByUID(e.journals.ListOverridesByUID), hydrateJournalBestEffort, icalPkg.ExportJournals)
 	default:
 		return nil, nil, fmt.Errorf("%w: %q", errUnknownOwnerType, ownerType)
 	}

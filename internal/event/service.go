@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,28 @@ var ErrMoveTargetHasUID = errors.New("event: the target calendar already holds t
 // names no calendar, or it names a calendar with a legacy override of the
 // occurrence and no master. The service refuses the edit.
 var ErrAmbiguousUID = errors.New("event: the UID has a series in more than one calendar; name the calendar of the series")
+
+// ErrAmbiguousOverride reports an occurrence whose series owns more than
+// one legacy override row at the same recurrence ID (an older version
+// saved them in different calendars). No rule can choose the row. The
+// error names the row IDs, so the user can delete or move one by ID.
+var ErrAmbiguousOverride = errors.New("event: the occurrence has more than one override row; delete or move one by its ID")
+
+// AmbiguousOverrideError is the ErrAmbiguousOverride of one occurrence.
+// IDs lists the rows.
+type AmbiguousOverrideError struct {
+	IDs []int64
+}
+
+func (e *AmbiguousOverrideError) Error() string {
+	parts := make([]string, len(e.IDs))
+	for i, id := range e.IDs {
+		parts[i] = strconv.FormatInt(id, 10)
+	}
+	return ErrAmbiguousOverride.Error() + " (rows " + strings.Join(parts, ", ") + ")"
+}
+
+func (e *AmbiguousOverrideError) Unwrap() error { return ErrAmbiguousOverride }
 
 // IsMoveRefusal reports whether err is a refusal of an edit that the user
 // can fix in the edit form: a refused calendar move or a refused
@@ -526,8 +549,8 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 // findInstanceOverrideTx finds the stored override of recID for master. A
 // row in the calendar of the master wins. Else it takes a legacy override
 // (see storage.LegacyOverride) that the series of master owns. The view
-// event_series_rows holds the rule. More than one legacy row gives
-// ErrAmbiguousUID. No row gives sql.ErrNoRows.
+// event_series_rows holds the rule. More than one legacy row gives an
+// *AmbiguousOverrideError. No row gives sql.ErrNoRows.
 func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, recID string) (storage.Event, error) {
 	rows, err := qtx.ListSeriesOverridesAtRecurrenceID(ctx, storage.ListSeriesOverridesAtRecurrenceIDParams{
 		CalendarID:   master.CalendarID,
@@ -547,9 +570,12 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 		return storage.Event{}, sql.ErrNoRows
 	case 1:
 		return rows[0], nil
-	default:
-		return storage.Event{}, ErrAmbiguousUID
 	}
+	ids := make([]int64, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	return storage.Event{}, &AmbiguousOverrideError{IDs: ids}
 }
 
 // moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
@@ -805,10 +831,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int6
 	}
 	existing, existErr := findInstanceOverrideTx(ctx, qtx, master, recID)
 	if existErr != nil && !errors.Is(existErr, sql.ErrNoRows) {
-		if errors.Is(existErr, ErrAmbiguousUID) {
-			return Event{}, existErr
-		}
-		return Event{}, fmt.Errorf("get override: %w", existErr)
+		return Event{}, wrapLookup("get override", existErr)
 	}
 	// The occurrence lives in the calendar of its stored override, or in
 	// the calendar of the master when no override exists. The shared rule
