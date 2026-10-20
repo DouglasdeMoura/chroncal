@@ -34,6 +34,27 @@ func (q *Queries) DeleteEventTruncateDeletesByCalendarUID(ctx context.Context, a
 	return err
 }
 
+const deleteEventTruncateDeletesCollidingWithMove = `-- name: DeleteEventTruncateDeletesCollidingWithMove :exec
+DELETE FROM event_truncate_deletes
+WHERE event_truncate_deletes.calendar_id = ?1 AND event_truncate_deletes.uid = ?2
+  AND event_truncate_deletes.cutoff_time IN (
+    SELECT t.cutoff_time FROM event_truncate_deletes AS t
+    WHERE t.calendar_id = ?3 AND t.uid = ?2)
+`
+
+type DeleteEventTruncateDeletesCollidingWithMoveParams struct {
+	FromCalendarID int64
+	Uid            string
+	ToCalendarID   int64
+}
+
+// Drop the log rows of the source calendar whose key the target calendar
+// already holds (see DeleteEventExdateDeletesCollidingWithMove).
+func (q *Queries) DeleteEventTruncateDeletesCollidingWithMove(ctx context.Context, arg DeleteEventTruncateDeletesCollidingWithMoveParams) error {
+	_, err := q.db.ExecContext(ctx, deleteEventTruncateDeletesCollidingWithMove, arg.FromCalendarID, arg.Uid, arg.ToCalendarID)
+	return err
+}
+
 const getEventTruncateDelete = `-- name: GetEventTruncateDelete :one
 SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE id = ?
 `

@@ -49,12 +49,15 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 		return e, false, false, err
 	}
 	if calendarID != 0 {
-		e, err := a.Events.GetByCalendarUIDAndRecurrenceID(ctx, calendarID, ref, recurrenceID)
+		// The override of the occurrence in the series of the calendar:
+		// the row beside the master, or a legacy override in another
+		// calendar. A generated occurrence would overwrite that row.
+		e, err := a.Events.SeriesOverride(ctx, calendarID, ref, recurrenceID)
 		if err == nil {
 			return e, false, true, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return event.Event{}, false, false, err
+			return event.Event{}, false, false, notFoundErr(err, "event", ref)
 		}
 		master, err := a.Events.SeriesMaster(ctx, calendarID, ref)
 		if err == nil {

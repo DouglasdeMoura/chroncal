@@ -556,3 +556,31 @@ func TestEventDelete_TwoLegacyOverridesNameTheRows(t *testing.T) {
 		t.Fatalf("stderr = %q, want the override rows named and no --calendar hint", stderr)
 	}
 }
+
+// TestEventUpdate_CalendarOfMasterEditsLegacyOverride: --calendar on the
+// calendar of the master still edits the stored legacy override of the
+// occurrence, instead of a generated occurrence over it.
+func TestEventUpdate_CalendarOfMasterEditsLegacyOverride(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid, legacyID := seedLegacyOverrideInHome(t)
+	day2 := "2026-04-07T09:00:00Z"
+	stdout, stderr, err := runChroncalCommand(t, "event", "update", uid, "--recurrence-id", day2, "--calendar", "Work", "--description", "Notes")
+	if err != nil {
+		t.Fatalf("update through the master calendar: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	out, _, err := runChroncalCommand(t, "event", "get", strconv.FormatInt(legacyID, 10), "--output", "json")
+	if err != nil {
+		t.Fatalf("event get legacy: %v", err)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(out), &row); err != nil {
+		t.Fatalf("decode get: %v stdout=%q", err, out)
+	}
+	if got := stringFromJSON(row["title"]); got != "Legacy late" {
+		t.Errorf("legacy title after the edit = %q, want it kept", got)
+	}
+	if got := stringFromJSON(row["description"]); got != "Notes" {
+		t.Errorf("legacy description after the edit = %q, want Notes", got)
+	}
+}

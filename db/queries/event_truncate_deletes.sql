@@ -42,3 +42,12 @@ SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY 
 -- Drop the log rows of one series in one calendar (see
 -- DeleteEventExdateDeletesByCalendarUID).
 DELETE FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ?;
+
+-- name: DeleteEventTruncateDeletesCollidingWithMove :exec
+-- Drop the log rows of the source calendar whose key the target calendar
+-- already holds (see DeleteEventExdateDeletesCollidingWithMove).
+DELETE FROM event_truncate_deletes
+WHERE event_truncate_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_truncate_deletes.uid = sqlc.arg(uid)
+  AND event_truncate_deletes.cutoff_time IN (
+    SELECT t.cutoff_time FROM event_truncate_deletes AS t
+    WHERE t.calendar_id = sqlc.arg(to_calendar_id) AND t.uid = sqlc.arg(uid));
