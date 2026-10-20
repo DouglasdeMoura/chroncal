@@ -95,15 +95,15 @@ func (s *Service) MigrateCalendarToAccount(
 	if err != nil {
 		return MigrateResult{}, fmt.Errorf("get source calendar: %w", err)
 	}
+	if source.AccountID != nil && *source.AccountID != 0 {
+		return MigrateResult{}, ErrCannotMigrateRemoteCalendar
+	}
 	// A declared calendar and a directory-fed calendar stay local (issue
 	// #809), the same rule that Connect enforces. The move would retire
 	// the source row, and the next launch would create an empty calendar
 	// with the declared name and the directory.
 	if err := calendar.StaysLocal(source.Name, source.LocalPath, s.declared); err != nil {
 		return MigrateResult{}, err
-	}
-	if source.AccountID != nil && *source.AccountID != 0 {
-		return MigrateResult{}, ErrCannotMigrateRemoteCalendar
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)

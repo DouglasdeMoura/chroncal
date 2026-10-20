@@ -243,6 +243,7 @@ func validateCalendars(entries []CalendarConfig) error {
 	// Names compare with strings.EqualFold, the same fold that the apply
 	// and the CLI calendar lookup use. Two entries that fold to one name
 	// would both bind to one row and undo each other on every launch.
+	trees := make([]string, len(entries))
 	for i := range entries {
 		e := &entries[i]
 		e.Name = strings.TrimSpace(e.Name)
@@ -275,12 +276,15 @@ func validateCalendars(entries []CalendarConfig) error {
 			return fmt.Errorf("calendars[%d] (%s): resolve path %q: %w", i, e.Name, raw, err)
 		}
 		// The import reads a directory and its subdirectories, so two
-		// entries on one tree would import the same files.
-		for _, earlier := range entries[:i] {
-			if fsutil.SameTree(earlier.Path, resolved) {
+		// entries on one tree would import the same files. Each tree
+		// resolves once.
+		tree := fsutil.ResolveTree(resolved)
+		for j, earlier := range entries[:i] {
+			if fsutil.SameResolvedTree(trees[j], tree) {
 				return fmt.Errorf("calendars[%d] (%s): path %q overlaps the path of %q", i, e.Name, raw, earlier.Name)
 			}
 		}
+		trees[i] = tree
 		e.Path = resolved
 	}
 	return nil

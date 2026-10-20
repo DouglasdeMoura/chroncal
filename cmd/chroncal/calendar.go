@@ -352,7 +352,7 @@ config.toml sets the same fields declaratively.`,
 				return err
 			}
 			if resolvedPath != "" && strings.TrimSpace(remoteURL) != "" {
-				return errInvalidInputf("--path and --remote-url are mutually exclusive: a calendar is local or a server collection")
+				return errPathAndRemoteURL()
 			}
 			if cmd.Flags().Changed("color") {
 				if err := model.ValidateHexColor(color); err != nil {
@@ -434,6 +434,12 @@ config.toml sets the same fields declaratively.`,
 	cmd.Flags().StringSliceVar(&defaultAlarms, "default-alarm", nil, "default alarm for this calendar, repeatable (e.g. -PT15M, AUDIO:-PT5M); 'none' turns default alarms off")
 	cmd.Flags().StringVar(&localPath, "path", "", "directory of .ics files that feeds this calendar (used by 'ical import' without a path)")
 	return cmd
+}
+
+// errPathAndRemoteURL is the refusal of --path next to --remote-url, the
+// same for create and update.
+func errPathAndRemoteURL() error {
+	return errInvalidInputf("--path and --remote-url are mutually exclusive: a calendar is local or a server collection")
 }
 
 // resolveCalendarPathFlag turns the --path value into the stored form: an
@@ -536,7 +542,7 @@ inherits the global [alarms] default from config.toml again.
 				}
 			}
 			if resolvedPath != "" && strings.TrimSpace(remoteURL) != "" {
-				return errInvalidInputf("--path and --remote-url are mutually exclusive: a calendar is local or a server collection")
+				return errPathAndRemoteURL()
 			}
 			if resolvedPath != "" && existing.AccountID != 0 && !disconnectRemote {
 				return errInvalidInputf("calendar %q: %v", existing.Name, calendarpkg.ErrRemoteLocalPath)
