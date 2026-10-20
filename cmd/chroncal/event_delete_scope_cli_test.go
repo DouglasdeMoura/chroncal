@@ -158,34 +158,7 @@ func TestEventDelete_FollowingAndSeriesMutuallyExclusive(t *testing.T) {
 func TestEventDelete_ScopeNeedsCalendarWhenUIDIsInTwoCalendars(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
-
-	for _, name := range []string{"Work", "Home"} {
-		if _, _, err := runChroncalCommand(t, "calendar", "create", name); err != nil {
-			t.Fatalf("calendar create %s: %v", name, err)
-		}
-	}
-	addDailySeries(t, "Standup", "2026-04-06")
-
-	got, _, err := runChroncalCommand(t, "event", "get", "1", "--output", "json")
-	if err != nil {
-		t.Fatalf("event get: %v", err)
-	}
-	var master map[string]any
-	if err := json.Unmarshal([]byte(got), &master); err != nil {
-		t.Fatalf("decode get: %v", err)
-	}
-	uid := stringFromJSON(master["uid"])
-
-	ics := filepath.Join(t.TempDir(), "home.ics")
-	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
-		"\r\nDTSTAMP:20260401T000000Z\r\nDTSTART:20260406T090000Z\r\nDTEND:20260406T093000Z\r\n" +
-		"RRULE:FREQ=DAILY;COUNT=4\r\nSUMMARY:Standup Home\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
-		t.Fatalf("write ics: %v", err)
-	}
-	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Home"); err != nil {
-		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
-	}
+	uid := seedSameUIDInWorkAndHome(t)
 
 	_, stderr, err := runChroncalCommand(t,
 		"event", "delete", uid,
@@ -215,5 +188,94 @@ func TestEventDelete_ScopeNeedsCalendarWhenUIDIsInTwoCalendars(t *testing.T) {
 	want := []string{"2026-04-06T09:00:00Z", "2026-04-07T09:00:00Z"}
 	if starts := listSeriesStartsIn(t, "Home", "2026-04-06", "2026-04-10"); strings.Join(starts, ",") != strings.Join(want, ",") {
 		t.Fatalf("Home starts after the following delete = %v, want %v", starts, want)
+	}
+}
+
+// seedSameUIDInWorkAndHome stores a daily series in Work and a copy with
+// the same UID in Home. It returns the UID.
+func seedSameUIDInWorkAndHome(t *testing.T) string {
+	t.Helper()
+	for _, name := range []string{"Work", "Home"} {
+		if _, _, err := runChroncalCommand(t, "calendar", "create", name); err != nil {
+			t.Fatalf("calendar create %s: %v", name, err)
+		}
+	}
+	addDailySeries(t, "Standup", "2026-04-06")
+
+	got, _, err := runChroncalCommand(t, "event", "get", "1", "--output", "json")
+	if err != nil {
+		t.Fatalf("event get: %v", err)
+	}
+	var master map[string]any
+	if err := json.Unmarshal([]byte(got), &master); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	uid := stringFromJSON(master["uid"])
+
+	ics := filepath.Join(t.TempDir(), "home.ics")
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
+		"\r\nDTSTAMP:20260401T000000Z\r\nDTSTART:20260406T090000Z\r\nDTEND:20260406T093000Z\r\n" +
+		"RRULE:FREQ=DAILY;COUNT=4\r\nSUMMARY:Standup Home\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Home"); err != nil {
+		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	return uid
+}
+
+// TestEventDelete_SeriesHonoursCalendar: --series with --calendar deletes
+// the series of that calendar only.
+func TestEventDelete_SeriesHonoursCalendar(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+
+	_, stderr, err := runChroncalCommand(t, "event", "delete", uid, "--series", "--yes")
+	if err == nil || !strings.Contains(stderr, "more than one calendar") {
+		t.Fatalf("bare UID with --series: err = %v, stderr = %q; want the ambiguity hint", err, stderr)
+	}
+
+	stdout, stderr, err := runChroncalCommand(t, "event", "delete", uid, "--series", "--calendar", "Home", "--yes")
+	if err != nil {
+		t.Fatalf("delete series in Home: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Deleted event series") {
+		t.Fatalf("expected the series success, got %q", stdout)
+	}
+	if starts := listSeriesStartsIn(t, "Work", "2026-04-06", "2026-04-10"); len(starts) != 4 {
+		t.Fatalf("Work starts after the Home delete = %v, want 4 untouched occurrences", starts)
+	}
+	if starts := listSeriesStartsIn(t, "Home", "2026-04-06", "2026-04-10"); len(starts) != 0 {
+		t.Fatalf("Home starts after the series delete = %v, want none", starts)
+	}
+}
+
+// TestEventDelete_NumericIDMustMatchCalendar: a row ID with a --calendar
+// that does not hold the row is a contradiction.
+func TestEventDelete_NumericIDMustMatchCalendar(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	seedSameUIDInWorkAndHome(t)
+
+	for _, args := range [][]string{
+		{"event", "delete", "1", "--calendar", "Home", "--following", "2026-04-08T09:00:00Z", "--yes"},
+		{"event", "delete", "1", "--calendar", "Home", "--series", "--yes"},
+	} {
+		_, stderr, err := runChroncalCommand(t, args...)
+		if err == nil || !strings.Contains(stderr, "not in --calendar") {
+			t.Fatalf("%v: err = %v, stderr = %q; want the calendar mismatch error", args, err, stderr)
+		}
+	}
+	if starts := listSeriesStartsIn(t, "Work", "2026-04-06", "2026-04-10"); len(starts) != 4 {
+		t.Fatalf("Work starts after the refused deletes = %v, want 4", starts)
+	}
+	stdout, stderr, err := runChroncalCommand(t, "event", "delete", "1", "--calendar", "Work", "--following", "2026-04-08T09:00:00Z", "--yes")
+	if err != nil {
+		t.Fatalf("delete following in Work by ID: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	if starts := listSeriesStartsIn(t, "Work", "2026-04-06", "2026-04-10"); len(starts) != 2 {
+		t.Fatalf("Work starts after the truncation = %v, want 2", starts)
 	}
 }

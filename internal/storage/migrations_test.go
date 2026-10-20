@@ -637,3 +637,67 @@ func TestMigration051UpDown(t *testing.T) {
 		t.Errorf("event_relations after the owner delete = %d, want 0 (cascade recreated)", n)
 	}
 }
+
+// TestMigration057UpDown covers the per-calendar keys of the delete logs
+// (issue #842). After Up, two calendars keep their own row of one
+// occurrence and of one cutoff. Down keeps the first row of each key.
+func TestMigration057UpDown(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig057.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec, count := migHelpers(t, ctx, conn)
+
+	mustExec(`INSERT INTO calendars (id, name) VALUES (2, 'Other')`)
+	mustExec(`INSERT INTO event_exdate_deletes (id, calendar_id, uid, recurrence_id)
+		VALUES (5, 1, 'mig057', '2026-01-02T10:00:00Z')`)
+	mustExec(`INSERT INTO event_exdate_deletes (id, calendar_id, uid, recurrence_id)
+		VALUES (6, 2, 'mig057', '2026-01-02T10:00:00Z')`)
+	mustExec(`INSERT INTO event_truncate_deletes (id, calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates)
+		VALUES (5, 1, 'mig057', '2026-01-03T10:00:00Z', 'FREQ=DAILY', '', '')`)
+	mustExec(`INSERT INTO event_truncate_deletes (id, calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates)
+		VALUES (6, 2, 'mig057', '2026-01-03T10:00:00Z', 'FREQ=DAILY', '', '')`)
+
+	// The same occurrence in the same calendar still conflicts.
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id) VALUES (1, 'mig057', '2026-01-02T10:00:00Z')`,
+	); err == nil {
+		t.Errorf("the per-calendar key accepted a second row of one occurrence in one calendar")
+	}
+
+	provider := migProvider(t, conn)
+	if _, err := provider.DownTo(ctx, 56); err != nil {
+		t.Fatalf("down to 56: %v", err)
+	}
+	for _, table := range []string{"event_exdate_deletes", "event_truncate_deletes"} {
+		if n := count(`SELECT COUNT(*) FROM ` + table); n != 1 {
+			t.Errorf("%s rows after Down = %d, want 1 (the second calendar's row is dropped)", table, n)
+		}
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE id = 5 AND calendar_id = 1`); n != 1 {
+			t.Errorf("%s row id 5 after Down = %d, want 1 (id-intact restore)", table, n)
+		}
+	}
+
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("re-up: %v", err)
+	}
+	mustExec(`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id)
+		VALUES (2, 'mig057', '2026-01-02T10:00:00Z')`)
+	mustExec(`INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule)
+		VALUES (2, 'mig057', '2026-01-03T10:00:00Z', 'FREQ=DAILY')`)
+	for _, table := range []string{"event_exdate_deletes", "event_truncate_deletes"} {
+		if n := count(`SELECT COUNT(*) FROM ` + table); n != 2 {
+			t.Errorf("%s rows after re-Up and a second calendar's insert = %d, want 2", table, n)
+		}
+	}
+	// The recreated foreign key still cascades a delete of the calendar.
+	mustExec(`DELETE FROM calendars WHERE id = 2`)
+	for _, table := range []string{"event_exdate_deletes", "event_truncate_deletes"} {
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE calendar_id = 2`); n != 0 {
+			t.Errorf("%s rows of the deleted calendar = %d, want 0 (cascade recreated)", table, n)
+		}
+	}
+}

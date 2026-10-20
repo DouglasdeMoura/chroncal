@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
+
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
@@ -33,8 +35,10 @@ func findSeriesMasterTx(ctx context.Context, qtx *storage.Queries, calendarID in
 // findSeriesMasterIncludingDeletedTx is findSeriesMasterTx for a restore.
 // The master can be in the trash, so a master row in the trash counts as
 // the master of its calendar. With calendarID 0, or for a legacy
-// override, one master row of the UID, live or in the trash, is the
-// choice.
+// override, the live masters of the UID come first: one live master is
+// the choice. With no live master, one master in the trash is the
+// choice. A copy of the UID in the trash of another calendar, for
+// example a purge-pending copy, then never blocks a restore.
 func findSeriesMasterIncludingDeletedTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (storage.Event, []uidmove.Master, error) {
 	return findSeriesMaster(ctx, qtx, calendarID, uid, true)
 }
@@ -45,7 +49,7 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 		return storage.Event{}, nil, err
 	}
 	masters := uidMasters(rows)
-	var candidates []storage.Event
+	var candidates, trashed []storage.Event
 	for _, m := range rows {
 		if calendarID != 0 && m.CalendarID == calendarID {
 			if includeDeleted || m.DeletedAt == nil {
@@ -55,9 +59,15 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 			// series is not live there.
 			return storage.Event{}, nil, sql.ErrNoRows
 		}
-		if includeDeleted || m.DeletedAt == nil {
+		switch {
+		case m.DeletedAt == nil:
 			candidates = append(candidates, m)
+		case includeDeleted:
+			trashed = append(trashed, m)
 		}
+	}
+	if len(candidates) == 0 {
+		candidates = trashed
 	}
 	if calendarID != 0 {
 		// The calendar holds no master row of the UID. A legacy override
@@ -83,13 +93,40 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	}
 }
 
-// wrapMasterLookup keeps ErrAmbiguousUID bare, so a caller can match it,
-// and wraps every other lookup error with "get master".
-func wrapMasterLookup(err error) error {
+// wrapLookup keeps ErrAmbiguousUID bare, so a caller can match it, and
+// wraps every other lookup error with prefix.
+func wrapLookup(prefix string, err error) error {
 	if errors.Is(err, ErrAmbiguousUID) {
 		return err
 	}
-	return fmt.Errorf("get master: %w", err)
+	return fmt.Errorf("%s: %w", prefix, err)
+}
+
+// wrapMasterLookup is wrapLookup for a master lookup.
+func wrapMasterLookup(err error) error {
+	return wrapLookup("get master", err)
+}
+
+// ensureSeriesWritableIn enforces the remote access and component policy
+// on every calendar that holds a row of the series of uid in calendarID:
+// that calendar and each calendar with a legacy override of the UID (see
+// storage.LegacyOverride). The other calendars that hold the UID stay
+// out, so a read-only copy of the UID in calendar A does not block a
+// delete or a restore of the series in calendar B.
+func ensureSeriesWritableIn(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error {
+	ids, err := q.ListSeriesCalendarIDs(ctx, storage.ListSeriesCalendarIDsParams{CalendarID: calendarID, Uid: uid})
+	if err != nil {
+		return fmt.Errorf("list series calendars: %w", err)
+	}
+	if len(ids) == 0 {
+		ids = []int64{calendarID}
+	}
+	for _, id := range ids {
+		if err := calendaraccess.EnsureWritable(ctx, q, id, "VEVENT"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SeriesMaster returns the live master of the series of uid in calendarID.
@@ -97,6 +134,26 @@ func wrapMasterLookup(err error) error {
 // master of the UID, or it returns ErrAmbiguousUID.
 func (s *Service) SeriesMaster(ctx context.Context, calendarID int64, uid string) (Event, error) {
 	r, _, err := findSeriesMasterTx(ctx, s.q, calendarID, uid)
+	if err != nil {
+		return Event{}, err
+	}
+	e := FromStorage(r)
+	s.populateSingleCategories(ctx, &e)
+	return e, nil
+}
+
+// SeriesOverride returns the live override row of the occurrence recID of
+// the series of uid in calendarID. A row in the calendar of the master
+// wins. Else it takes a legacy override of the occurrence (see
+// storage.LegacyOverride). The override rows of a master in another
+// calendar stay out, and a row in the trash stays out. No row gives
+// sql.ErrNoRows. See findSeriesMasterTx for the master rule.
+func (s *Service) SeriesOverride(ctx context.Context, calendarID int64, uid, recID string) (Event, error) {
+	master, masters, err := findSeriesMasterTx(ctx, s.q, calendarID, uid)
+	if err != nil {
+		return Event{}, err
+	}
+	r, err := findInstanceOverrideTx(ctx, s.q, master, masters, recID)
 	if err != nil {
 		return Event{}, err
 	}

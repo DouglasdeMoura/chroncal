@@ -66,34 +66,6 @@ func (q *Queries) GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx context.Conte
 	return i, err
 }
 
-const getEventTruncateDeleteByUIDAndCutoff = `-- name: GetEventTruncateDeleteByUIDAndCutoff :one
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE uid = ? AND cutoff_time = ?
-`
-
-type GetEventTruncateDeleteByUIDAndCutoffParams struct {
-	Uid        string
-	CutoffTime string
-}
-
-// Looks up the truncation log row by its unique (uid, cutoff_time) key so the
-// TUI undo path can reverse a "this and following" delete through the same
-// provenance-aware reversal the trash view uses.
-func (q *Queries) GetEventTruncateDeleteByUIDAndCutoff(ctx context.Context, arg GetEventTruncateDeleteByUIDAndCutoffParams) (EventTruncateDelete, error) {
-	row := q.db.QueryRowContext(ctx, getEventTruncateDeleteByUIDAndCutoff, arg.Uid, arg.CutoffTime)
-	var i EventTruncateDelete
-	err := row.Scan(
-		&i.ID,
-		&i.CalendarID,
-		&i.Uid,
-		&i.CutoffTime,
-		&i.PreviousRrule,
-		&i.DeletedAt,
-		&i.HiddenOverrides,
-		&i.RemovedRdates,
-	)
-	return i, err
-}
-
 const listEventTruncateDeletesByCalendar = `-- name: ListEventTruncateDeletesByCalendar :many
 SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes
 WHERE calendar_id = ?
@@ -165,7 +137,7 @@ func (q *Queries) PurgeOldEventTruncateDeletes(ctx context.Context, deletedAt st
 const recordEventTruncateDelete = `-- name: RecordEventTruncateDelete :exec
 INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates)
 VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(uid, cutoff_time) DO UPDATE SET
+ON CONFLICT(calendar_id, uid, cutoff_time) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 `
 
@@ -178,9 +150,10 @@ type RecordEventTruncateDeleteParams struct {
 	RemovedRdates   *string
 }
 
-// Idempotent: truncating the same cutoff twice keeps one log row. Stores
-// only the FIRST previous_rrule, hidden_overrides, and removed_rdates seen so
-// re-truncating doesn't overwrite the original pre-truncation state with an
+// Idempotent: a second truncation at the same cutoff in one calendar keeps
+// one log row. Each calendar keeps its own row (issue #842). The row keeps
+// the FIRST previous_rrule, hidden_overrides, and removed_rdates, so a
+// second truncation does not overwrite the pre-truncation state with an
 // already-truncated rule or an empty override/rdate set.
 func (q *Queries) RecordEventTruncateDelete(ctx context.Context, arg RecordEventTruncateDeleteParams) error {
 	_, err := q.db.ExecContext(ctx, recordEventTruncateDelete,

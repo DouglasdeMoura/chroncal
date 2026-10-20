@@ -210,8 +210,11 @@ func validateEventDeleteScope(ctx context.Context, a *app.App, ev event.Event, c
 		if recurrence.OccurrenceExistsAt(master, scopeAt) {
 			return nil
 		}
-		if _, oErr := a.Events.GetByCalendarUIDAndRecurrenceID(
-			ctx, ev.CalendarID, ev.UID, scopeAt.UTC().Format(time.RFC3339)); oErr == nil {
+		// The override must belong to this series: a row of the same
+		// UID in another calendar, or a row in the trash, does not make
+		// the occurrence deletable here (issue #842).
+		if _, oErr := a.Events.SeriesOverride(
+			ctx, master.CalendarID, ev.UID, scopeAt.UTC().Format(time.RFC3339)); oErr == nil {
 			return nil
 		} else if !errors.Is(oErr, sql.ErrNoRows) {
 			return fmt.Errorf("look up override: %w", oErr)
@@ -220,7 +223,7 @@ func validateEventDeleteScope(ctx context.Context, a *app.App, ev event.Event, c
 		if recurrence.HasOccurrenceFrom(master, scopeAt) {
 			return nil
 		}
-		has, hErr := a.Events.HasLiveOverrideFrom(ctx, ev.UID, scopeAt)
+		has, hErr := a.Events.HasLiveOverrideFrom(ctx, master.CalendarID, ev.UID, scopeAt)
 		if hErr != nil {
 			return fmt.Errorf("check overrides: %w", hErr)
 		}
