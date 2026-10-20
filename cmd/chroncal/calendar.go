@@ -355,10 +355,9 @@ config.toml sets the same fields declaratively.`,
 				return errPathAndRemoteURL()
 			}
 			if cmd.Flags().Changed("color") {
-				if err := model.ValidateHexColor(color); err != nil {
-					return errInvalidInputf("--color: %v", err)
+				if color, err = resolveCalendarColorFlag(color); err != nil {
+					return err
 				}
-				color = model.NormalizeHexColor(color)
 			}
 
 			a, err := initApp()
@@ -440,6 +439,15 @@ config.toml sets the same fields declaratively.`,
 // same for create and update.
 func errPathAndRemoteURL() error {
 	return errInvalidInputf("--path and --remote-url are mutually exclusive: a calendar is local or a server collection")
+}
+
+// resolveCalendarColorFlag validates the --color value and returns it in
+// the stored form. The create and update commands share it.
+func resolveCalendarColorFlag(raw string) (string, error) {
+	if err := model.ValidateHexColor(raw); err != nil {
+		return "", errInvalidInputf("--color: %v", err)
+	}
+	return model.NormalizeHexColor(raw), nil
 }
 
 // resolveCalendarPathFlag turns the --path value into the stored form: an
@@ -581,10 +589,9 @@ inherits the global [alarms] default from config.toml again.
 				n = name
 			}
 			if cmd.Flags().Changed("color") {
-				if err := model.ValidateHexColor(color); err != nil {
-					return errInvalidInputf("--color: %v", err)
+				if co, err = resolveCalendarColorFlag(color); err != nil {
+					return err
 				}
-				co = model.NormalizeHexColor(color)
 			}
 			if cmd.Flags().Changed("description") {
 				d = description

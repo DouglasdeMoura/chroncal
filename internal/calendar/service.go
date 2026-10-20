@@ -485,11 +485,13 @@ func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error
 	}); err != nil {
 		return err
 	}
+	// The read reports a missing row for a clear too, so a stale ID never
+	// commits a no-op as a success.
+	existing, err := qtx.GetCalendar(ctx, id)
+	if err != nil {
+		return err
+	}
 	if path != "" {
-		existing, err := qtx.GetCalendar(ctx, id)
-		if err != nil {
-			return err
-		}
 		// fromStorage owns the "is remote" rule: a NULL or a 0 account
 		// ID both mean a local calendar.
 		if fromStorage(existing).AccountID != 0 {

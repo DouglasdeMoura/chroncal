@@ -361,7 +361,7 @@ func TestApplyWarnsWhenItResetsAStoredField(t *testing.T) {
 	}
 	// The color resets in the first pass and the path in the second, so
 	// two warnings name the two fields.
-	if len(warnings) != 2 || !strings.Contains(warnings[0], "replaced the stored color") || !strings.Contains(warnings[1], "set the path /new") {
+	if len(warnings) != 2 || !strings.Contains(warnings[0], "replaced the stored color") || !strings.Contains(warnings[1], "replaced the stored path with /new") {
 		t.Fatalf("warnings = %v, want a color reset warning and a path warning", warnings)
 	}
 	got, _ := svc.Get(ctx, cal.ID)
@@ -580,7 +580,7 @@ func TestCheckRename(t *testing.T) {
 	}
 }
 
-func TestApplyWarnsWhenItPutsAClearedPathBack(t *testing.T) {
+func TestApplyFirstPathOnAnAdoptedRowWarnsAboutNothing(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	cal, err := svc.Create(ctx, "Fastmail", "#111111", "")
@@ -592,8 +592,10 @@ func TestApplyWarnsWhenItPutsAClearedPathBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "set the path /p") {
-		t.Fatalf("warnings = %v, want a path warning for an adopted row", warnings)
+	// The stored path was empty, so nothing was replaced and no warning
+	// names the path, like an empty stored description.
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none for a first path on an adopted row", warnings)
 	}
 	got, _ := svc.Get(ctx, cal.ID)
 	if got.LocalPath != "/p" {
@@ -647,5 +649,13 @@ func TestApplyAdoptsTheLocalVariantNextToARemoteOne(t *testing.T) {
 	got, _ := svc.Get(ctx, local.ID)
 	if got.LocalPath != "/p" {
 		t.Fatalf("the local variant was not adopted: %+v", got)
+	}
+}
+
+
+func TestSetLocalPathReportsAMissingRowOnClear(t *testing.T) {
+	svc := newTestService(t)
+	if err := svc.SetLocalPath(context.Background(), 999, ""); err == nil {
+		t.Fatal("SetLocalPath(\"\") on a missing row returned nil")
 	}
 }

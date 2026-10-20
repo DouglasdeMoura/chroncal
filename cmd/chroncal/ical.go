@@ -282,7 +282,7 @@ func (o icalImportOutcome) json() map[string]any {
 }
 
 // missingDirectoryOutcome is the run of a stored directory that is not
-// there: the sync tool has not created it yet, or the mount is away. The
+// there: the sync tool did not create it yet, or the mount is away. The
 // run imports nothing, succeeds, and carries a warning, so a timer job
 // does not fail on every tick before the first sync.
 func missingDirectoryOutcome(target icalImportTarget) icalImportOutcome {
@@ -308,7 +308,7 @@ func importIntoCalendar(ctx context.Context, a *app.App, target icalImportTarget
 			path = resolved
 		case errors.Is(err, fs.ErrNotExist):
 			// A link to an unmounted drive, or a directory that the sync
-			// tool has not created yet. ParsePath would refuse the link
+			// tool did not create yet. ParsePath would refuse the link
 			// with another message, so report the real state here.
 			if target.lenient {
 				return missingDirectoryOutcome(target)

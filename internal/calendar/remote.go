@@ -149,8 +149,8 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	cal = lockedCal
 
 	// The check runs again on the locked row (issue #809). ConnectTarget
-	// checked an earlier read, and a path or an apply may have landed
-	// since.
+	// checked an earlier read, and a path or an apply can land after that
+	// read.
 	if err := s.CheckLinkable(cal); err != nil {
 		return err
 	}
