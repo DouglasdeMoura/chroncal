@@ -555,8 +555,15 @@ inherits the global [alarms] default from config.toml again.
 			if resolvedPath != "" && existing.AccountID != 0 && !disconnectRemote {
 				return errInvalidInputf("calendar %q: %v", existing.Name, calendarpkg.ErrRemoteLocalPath)
 			}
-			if err := a.Calendars.CheckPathFree(ctx, existing.ID, resolvedPath); err != nil {
-				return err
+			// The path lands first when no remote flag is set (see below),
+			// and SetLocalPath runs the overlap check itself. The pre-check
+			// serves the orders where other writes come before the path.
+			remoteFlags := disconnectRemote || strings.TrimSpace(remoteURL) != ""
+			pathFirst := cmd.Flags().Changed("path") && (!remoteFlags || resolvedPath == "")
+			if !pathFirst {
+				if err := a.Calendars.CheckPathFree(ctx, existing.ID, resolvedPath); err != nil {
+					return err
+				}
 			}
 			if cmd.Flags().Changed("name") {
 				if err := a.Calendars.CheckRename(cals, existing.Name, name); err != nil {
@@ -603,8 +610,6 @@ inherits the global [alarms] default from config.toml again.
 			// cleared path lands before a link, so --path "" next to
 			// --remote-url frees the calendar for the link; a new path
 			// lands after a disconnect (see below).
-			remoteFlags := disconnectRemote || strings.TrimSpace(remoteURL) != ""
-			pathFirst := cmd.Flags().Changed("path") && (!remoteFlags || resolvedPath == "")
 			if pathFirst {
 				if err := a.Calendars.SetLocalPath(ctx, existing.ID, resolvedPath); err != nil {
 					return fmt.Errorf("set calendar path: %w", err)

@@ -297,7 +297,7 @@ func TestApplyWarnsOnAmbiguousCaseVariants(t *testing.T) {
 	}
 }
 
-func TestApplyDoesNotAdoptRemoteCaseVariant(t *testing.T) {
+func TestApplyWarnsOnARemoteCaseVariant(t *testing.T) {
 	svc, q, _ := newTestServiceWithDB(t)
 	ctx := context.Background()
 	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
@@ -312,16 +312,22 @@ func TestApplyDoesNotAdoptRemoteCaseVariant(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("LinkCalendarToAccount: %v", err)
 	}
+	// A local "personal" would shadow the remote one for every --calendar
+	// lookup, which folds case, so the entry is a warning.
 	warnings, err := svc.Apply(ctx, []Declared{{Name: "personal", Path: "/p"}})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if len(warnings) != 0 {
-		t.Fatalf("a remote case variant must not block the entry: %v", warnings)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], ErrDeclaredRemote.Error()) {
+		t.Fatalf("warnings = %v, want one ErrDeclaredRemote warning", warnings)
 	}
-	got, err := svc.getByName(ctx, "personal")
-	if err != nil || got.Name != "personal" || got.AccountID != 0 || got.LocalPath != "/p" {
-		t.Fatalf("Apply did not create the local calendar: %+v, %v", got, err)
+	if _, err := svc.getByName(ctx, "personal"); err == nil {
+		cals, _ := svc.List(ctx)
+		for _, c := range cals {
+			if c.Name == "personal" {
+				t.Fatalf("Apply created a local calendar next to the remote variant: %v", cals)
+			}
+		}
 	}
 }
 
@@ -656,5 +662,56 @@ func TestSetLocalPathReportsAMissingRowOnClear(t *testing.T) {
 	svc := newTestService(t)
 	if err := svc.SetLocalPath(context.Background(), 999, ""); err == nil {
 		t.Fatal("SetLocalPath(\"\") on a missing row returned nil")
+	}
+}
+
+func TestApplyRetriesAChangeRefusedByALaterRefusedChange(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	for name, path := range map[string]string{"B": "/y", "C": "/x/c"} {
+		if _, err := svc.CreateWithPath(ctx, name, "#111111", "", path); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	// B wants /x, which holds C, so B fails. A wants /x/a, which is free
+	// once B fails, so A must land although B comes later in the config.
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "A", Path: "/x/a"}, {Name: "B", Path: "/x"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	a, _ := svc.getByName(ctx, "A")
+	b, _ := svc.getByName(ctx, "B")
+	if a.LocalPath != "/x/a" || b.LocalPath != "/y" {
+		t.Fatalf("paths: A=%q B=%q, warnings=%v", a.LocalPath, b.LocalPath, warnings)
+	}
+	for _, w := range warnings {
+		if strings.HasPrefix(w, `calendar "A"`) {
+			t.Fatalf("A must land without a warning: %v", warnings)
+		}
+	}
+}
+
+func TestApplyRechecksAnAcceptedChangeAgainstARestoredPath(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	for name, path := range map[string]string{"A": "/p1", "B": "/q/sub", "C": "/z/c"} {
+		if _, err := svc.CreateWithPath(ctx, name, "#111111", "", path); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	// A wants /q. B wants /z, which holds C, so B keeps /q/sub, which lies
+	// inside A's new path. The second walk refuses A too; both keep their
+	// stored paths and nothing shares a tree.
+	warnings, err := svc.Apply(ctx, []Declared{{Name: "A", Path: "/q"}, {Name: "B", Path: "/z"}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	a, _ := svc.getByName(ctx, "A")
+	b, _ := svc.getByName(ctx, "B")
+	if a.LocalPath != "/p1" || b.LocalPath != "/q/sub" {
+		t.Fatalf("paths: A=%q B=%q, warnings=%v", a.LocalPath, b.LocalPath, warnings)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("warnings = %v, want one for A and one for B", warnings)
 	}
 }

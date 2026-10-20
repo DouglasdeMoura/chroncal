@@ -174,6 +174,13 @@ func (s *Service) CheckRename(cals []Calendar, from, to string) error {
 	return nil
 }
 
+// bindDeclared adds one name to the guard.
+func (s *Service) bindDeclared(name string) {
+	s.declaredMu.Lock()
+	defer s.declaredMu.Unlock()
+	s.declared[name] = true
+}
+
 // rebindDeclared moves the guard from one spelling to another.
 func (s *Service) rebindDeclared(from, to string) {
 	s.declaredMu.Lock()
@@ -277,8 +284,7 @@ func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) 
 // Apply runs on every launch, so it must stay idempotent and cheap. It
 // reads the calendar list once and writes only the rows that differ.
 func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []string, err error) {
-	bound := make(map[string]bool, len(declared))
-	s.setDeclared(bound)
+	s.setDeclared(make(map[string]bool, len(declared)))
 	for _, d := range declared {
 		if strings.TrimSpace(d.Name) == "" {
 			return nil, fmt.Errorf("calendars: an entry has no name")
@@ -296,16 +302,18 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 
 	for _, d := range declared {
 		name := strings.TrimSpace(d.Name)
-		// An exact name that a CalDAV account owns is a warning. Any other
-		// remote row is not a match and must not make the name ambiguous,
-		// so the lookup runs over the local rows.
-		if remoteExact(existing, name) {
-			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, ErrDeclaredRemote))
-			continue
-		}
+		// The lookup runs over the local rows, so a remote row never makes
+		// a name ambiguous. Without a local match, a remote row with the
+		// name in any case is a warning: a new local calendar would shadow
+		// the remote one for every --calendar lookup, which folds case
+		// too.
 		cal, ok, err := FindByName(localOnly(existing), name)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
+			continue
+		}
+		if !ok && remoteFold(existing, name) {
+			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, ErrDeclaredRemote))
 			continue
 		}
 		// adopted marks a row that existed before this apply. A reset of
@@ -348,9 +356,7 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			existing = append(existing, cal)
 		}
 		// The guard binds to the stored spelling of the name.
-		s.declaredMu.Lock()
-		bound[cal.Name] = true
-		s.declaredMu.Unlock()
+		s.bindDeclared(cal.Name)
 		// A stored value that differs from the declared one comes from a
 		// CLI or TUI edit, or from an edit of the file. The entry wins,
 		// and a warning names the reset, so an edit never vanishes in
@@ -394,56 +400,56 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		return warnings, nil
 	}
 
-	// Second pass. Plan the paths as they stand after the apply, then
-	// check each change against that state. A change that would share a
-	// tree with another calendar warns and keeps its stored path, so a
-	// conflict never leaves a calendar without a directory. The accepted
-	// changes land in one transaction as plain overwrites, so two entries
-	// that exchange their paths converge in one apply, and a concurrent
-	// write cannot land between two of them.
-	planned := make([]Calendar, len(existing))
-	copy(planned, existing)
-	for _, c := range changes {
-		for i := range planned {
-			if planned[i].ID == c.ID {
-				planned[i].LocalPath = c.To
-			}
-		}
-	}
-	// A refusal reverts one planned path, which can create a conflict for
-	// a change that passed before. The check repeats until no change is
-	// refused, so every conflict gets its own warning and every
-	// independent change lands.
-	// Each path resolves once, outside the transaction. A revert reuses
-	// the resolved stored path, and the transaction reuses the cache.
+	// Second pass. The plan walks the changes in config order. Each change
+	// checks against the stored paths of the calendars that do not change
+	// and against the changes before it that passed, so a change never
+	// fails because of a later change that fails itself. A refusal keeps
+	// the stored path of that calendar, so a conflict never leaves a
+	// calendar without a directory. The restored path can conflict with a
+	// change that passed before it, so the walk repeats with the refusal
+	// kept until a walk refuses nothing. Each walk keeps at least one more
+	// refusal, so the loop ends. The accepted changes land in one
+	// transaction as plain overwrites, so two entries that exchange their
+	// paths converge in one apply, and a concurrent write cannot land
+	// between two of them.
 	cache := treeCache{}
-	resolved := resolveTrees(planned, cache)
-	resolvedFrom := make(map[int64]string, len(changes))
-	resolvedTo := make(map[int64]string, len(changes))
-	for _, c := range changes {
-		resolvedFrom[c.ID] = cache.tree(c.From)
-		resolvedTo[c.ID] = cache.tree(c.To)
-	}
-	accepted := append([]pathChange(nil), changes...)
+	refused := make(map[int64]bool, len(changes))
+	var accepted []pathChange
 	for {
-		refused := false
-		kept := accepted[:0]
-		for _, c := range accepted {
-			if err := checkResolvedPathFree(planned, resolved, c.ID, c.To, resolvedTo[c.ID]); err != nil {
-				warnings = append(warnings, fmt.Sprintf("calendar %q: %v", c.Name, err))
+		planned := make([]Calendar, len(existing))
+		copy(planned, existing)
+		for _, c := range changes {
+			if !refused[c.ID] {
 				for i := range planned {
 					if planned[i].ID == c.ID {
-						planned[i].LocalPath = c.From
-						resolved[i] = resolvedFrom[c.ID]
+						planned[i].LocalPath = ""
 					}
 				}
-				refused = true
+			}
+		}
+		resolved := resolveTrees(planned, cache)
+		accepted = accepted[:0]
+		newRefusal := false
+		for _, c := range changes {
+			if refused[c.ID] {
 				continue
 			}
-			kept = append(kept, c)
+			err := checkResolvedPathFree(planned, resolved, c.ID, c.To, cache.tree(c.To))
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("calendar %q: %v", c.Name, err))
+				refused[c.ID] = true
+				newRefusal = true
+				continue
+			}
+			for i := range planned {
+				if planned[i].ID == c.ID {
+					planned[i].LocalPath = c.To
+					resolved[i] = cache.tree(c.To)
+				}
+			}
+			accepted = append(accepted, c)
 		}
-		accepted = kept
-		if !refused {
+		if !newRefusal {
 			break
 		}
 	}
@@ -470,11 +476,11 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	return warnings, nil
 }
 
-// remoteExact reports whether a calendar with exactly that name belongs to
-// a CalDAV account.
-func remoteExact(cals []Calendar, name string) bool {
+// remoteFold reports whether a calendar with that name, in any case,
+// belongs to a CalDAV account.
+func remoteFold(cals []Calendar, name string) bool {
 	for _, c := range cals {
-		if c.Name == name && c.AccountID != 0 {
+		if c.AccountID != 0 && strings.EqualFold(c.Name, name) {
 			return true
 		}
 	}
@@ -497,8 +503,9 @@ type pathChange struct {
 	ID       int64
 	Name     string
 	From, To string
-	// Adopted marks a row that existed before the apply. A user who
-	// cleared the directory of a declared calendar then gets a warning
-	// when the entry puts it back.
+	// Adopted marks a row that existed before the apply. A replaced path
+	// on such a row gets a warning. An empty stored path is nothing to
+	// replace, so a cleared path returns without a warning, like a
+	// cleared description.
 	Adopted bool
 }
