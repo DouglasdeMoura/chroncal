@@ -43,7 +43,51 @@ ALTER TABLE event_truncate_deletes_new RENAME TO event_truncate_deletes;
 CREATE INDEX idx_event_truncate_deletes_calendar ON event_truncate_deletes(calendar_id);
 CREATE INDEX idx_event_truncate_deletes_deleted_at ON event_truncate_deletes(deleted_at);
 
+-- The rows of each event series. One row of the view pairs an event row
+-- (id, live or in the trash) with the calendar whose series owns it
+-- (owner_calendar_id). A row in a calendar with a master row of its UID
+-- belongs to the series of that calendar. A legacy override (a row in a
+-- calendar with no master row of its UID) belongs to the series of the
+-- master row c when no other calendar holds a live master, and, when c
+-- is in the trash, when no other calendar holds a master row at all.
+-- uidmove.LegacyOwner is the Go form of that rule. A row of a UID with
+-- no master row in any calendar (an orphan override, for example a
+-- Google instance under its own UID) belongs to the series of its own
+-- calendar, so the export of that calendar still carries it. A legacy
+-- override with no owner is not in the view. Drop the view before a
+-- rebuild of the events table, and create it again after.
+CREATE VIEW event_series_rows AS
+SELECT
+    e.id AS id,
+    e.uid AS uid,
+    e.calendar_id AS calendar_id,
+    e.recurrence_id AS recurrence_id,
+    e.deleted_at AS deleted_at,
+    c.calendar_id AS owner_calendar_id
+FROM events AS e
+JOIN events AS c ON c.uid = e.uid AND c.recurrence_id = ''
+WHERE c.calendar_id = e.calendar_id
+   OR (NOT EXISTS (
+        SELECT 1 FROM events AS m
+        WHERE m.uid = e.uid AND m.recurrence_id = '' AND m.calendar_id = e.calendar_id)
+       AND NOT EXISTS (
+        SELECT 1 FROM events AS o
+        WHERE o.uid = e.uid AND o.recurrence_id = '' AND o.calendar_id != c.calendar_id
+          AND (o.deleted_at IS NULL OR c.deleted_at IS NOT NULL)))
+UNION ALL
+SELECT
+    e.id AS id,
+    e.uid AS uid,
+    e.calendar_id AS calendar_id,
+    e.recurrence_id AS recurrence_id,
+    e.deleted_at AS deleted_at,
+    e.calendar_id AS owner_calendar_id
+FROM events AS e
+WHERE NOT EXISTS (
+    SELECT 1 FROM events AS m WHERE m.uid = e.uid AND m.recurrence_id = '');
+
 -- +goose Down
+DROP VIEW IF EXISTS event_series_rows;
 -- The old keys hold one row per UID. A second calendar's row of the same
 -- occurrence or cutoff does not fit, so the copy keeps the first row.
 CREATE TABLE event_exdate_deletes_old (

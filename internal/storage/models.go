@@ -194,6 +194,15 @@ type EventResource struct {
 	Text    string
 }
 
+type EventSeriesRow struct {
+	ID              int64
+	Uid             string
+	CalendarID      int64
+	RecurrenceID    string
+	DeletedAt       *string
+	OwnerCalendarID int64
+}
+
 type EventTruncateDelete struct {
 	ID              int64
 	CalendarID      int64
