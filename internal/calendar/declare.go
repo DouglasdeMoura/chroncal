@@ -86,17 +86,12 @@ func (c treeCache) tree(path string) string {
 // resolveTrees resolves the stored path of each calendar once. A non-nil
 // cache serves and records the resolved trees.
 func resolveTrees(cals []Calendar, cache treeCache) []string {
+	if cache == nil {
+		cache = treeCache{}
+	}
 	resolved := make([]string, len(cals))
 	for i := range cals {
-		path := cals[i].LocalPath
-		if tree, ok := cache[path]; ok {
-			resolved[i] = tree
-			continue
-		}
-		resolved[i] = fsutil.ResolveTree(path)
-		if cache != nil {
-			cache[path] = resolved[i]
-		}
+		resolved[i] = cache.tree(cals[i].LocalPath)
 	}
 	return resolved
 }
@@ -275,8 +270,9 @@ func (s *Service) getByName(ctx context.Context, name string) (Calendar, error) 
 //
 // The paths land in a second pass. The pass plans the paths as they stand
 // after the apply, warns about a change that would share a tree with
-// another calendar, then clears every accepted change and sets the new
-// paths, so two entries that exchange their paths converge in one apply.
+// another calendar, then sets every accepted path in one transaction. No
+// index constrains local_path, so a plain overwrite lets two entries that
+// exchange their paths converge in one apply.
 //
 // Apply runs on every launch, so it must stay idempotent and cheap. It
 // reads the calendar list once and writes only the rows that differ.
@@ -402,9 +398,9 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	// check each change against that state. A change that would share a
 	// tree with another calendar warns and keeps its stored path, so a
 	// conflict never leaves a calendar without a directory. The accepted
-	// changes land in one transaction, clear first and set second, so two
-	// entries that exchange their paths converge in one apply, and a
-	// concurrent write cannot land between the clear and the set.
+	// changes land in one transaction as plain overwrites, so two entries
+	// that exchange their paths converge in one apply, and a concurrent
+	// write cannot land between two of them.
 	planned := make([]Calendar, len(existing))
 	copy(planned, existing)
 	for _, c := range changes {
@@ -464,9 +460,11 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		}
 		return warnings, err
 	}
+	// An empty stored path is nothing to replace, like an empty stored
+	// description, so a first path on an adopted row warns about nothing.
 	for _, c := range accepted {
-		if c.Adopted {
-			warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry set the path %s", c.Name, c.To))
+		if c.Adopted && c.From != "" {
+			warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored path with %s", c.Name, c.To))
 		}
 	}
 	return warnings, nil
