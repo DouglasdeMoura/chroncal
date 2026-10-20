@@ -799,6 +799,11 @@ to stderr.`,
 			if getErr != nil {
 				return notFoundErr(getErr, "calendar", id)
 			}
+			// A declared calendar is refused before any prompt, so the
+			// user never confirms a delete that the service then refuses.
+			if a.Calendars.IsDeclared(cal.Name) {
+				return fmt.Errorf("calendar %q: %w", cal.Name, calendarpkg.ErrDeclaredCalendar)
+			}
 			eventCount, err := a.Queries.CountEventsByCalendar(ctx, id)
 			if err != nil {
 				// The confirm prompt quotes this count. Abort when it is

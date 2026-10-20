@@ -450,6 +450,13 @@ func (m Model) handleCalendarDeleteRequested(msg CalendarDeleteRequestedMsg) (te
 	// before the destructive confirm. The user then chooses the
 	// replacement default. Never promote in silence.
 	id, name := msg.ID, msg.Name
+	// A declared calendar is refused before the confirm dialog, so the
+	// user never confirms a delete that the service then refuses.
+	if m.app != nil && m.app.Calendars.IsDeclared(name) {
+		return m, func() tea.Msg {
+			return calendarMutationDoneMsg{err: fmt.Errorf("calendar %q: %w", name, calendar.ErrDeclaredCalendar)}
+		}
+	}
 	info, known := m.calendars[id]
 	if known && info.IsDefault {
 		candidates := defaultPromotionCandidates(m.calendars, id)

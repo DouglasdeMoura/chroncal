@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/douglasdemoura/chroncal/internal/fsutil"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -108,6 +107,10 @@ func (s *Service) Create(ctx context.Context, name, color, description string) (
 // leaves no half-made row behind. An empty path creates a calendar without
 // a directory.
 func (s *Service) CreateWithPath(ctx context.Context, name, color, description, localPath string) (Calendar, error) {
+	cache, err := s.resolveBeforeTx(ctx, localPath)
+	if err != nil {
+		return Calendar{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Calendar{}, fmt.Errorf("begin tx: %w", err)
@@ -131,7 +134,7 @@ func (s *Service) CreateWithPath(ctx context.Context, name, color, description, 
 	// write lock, so two writers cannot both read a list without the
 	// other path and both commit. A conflict rolls the insert back.
 	if localPath != "" {
-		if err := s.checkPathFreeTx(ctx, qtx, r.ID, localPath); err != nil {
+		if err := s.checkPathFreeTx(ctx, qtx, r.ID, localPath, cache); err != nil {
 			return Calendar{}, err
 		}
 	}
@@ -404,12 +407,12 @@ func fromStorage(r storage.Calendar) Calendar {
 // checkPathFreeTx reads the calendar list inside the transaction and
 // returns ErrOverlappingPath when another calendar than id already uses
 // path or a directory above or below it.
-func (s *Service) checkPathFreeTx(ctx context.Context, qtx *storage.Queries, id int64, path string) error {
+func (s *Service) checkPathFreeTx(ctx context.Context, qtx *storage.Queries, id int64, path string, cache treeCache) error {
 	cals, err := listWith(ctx, qtx)
 	if err != nil {
 		return fmt.Errorf("list calendars: %w", err)
 	}
-	return checkPathFree(cals, id, path)
+	return checkResolvedPathFree(cals, resolveTrees(cals, cache), id, path, cache.tree(path))
 }
 
 // setLocalPaths applies a set of path changes in one transaction. Every
@@ -419,7 +422,7 @@ func (s *Service) checkPathFreeTx(ctx context.Context, qtx *storage.Queries, id 
 // lock, so the list sees every committed path and two writers cannot both
 // pass. A conflict rolls every change back, so no calendar loses its
 // directory to a half-done pass.
-func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange) error {
+func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange, cache treeCache) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -435,9 +438,9 @@ func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange) error
 	if err != nil {
 		return fmt.Errorf("list calendars: %w", err)
 	}
-	resolved := resolveTrees(cals)
+	resolved := resolveTrees(cals, cache)
 	for _, c := range changes {
-		if err := checkResolvedPathFree(cals, resolved, c.ID, fsutil.ResolveTree(c.To)); err != nil {
+		if err := checkResolvedPathFree(cals, resolved, c.ID, c.To, cache.tree(c.To)); err != nil {
 			return err
 		}
 	}
@@ -452,7 +455,7 @@ func (s *Service) CheckPathFree(ctx context.Context, id int64, path string) erro
 	if path == "" {
 		return nil
 	}
-	return s.checkPathFreeTx(ctx, s.q, id, path)
+	return s.checkPathFreeTx(ctx, s.q, id, path, treeCache{})
 }
 
 // SetLocalPath stores the directory of .ics files that feeds the calendar
@@ -463,6 +466,10 @@ func (s *Service) CheckPathFree(ctx context.Context, id int64, path string) erro
 // (ErrRemoteLocalPath). An import from the directory would push the files
 // to the server, which already owns the collection.
 func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error {
+	cache, err := s.resolveBeforeTx(ctx, path)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -488,11 +495,28 @@ func (s *Service) SetLocalPath(ctx context.Context, id int64, path string) error
 		if fromStorage(existing).AccountID != 0 {
 			return fmt.Errorf("calendar %q: %w", existing.Name, ErrRemoteLocalPath)
 		}
-		if err := s.checkPathFreeTx(ctx, qtx, id, path); err != nil {
+		if err := s.checkPathFreeTx(ctx, qtx, id, path, cache); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// resolveBeforeTx resolves the trees of every stored path and of the
+// candidate before a transaction opens, so no file system walk runs under
+// the database write lock. An empty candidate needs no resolution.
+func (s *Service) resolveBeforeTx(ctx context.Context, candidate string) (treeCache, error) {
+	cache := treeCache{}
+	if candidate == "" {
+		return cache, nil
+	}
+	cals, err := s.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list calendars: %w", err)
+	}
+	resolveTrees(cals, cache)
+	cache.tree(candidate)
+	return cache, nil
 }
 
 // isUniqueViolation returns true when the error is a SQLite UNIQUE constraint

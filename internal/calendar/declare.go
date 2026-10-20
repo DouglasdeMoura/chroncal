@@ -74,26 +74,53 @@ var ErrOverlappingPath = model.NewInputError(
 // launches. The candidate resolves once; each stored path resolves once
 // per call.
 func checkPathFree(cals []Calendar, id int64, path string) error {
-	return checkResolvedPathFree(cals, resolveTrees(cals), id, fsutil.ResolveTree(path))
+	return checkResolvedPathFree(cals, resolveTrees(cals, nil), id, path, fsutil.ResolveTree(path))
 }
 
-// resolveTrees resolves the stored path of each calendar once.
-func resolveTrees(cals []Calendar) []string {
+// treeCache maps a stored path to its resolved tree. A caller resolves
+// the trees before it opens a transaction, so no file system walk runs
+// under the database write lock, and the transaction resolves only a path
+// that appeared since.
+type treeCache map[string]string
+
+// tree returns the resolved tree of path through the cache.
+func (c treeCache) tree(path string) string {
+	if tree, ok := c[path]; ok {
+		return tree
+	}
+	tree := fsutil.ResolveTree(path)
+	c[path] = tree
+	return tree
+}
+
+// resolveTrees resolves the stored path of each calendar once. A non-nil
+// cache serves and records the resolved trees.
+func resolveTrees(cals []Calendar, cache treeCache) []string {
 	resolved := make([]string, len(cals))
 	for i := range cals {
-		resolved[i] = fsutil.ResolveTree(cals[i].LocalPath)
+		path := cals[i].LocalPath
+		if tree, ok := cache[path]; ok {
+			resolved[i] = tree
+			continue
+		}
+		resolved[i] = fsutil.ResolveTree(path)
+		if cache != nil {
+			cache[path] = resolved[i]
+		}
 	}
 	return resolved
 }
 
 // checkResolvedPathFree is checkPathFree with every path already resolved:
 // resolved[i] belongs to cals[i], and candidate is the resolved path under
-// check. The plan of Apply resolves each path once and calls it in a loop.
-// The planned path of id itself is not a conflict.
-func checkResolvedPathFree(cals []Calendar, resolved []string, id int64, candidate string) error {
+// check. The error names path, the spelling the user wrote, so the user
+// finds it in the config file or the command. The plan of Apply resolves
+// each path once and calls it in a loop. The planned path of id itself is
+// not a conflict.
+func checkResolvedPathFree(cals []Calendar, resolved []string, id int64, path, candidate string) error {
 	for i, c := range cals {
 		if c.ID != id && fsutil.SameResolvedTree(resolved[i], candidate) {
-			return fmt.Errorf("path %s overlaps the directory of calendar %q: %w", candidate, c.Name, ErrOverlappingPath)
+			return fmt.Errorf("path %s overlaps the directory of calendar %q: %w", path, c.Name, ErrOverlappingPath)
 		}
 	}
 	return nil
@@ -282,22 +309,17 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 
 	for _, d := range declared {
 		name := strings.TrimSpace(d.Name)
-		cal, ok, err := FindByName(existing, name)
-		if ok && err == nil && cal.Name == name && cal.AccountID != 0 {
+		// An exact name that a CalDAV account owns is a warning. Any other
+		// remote row is not a match and must not make the name ambiguous,
+		// so the lookup runs over the local rows.
+		if remoteExact(existing, name) {
 			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, ErrDeclaredRemote))
 			continue
 		}
-		if err != nil || (ok && cal.AccountID != 0) {
-			// A case variant that a CalDAV account owns is not a match,
-			// and it must not make the name ambiguous: Apply never adopts
-			// a remote row. The lookup repeats over the local rows. The
-			// exact name is free, so an entry without a local variant
-			// creates its own calendar, as "calendar create" would.
-			cal, ok, err = FindByName(localOnly(existing), name)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
-				continue
-			}
+		cal, ok, err := FindByName(localOnly(existing), name)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, err))
+			continue
 		}
 		// adopted marks a row that existed before this apply. A reset of
 		// one of its fields gets a warning; a new row gets none.
@@ -405,23 +427,22 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	// a change that passed before. The check repeats until no change is
 	// refused, so every conflict gets its own warning and every
 	// independent change lands.
-	// Each path resolves once. A revert reuses the resolved stored path.
-	resolved := make([]string, len(planned))
-	for i := range planned {
-		resolved[i] = fsutil.ResolveTree(planned[i].LocalPath)
-	}
+	// Each path resolves once, outside the transaction. A revert reuses
+	// the resolved stored path, and the transaction reuses the cache.
+	cache := treeCache{}
+	resolved := resolveTrees(planned, cache)
 	resolvedFrom := make(map[int64]string, len(changes))
 	resolvedTo := make(map[int64]string, len(changes))
 	for _, c := range changes {
-		resolvedFrom[c.ID] = fsutil.ResolveTree(c.From)
-		resolvedTo[c.ID] = fsutil.ResolveTree(c.To)
+		resolvedFrom[c.ID] = cache.tree(c.From)
+		resolvedTo[c.ID] = cache.tree(c.To)
 	}
 	accepted := append([]pathChange(nil), changes...)
 	for {
 		refused := false
 		kept := accepted[:0]
 		for _, c := range accepted {
-			if err := checkResolvedPathFree(planned, resolved, c.ID, resolvedTo[c.ID]); err != nil {
+			if err := checkResolvedPathFree(planned, resolved, c.ID, c.To, resolvedTo[c.ID]); err != nil {
 				warnings = append(warnings, fmt.Sprintf("calendar %q: %v", c.Name, err))
 				for i := range planned {
 					if planned[i].ID == c.ID {
@@ -442,7 +463,7 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 	if len(accepted) == 0 {
 		return warnings, nil
 	}
-	if err := s.setLocalPaths(ctx, accepted); err != nil {
+	if err := s.setLocalPaths(ctx, accepted, cache); err != nil {
 		if errors.Is(err, ErrOverlappingPath) {
 			// A concurrent write took a tree between the plan and the
 			// transaction. No path changed. The next launch applies the
@@ -458,6 +479,17 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		}
 	}
 	return warnings, nil
+}
+
+// remoteExact reports whether a calendar with exactly that name belongs to
+// a CalDAV account.
+func remoteExact(cals []Calendar, name string) bool {
+	for _, c := range cals {
+		if c.Name == name && c.AccountID != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // localOnly returns the calendars that no CalDAV account owns.

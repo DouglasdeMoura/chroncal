@@ -680,6 +680,11 @@ name = "A"
 name = "A"
 path = "calendars/a"
 `,
+		"other user's home": `
+[[calendars]]
+name = "A"
+path = "~alice/calendars"
+`,
 		"bad color": `
 [[calendars]]
 name = "A"
