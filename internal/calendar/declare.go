@@ -67,16 +67,6 @@ var ErrAmbiguousName = model.NewInputError(
 var ErrOverlappingPath = model.NewInputError(
 	"each calendar needs its own directory tree")
 
-// checkPathFree returns ErrOverlappingPath when another calendar than id
-// uses path or a directory above or below it. The error names the path and
-// the other calendar; the caller adds the subject calendar. The list order
-// decides which calendar the error names, so the name is stable across
-// launches. The candidate resolves once; each stored path resolves once
-// per call.
-func checkPathFree(cals []Calendar, id int64, path string) error {
-	return checkResolvedPathFree(cals, resolveTrees(cals, nil), id, path, fsutil.ResolveTree(path))
-}
-
 // treeCache maps a stored path to its resolved tree. A caller resolves
 // the trees before it opens a transaction, so no file system walk runs
 // under the database write lock, and the transaction resolves only a path
@@ -111,12 +101,13 @@ func resolveTrees(cals []Calendar, cache treeCache) []string {
 	return resolved
 }
 
-// checkResolvedPathFree is checkPathFree with every path already resolved:
-// resolved[i] belongs to cals[i], and candidate is the resolved path under
-// check. The error names path, the spelling the user wrote, so the user
-// finds it in the config file or the command. The plan of Apply resolves
-// each path once and calls it in a loop. The planned path of id itself is
-// not a conflict.
+// checkResolvedPathFree returns ErrOverlappingPath when another calendar
+// than id uses a directory in the tree of candidate. Every path is already
+// resolved: resolved[i] belongs to cals[i], and candidate is the resolved
+// path under check. The error names path, the spelling the user wrote, so
+// the user finds it in the config file or the command. The list order
+// decides which calendar the error names, so the name is stable across
+// launches. The planned path of id itself is not a conflict.
 func checkResolvedPathFree(cals []Calendar, resolved []string, id int64, path, candidate string) error {
 	for i, c := range cals {
 		if c.ID != id && fsutil.SameResolvedTree(resolved[i], candidate) {
