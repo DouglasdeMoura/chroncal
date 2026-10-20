@@ -37,8 +37,19 @@ var errUnknownOwnerType = errors.New("unknown owner type")
 type ownerOps struct {
 	// softDeleteByUID soft-deletes the live rows of uid in one calendar.
 	softDeleteByUID func(ctx context.Context, e *Engine, calendarID int64, uid string) error
-	lookupID        func(ctx context.Context, e *Engine, uid string) (int64, error)
-	export          func(ctx context.Context, e *Engine, uid string) ([]byte, error)
+	// lookupID finds the live master row of uid in one calendar.
+	lookupID func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error)
+	// export bundles the series of uid in one calendar.
+	export func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error)
+}
+
+// byUID adapts a lookup by UID to the calendar-scoped signature of
+// exportResourceFor. The todo and journal tables keep one UID in one
+// calendar, so their lookups take no calendar.
+func byUID[T any](get func(context.Context, string) (T, error)) func(context.Context, int64, string) (T, error) {
+	return func(ctx context.Context, _ int64, uid string) (T, error) {
+		return get(ctx, uid)
+	}
 }
 
 var ownerOpsByType = map[string]ownerOps{
@@ -46,16 +57,16 @@ var ownerOpsByType = map[string]ownerOps{
 		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
 			return e.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
-		lookupID: func(ctx context.Context, e *Engine, uid string) (int64, error) {
-			row, err := e.q.GetEventByUID(ctx, uid)
+		lookupID: func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error) {
+			row, err := e.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 			if err != nil {
 				return 0, err
 			}
 			return row.ID, nil
 		},
-		export: func(ctx context.Context, e *Engine, uid string) ([]byte, error) {
-			data, _, err := exportResourceFor(ctx, e, uid, ownerTypeEvent,
-				e.events.GetByUID, e.events.ListOverridesByUID, hydrateEvent, icalPkg.ExportEvents)
+		export: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error) {
+			data, _, err := exportResourceFor(ctx, e, calendarID, uid, ownerTypeEvent,
+				e.events.GetByCalendarUID, e.events.ListSeriesOverrides, hydrateEvent, icalPkg.ExportEvents)
 			return data, err
 		},
 	},
@@ -63,16 +74,16 @@ var ownerOpsByType = map[string]ownerOps{
 		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
 			return e.q.SoftDeleteTodosByCalendarUID(ctx, storage.SoftDeleteTodosByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
-		lookupID: func(ctx context.Context, e *Engine, uid string) (int64, error) {
+		lookupID: func(ctx context.Context, e *Engine, _ int64, uid string) (int64, error) {
 			row, err := e.q.GetTodoByUID(ctx, uid)
 			if err != nil {
 				return 0, err
 			}
 			return row.ID, nil
 		},
-		export: func(ctx context.Context, e *Engine, uid string) ([]byte, error) {
-			data, _, err := exportResourceFor(ctx, e, uid, ownerTypeTodo,
-				e.todos.GetByUID, e.todos.ListOverridesByUID, hydrateTodo, icalPkg.ExportTodos)
+		export: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error) {
+			data, _, err := exportResourceFor(ctx, e, calendarID, uid, ownerTypeTodo,
+				byUID(e.todos.GetByUID), byUID(e.todos.ListOverridesByUID), hydrateTodo, icalPkg.ExportTodos)
 			return data, err
 		},
 	},
@@ -80,16 +91,16 @@ var ownerOpsByType = map[string]ownerOps{
 		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
 			return e.q.SoftDeleteJournalsByCalendarUID(ctx, storage.SoftDeleteJournalsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
-		lookupID: func(ctx context.Context, e *Engine, uid string) (int64, error) {
+		lookupID: func(ctx context.Context, e *Engine, _ int64, uid string) (int64, error) {
 			row, err := e.q.GetJournalByUID(ctx, uid)
 			if err != nil {
 				return 0, err
 			}
 			return row.ID, nil
 		},
-		export: func(ctx context.Context, e *Engine, uid string) ([]byte, error) {
-			data, _, err := exportResourceFor(ctx, e, uid, ownerTypeJournal,
-				e.journals.GetByUID, e.journals.ListOverridesByUID, hydrateJournal, icalPkg.ExportJournals)
+		export: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error) {
+			data, _, err := exportResourceFor(ctx, e, calendarID, uid, ownerTypeJournal,
+				byUID(e.journals.GetByUID), byUID(e.journals.ListOverridesByUID), hydrateJournal, icalPkg.ExportJournals)
 			return data, err
 		},
 	},
@@ -99,6 +110,10 @@ var ownerOpsByType = map[string]ownerOps{
 // iCal payload. CalDAV tracks one resource per UID. Recurring resources are
 // stored as a master row plus override rows that share the UID. We normally
 // bundle master plus overrides so instance edits round-trip to the server.
+//
+// Two calendars can hold the same event UID (issue #842), so the bundle
+// takes the master of calendarID and the overrides of that series only.
+// The push of one calendar then never uploads the series of another.
 //
 // The hydrator decides the failure mode. The strict adapters return an error
 // and nil dropped, so one unreadable relation aborts the export. The
@@ -114,14 +129,15 @@ var ownerOpsByType = map[string]ownerOps{
 func exportResourceFor[T any](
 	ctx context.Context,
 	e *Engine,
+	calendarID int64,
 	uid, kind string,
-	get func(context.Context, string) (T, error),
-	listOverrides func(context.Context, string) ([]T, error),
+	get func(context.Context, int64, string) (T, error),
+	listOverrides func(context.Context, int64, string) ([]T, error),
 	hydrate func(context.Context, *Engine, *T) ([]string, error),
 	export func([]T, string) ([]byte, error),
 ) ([]byte, []string, error) {
 	var rows []T
-	switch row, err := get(ctx, uid); {
+	switch row, err := get(ctx, calendarID, uid); {
 	case err == nil:
 		rows = append(rows, row)
 	case !errors.Is(err, sql.ErrNoRows):
@@ -132,7 +148,7 @@ func exportResourceFor[T any](
 		// then clear the dirty flag so nothing ever retries.
 		return nil, nil, fmt.Errorf("get %s master uid %s: %w", kind, uid, err)
 	}
-	overrides, err := listOverrides(ctx, uid)
+	overrides, err := listOverrides(ctx, calendarID, uid)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list overrides for %s uid %s: %w", kind, uid, err)
 	}
@@ -205,16 +221,16 @@ func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64,
 	return ops.softDeleteByUID(ctx, e, calendarID, uid)
 }
 
-// lookupOwnerID resolves the local row ID that backs a UID for the given owner
-// type. It returns errUnknownOwnerType for an unrecognized type and the
-// lookup error when no live row exists. Callers then never silently
-// attribute a record to ID 0.
-func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) (int64, error) {
+// lookupOwnerID resolves the local row ID that backs a UID in calendarID
+// for the given owner type. It returns errUnknownOwnerType for an
+// unrecognized type and the lookup error when no live row exists. Callers
+// then never silently attribute a record to ID 0.
+func (e *Engine) lookupOwnerID(ctx context.Context, calendarID int64, ownerType, uid string) (int64, error) {
 	ops, err := ownerOpsFor(ownerType)
 	if err != nil {
 		return 0, err
 	}
-	return ops.lookupID(ctx, e, uid)
+	return ops.lookupID(ctx, e, calendarID, uid)
 }
 
 // errResourceMissing reports that no live local row exists for a UID we were
@@ -223,14 +239,15 @@ func (e *Engine) lookupOwnerID(ctx context.Context, ownerType, uid string) (int6
 // failure.
 var errResourceMissing = errors.New("local resource missing for uid")
 
-// exportResource exports a local resource to iCal bytes. It dispatches on
-// owner type. See exportResourceFor for the master/override bundle behavior.
-func (e *Engine) exportResource(ctx context.Context, ownerType string, uid string) ([]byte, error) {
+// exportResource exports the local resource of uid in calendarID to iCal
+// bytes. It dispatches on owner type. See exportResourceFor for the
+// master/override bundle behavior.
+func (e *Engine) exportResource(ctx context.Context, calendarID int64, ownerType string, uid string) ([]byte, error) {
 	ops, err := ownerOpsFor(ownerType)
 	if err != nil {
 		return nil, err
 	}
-	return ops.export(ctx, e, uid)
+	return ops.export(ctx, e, calendarID, uid)
 }
 
 // hydrateEvent/hydrateTodo/hydrateJournal adapt the domain services' Hydrate

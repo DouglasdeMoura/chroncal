@@ -29,7 +29,7 @@ func TestTrash_InstanceDeleteLoggedAndRestorable(t *testing.T) {
 	}
 
 	instance := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
-	if err := svc.DeleteInstance(ctx, master.UID, instance); err != nil {
+	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, instance); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
 
@@ -118,7 +118,7 @@ func TestTrash_InstanceDeleteIsIdempotent(t *testing.T) {
 	}
 	instance := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
-		if err := svc.DeleteInstance(ctx, master.UID, instance); err != nil {
+		if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, instance); err != nil {
 			t.Fatalf("DeleteInstance #%d: %v", i, err)
 		}
 	}
@@ -166,7 +166,7 @@ func TestTrash_TruncationLoggedAndRestorable(t *testing.T) {
 	}
 
 	cutoff := time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC)
-	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err != nil {
+	if err := svc.DeleteFromInstance(ctx, master.CalendarID, master.UID, cutoff); err != nil {
 		t.Fatalf("DeleteFromInstance: %v", err)
 	}
 
@@ -253,7 +253,7 @@ func TestTrash_PurgeTruncationKeepsRRuleTruncated(t *testing.T) {
 	}
 	originalRRULE := master.RecurrenceRule
 	cutoff := time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
-	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err != nil {
+	if err := svc.DeleteFromInstance(ctx, master.CalendarID, master.UID, cutoff); err != nil {
 		t.Fatalf("DeleteFromInstance: %v", err)
 	}
 
@@ -325,7 +325,7 @@ func TestTrash_TruncationRestoreKeepsIndependentlyDeletedOverride(t *testing.T) 
 
 	// User then deletes that single customized instance on its own. This
 	// soft-deletes the override row and adds an EXDATE on the master.
-	if err := svc.DeleteInstance(ctx, master.UID, overrideTime); err != nil {
+	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, overrideTime); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
 	if _, err := svc.Get(ctx, override.ID); err == nil {
@@ -335,7 +335,7 @@ func TestTrash_TruncationRestoreKeepsIndependentlyDeletedOverride(t *testing.T) 
 	// Later, user truncates the series "this and following" from an earlier
 	// cutoff (Apr 8). The already-deleted Apr 22 override is untouched.
 	cutoff := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
-	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err != nil {
+	if err := svc.DeleteFromInstance(ctx, master.CalendarID, master.UID, cutoff); err != nil {
 		t.Fatalf("DeleteFromInstance: %v", err)
 	}
 
@@ -382,7 +382,7 @@ func TestTrash_PurgeInstanceKeepsExdate(t *testing.T) {
 		t.Fatalf("create master: %v", err)
 	}
 	instance := time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC)
-	if err := svc.DeleteInstance(ctx, master.UID, instance); err != nil {
+	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, instance); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
 	entries, _ := svc.ListTrash(ctx, 1)

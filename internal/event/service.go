@@ -1122,7 +1122,12 @@ func isUniqueViolationOnRecurrenceID(err error) bool {
 // Both rows are marked dirty so CalDAV sync ships the truncation and the new
 // series together. Pre-truncation state is recorded in event_truncate_deletes
 // so the trash view can offer an atomic restore later.
-func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
+//
+// calendarID names the calendar of the series. Two calendars can hold the
+// same UID (issue #842). With 0, one live master is the only choice, and
+// more give ErrAmbiguousUID. See findSeriesMasterTx. p.CalendarID names the
+// calendar of the new series, and 0 keeps the calendar of the master.
+func (s *Service) UpdateFromInstance(ctx context.Context, calendarID int64, uid string, instanceTime time.Time, p UpdateParams) (Event, error) {
 	p.applyDefaults()
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1132,7 +1137,7 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, masterCalendarID, err := updateFromInstanceTx(ctx, qtx, uid, instanceTime, p)
+	e, masterCalendarID, err := updateFromInstanceTx(ctx, qtx, calendarID, uid, instanceTime, p)
 	if err != nil {
 		return Event{}, err
 	}
@@ -1154,7 +1159,7 @@ func (s *Service) UpdateFromInstance(ctx context.Context, uid string, instanceTi
 // UpdateFromInstanceWithRelations is UpdateFromInstance plus an attendee/alarm
 // write on the new split series in the same transaction. The truncation, the
 // new master, and its children then commit atomically (issue #87).
-func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
+func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, calendarID int64, uid string, instanceTime time.Time, p UpdateParams, attendees []model.Attendee, alarms []model.Alarm) (Event, error) {
 	p.applyDefaults()
 
 	// Reject a bad attendee or alarm before the transaction opens. See
@@ -1174,7 +1179,7 @@ func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid strin
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	e, masterCalendarID, err := updateFromInstanceTx(ctx, qtx, uid, instanceTime, p)
+	e, masterCalendarID, err := updateFromInstanceTx(ctx, qtx, calendarID, uid, instanceTime, p)
 	if err != nil {
 		return Event{}, err
 	}
@@ -1201,15 +1206,16 @@ func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, uid strin
 // split-series master with its categories. All of that uses a tx-bound
 // Queries. It returns the new event and the master's calendar ID. It opens
 // no transaction. Callers can then compose it with attendee/alarm writes.
-func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
+// calendarID names the calendar of the series (see findSeriesMasterTx).
+func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string, instanceTime time.Time, p UpdateParams) (Event, int64, error) {
 	// Every update entry point reaches this function, so the span rule
 	// lives here rather than at each caller.
 	if err := validateDurationValue(p.StartTime, p.DurationValue); err != nil {
 		return Event{}, 0, err
 	}
-	master, err := qtx.GetEventByUID(ctx, uid)
+	master, _, err := findSeriesMasterTx(ctx, qtx, calendarID, uid)
 	if err != nil {
-		return Event{}, 0, fmt.Errorf("get master: %w", err)
+		return Event{}, 0, wrapMasterLookup(err)
 	}
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
 		return Event{}, 0, err

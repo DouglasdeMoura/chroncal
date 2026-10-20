@@ -75,7 +75,7 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 			}
 			switch msg.Choice {
 			case 0: // This event
-				meta, err := m.app.Events.DeleteInstanceWithUndo(context.Background(), ev.UID, scopeAt)
+				meta, err := m.app.Events.DeleteInstanceWithUndo(context.Background(), ev.CalendarID, ev.UID, scopeAt)
 				return eventDeletedMsg{
 					calendarID: ev.CalendarID,
 					meta:       meta,
@@ -83,7 +83,7 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 					err:        err,
 				}
 			case 1: // This and following
-				meta, err := m.app.Events.DeleteFromInstanceWithUndo(context.Background(), ev.UID, scopeAt)
+				meta, err := m.app.Events.DeleteFromInstanceWithUndo(context.Background(), ev.CalendarID, ev.UID, scopeAt)
 				return eventDeletedMsg{
 					calendarID: ev.CalendarID,
 					meta:       meta,
@@ -91,7 +91,7 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 					err:        err,
 				}
 			case 2: // All events
-				meta, err := m.app.Events.DeleteSeriesWithUndo(context.Background(), ev.UID)
+				meta, err := m.app.Events.DeleteSeriesWithUndo(context.Background(), ev.CalendarID, ev.UID)
 				return eventDeletedMsg{
 					calendarID: ev.CalendarID,
 					meta:       meta,
@@ -199,7 +199,9 @@ func validateEventDeleteScope(ctx context.Context, a *app.App, ev event.Event, c
 	if err != nil {
 		return fmt.Errorf("invalid recurrence id %q: %w", ev.RecurrenceID, err)
 	}
-	master, err := a.Events.GetByUID(ctx, ev.UID)
+	// The series is the one in the calendar of the row: two calendars can
+	// hold the same UID (issue #842).
+	master, err := a.Events.SeriesMaster(ctx, ev.CalendarID, ev.UID)
 	if err != nil {
 		return fmt.Errorf("get series master: %w", err)
 	}
@@ -208,8 +210,8 @@ func validateEventDeleteScope(ctx context.Context, a *app.App, ev event.Event, c
 		if recurrence.OccurrenceExistsAt(master, scopeAt) {
 			return nil
 		}
-		if _, oErr := a.Events.GetByUIDAndRecurrenceID(
-			ctx, ev.UID, scopeAt.UTC().Format(time.RFC3339)); oErr == nil {
+		if _, oErr := a.Events.GetByCalendarUIDAndRecurrenceID(
+			ctx, ev.CalendarID, ev.UID, scopeAt.UTC().Format(time.RFC3339)); oErr == nil {
 			return nil
 		} else if !errors.Is(oErr, sql.ErrNoRows) {
 			return fmt.Errorf("look up override: %w", oErr)

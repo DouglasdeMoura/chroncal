@@ -40,10 +40,11 @@ type resource struct {
 	// resolves an override row by it.
 	resolve func(ctx context.Context, a *app.App, ref, recurrenceID string) (row, error)
 
-	// del soft-deletes one row by ID. delSeries soft-deletes a master row
-	// and every override that shares the UID.
+	// del soft-deletes one row by ID. delSeries soft-deletes the master row
+	// of the resolved row and every override of its series. The row carries
+	// the calendar: two calendars can hold the same event UID (issue #842).
 	del       func(ctx context.Context, a *app.App, id int64) error
-	delSeries func(ctx context.Context, a *app.App, uid string) error
+	delSeries func(ctx context.Context, a *app.App, target row) error
 
 	// restoreByID clears the deletion marker on one row. restoreByUID
 	// clears it on every row that shares the UID.
@@ -133,7 +134,7 @@ func newDeleteCmd(r resource, h verbHelp) *cobra.Command {
 
 			w := cmd.OutOrStdout()
 			if series {
-				if err := r.delSeries(ctx, a, target.UID); err != nil {
+				if err := r.delSeries(ctx, a, target); err != nil {
 					return fmt.Errorf("delete series: %w", err)
 				}
 				return reportDeleted(cmd, a, w, target.CalendarID,

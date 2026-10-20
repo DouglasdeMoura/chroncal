@@ -92,7 +92,7 @@ func TestMoveRecurringSeriesMovesOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	master, _, _ := createSeriesWithOverride(t, engine, calA)
-	if err := engine.events.DeleteInstance(ctx, master.UID, master.StartTime.Add(48*time.Hour)); err != nil {
+	if err := engine.events.DeleteInstance(ctx, master.CalendarID, master.UID, master.StartTime.Add(48*time.Hour)); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
 	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
@@ -631,7 +631,7 @@ func TestUpdateFromInstanceToOtherCalendarMarksMasterDirty(t *testing.T) {
 		t.Fatalf("initial push = %+v, %v", res, err)
 	}
 	cut := master.StartTime.Add(48 * time.Hour)
-	tail, err := engine.events.UpdateFromInstance(ctx, master.UID, cut, event.UpdateParams{
+	tail, err := engine.events.UpdateFromInstance(ctx, master.CalendarID, master.UID, cut, event.UpdateParams{
 		CalendarID: calB, Title: "Tail", StartTime: cut, EndTime: cut.Add(time.Hour),
 		RecurrenceRule: "FREQ=DAILY;COUNT=3",
 	})

@@ -59,7 +59,7 @@ func TestDeleteInstance_ConcurrentNoLostUpdate(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-gate // release all goroutines together to maximize interleaving
-			errs[i] = svc.DeleteInstance(ctx, master.UID, instances[i])
+			errs[i] = svc.DeleteInstance(ctx, master.CalendarID, master.UID, instances[i])
 		}(i)
 	}
 	close(gate)

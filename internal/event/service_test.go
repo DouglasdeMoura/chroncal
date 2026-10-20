@@ -554,7 +554,7 @@ func TestEventService_Attendees(t *testing.T) {
 	}
 }
 
-func TestEventService_ListOverridesByUID(t *testing.T) {
+func TestEventService_ListSeriesOverrides(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
@@ -573,9 +573,9 @@ func TestEventService_ListOverridesByUID(t *testing.T) {
 		RecurrenceID: "2026-04-08T10:00:00Z",
 	})
 
-	overrides, err := svc.ListOverridesByUID(ctx, "recurring-uid")
+	overrides, err := svc.ListSeriesOverrides(ctx, 1, "recurring-uid")
 	if err != nil {
-		t.Fatalf("ListOverridesByUID error: %v", err)
+		t.Fatalf("ListSeriesOverrides error: %v", err)
 	}
 	if len(overrides) != 1 {
 		t.Fatalf("overrides = %d, want 1", len(overrides))
@@ -830,7 +830,7 @@ func TestDeleteInstance_AllDayStoresDateOnlyEXDATE(t *testing.T) {
 	}
 
 	instance := time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC)
-	if err := svc.DeleteInstance(ctx, master.UID, instance); err != nil {
+	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, instance); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
 
@@ -892,7 +892,7 @@ func TestDeleteSeries_CascadesAll(t *testing.T) {
 		})
 	}
 
-	if err := svc.DeleteSeries(ctx, "series-del"); err != nil {
+	if err := svc.DeleteSeries(ctx, 1, "series-del"); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
 
@@ -900,7 +900,7 @@ func TestDeleteSeries_CascadesAll(t *testing.T) {
 	if err == nil {
 		t.Error("master should be deleted")
 	}
-	overrides, _ := svc.ListOverridesByUID(ctx, "series-del")
+	overrides, _ := svc.ListSeriesOverrides(ctx, 1, "series-del")
 	if len(overrides) != 0 {
 		t.Errorf("overrides remaining = %d, want 0", len(overrides))
 	}

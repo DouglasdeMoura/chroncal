@@ -156,7 +156,7 @@ func TestDeleteSeries_TombstoneIsAtomic(t *testing.T) {
 		t.Fatalf("drop tombstones: %v", err)
 	}
 
-	if err := svc.DeleteSeries(ctx, master.UID); err == nil {
+	if err := svc.DeleteSeries(ctx, master.CalendarID, master.UID); err == nil {
 		t.Fatal("DeleteSeries succeeded but the tombstone write failed; the error was discarded")
 	}
 
@@ -200,7 +200,7 @@ func TestDeleteInstance_SyncMarkIsAtomic(t *testing.T) {
 	}
 
 	instanceAt := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
-	if err := svc.DeleteInstance(ctx, master.UID, instanceAt); err == nil {
+	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, instanceAt); err == nil {
 		t.Fatal("DeleteInstance succeeded but the dirty-mark write failed; the error was discarded")
 	}
 
@@ -242,7 +242,7 @@ func TestDeleteFromInstance_SyncMarkIsAtomic(t *testing.T) {
 	}
 
 	cutoff := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
-	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err == nil {
+	if err := svc.DeleteFromInstance(ctx, master.CalendarID, master.UID, cutoff); err == nil {
 		t.Fatal("DeleteFromInstance succeeded but the dirty-mark write failed; the error was discarded")
 	}
 
@@ -381,7 +381,7 @@ func TestUpdatePaths_SyncMarkIsAtomic(t *testing.T) {
 		{
 			name: "UpdateFromInstance",
 			call: func(svc *Service, master Event) error {
-				_, err := svc.UpdateFromInstance(context.Background(), master.UID,
+				_, err := svc.UpdateFromInstance(context.Background(), master.CalendarID, master.UID,
 					instanceAt, editTitle())
 				return err
 			},
@@ -391,7 +391,7 @@ func TestUpdatePaths_SyncMarkIsAtomic(t *testing.T) {
 			name: "UpdateFromInstanceWithRelations",
 			call: func(svc *Service, master Event) error {
 				_, err := svc.UpdateFromInstanceWithRelations(context.Background(),
-					master.UID, instanceAt, editTitle(), attendees, nil)
+					master.CalendarID, master.UID, instanceAt, editTitle(), attendees, nil)
 				return err
 			},
 			verify: seriesIntact,

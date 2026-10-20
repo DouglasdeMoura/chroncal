@@ -453,7 +453,7 @@ func TestEngineExportResourceFallsBackToOrphanOverride(t *testing.T) {
 		t.Fatalf("insert orphan override: %v", err)
 	}
 
-	data, err := engine.exportResource(ctx, "event", uid)
+	data, err := engine.exportResource(ctx, 1, "event", uid)
 	if err != nil {
 		t.Fatalf("exportResource: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestEngineExportResourcePropagatesOverrideListError(t *testing.T) {
 				t.Fatalf("insert corrupt override: %v", err)
 			}
 
-			data, err := engine.exportResource(ctx, tc.ownerType, uid)
+			data, err := engine.exportResource(ctx, 1, tc.ownerType, uid)
 			if err == nil {
 				t.Fatalf("exportResource returned nil error; master-only export would delete overrides on the server:\n%s", string(data))
 			}

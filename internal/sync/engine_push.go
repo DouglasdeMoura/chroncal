@@ -51,7 +51,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		// foreign-organized events here clears the dirty flag so we stop
 		// retrying every sync; the local row is left untouched.
 		if pushIdentity != "" && res.OwnerType == ownerTypeEvent {
-			organizes, oErr := e.userOrganizesEvent(ctx, res.Uid, pushIdentity)
+			organizes, oErr := e.userOrganizesEvent(ctx, calendarID, res.Uid, pushIdentity)
 			if oErr != nil {
 				// A failed lookup proves nothing. Keep the row dirty and
 				// retry on the next pass rather than guess in either
@@ -101,7 +101,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		e.logger.Debug("pushing resource", "uid", res.Uid, "remote_url", res.RemoteUrl)
 
 		// Export the local resource to iCal
-		icalData, err := e.exportResource(ctx, res.OwnerType, res.Uid)
+		icalData, err := e.exportResource(ctx, calendarID, res.OwnerType, res.Uid)
 		if err != nil {
 			if errors.Is(err, errResourceMissing) {
 				// No live local row backs this dirty sync_resource (the user
@@ -527,7 +527,7 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 	if encodeErr != nil {
 		e.logger.Warn("encode server resource for conflict record", "uid", res.Uid, "error", encodeErr)
 	}
-	ownerID, lookupErr := e.lookupOwnerID(ctx, res.OwnerType, res.Uid)
+	ownerID, lookupErr := e.lookupOwnerID(ctx, calendarID, res.OwnerType, res.Uid)
 	if lookupErr != nil {
 		e.logger.Warn("lookup owner id for conflict record", "uid", res.Uid, "owner_type", res.OwnerType, "error", lookupErr)
 	}

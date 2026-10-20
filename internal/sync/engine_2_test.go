@@ -575,7 +575,7 @@ END:VCALENDAR
 	// The push path exports the resource once before the PUT and reuses that
 	// result for the conflict record instead of re-exporting (issue #264), so
 	// it must still match a fresh export of the same local resource.
-	wantLocal, err := engine.exportResource(ctx, "event", "conflict-event")
+	wantLocal, err := engine.exportResource(ctx, calendarID, "event", "conflict-event")
 	if err != nil {
 		t.Fatalf("exportResource: %v", err)
 	}
@@ -916,7 +916,7 @@ func TestEnginePushLocalEditsRefreshesOpenConflict(t *testing.T) {
 	if len(conflicts) != 1 {
 		t.Fatalf("sync conflicts = %d, want 1 (upsert, no duplicate row)", len(conflicts))
 	}
-	wantLocal, err := engine.exportResource(ctx, "event", "conflict-event")
+	wantLocal, err := engine.exportResource(ctx, calendarID, "event", "conflict-event")
 	if err != nil {
 		t.Fatalf("exportResource: %v", err)
 	}

@@ -77,7 +77,7 @@ func TestSoftDelete_Series(t *testing.T) {
 		t.Fatalf("create override: %v", err)
 	}
 
-	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+	if err := svc.DeleteSeries(ctx, master.CalendarID, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
 
@@ -96,7 +96,7 @@ func TestSoftDelete_Series(t *testing.T) {
 	if _, err := svc.Get(ctx, master.ID); err != nil {
 		t.Fatalf("Get master after restore: %v", err)
 	}
-	overrides, err := svc.ListOverridesByUID(ctx, master.UID)
+	overrides, err := svc.ListSeriesOverrides(ctx, master.CalendarID, master.UID)
 	if err != nil {
 		t.Fatalf("ListOverridesByUID: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestSoftDelete_RestoreUndoDeleteInstanceClearsEXDATE(t *testing.T) {
 	}
 	instance := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
 
-	meta, err := svc.DeleteInstanceWithUndo(ctx, master.UID, instance)
+	meta, err := svc.DeleteInstanceWithUndo(ctx, master.CalendarID, master.UID, instance)
 	if err != nil {
 		t.Fatalf("DeleteInstanceWithUndo: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestSoftDelete_FromInstance_RRULE(t *testing.T) {
 	}
 
 	cutoff := time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC)
-	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, cutoff)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.CalendarID, master.UID, cutoff)
 	if err != nil {
 		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestSoftDelete_FromInstance_UndoAfterGap(t *testing.T) {
 	}
 
 	cutoff := time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC)
-	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, cutoff)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.CalendarID, master.UID, cutoff)
 	if err != nil {
 		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestSoftDelete_FromInstance_UndoAfterGap(t *testing.T) {
 	// The guard must still catch a genuine concurrent edit. Re-truncate to get
 	// fresh undo meta, then advance updated_at past the captured post-truncation
 	// value to simulate an external write, and confirm Undo is rejected.
-	meta2, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, cutoff)
+	meta2, err := svc.DeleteFromInstanceWithUndo(ctx, master.CalendarID, master.UID, cutoff)
 	if err != nil {
 		t.Fatalf("DeleteFromInstanceWithUndo (2): %v", err)
 	}
@@ -629,7 +629,7 @@ func TestSoftDelete_UndoInstanceDeletePreservesPreexistingEXDATE(t *testing.T) {
 	}
 
 	instance := time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)
-	meta, err := svc.DeleteInstanceWithUndo(ctx, master.UID, instance)
+	meta, err := svc.DeleteInstanceWithUndo(ctx, master.CalendarID, master.UID, instance)
 	if err != nil {
 		t.Fatalf("DeleteInstanceWithUndo: %v", err)
 	}
@@ -681,7 +681,7 @@ func TestSoftDelete_RestoreByUIDPreservesImportedEXDATE(t *testing.T) {
 	}
 
 	// DeleteSeries soft-deletes master + override WITHOUT adding any EXDATE.
-	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+	if err := svc.DeleteSeries(ctx, master.CalendarID, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
 	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
@@ -719,7 +719,7 @@ func TestSoftDelete_RestoreFromInstanceSurfacesMarkDirtyError(t *testing.T) {
 	}
 
 	cutoff := time.Date(2026, 4, 22, 14, 0, 0, 0, time.UTC)
-	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.UID, cutoff)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, master.CalendarID, master.UID, cutoff)
 	if err != nil {
 		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
 	}
@@ -803,7 +803,7 @@ func TestSoftDelete_RestoreByUIDOrphanTailClearsTombstone(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert sync resource: %v", err)
 	}
-	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+	if err := svc.DeleteSeries(ctx, master.CalendarID, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
 	tombstones, err := svc.q.ListTombstonesByCalendar(ctx, master.CalendarID)
@@ -887,7 +887,7 @@ func TestSoftDelete_RestoreUndoSeriesOrphanTailClearsTombstone(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert sync resource: %v", err)
 	}
-	meta, err := svc.DeleteSeriesWithUndo(ctx, master.UID)
+	meta, err := svc.DeleteSeriesWithUndo(ctx, master.CalendarID, master.UID)
 	if err != nil {
 		t.Fatalf("DeleteSeriesWithUndo: %v", err)
 	}

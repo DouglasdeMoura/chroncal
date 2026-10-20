@@ -99,7 +99,7 @@ func TestUpdateInstance_UpdatesExistingOverride(t *testing.T) {
 		t.Fatalf("second UpdateInstance: %v", err)
 	}
 
-	overrides, err := svc.ListOverridesByUID(ctx, master.UID)
+	overrides, err := svc.ListSeriesOverrides(ctx, master.CalendarID, master.UID)
 	if err != nil {
 		t.Fatalf("ListOverridesByUID: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestUpdateFromInstance_TruncatesMasterAndCreatesSplit(t *testing.T) {
 
 	cutoff := time.Date(2026, 5, 27, 9, 0, 0, 0, time.UTC) // Wed of next week
 
-	split, err := svc.UpdateFromInstance(ctx, master.UID, cutoff, UpdateParams{
+	split, err := svc.UpdateFromInstance(ctx, master.CalendarID, master.UID, cutoff, UpdateParams{
 		CalendarID:     master.CalendarID,
 		Title:          "Standup (new room)",
 		StartTime:      cutoff,
@@ -184,7 +184,7 @@ func TestUpdateFromInstance_SoftDeletesFutureOverrides(t *testing.T) {
 	}
 
 	cutoff := time.Date(2026, 5, 27, 9, 0, 0, 0, time.UTC) // Wed next week
-	if _, err := svc.UpdateFromInstance(ctx, master.UID, cutoff, UpdateParams{
+	if _, err := svc.UpdateFromInstance(ctx, master.CalendarID, master.UID, cutoff, UpdateParams{
 		CalendarID:     master.CalendarID,
 		Title:          "split",
 		StartTime:      cutoff,
@@ -194,7 +194,7 @@ func TestUpdateFromInstance_SoftDeletesFutureOverrides(t *testing.T) {
 		t.Fatalf("UpdateFromInstance: %v", err)
 	}
 
-	overrides, err := svc.ListOverridesByUID(ctx, master.UID)
+	overrides, err := svc.ListSeriesOverrides(ctx, master.CalendarID, master.UID)
 	if err != nil {
 		t.Fatalf("ListOverridesByUID: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestDeleteFromInstance_AllDayEmitsDateOnlyUntil(t *testing.T) {
 	// Drop the May 20 occurrence and everything after it; May 19 is the last
 	// kept instance.
 	cutoff := time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC)
-	if err := svc.DeleteFromInstance(ctx, master.UID, cutoff); err != nil {
+	if err := svc.DeleteFromInstance(ctx, master.CalendarID, master.UID, cutoff); err != nil {
 		t.Fatalf("DeleteFromInstance: %v", err)
 	}
 
@@ -348,7 +348,7 @@ func TestUpdate_AllEventsRewritesMaster(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	overrides, err := svc.ListOverridesByUID(ctx, master.UID)
+	overrides, err := svc.ListSeriesOverrides(ctx, master.CalendarID, master.UID)
 	if err != nil {
 		t.Fatalf("ListOverridesByUID: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestUpdateInstance_RevivesDeletedOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first UpdateInstance: %v", err)
 	}
-	if err := svc.DeleteInstance(ctx, master.UID, inst); err != nil {
+	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, inst); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
 	second, err := edit("Second edit")
@@ -433,7 +433,7 @@ func TestUpdateInstance_RevivedOverrideStartsWithoutOldRelations(t *testing.T) {
 	if err := svc.ReplaceAttachments(ctx, first.ID, []model.Attachment{{URI: "https://example.com/a.pdf"}}); err != nil {
 		t.Fatalf("ReplaceAttachments: %v", err)
 	}
-	if err := svc.DeleteInstance(ctx, master.UID, inst); err != nil {
+	if err := svc.DeleteInstance(ctx, master.CalendarID, master.UID, inst); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
 	}
 	second, err := svc.UpdateInstance(ctx, master.UID, inst, params)
@@ -524,7 +524,7 @@ func TestUpdateInstance_DoesNotReviveOverrideHiddenBySplit(t *testing.T) {
 	}
 	split := params(cut)
 	split.RecurrenceRule = "FREQ=WEEKLY"
-	if _, err := svc.UpdateFromInstance(ctx, master.UID, cut, split); err != nil {
+	if _, err := svc.UpdateFromInstance(ctx, master.CalendarID, master.UID, cut, split); err != nil {
 		t.Fatalf("UpdateFromInstance: %v", err)
 	}
 
@@ -532,7 +532,7 @@ func TestUpdateInstance_DoesNotReviveOverrideHiddenBySplit(t *testing.T) {
 	if !errors.Is(err, ErrOccurrenceOutsideSeries) {
 		t.Fatalf("UpdateInstance past the split = %v, want ErrOccurrenceOutsideSeries", err)
 	}
-	overrides, err := svc.ListOverridesByUID(ctx, master.UID)
+	overrides, err := svc.ListSeriesOverrides(ctx, master.CalendarID, master.UID)
 	if err != nil {
 		t.Fatalf("ListOverridesByUID: %v", err)
 	}
@@ -555,7 +555,7 @@ func TestUpdateInstance_RevivesOverrideAfterMasterRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first UpdateInstance: %v", err)
 	}
-	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
+	if err := svc.DeleteSeries(ctx, master.CalendarID, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
 	if err := svc.RestoreByID(ctx, master.ID); err != nil {
@@ -591,7 +591,7 @@ func TestUpdateInstance_RevivesOverrideAfterUntilRemoved(t *testing.T) {
 	}
 	split := params(cut)
 	split.RecurrenceRule = "FREQ=WEEKLY"
-	if _, err := svc.UpdateFromInstance(ctx, master.UID, cut, split); err != nil {
+	if _, err := svc.UpdateFromInstance(ctx, master.CalendarID, master.UID, cut, split); err != nil {
 		t.Fatalf("UpdateFromInstance: %v", err)
 	}
 	fresh, err := svc.Get(ctx, master.ID)

@@ -43,7 +43,7 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 		return e, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return event.Event{}, false, err
+		return event.Event{}, false, notFoundErr(err, "event", ref)
 	}
 	master, err := a.Events.GetByUID(ctx, ref)
 	if err != nil {

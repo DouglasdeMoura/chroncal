@@ -114,14 +114,16 @@ func LegacyOverride(ownMasterRows int64) bool {
 // dirtyCalendar returns the calendar whose sync row a write of a row of uid
 // in calendarID must mark dirty.
 //
-// The export of a UID holds the master and every override, in all
-// calendars (issue #842). A dirty mark on the calendar of a legacy override
-// (see LegacyOverride) uploads the whole series into it a second time. So
-// when calendarID holds an override row of uid (live or in the trash) that
-// is a legacy override, and exactly one calendar holds a live master, the
-// mark goes to that calendar. Each other case marks calendarID. A master in
-// the trash keeps the mark in its calendar: a delete of a series in A must
-// not send its mark to a live copy of the UID in B.
+// The export of a UID in one calendar holds the master of that calendar,
+// its overrides, and the legacy overrides of the UID (see LegacyOverride
+// and the query ListSeriesOverridesInCalendar, issue #842). A calendar
+// with a legacy override and no master exports no master, so a dirty mark
+// on it pushes nothing useful. So when calendarID holds an override row
+// of uid (live or in the trash) that is a legacy override, and exactly one
+// calendar holds a live master, the mark goes to that calendar. Each other
+// case marks calendarID. A master in the trash keeps the mark in its
+// calendar: a delete of a series in A must not send its mark to a live
+// copy of the UID in B.
 //
 // The common case (calendarID holds the master) costs one aggregate lookup
 // on the UNIQUE(calendar_id, uid, recurrence_id) key. Only the legacy case

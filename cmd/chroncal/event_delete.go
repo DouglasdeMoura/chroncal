@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -24,8 +25,10 @@ var eventResource = resource{
 		}
 		return row{ID: e.ID, UID: e.UID, CalendarID: e.CalendarID, Summary: e.Title}, nil
 	},
-	del:          func(ctx context.Context, a *app.App, id int64) error { return a.Events.Delete(ctx, id) },
-	delSeries:    func(ctx context.Context, a *app.App, uid string) error { return a.Events.DeleteSeries(ctx, uid) },
+	del: func(ctx context.Context, a *app.App, id int64) error { return a.Events.Delete(ctx, id) },
+	delSeries: func(ctx context.Context, a *app.App, target row) error {
+		return a.Events.DeleteSeries(ctx, target.CalendarID, target.UID)
+	},
 	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Events.RestoreByID(ctx, id) },
 	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Events.RestoreByUID(ctx, uid) },
 	purgeCandidate: func(ctx context.Context, a *app.App, id int64) (row, bool, error) {
@@ -97,7 +100,25 @@ func masterForScope(ctx context.Context, a *app.App, resolved event.Event) (even
 	if resolved.RecurrenceID == "" {
 		return resolved, nil
 	}
-	return a.Events.GetByUID(ctx, resolved.UID)
+	// The series is the one in the calendar of the override row: two
+	// calendars can hold the same UID (issue #842).
+	return a.Events.SeriesMaster(ctx, resolved.CalendarID, resolved.UID)
+}
+
+// resolveSeriesMaster resolves the master row of a series for the
+// occurrence scopes of event delete. A numeric ref addresses one row by
+// ID. A UID ref addresses the live master of the UID. Two calendars can
+// hold the same UID (issue #842): calendarID names the calendar of the
+// series, and 0 accepts a UID with one live master only.
+func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID int64) (event.Event, error) {
+	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil || calendarID == 0 {
+		return resolveEvent(ctx, a, ref, "")
+	}
+	e, err := a.Events.GetByCalendarUID(ctx, calendarID, ref)
+	if err != nil {
+		return event.Event{}, notFoundErr(err, "event", ref)
+	}
+	return e, nil
 }
 
 func noSuchOccurrenceErr(master event.Event, at time.Time) error {
@@ -129,11 +150,13 @@ any override at that time). --following truncates the series at that date.`,
 		example: `  chroncal event delete 42
   chroncal event delete standup-uid --recurrence-id 2026-04-07T12:00:00Z
   chroncal event delete standup-uid --following 2026-04-07T12:00:00Z
-  chroncal event delete standup-uid --series`,
+  chroncal event delete standup-uid --series
+  chroncal event delete standup-uid --calendar Work --following 2026-04-07T12:00:00Z`,
 	})
 
-	var following string
+	var following, calendarName string
 	cmd.Flags().StringVar(&following, "following", "", "delete this occurrence and every following one (RFC 3339 timestamp)")
+	cmd.Flags().StringVar(&calendarName, "calendar", "", "calendar of the series, when the UID is in more than one calendar")
 	cmd.Flags().Lookup("recurrence-id").Usage = "delete this occurrence (RFC 3339 timestamp)"
 
 	plainDelete := cmd.RunE
@@ -154,6 +177,9 @@ any override at that time). --following truncates the series at that date.`,
 			return errInvalidInputf("--recurrence-id and --following are mutually exclusive")
 		}
 		if recurrenceID == "" && following == "" {
+			if calendarName != "" {
+				return errInvalidInputf("--calendar applies to --recurrence-id and --following only")
+			}
 			return plainDelete(cmd, args)
 		}
 
@@ -178,8 +204,16 @@ any override at that time). --following truncates the series at that date.`,
 		defer a.Close()
 		ctx := context.Background()
 
+		var calendarID int64
+		if calendarName != "" {
+			calendarID, err = resolveCalendarID(ctx, a, calendarName)
+			if err != nil {
+				return err
+			}
+		}
+
 		// Occurrence scopes address the series through its master row.
-		e, err := resolveEvent(ctx, a, args[0], "")
+		e, err := resolveSeriesMaster(ctx, a, args[0], calendarID)
 		if err != nil {
 			return fmt.Errorf("get event: %w", err)
 		}
@@ -202,7 +236,7 @@ any override at that time). --following truncates the series at that date.`,
 
 		w := cmd.OutOrStdout()
 		if following != "" {
-			if err := a.Events.DeleteFromInstance(ctx, e.UID, followingAt); err != nil {
+			if err := a.Events.DeleteFromInstance(ctx, e.CalendarID, e.UID, followingAt); err != nil {
 				return fmt.Errorf("delete this and following: %w", err)
 			}
 			return reportDeleted(cmd, a, w, e.CalendarID,
@@ -210,7 +244,7 @@ any override at that time). --following truncates the series at that date.`,
 				fmt.Sprintf("Deleted %q and following occurrences.\n", safeText(e.Title)))
 		}
 
-		if err := a.Events.DeleteInstance(ctx, e.UID, occurrenceAt); err != nil {
+		if err := a.Events.DeleteInstance(ctx, e.CalendarID, e.UID, occurrenceAt); err != nil {
 			return fmt.Errorf("delete occurrence: %w", err)
 		}
 		return reportDeleted(cmd, a, w, e.CalendarID,

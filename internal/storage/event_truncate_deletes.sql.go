@@ -38,6 +38,34 @@ func (q *Queries) GetEventTruncateDelete(ctx context.Context, id int64) (EventTr
 	return i, err
 }
 
+const getEventTruncateDeleteByCalendarUIDAndCutoff = `-- name: GetEventTruncateDeleteByCalendarUIDAndCutoff :one
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? AND cutoff_time = ?
+`
+
+type GetEventTruncateDeleteByCalendarUIDAndCutoffParams struct {
+	CalendarID int64
+	Uid        string
+	CutoffTime string
+}
+
+// The truncation log row of one cutoff of the series in one calendar. Two
+// calendars can hold the same UID (issue #842).
+func (q *Queries) GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx context.Context, arg GetEventTruncateDeleteByCalendarUIDAndCutoffParams) (EventTruncateDelete, error) {
+	row := q.db.QueryRowContext(ctx, getEventTruncateDeleteByCalendarUIDAndCutoff, arg.CalendarID, arg.Uid, arg.CutoffTime)
+	var i EventTruncateDelete
+	err := row.Scan(
+		&i.ID,
+		&i.CalendarID,
+		&i.Uid,
+		&i.CutoffTime,
+		&i.PreviousRrule,
+		&i.DeletedAt,
+		&i.HiddenOverrides,
+		&i.RemovedRdates,
+	)
+	return i, err
+}
+
 const getEventTruncateDeleteByUIDAndCutoff = `-- name: GetEventTruncateDeleteByUIDAndCutoff :one
 SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE uid = ? AND cutoff_time = ?
 `
