@@ -110,7 +110,7 @@ again updates existing items instead of blindly duplicating them.`,
 					// continues, so one missing directory does not stop
 					// the other calendars. The JSON array carries the
 					// failed run with its error, so a script sees it too.
-					fmt.Fprintf(os.Stderr, "chroncal: %s: %v\n", safeText(target.calendarName), outcome.err)
+					fmt.Fprintf(os.Stderr, "chroncal: %s: %s\n", safeText(target.calendarName), safeText(outcome.err.Error()))
 					outcomes = append(outcomes, outcome)
 					failed++
 					continue

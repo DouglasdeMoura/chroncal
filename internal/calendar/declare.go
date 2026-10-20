@@ -74,23 +74,26 @@ var ErrOverlappingPath = model.NewInputError(
 // launches. The candidate resolves once; each stored path resolves once
 // per call.
 func checkPathFree(cals []Calendar, id int64, path string) error {
+	return checkResolvedPathFree(cals, resolveTrees(cals), id, fsutil.ResolveTree(path))
+}
+
+// resolveTrees resolves the stored path of each calendar once.
+func resolveTrees(cals []Calendar) []string {
 	resolved := make([]string, len(cals))
 	for i := range cals {
 		resolved[i] = fsutil.ResolveTree(cals[i].LocalPath)
 	}
-	return checkResolvedPathFree(cals, resolved, id, path)
+	return resolved
 }
 
-// checkResolvedPathFree is checkPathFree with the stored paths already
-// resolved (resolved[i] belongs to cals[i]). The plan of Apply resolves
-// each path once and calls it in a loop. The planned path of id itself
-// is not a conflict: resolved[i] holds the new path of the change under
-// check.
-func checkResolvedPathFree(cals []Calendar, resolved []string, id int64, path string) error {
-	candidate := fsutil.ResolveTree(path)
+// checkResolvedPathFree is checkPathFree with every path already resolved:
+// resolved[i] belongs to cals[i], and candidate is the resolved path under
+// check. The plan of Apply resolves each path once and calls it in a loop.
+// The planned path of id itself is not a conflict.
+func checkResolvedPathFree(cals []Calendar, resolved []string, id int64, candidate string) error {
 	for i, c := range cals {
 		if c.ID != id && fsutil.SameResolvedTree(resolved[i], candidate) {
-			return fmt.Errorf("path %s overlaps the directory of calendar %q: %w", path, c.Name, ErrOverlappingPath)
+			return fmt.Errorf("path %s overlaps the directory of calendar %q: %w", candidate, c.Name, ErrOverlappingPath)
 		}
 	}
 	return nil
@@ -345,18 +348,21 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		// silence.
 		// An empty stored value is nothing to replace, so the first apply
 		// of a new entry field warns about nothing.
-		var reset, replaced []string
+		var (
+			changed  bool
+			replaced []string
+		)
 		if d.Color != "" && !strings.EqualFold(d.Color, cal.Color) {
-			reset = append(reset, "color")
+			changed = true
 			replaced = append(replaced, "color")
 		}
 		if d.Description != "" && d.Description != cal.Description {
-			reset = append(reset, "description")
+			changed = true
 			if cal.Description != "" {
 				replaced = append(replaced, "description")
 			}
 		}
-		if len(reset) > 0 {
+		if changed {
 			color, description := cal.Color, cal.Description
 			if d.Color != "" {
 				color = d.Color
@@ -368,7 +374,7 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 				return warnings, fmt.Errorf("update calendar %q: %w", name, err)
 			}
 			if adopted && len(replaced) > 0 {
-				warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored %s", name, strings.Join(replaced, ", ")))
+				warnings = append(warnings, fmt.Sprintf("calendar %q: the [[calendars]] entry replaced the stored %s", cal.Name, strings.Join(replaced, ", ")))
 			}
 		}
 		if d.Path != "" && d.Path != cal.LocalPath {
@@ -405,15 +411,17 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 		resolved[i] = fsutil.ResolveTree(planned[i].LocalPath)
 	}
 	resolvedFrom := make(map[int64]string, len(changes))
+	resolvedTo := make(map[int64]string, len(changes))
 	for _, c := range changes {
 		resolvedFrom[c.ID] = fsutil.ResolveTree(c.From)
+		resolvedTo[c.ID] = fsutil.ResolveTree(c.To)
 	}
 	accepted := append([]pathChange(nil), changes...)
 	for {
 		refused := false
 		kept := accepted[:0]
 		for _, c := range accepted {
-			if err := checkResolvedPathFree(planned, resolved, c.ID, c.To); err != nil {
+			if err := checkResolvedPathFree(planned, resolved, c.ID, resolvedTo[c.ID]); err != nil {
 				warnings = append(warnings, fmt.Sprintf("calendar %q: %v", c.Name, err))
 				for i := range planned {
 					if planned[i].ID == c.ID {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/douglasdemoura/chroncal/internal/fsutil"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -411,10 +412,13 @@ func (s *Service) checkPathFreeTx(ctx context.Context, qtx *storage.Queries, id 
 	return checkPathFree(cals, id, path)
 }
 
-// setLocalPaths applies a set of path changes in one transaction. It
-// clears every path that changes, then sets each new path after the
-// overlap check inside the transaction. A refused path rolls back every
-// change, so no calendar loses its directory to a half-done pass.
+// setLocalPaths applies a set of path changes in one transaction. Every
+// set lands first, then one list serves the overlap check of each change.
+// No index constrains local_path, so a plain overwrite handles two
+// calendars that exchange their paths. The writes take the SQLite write
+// lock, so the list sees every committed path and two writers cannot both
+// pass. A conflict rolls every change back, so no calendar loses its
+// directory to a half-done pass.
 func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -422,17 +426,6 @@ func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange) error
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
-	for _, c := range changes {
-		if c.From == "" {
-			continue
-		}
-		if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{ID: c.ID}); err != nil {
-			return fmt.Errorf("clear path of calendar %q: %w", c.Name, err)
-		}
-	}
-	// Every set lands before the check. The writes take the SQLite write
-	// lock, so the one list below sees every committed path and two
-	// writers cannot both pass. A conflict rolls every change back.
 	for _, c := range changes {
 		if err := qtx.UpdateCalendarLocalPath(ctx, storage.UpdateCalendarLocalPathParams{LocalPath: c.To, ID: c.ID}); err != nil {
 			return fmt.Errorf("set path of calendar %q: %w", c.Name, err)
@@ -442,8 +435,9 @@ func (s *Service) setLocalPaths(ctx context.Context, changes []pathChange) error
 	if err != nil {
 		return fmt.Errorf("list calendars: %w", err)
 	}
+	resolved := resolveTrees(cals)
 	for _, c := range changes {
-		if err := checkPathFree(cals, c.ID, c.To); err != nil {
+		if err := checkResolvedPathFree(cals, resolved, c.ID, fsutil.ResolveTree(c.To)); err != nil {
 			return err
 		}
 	}
