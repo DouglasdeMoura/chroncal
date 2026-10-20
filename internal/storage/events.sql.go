@@ -96,6 +96,27 @@ func (q *Queries) CountEventsByCalendar(ctx context.Context, calendarID int64) (
 	return count, err
 }
 
+const countLiveEventUIDRowsInCalendar = `-- name: CountLiveEventUIDRowsInCalendar :one
+SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
+`
+
+type CountLiveEventUIDRowsInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Count the live rows of one UID in one calendar, master and overrides.
+// The series rule of a live edit reads it when no series owns the rows
+// of the calendar: a calendar with live rows of a UID that has two live
+// masters cannot choose, and a calendar with rows in the trash only
+// holds no live series.
+func (q *Queries) CountLiveEventUIDRowsInCalendar(ctx context.Context, arg CountLiveEventUIDRowsInCalendarParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveEventUIDRowsInCalendar, arg.CalendarID, arg.Uid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countSeriesRowsInTrash = `-- name: CountSeriesRowsInTrash :one
 SELECT COUNT(*) FROM events
 WHERE events.deleted_at IS NOT NULL
@@ -1469,7 +1490,7 @@ func (q *Queries) RestoreEvent(ctx context.Context, id int64) error {
 	return err
 }
 
-const restoreEventByCalendarUIDAndRecurrenceID = `-- name: RestoreEventByCalendarUIDAndRecurrenceID :exec
+const restoreEventByCalendarUIDAndRecurrenceID = `-- name: RestoreEventByCalendarUIDAndRecurrenceID :execrows
 UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
@@ -1486,9 +1507,12 @@ type RestoreEventByCalendarUIDAndRecurrenceIDParams struct {
 // Un-hide the soft-deleted override of one occurrence in one calendar.
 // The undo of a delete of a legacy override uses it: the row belongs to
 // no single series, so the restore touches that row only.
-func (q *Queries) RestoreEventByCalendarUIDAndRecurrenceID(ctx context.Context, arg RestoreEventByCalendarUIDAndRecurrenceIDParams) error {
-	_, err := q.db.ExecContext(ctx, restoreEventByCalendarUIDAndRecurrenceID, arg.CalendarID, arg.Uid, arg.RecurrenceID)
-	return err
+func (q *Queries) RestoreEventByCalendarUIDAndRecurrenceID(ctx context.Context, arg RestoreEventByCalendarUIDAndRecurrenceIDParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreEventByCalendarUIDAndRecurrenceID, arg.CalendarID, arg.Uid, arg.RecurrenceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const restoreEventsByUID = `-- name: RestoreEventsByUID :execrows

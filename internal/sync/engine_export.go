@@ -52,6 +52,14 @@ func byUID[T any](get func(context.Context, string) (T, error)) func(context.Con
 	}
 }
 
+// overridesByUID is byUID for the override lookup, which also receives
+// the outcome of the master lookup.
+func overridesByUID[T any](list func(context.Context, string) ([]T, error)) func(context.Context, int64, string, bool) ([]T, error) {
+	return func(ctx context.Context, _ int64, uid string, _ bool) ([]T, error) {
+		return list(ctx, uid)
+	}
+}
+
 var ownerOpsByType = map[string]ownerOps{
 	ownerTypeEvent: {
 		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
@@ -65,9 +73,8 @@ var ownerOpsByType = map[string]ownerOps{
 			return row.ID, nil
 		},
 		export: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error) {
-			get, listOverrides := e.eventExportLookups()
 			data, _, err := exportResourceFor(ctx, e, calendarID, uid, ownerTypeEvent,
-				get, listOverrides, hydrateEvent, icalPkg.ExportEvents)
+				e.eventMasterForExport, e.eventOverridesForExport, hydrateEvent, icalPkg.ExportEvents)
 			return data, err
 		},
 	},
@@ -84,7 +91,7 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 		export: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error) {
 			data, _, err := exportResourceFor(ctx, e, calendarID, uid, ownerTypeTodo,
-				byUID(e.todos.GetByUID), byUID(e.todos.ListOverridesByUID), hydrateTodo, icalPkg.ExportTodos)
+				byUID(e.todos.GetByUID), overridesByUID(e.todos.ListOverridesByUID), hydrateTodo, icalPkg.ExportTodos)
 			return data, err
 		},
 	},
@@ -101,7 +108,7 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 		export: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error) {
 			data, _, err := exportResourceFor(ctx, e, calendarID, uid, ownerTypeJournal,
-				byUID(e.journals.GetByUID), byUID(e.journals.ListOverridesByUID), hydrateJournal, icalPkg.ExportJournals)
+				byUID(e.journals.GetByUID), overridesByUID(e.journals.ListOverridesByUID), hydrateJournal, icalPkg.ExportJournals)
 			return data, err
 		},
 	},
@@ -131,32 +138,19 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 	return event.Event{}, err
 }
 
-// eventExportLookups returns the master and the override lookups of one
-// event export. The pair shares the outcome of the master lookup: with a
-// master in the calendar, the override lookup takes the series rule
-// (ListSeriesOverrides) and runs no other query. With no master in the
-// calendar (sql.ErrNoRows from eventMasterForExport, so no live master
-// exists anywhere), the rows of the UID in the calendar are orphan
-// instances, and the override lookup takes them with no series rule. A
-// row that a restore by ID brought back beside a master in the trash
-// then still reaches the server.
-func (e *Engine) eventExportLookups() (
-	func(context.Context, int64, string) (event.Event, error),
-	func(context.Context, int64, string) ([]event.Event, error),
-) {
-	masterMissing := false
-	get := func(ctx context.Context, calendarID int64, uid string) (event.Event, error) {
-		master, err := e.eventMasterForExport(ctx, calendarID, uid)
-		masterMissing = errors.Is(err, sql.ErrNoRows)
-		return master, err
+// eventOverridesForExport lists the override rows of the export of uid in
+// calendarID. masterFound reports the outcome of eventMasterForExport.
+// With a master in the calendar, the series rule (ListSeriesOverrides)
+// gives the overrides. With no master in the calendar, so no live master
+// anywhere, the rows of the UID in the calendar are orphan instances,
+// and the lookup takes them with no series rule. A row that a restore by
+// ID brought back beside a master in the trash then still reaches the
+// server.
+func (e *Engine) eventOverridesForExport(ctx context.Context, calendarID int64, uid string, masterFound bool) ([]event.Event, error) {
+	if !masterFound {
+		return e.events.ListLiveOverridesInCalendar(ctx, calendarID, uid)
 	}
-	listOverrides := func(ctx context.Context, calendarID int64, uid string) ([]event.Event, error) {
-		if masterMissing {
-			return e.events.ListLiveOverridesInCalendar(ctx, calendarID, uid)
-		}
-		return e.events.ListSeriesOverrides(ctx, calendarID, uid)
-	}
-	return get, listOverrides
+	return e.events.ListSeriesOverrides(ctx, calendarID, uid)
 }
 
 // exportResourceFor bundles a UID's master row plus its override rows into an
@@ -187,13 +181,15 @@ func exportResourceFor[T any](
 	calendarID int64,
 	uid, kind string,
 	get func(context.Context, int64, string) (T, error),
-	listOverrides func(context.Context, int64, string) ([]T, error),
+	listOverrides func(ctx context.Context, calendarID int64, uid string, masterFound bool) ([]T, error),
 	hydrate func(context.Context, *Engine, *T) ([]string, error),
 	export func([]T, string) ([]byte, error),
 ) ([]byte, []string, error) {
 	var rows []T
+	masterFound := false
 	switch row, err := get(ctx, calendarID, uid); {
 	case err == nil:
+		masterFound = true
 		rows = append(rows, row)
 	case !errors.Is(err, sql.ErrNoRows):
 		// Only "no master row" is an expected outcome here (the orphan-instance
@@ -203,7 +199,7 @@ func exportResourceFor[T any](
 		// then clear the dirty flag so nothing ever retries.
 		return nil, nil, fmt.Errorf("get %s master uid %s: %w", kind, uid, err)
 	}
-	overrides, err := listOverrides(ctx, calendarID, uid)
+	overrides, err := listOverrides(ctx, calendarID, uid, masterFound)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list overrides for %s uid %s: %w", kind, uid, err)
 	}

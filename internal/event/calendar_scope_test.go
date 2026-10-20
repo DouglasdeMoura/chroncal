@@ -1540,3 +1540,195 @@ func TestUndo_MasterDeleteAfterTrashRestore(t *testing.T) {
 		t.Errorf("exdates after the undo = %q, want the own deleted occurrence still excluded", m.ExDates)
 	}
 }
+
+// TestRestoreByID_MasterWithoutLogComesBackAlone: a master with no
+// series-delete log row (a plain delete) comes back alone. An override
+// that a sync prune hid with no log stays hidden.
+func TestRestoreByID_MasterWithoutLogComesBackAlone(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "pruned-uid", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	override, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "pruned-uid", CalendarID: 1, Title: "Late",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert override: %v", err)
+	}
+	if err := svc.q.SoftDeleteEvent(ctx, override.ID); err != nil {
+		t.Fatalf("prune override: %v", err)
+	}
+	if err := svc.Delete(ctx, master.ID); err != nil {
+		t.Fatalf("Delete(master): %v", err)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	if m, err := svc.Get(ctx, master.ID); err != nil || m.DeletedAt != nil {
+		t.Errorf("master after the restore = %+v, %v; want it live", m, err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, override.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("pruned override after the restore = %+v, %v; want it still hidden", r, err)
+	}
+}
+
+// TestUndoSeries_AfterTrashRestore: the undo of a series delete after a
+// restore from the trash has nothing to do.
+func TestUndoSeries_AfterTrashRestore(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, _, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("RestoreUndo after the trash restore err = %v, want ErrNotDeleted", err)
+	}
+	overrides, err := svc.ListSeriesOverrides(ctx, 1, master.UID)
+	if err != nil || len(overrides) != 2 {
+		t.Errorf("live overrides = %+v, %v; want both", overrides, err)
+	}
+}
+
+// TestDeleteSeries_TrashedCalendarBesideTwoLiveMasters: a calendar whose
+// rows of the UID are all in the trash holds no live series, so a series
+// delete there reports ErrSeriesInTrash, not an ambiguity, also when two
+// other calendars hold live masters.
+func TestDeleteSeries_TrashedCalendarBesideTwoLiveMasters(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, _, _ := twoCalendarSeries(t, svc)
+	calC := insertCalendar(t, svc, "Third")
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: masterA.UID, CalendarID: calC, Title: "Standup C",
+		StartTime: masterA.StartTime, EndTime: masterA.EndTime, RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	}); err != nil {
+		t.Fatalf("upsert master C: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, calC, masterA.UID); err != nil {
+		t.Fatalf("DeleteSeries(C): %v", err)
+	}
+	if _, err := svc.SeriesMaster(ctx, calC, masterA.UID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("SeriesMaster(trashed C) err = %v, want sql.ErrNoRows", err)
+	}
+	if err := svc.DeleteSeries(ctx, calC, masterA.UID); !errors.Is(err, ErrSeriesInTrash) {
+		t.Errorf("DeleteSeries(trashed C) err = %v, want ErrSeriesInTrash", err)
+	}
+}
+
+// TestGetByUID_AllMastersTrashed: a UID whose masters are all in the
+// trash, in two calendars, is not found by a live lookup.
+func TestGetByUID_AllMastersTrashed(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	for _, cal := range []int64{masterA.CalendarID, masterB.CalendarID} {
+		if err := svc.DeleteSeries(ctx, cal, masterA.UID); err != nil {
+			t.Fatalf("DeleteSeries(%d): %v", cal, err)
+		}
+	}
+	if _, err := svc.GetByUID(ctx, masterA.UID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("GetByUID err = %v, want sql.ErrNoRows", err)
+	}
+	if _, err := svc.SeriesMaster(ctx, 0, masterA.UID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("SeriesMaster(0) err = %v, want sql.ErrNoRows", err)
+	}
+	if err := svc.DeleteInstance(ctx, 0, masterA.UID, second); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("DeleteInstance(0) err = %v, want sql.ErrNoRows", err)
+	}
+	// A restore still sees both trashed masters as ambiguous.
+	if err := svc.RestoreByUID(ctx, masterA.UID); !errors.Is(err, ErrAmbiguousUID) {
+		t.Errorf("RestoreByUID err = %v, want ErrAmbiguousUID", err)
+	}
+}
+
+// TestUndo_OrphanOverride: the undo of a delete of an orphan override
+// (no master anywhere) un-hides that row, reports a purged row, and does
+// nothing twice.
+func TestUndo_OrphanOverride(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	at := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
+	orphan, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "orphan-uid", CalendarID: 1, Title: "Orphan",
+		StartTime: at, EndTime: at.Add(time.Hour), RecurrenceID: at.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert orphan override: %v", err)
+	}
+	meta, err := svc.DeleteWithUndo(ctx, orphan.ID)
+	if err != nil {
+		t.Fatalf("DeleteWithUndo: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if r, err := svc.Get(ctx, orphan.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("orphan after the undo = %+v, %v; want it live", r, err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrNotDeleted) {
+		t.Errorf("second RestoreUndo err = %v, want ErrNotDeleted", err)
+	}
+	if err := svc.Delete(ctx, orphan.ID); err != nil {
+		t.Fatalf("Delete again: %v", err)
+	}
+	if err := svc.PurgeByID(ctx, orphan.ID); err != nil {
+		t.Fatalf("PurgeByID: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrNotDeleted) {
+		t.Errorf("RestoreUndo of a purged row err = %v, want ErrNotDeleted", err)
+	}
+}
+
+// TestDeleteInstance_TwoLegacyOverridesAtOneOccurrence: two legacy rows
+// of one occurrence, both owned by the one master, give an error that
+// names the rows.
+func TestDeleteInstance_TwoLegacyOverridesAtOneOccurrence(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "twin-uid", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	ids := make([]int64, 0, 2)
+	for _, name := range []string{"Legacy C", "Legacy D"} {
+		cal := insertCalendar(t, svc, name)
+		row, err := svc.UpsertByUID(ctx, UpsertParams{
+			UID: "twin-uid", CalendarID: cal, Title: name,
+			StartTime: second, EndTime: second.Add(time.Hour), RecurrenceID: second.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("upsert %s: %v", name, err)
+		}
+		ids = append(ids, row.ID)
+	}
+	err = svc.DeleteInstance(ctx, 1, master.UID, second)
+	if !errors.Is(err, ErrAmbiguousOverride) {
+		t.Fatalf("DeleteInstance err = %v, want ErrAmbiguousOverride", err)
+	}
+	for _, id := range ids {
+		if !strings.Contains(err.Error(), strconv.FormatInt(id, 10)) {
+			t.Errorf("error %q does not name row %d", err, id)
+		}
+	}
+	if _, err := svc.SeriesOverride(ctx, 1, master.UID, second.Format(time.RFC3339)); !errors.Is(err, ErrAmbiguousOverride) {
+		t.Errorf("SeriesOverride err = %v, want ErrAmbiguousOverride", err)
+	}
+}

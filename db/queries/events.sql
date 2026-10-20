@@ -359,7 +359,7 @@ SELECT s.owner_calendar_id FROM event_series_rows AS s WHERE s.id = ? ORDER BY s
 -- access guard of a UID-wide delete or restore reads it.
 SELECT DISTINCT calendar_id FROM events WHERE uid = ? ORDER BY calendar_id;
 
--- name: RestoreEventByCalendarUIDAndRecurrenceID :exec
+-- name: RestoreEventByCalendarUIDAndRecurrenceID :execrows
 -- Un-hide the soft-deleted override of one occurrence in one calendar.
 -- The undo of a delete of a legacy override uses it: the row belongs to
 -- no single series, so the restore touches that row only.
@@ -407,3 +407,11 @@ ORDER BY events.id;
 SELECT * FROM events
 WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NULL
 ORDER BY recurrence_id;
+
+-- name: CountLiveEventUIDRowsInCalendar :one
+-- Count the live rows of one UID in one calendar, master and overrides.
+-- The series rule of a live edit reads it when no series owns the rows
+-- of the calendar: a calendar with live rows of a UID that has two live
+-- masters cannot choose, and a calendar with rows in the trash only
+-- holds no live series.
+SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
