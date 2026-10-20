@@ -35,6 +35,29 @@ func (q *Queries) DeleteEventExdateDeletesByCalendarUID(ctx context.Context, arg
 	return err
 }
 
+const deleteEventExdateDeletesCollidingWithMove = `-- name: DeleteEventExdateDeletesCollidingWithMove :exec
+DELETE FROM event_exdate_deletes
+WHERE event_exdate_deletes.calendar_id = ?1 AND event_exdate_deletes.uid = ?2
+  AND event_exdate_deletes.recurrence_id IN (
+    SELECT t.recurrence_id FROM event_exdate_deletes AS t
+    WHERE t.calendar_id = ?3 AND t.uid = ?2)
+`
+
+type DeleteEventExdateDeletesCollidingWithMoveParams struct {
+	FromCalendarID int64
+	Uid            string
+	ToCalendarID   int64
+}
+
+// Drop the log rows of the source calendar whose key the target calendar
+// already holds. A move of the UID into a calendar with rows of the UID
+// (a legacy override that goes back to its master) keeps the logs of the
+// target.
+func (q *Queries) DeleteEventExdateDeletesCollidingWithMove(ctx context.Context, arg DeleteEventExdateDeletesCollidingWithMoveParams) error {
+	_, err := q.db.ExecContext(ctx, deleteEventExdateDeletesCollidingWithMove, arg.FromCalendarID, arg.Uid, arg.ToCalendarID)
+	return err
+}
+
 const getEventExdateDelete = `-- name: GetEventExdateDelete :one
 SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE id = ?
 `

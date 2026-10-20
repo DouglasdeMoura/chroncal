@@ -40,3 +40,14 @@ SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY re
 -- drops them, and a calendar move clears stale rows in the target
 -- calendar before the move (the keys are per calendar).
 DELETE FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ?;
+
+-- name: DeleteEventExdateDeletesCollidingWithMove :exec
+-- Drop the log rows of the source calendar whose key the target calendar
+-- already holds. A move of the UID into a calendar with rows of the UID
+-- (a legacy override that goes back to its master) keeps the logs of the
+-- target.
+DELETE FROM event_exdate_deletes
+WHERE event_exdate_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_exdate_deletes.uid = sqlc.arg(uid)
+  AND event_exdate_deletes.recurrence_id IN (
+    SELECT t.recurrence_id FROM event_exdate_deletes AS t
+    WHERE t.calendar_id = sqlc.arg(to_calendar_id) AND t.uid = sqlc.arg(uid));

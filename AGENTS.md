@@ -89,7 +89,7 @@ The database stores a recurring event as one row with `recurrence_rule`. Each ov
 
 A calendar move of a UID moves every row of that UID as one unit. The move rules live in `internal/uidmove`: the override rule, the target-collision check, and the move record. The event, todo, and journal services bind their queries to `uidmove.Rows` and call it inside the update transaction. Fix a move rule in `uidmove`. Do not fix it per domain.
 
-Two calendars can hold an event series with the same UID (issue #842). A series lookup takes the calendar of the series (`findSeriesMasterTx` in `internal/event/series_scope.go`). A legacy override (an override row in a calendar with no master of its UID) belongs to the series that `uidmove.LegacyOwner` names: the one live master, or else the one master in the trash. The series queries in `db/queries/events.sql` repeat that rule in SQL (see `ListSeriesOverridesInCalendar`). Change the rule in `LegacyOwner` and in that SQL clause together.
+Two calendars can hold an event series with the same UID (issue #842). A series lookup takes the calendar of the series (`findSeriesMasterTx` in `internal/event/series_scope.go`). A legacy override is an override row in a calendar with no master of its UID. `uidmove.LegacyOwner` names the series that owns it. The one live master of the UID owns it. With no live master, the one master in the trash owns it. The series queries in `db/queries/events.sql` repeat that rule in SQL (see `ListSeriesOverridesInCalendar`). Change the rule in `LegacyOwner` and in that SQL clause together.
 
 ### Alarms
 

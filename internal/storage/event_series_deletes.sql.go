@@ -26,6 +26,27 @@ func (q *Queries) DeleteEventSeriesDeletesByCalendarUID(ctx context.Context, arg
 	return err
 }
 
+const deleteEventSeriesDeletesCollidingWithMove = `-- name: DeleteEventSeriesDeletesCollidingWithMove :exec
+DELETE FROM event_series_deletes
+WHERE event_series_deletes.calendar_id = ?1 AND event_series_deletes.uid = ?2
+  AND EXISTS (
+    SELECT 1 FROM event_series_deletes AS t
+    WHERE t.calendar_id = ?3 AND t.uid = ?2)
+`
+
+type DeleteEventSeriesDeletesCollidingWithMoveParams struct {
+	FromCalendarID int64
+	Uid            string
+	ToCalendarID   int64
+}
+
+// Drop the log row of the source calendar when the target calendar holds
+// one (see DeleteEventExdateDeletesCollidingWithMove).
+func (q *Queries) DeleteEventSeriesDeletesCollidingWithMove(ctx context.Context, arg DeleteEventSeriesDeletesCollidingWithMoveParams) error {
+	_, err := q.db.ExecContext(ctx, deleteEventSeriesDeletesCollidingWithMove, arg.FromCalendarID, arg.Uid, arg.ToCalendarID)
+	return err
+}
+
 const getEventSeriesDeleteByCalendarUID = `-- name: GetEventSeriesDeleteByCalendarUID :one
 SELECT id, calendar_id, uid, hidden_ids, deleted_at FROM event_series_deletes WHERE calendar_id = ? AND uid = ?
 `

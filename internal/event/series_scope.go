@@ -70,7 +70,19 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if err != nil {
 		return storage.Event{}, err
 	}
-	if _, _, ambiguous := uidmove.LegacyOwner(uidMasters(rows)); !ambiguous {
+	masters := uidMasters(rows)
+	if !includeDeleted {
+		// A live edit sees the live masters only: two masters in the
+		// trash make no ambiguity for a live legacy override.
+		var live []uidmove.Master
+		for _, m := range masters {
+			if !m.Trashed {
+				live = append(live, m)
+			}
+		}
+		masters = live
+	}
+	if _, _, ambiguous := uidmove.LegacyOwner(masters); !ambiguous {
 		return storage.Event{}, sql.ErrNoRows
 	}
 	// A live edit counts the live rows of the calendar only: a calendar
