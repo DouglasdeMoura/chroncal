@@ -111,9 +111,10 @@ func TestUndo_AlreadyRestoredEntryLeavesTheStack(t *testing.T) {
 		return msg
 	}
 	first := press()
-	require.ErrorIs(t, first.err, event.ErrNotDeleted)
+	require.ErrorIs(t, first.err, event.ErrAlreadyRestored)
 	require.Equal(t, 1, m.undoStack.Len(), "the restored entry leaves the stack")
 	require.Equal(t, ToastFailed, m.toast.State())
+	require.Equal(t, "already restored", m.toast.reason)
 
 	second := press()
 	require.NoError(t, second.err)
@@ -152,4 +153,33 @@ func TestUndo_TruncationWithMasterInTrashKeepsEntry(t *testing.T) {
 	m = updated.(Model)
 	require.Equal(t, 1, m.undoStack.Len(), "the entry stays for a later undo")
 	require.Equal(t, "restore the series first", m.toast.reason)
+}
+
+// TestUndo_PurgedRowsLeaveTheStack: the undo of a delete whose row a purge
+// took has nothing to restore. The entry leaves the stack with the message
+// "nothing to restore".
+func TestUndo_PurgedRowsLeaveTheStack(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+	cals, err := a.Calendars.List(ctx)
+	require.NoError(t, err)
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	ev, err := a.Events.Create(ctx, event.CreateParams{CalendarID: cals[0].ID, Title: "Gone", StartTime: start, EndTime: start.Add(time.Hour)})
+	require.NoError(t, err)
+	meta, err := a.Events.DeleteWithUndo(ctx, ev.ID)
+	require.NoError(t, err)
+	m.undoStack.Push(UndoEntry{Meta: meta, DeletedAt: time.Now()})
+	require.NoError(t, a.Events.PurgeByID(ctx, ev.ID))
+
+	m.focus = focusCalendar
+	next, cmd, handled := m.interceptGlobalKeys(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	require.True(t, handled)
+	msg, ok := cmd().(eventRestoredMsg)
+	require.True(t, ok)
+	require.ErrorIs(t, msg.err, event.ErrNotDeleted)
+	require.NotErrorIs(t, msg.err, event.ErrAlreadyRestored)
+	updated, _ := next.Update(msg)
+	m = updated.(Model)
+	require.Equal(t, 0, m.undoStack.Len())
+	require.Equal(t, "nothing to restore", m.toast.reason)
 }

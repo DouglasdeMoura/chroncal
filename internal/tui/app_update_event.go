@@ -520,11 +520,17 @@ func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 	// The restore has landed; allow the next undo to dispatch.
 	m.undoRestoreInFlight = false
 	if errors.Is(msg.err, event.ErrNotDeleted) {
-		// Another path restored the delete already: the trash, the CLI,
-		// or a pull. The entry has nothing left to undo, so it leaves the
-		// stack, and the next undo reaches the entry below it.
+		// The entry has nothing left to undo, so it leaves the stack, and
+		// the next undo reaches the entry below it. ErrAlreadyRestored
+		// says another path restored the delete first: the trash, the CLI,
+		// or a pull. Else a purge took the rows, or the undo data names
+		// no rows.
 		m.undoStack.Remove(msg.meta)
-		return m, tea.Batch(m.loadEvents(), m.toast.Failed("already restored"))
+		reason := "nothing to restore"
+		if errors.Is(msg.err, event.ErrAlreadyRestored) {
+			reason = "already restored"
+		}
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed(reason))
 	}
 	if errors.Is(msg.err, event.ErrMasterInTrash) {
 		// The entry needs its series back first. It stays on the stack,

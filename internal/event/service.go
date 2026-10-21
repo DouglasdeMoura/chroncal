@@ -595,6 +595,12 @@ func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEv
 		if err := qtx.DeleteEventSeriesDeletesByCalendarUID(ctx, storage.DeleteEventSeriesDeletesByCalendarUIDParams{CalendarID: arg.FromCalendarID, Uid: arg.Uid}); err != nil {
 			return fmt.Errorf("delete source event_series_deletes: %w", err)
 		}
+		// The source calendar holds no master, so its occurrence logs record
+		// no delete of the target master. Moved into the target, they would
+		// strip an imported EXDATE of that master (issue #86). They go.
+		if err := qtx.DeleteEventExdateDeletesByCalendarUID(ctx, storage.DeleteEventExdateDeletesByCalendarUIDParams{CalendarID: arg.FromCalendarID, Uid: arg.Uid}); err != nil {
+			return fmt.Errorf("delete source event_exdate_deletes: %w", err)
+		}
 	} else {
 		// The same queries with the calendars swapped drop the target
 		// rows whose keys the source holds. A series-delete log in a

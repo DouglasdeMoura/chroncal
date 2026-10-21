@@ -6,12 +6,17 @@
 -- SQLite cannot drop a table UNIQUE constraint, so rebuild both tables. No
 -- table references them, so a plain copy keeps every row.
 
+-- pruned is 1 for a marker of a pull prune: the server dropped the
+-- override, and the pull hid its row. A marker is no delete of the user.
+-- The trash and the EXDATE contract ignore it. The restore of a master
+-- with no series-delete log reads it, so the pruned row stays hidden.
 CREATE TABLE event_exdate_deletes_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
     uid TEXT NOT NULL,
     recurrence_id TEXT NOT NULL,
     deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    pruned INTEGER NOT NULL DEFAULT 0,
     UNIQUE (calendar_id, uid, recurrence_id)
 );
 INSERT INTO event_exdate_deletes_new (id, calendar_id, uid, recurrence_id, deleted_at)
@@ -168,8 +173,9 @@ CREATE TABLE event_exdate_deletes_old (
     deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE (uid, recurrence_id)
 );
+-- The old schema has no pruned marker, so a marker goes.
 INSERT OR IGNORE INTO event_exdate_deletes_old (id, calendar_id, uid, recurrence_id, deleted_at)
-SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes ORDER BY id;
+SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE pruned = 0 ORDER BY id;
 DROP INDEX IF EXISTS idx_event_exdate_deletes_calendar;
 DROP INDEX IF EXISTS idx_event_exdate_deletes_deleted_at;
 DROP TABLE event_exdate_deletes;

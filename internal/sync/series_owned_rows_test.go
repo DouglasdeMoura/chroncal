@@ -107,3 +107,66 @@ func TestDeleteLocalResource_KeepsLegacyRowOfOtherCalendar(t *testing.T) {
 		t.Errorf("master of the pulled calendar after the remote delete = trashed %v, %v; want it in the trash", master.DeletedAt != nil, err)
 	}
 }
+
+// TestPruneMarker_KeepsPrunedRowOutOfSameSecondRestore: a pull prune
+// writes a pruned marker. The trash lists no entry for it. A restore of the
+// master with no series-delete log brings back the rows of the same second,
+// but not the pruned row.
+func TestPruneMarker_KeepsPrunedRowOutOfSameSecondRestore(t *testing.T) {
+	t.Parallel()
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	const uid = "prune-marker"
+	const prunedRID = "2026-07-02T17:00:00Z"
+	const keptRID = "2026-08-27T17:00:00Z"
+	if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{Events: []event.Event{
+		pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"),
+		pruneTestEvent(uid, calendarID, prunedRID, ""),
+		pruneTestEvent(uid, calendarID, keptRID, ""),
+	}}); err != nil {
+		t.Fatalf("first persistImported: %v", err)
+	}
+	if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{Events: []event.Event{
+		pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"),
+		pruneTestEvent(uid, calendarID, keptRID, ""),
+	}}); err != nil {
+		t.Fatalf("second persistImported: %v", err)
+	}
+	entries, err := engine.events.ListTrash(ctx, calendarID)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	for _, e := range entries {
+		if e.Kind == event.TrashKindInstance {
+			t.Errorf("trash lists the pruned marker as an instance entry")
+		}
+	}
+	if err := engine.deleteLocalResourceByUID(ctx, calendarID, ownerTypeEvent, uid); err != nil {
+		t.Fatalf("deleteLocalResourceByUID: %v", err)
+	}
+	// One second for every row, as one delete would leave them.
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-09-01T10:00:00Z' WHERE uid = ?`, uid); err != nil {
+		t.Fatalf("align deleted_at: %v", err)
+	}
+	master, err := q.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: calendarID, Uid: uid})
+	if err != nil {
+		t.Fatalf("get master: %v", err)
+	}
+	if err := engine.events.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	for rid, wantLive := range map[string]bool{keptRID: true, prunedRID: false} {
+		r, err := q.GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams{CalendarID: calendarID, Uid: uid, RecurrenceID: rid})
+		if err != nil {
+			t.Fatalf("get row %s: %v", rid, err)
+		}
+		if live := r.DeletedAt == nil; live != wantLive {
+			t.Errorf("row %s live = %v, want %v", rid, live, wantLive)
+		}
+	}
+}

@@ -59,7 +59,7 @@ func (q *Queries) DeleteEventExdateDeletesCollidingWithMove(ctx context.Context,
 }
 
 const getEventExdateDelete = `-- name: GetEventExdateDelete :one
-SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE id = ?
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned FROM event_exdate_deletes WHERE id = ?
 `
 
 func (q *Queries) GetEventExdateDelete(ctx context.Context, id int64) (EventExdateDelete, error) {
@@ -71,12 +71,13 @@ func (q *Queries) GetEventExdateDelete(ctx context.Context, id int64) (EventExda
 		&i.Uid,
 		&i.RecurrenceID,
 		&i.DeletedAt,
+		&i.Pruned,
 	)
 	return i, err
 }
 
 const getEventExdateDeleteByCalendarUIDRecurrence = `-- name: GetEventExdateDeleteByCalendarUIDRecurrence :one
-SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND pruned = 0
 `
 
 type GetEventExdateDeleteByCalendarUIDRecurrenceParams struct {
@@ -86,7 +87,8 @@ type GetEventExdateDeleteByCalendarUIDRecurrenceParams struct {
 }
 
 // The delete log of one occurrence of the series in one calendar. Two
-// calendars can hold the same UID.
+// calendars can hold the same UID. A pruned marker is no delete log: the
+// EXDATE contract must not strip an EXDATE of the server for it.
 func (q *Queries) GetEventExdateDeleteByCalendarUIDRecurrence(ctx context.Context, arg GetEventExdateDeleteByCalendarUIDRecurrenceParams) (EventExdateDelete, error) {
 	row := q.db.QueryRowContext(ctx, getEventExdateDeleteByCalendarUIDRecurrence, arg.CalendarID, arg.Uid, arg.RecurrenceID)
 	var i EventExdateDelete
@@ -96,16 +98,19 @@ func (q *Queries) GetEventExdateDeleteByCalendarUIDRecurrence(ctx context.Contex
 		&i.Uid,
 		&i.RecurrenceID,
 		&i.DeletedAt,
+		&i.Pruned,
 	)
 	return i, err
 }
 
 const listEventExdateDeletesByCalendar = `-- name: ListEventExdateDeletesByCalendar :many
-SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes
-WHERE calendar_id = ?
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned FROM event_exdate_deletes
+WHERE calendar_id = ? AND pruned = 0
 ORDER BY deleted_at DESC
 `
 
+// The occurrence delete logs of one calendar for the trash. A pruned marker
+// is no delete of the user, so it stays out.
 func (q *Queries) ListEventExdateDeletesByCalendar(ctx context.Context, calendarID int64) ([]EventExdateDelete, error) {
 	rows, err := q.db.QueryContext(ctx, listEventExdateDeletesByCalendar, calendarID)
 	if err != nil {
@@ -121,6 +126,7 @@ func (q *Queries) ListEventExdateDeletesByCalendar(ctx context.Context, calendar
 			&i.Uid,
 			&i.RecurrenceID,
 			&i.DeletedAt,
+			&i.Pruned,
 		); err != nil {
 			return nil, err
 		}
@@ -136,7 +142,7 @@ func (q *Queries) ListEventExdateDeletesByCalendar(ctx context.Context, calendar
 }
 
 const listEventExdateDeletesByCalendarUID = `-- name: ListEventExdateDeletesByCalendarUID :many
-SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id
 `
 
 type ListEventExdateDeletesByCalendarUIDParams struct {
@@ -144,8 +150,9 @@ type ListEventExdateDeletesByCalendarUIDParams struct {
 	Uid        string
 }
 
-// The occurrence logs of one series in one calendar. The restore of a
-// master with no series-delete log reads them in one query.
+// The occurrence logs of one series in one calendar, the pruned markers
+// too. The restore of a master with no series-delete log reads them in one
+// query, and leaves the rows they name in the trash.
 func (q *Queries) ListEventExdateDeletesByCalendarUID(ctx context.Context, arg ListEventExdateDeletesByCalendarUIDParams) ([]EventExdateDelete, error) {
 	rows, err := q.db.QueryContext(ctx, listEventExdateDeletesByCalendarUID, arg.CalendarID, arg.Uid)
 	if err != nil {
@@ -161,6 +168,7 @@ func (q *Queries) ListEventExdateDeletesByCalendarUID(ctx context.Context, arg L
 			&i.Uid,
 			&i.RecurrenceID,
 			&i.DeletedAt,
+			&i.Pruned,
 		); err != nil {
 			return nil, err
 		}
@@ -209,7 +217,8 @@ const recordEventExdateDelete = `-- name: RecordEventExdateDelete :exec
 INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id)
 VALUES (?, ?, ?)
 ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    pruned = 0
 `
 
 type RecordEventExdateDeleteParams struct {
@@ -219,8 +228,28 @@ type RecordEventExdateDeleteParams struct {
 }
 
 // Idempotent: a second delete of the same occurrence in one calendar keeps
-// one log row. Each calendar keeps its own row (issue #842).
+// one log row. Each calendar keeps its own row (issue #842). A delete of
+// the user turns a pruned marker of the occurrence into a delete log.
 func (q *Queries) RecordEventExdateDelete(ctx context.Context, arg RecordEventExdateDeleteParams) error {
 	_, err := q.db.ExecContext(ctx, recordEventExdateDelete, arg.CalendarID, arg.Uid, arg.RecurrenceID)
+	return err
+}
+
+const recordEventExdatePrune = `-- name: RecordEventExdatePrune :exec
+INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, pruned)
+VALUES (?, ?, ?, 1)
+ON CONFLICT(calendar_id, uid, recurrence_id) DO NOTHING
+`
+
+type RecordEventExdatePruneParams struct {
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+}
+
+// Write the pruned marker of an override row that a pull prune hid. A
+// delete log of the same occurrence stays as it is.
+func (q *Queries) RecordEventExdatePrune(ctx context.Context, arg RecordEventExdatePruneParams) error {
+	_, err := q.db.ExecContext(ctx, recordEventExdatePrune, arg.CalendarID, arg.Uid, arg.RecurrenceID)
 	return err
 }
