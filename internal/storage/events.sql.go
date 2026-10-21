@@ -1543,20 +1543,38 @@ func (q *Queries) RestoreEventsByIDs(ctx context.Context, ids []int64) (int64, e
 	return result.RowsAffected()
 }
 
-const restoreEventsByUID = `-- name: RestoreEventsByUID :execrows
+const restoreEventsByUID = `-- name: RestoreEventsByUID :many
 UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE uid = ? AND deleted_at IS NOT NULL
+RETURNING calendar_id
 `
 
-func (q *Queries) RestoreEventsByUID(ctx context.Context, uid string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, restoreEventsByUID, uid)
+// Un-hide every soft-deleted row of one UID. The result holds the calendar
+// of each row that came back, so the caller reconciles those calendars only.
+func (q *Queries) RestoreEventsByUID(ctx context.Context, uid string) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, restoreEventsByUID, uid)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected()
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var calendar_id int64
+		if err := rows.Scan(&calendar_id); err != nil {
+			return nil, err
+		}
+		items = append(items, calendar_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const restoreSeriesOverrideByRecurrenceID = `-- name: RestoreSeriesOverrideByRecurrenceID :execrows
@@ -1646,6 +1664,30 @@ func (q *Queries) SoftDeleteEventsByCalendarUID(ctx context.Context, arg SoftDel
 	return result.RowsAffected()
 }
 
+const softDeleteEventsByIDs = `-- name: SoftDeleteEventsByIDs :exec
+UPDATE events SET
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id IN (/*SLICE:ids*/?) AND deleted_at IS NULL
+`
+
+// Soft-delete a set of live rows by ID in one statement. The truncation of
+// a series reads its rows once and hides them with it.
+func (q *Queries) SoftDeleteEventsByIDs(ctx context.Context, ids []int64) error {
+	query := softDeleteEventsByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	_, err := q.db.ExecContext(ctx, query, queryParams...)
+	return err
+}
+
 const softDeleteEventsByUID = `-- name: SoftDeleteEventsByUID :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
@@ -1655,29 +1697,6 @@ WHERE uid = ? AND deleted_at IS NULL
 
 func (q *Queries) SoftDeleteEventsByUID(ctx context.Context, uid string) error {
 	_, err := q.db.ExecContext(ctx, softDeleteEventsByUID, uid)
-	return err
-}
-
-const softDeleteSeriesOverridesAtOrAfter = `-- name: SoftDeleteSeriesOverridesAtOrAfter :exec
-UPDATE events SET
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
-`
-
-type SoftDeleteSeriesOverridesAtOrAfterParams struct {
-	RecurrenceID string
-	Uid          string
-	CalendarID   int64
-}
-
-// Soft-delete the live overrides of the series in one calendar at or
-// after the cutoff (see ListSeriesOverridesInCalendar).
-func (q *Queries) SoftDeleteSeriesOverridesAtOrAfter(ctx context.Context, arg SoftDeleteSeriesOverridesAtOrAfterParams) error {
-	_, err := q.db.ExecContext(ctx, softDeleteSeriesOverridesAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
 	return err
 }
 

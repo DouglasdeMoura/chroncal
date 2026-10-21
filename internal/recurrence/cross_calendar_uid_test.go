@@ -2,6 +2,7 @@ package recurrence
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -157,5 +158,65 @@ func TestListExpandedEvents_LegacyOverrideJoinsItsOwner(t *testing.T) {
 	}
 	if got := atSecond(); len(got) != 1 || got[0].ID != own.ID {
 		t.Errorf("rows at the second occurrence = %+v, want the own row %d once", got, own.ID)
+	}
+}
+
+// TestListExpandedEvents_TwoLegacyRowsLowestIDWins: two legacy rows of one
+// occurrence show once. The lowest ID wins, as in the export and the edit.
+func TestListExpandedEvents_TwoLegacyRowsLowestIDWins(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+	start := time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC)
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	second := start.AddDate(0, 0, 7)
+	// The lowest ID sits in the later calendar, so neither the calendar
+	// order nor the occurrence order picks it by chance.
+	cals := make([]int64, 0, 2)
+	for _, name := range []string{"Legacy C", "Legacy D"} {
+		res, err := db.ExecContext(ctx, `INSERT INTO calendars (name) VALUES (?)`, name)
+		if err != nil {
+			t.Fatalf("insert calendar: %v", err)
+		}
+		cal, err := res.LastInsertId()
+		if err != nil {
+			t.Fatalf("calendar id: %v", err)
+		}
+		cals = append(cals, cal)
+	}
+	var lowest int64
+	for i, cal := range []int64{cals[1], cals[0]} {
+		name := "Legacy " + strconv.FormatInt(cal, 10)
+		row, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+			UID: master.UID, CalendarID: cal, Title: name,
+			StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour),
+			RecurrenceID: second.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("upsert %s: %v", name, err)
+		}
+		if i == 0 {
+			lowest = row.ID
+		}
+	}
+	got, err := recurSvc.ListExpandedEvents(ctx, start, start.AddDate(0, 0, 14))
+	if err != nil {
+		t.Fatalf("ListExpandedEvents: %v", err)
+	}
+	var at []ExpandedEvent
+	for _, ev := range got {
+		if ev.UID == master.UID && !ev.StartTime.Before(second) && ev.StartTime.Before(second.AddDate(0, 0, 1)) {
+			at = append(at, ev)
+		}
+	}
+	if len(at) != 1 || at[0].ID != lowest {
+		t.Errorf("rows at the second occurrence = %+v, want the row %d once", at, lowest)
 	}
 }

@@ -129,12 +129,15 @@ UPDATE events SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
 
--- name: RestoreEventsByUID :execrows
+-- name: RestoreEventsByUID :many
+-- Un-hide every soft-deleted row of one UID. The result holds the calendar
+-- of each row that came back, so the caller reconciles those calendars only.
 UPDATE events SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NOT NULL;
+WHERE uid = ? AND deleted_at IS NOT NULL
+RETURNING calendar_id;
 
 -- name: PurgeSoftDeletedEvents :execrows
 DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?;
@@ -245,16 +248,13 @@ WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id));
 
--- name: SoftDeleteSeriesOverridesAtOrAfter :exec
--- Soft-delete the live overrides of the series in one calendar at or
--- after the cutoff (see ListSeriesOverridesInCalendar).
+-- name: SoftDeleteEventsByIDs :exec
+-- Soft-delete a set of live rows by ID in one statement. The truncation of
+-- a series reads its rows once and hides them with it.
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence_id) AND events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id));
+WHERE id IN (sqlc.slice(ids)) AND deleted_at IS NULL;
 
 -- name: RestoreSeriesOverridesAtOrAfter :exec
 -- Un-hide the soft-deleted overrides of the series in one calendar at or

@@ -143,16 +143,14 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 		// The live series of another calendar owns the rows here, and its
 		// calendar exports them.
 		return event.Event{}, fmt.Errorf("%w: event uid %s has its series in another calendar", errResourceMissing, uid)
-	case found && owner.CalendarID == calendarID:
-		// The master of this calendar is in the trash, so the server
-		// object of the calendar holds a whole series. A PUT of the live
-		// rows alone would replace it with a body with no master. The
-		// rows stay local until the master comes back.
-		return event.Event{}, fmt.Errorf("%w: event uid %s has its master in the trash", errResourceMissing, uid)
 	case found:
-		// The owner is a master in the trash of another calendar. The
-		// live rows here are orphan instances of this calendar.
-		return event.Event{}, sql.ErrNoRows
+		// The master that owns the rows is in the trash, here or in
+		// another calendar. Its series holds the rows, and its restore
+		// sends them again. A PUT of the live rows alone would replace a
+		// series object with a body with no master, or put the occurrence
+		// on the server twice. The rows stay local until the master comes
+		// back.
+		return event.Event{}, fmt.Errorf("%w: event uid %s has its series master in the trash", errResourceMissing, uid)
 	}
 	// No owner. Two or more live masters own no legacy row, and a calendar
 	// with no row has nothing to own: nothing to export. A UID with no
@@ -170,10 +168,9 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 // eventOverridesForExport lists the override rows of the export of uid in
 // calendarID. masterFound reports the outcome of eventMasterForExport. With a
 // master in the calendar, the series rule (ListSeriesOverrides) gives the
-// overrides. With no master in the calendar, no live master exists anywhere.
+// overrides. With no master in the calendar, no master row exists anywhere.
 // The rows of the UID in the calendar are then orphan instances, and the
-// lookup takes them with no series rule. A row that a restore by ID brought
-// back beside a master in the trash then still reaches the server.
+// lookup takes them with no series rule.
 func (e *Engine) eventOverridesForExport(ctx context.Context, calendarID int64, uid string, masterFound bool) ([]event.Event, error) {
 	if !masterFound {
 		return e.events.ListLiveOverridesInCalendar(ctx, calendarID, uid)

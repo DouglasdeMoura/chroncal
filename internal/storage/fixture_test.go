@@ -47,6 +47,15 @@ func buildFixtureDB() (string, error) {
 	return path, nil
 }
 
+// TestMain removes the fixture directory after the tests of the package.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if fixturePath != "" {
+		_ = os.RemoveAll(filepath.Dir(fixturePath))
+	}
+	os.Exit(code)
+}
+
 // openFixtureDB opens a copy of the migrated fixture database. Use it in
 // each storage test that does not test the migration set itself.
 func openFixtureDB(t *testing.T) *sql.DB {

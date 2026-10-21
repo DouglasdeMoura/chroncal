@@ -614,9 +614,10 @@ func TestEventUpdate_LegacyCalendarWithTwoMastersNamesIt(t *testing.T) {
 	}
 }
 
-// TestEventGet_TwoLegacyOverridesNameTheRows: a get of one occurrence by
-// UID with two legacy rows names the rows.
-func TestEventGet_TwoLegacyOverridesNameTheRows(t *testing.T) {
+// TestEventGet_TwoLegacyOverridesShowTheWinner: a get of one occurrence by
+// UID with two legacy rows shows the row that an edit changes: the lowest
+// ID. Only a delete names the two rows.
+func TestEventGet_TwoLegacyOverridesShowTheWinner(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
 	uid, legacyID := seedLegacyOverrideInHome(t)
@@ -633,12 +634,16 @@ func TestEventGet_TwoLegacyOverridesNameTheRows(t *testing.T) {
 	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Other"); err != nil {
 		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
 	}
-	_, stderr, err := runChroncalCommand(t, "event", "get", uid, "--recurrence-id", "2026-04-07T09:00:00Z")
-	if err == nil {
-		t.Fatal("get with two override rows of one occurrence succeeded")
+	stdout, stderr, err := runChroncalCommand(t, "event", "get", uid, "--recurrence-id", "2026-04-07T09:00:00Z", "--output", "json")
+	if err != nil {
+		t.Fatalf("get with two override rows: %v (stderr=%q)", err, stderr)
 	}
-	if !strings.Contains(stderr, "more than one override row") || !strings.Contains(stderr, strconv.FormatInt(legacyID, 10)) {
-		t.Fatalf("stderr = %q, want the override rows named", stderr)
+	var row map[string]any
+	if err := json.Unmarshal([]byte(stdout), &row); err != nil {
+		t.Fatalf("decode get: %v stdout=%q", err, stdout)
+	}
+	if got := int64(row["id"].(float64)); got != legacyID {
+		t.Errorf("get = row %d, want the lowest ID %d", got, legacyID)
 	}
 }
 

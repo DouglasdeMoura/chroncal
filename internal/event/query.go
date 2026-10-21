@@ -124,19 +124,14 @@ func (s *Service) GetByCalendarUID(ctx context.Context, calendarID int64, uid st
 // of uid. Two calendars can hold the same UID (issue #842). The series
 // rule names the series (see SeriesOccurrence). Two live masters give
 // ErrAmbiguousUID. Two legacy rows of the occurrence in one series give
-// ErrAmbiguousOverride with the row IDs. A live master with no override at
-// the occurrence gives sql.ErrNoRows. A UID with no live master reads its
-// orphan instances (OrphanOccurrence). To name the series, use
+// ErrAmbiguousOverride with the row IDs: the CLI delete and get resolve a
+// UID and a recurrence ID with it, and the user chooses the row. A live
+// master with no override at the occurrence gives the one live row outside
+// the live series (occurrenceOutsideSeries). A UID with no live master
+// reads its orphan instances (OrphanOccurrence). To name the series, use
 // SeriesOverride or GetByCalendarUIDAndRecurrenceID.
 func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID string) (Event, error) {
-	// The series rule names the row: the one beside the master, or the
-	// legacy override that the series owns. Two legacy rows of the
-	// occurrence give ErrAmbiguousOverride with the row IDs. A live
-	// master with no override at the occurrence gives sql.ErrNoRows: a
-	// row of another calendar's trashed series is not the occurrence.
-	// Only a UID with no live master (an orphan instance) keeps the plain
-	// lookup below.
-	master, override, err := s.SeriesOccurrence(ctx, 0, uid, recurrenceID)
+	master, override, err := s.seriesOccurrence(ctx, 0, uid, recurrenceID, true)
 	switch {
 	case err == nil && override != nil:
 		return *override, nil

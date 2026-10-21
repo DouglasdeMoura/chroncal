@@ -29,20 +29,14 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 	if err != nil {
 		return nil, err
 	}
-	// The owner rule of the view event_series_rows attaches a legacy
-	// override to the master that owns it, as delete, export, edit, and
-	// restore do. A row with no owner keeps its own calendar.
-	owners, err := s.q.ListSeriesOwnersByUIDs(ctx, uids)
+	ownerOf, err := s.legacyOwners(ctx, masters, rows)
 	if err != nil {
 		return nil, err
 	}
-	ownerOf := make(map[int64]int64, len(owners))
-	for _, o := range owners {
-		ownerOf[o.ID] = o.OwnerCalendarID
-	}
 	byUID := make(map[string][]storage.Event, len(rows))
-	// One row per occurrence and series: the row of the owner calendar
-	// wins over a legacy row, as in event.Service.ListSeriesOverrides.
+	// One row per occurrence and series, with the rule of the export
+	// (event.Service.ListSeriesOverrides) and of the edit: the row of the
+	// owner calendar wins, then the lowest ID.
 	at := make(map[string]int, len(rows))
 	for _, r := range rows {
 		owner, ok := ownerOf[r.ID]
@@ -51,16 +45,51 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 		}
 		key := seriesKey(owner, r.Uid)
 		occ := key + "\x00" + r.RecurrenceID
-		if i, seen := at[occ]; seen {
-			if r.CalendarID == owner && byUID[key][i].CalendarID != owner {
-				byUID[key][i] = r
-			}
+		i, seen := at[occ]
+		if !seen {
+			at[occ] = len(byUID[key])
+			byUID[key] = append(byUID[key], r)
 			continue
 		}
-		at[occ] = len(byUID[key])
-		byUID[key] = append(byUID[key], r)
+		cur := byUID[key][i]
+		rOwn, curOwn := r.CalendarID == owner, cur.CalendarID == owner
+		if (rOwn && !curOwn) || (rOwn == curOwn && r.ID < cur.ID) {
+			byUID[key][i] = r
+		}
 	}
 	return byUID, nil
+}
+
+// legacyOwners gives the owner calendar of each override row that does not
+// sit beside a loaded master. An override beside its own master belongs to
+// that series, so the common case reads no view. Only the UIDs with a row
+// in a calendar with no loaded master read the view event_series_rows. A
+// row with no owner is not in the result.
+func (s *Service) legacyOwners(ctx context.Context, masters, rows []storage.Event) (map[int64]int64, error) {
+	loaded := make(map[string]bool, len(masters))
+	for _, m := range masters {
+		loaded[seriesKey(m.CalendarID, m.Uid)] = true
+	}
+	var uids []string
+	away := make(map[string]bool)
+	for _, r := range rows {
+		if !loaded[seriesKey(r.CalendarID, r.Uid)] && !away[r.Uid] {
+			away[r.Uid] = true
+			uids = append(uids, r.Uid)
+		}
+	}
+	if len(uids) == 0 {
+		return nil, nil
+	}
+	owners, err := s.q.ListSeriesOwnersByUIDs(ctx, uids)
+	if err != nil {
+		return nil, err
+	}
+	ownerOf := make(map[int64]int64, len(owners))
+	for _, o := range owners {
+		ownerOf[o.ID] = o.OwnerCalendarID
+	}
+	return ownerOf, nil
 }
 
 // newEventRRuleSet parses evt's RRULE into a reusable recurset.Set for
