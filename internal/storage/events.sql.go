@@ -7,6 +7,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 )
 
 const countEventIdentitiesByCalendar = `-- name: CountEventIdentitiesByCalendar :one
@@ -717,6 +718,45 @@ func (q *Queries) ListDeletedSeriesOverrideRecurrenceIDs(ctx context.Context, ar
 	return items, nil
 }
 
+const listEventCalendarIDsByIDs = `-- name: ListEventCalendarIDsByIDs :many
+SELECT DISTINCT calendar_id FROM events WHERE id IN (/*SLICE:ids*/?) ORDER BY calendar_id
+`
+
+// The calendars of a set of rows, live or in the trash. The access guard
+// of a log-driven restore reads it in one query.
+func (q *Queries) ListEventCalendarIDsByIDs(ctx context.Context, ids []int64) ([]int64, error) {
+	query := listEventCalendarIDsByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var calendar_id int64
+		if err := rows.Scan(&calendar_id); err != nil {
+			return nil, err
+		}
+		items = append(items, calendar_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventCalendarIDsByUID = `-- name: ListEventCalendarIDsByUID :many
 SELECT DISTINCT calendar_id FROM events WHERE uid = ? ORDER BY calendar_id
 `
@@ -978,6 +1018,35 @@ func (q *Queries) ListEventsByUIDAndRecurrenceID(ctx context.Context, arg ListEv
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveEventCalendarIDsByUID = `-- name: ListLiveEventCalendarIDsByUID :many
+SELECT DISTINCT calendar_id FROM events WHERE uid = ? AND deleted_at IS NULL ORDER BY calendar_id
+`
+
+// Every calendar that holds a live row of one UID. A series delete with
+// no calendar and no live master picks the one calendar of the rows.
+func (q *Queries) ListLiveEventCalendarIDsByUID(ctx context.Context, uid string) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveEventCalendarIDsByUID, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var calendar_id int64
+		if err := rows.Scan(&calendar_id); err != nil {
+			return nil, err
+		}
+		items = append(items, calendar_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -1596,6 +1665,34 @@ WHERE id = ? AND deleted_at IS NOT NULL
 // log use it, and the count tells a purged row from a restored one.
 func (q *Queries) RestoreEventByID(ctx context.Context, id int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, restoreEventByID, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const restoreEventsByIDs = `-- name: RestoreEventsByIDs :execrows
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id IN (/*SLICE:ids*/?) AND deleted_at IS NOT NULL
+`
+
+// Un-hide a set of soft-deleted rows by ID in one statement. The count
+// tells the rows that came back from the rows that were live or purged.
+func (q *Queries) RestoreEventsByIDs(ctx context.Context, ids []int64) (int64, error) {
+	query := restoreEventsByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	result, err := q.db.ExecContext(ctx, query, queryParams...)
 	if err != nil {
 		return 0, err
 	}

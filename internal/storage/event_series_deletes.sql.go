@@ -69,6 +69,39 @@ func (q *Queries) GetEventSeriesDeleteByCalendarUID(ctx context.Context, arg Get
 	return i, err
 }
 
+const listEventSeriesDeletesByUID = `-- name: ListEventSeriesDeletesByUID :many
+SELECT id, calendar_id, uid, hidden_ids, deleted_at FROM event_series_deletes WHERE uid = ? ORDER BY calendar_id
+`
+
+func (q *Queries) ListEventSeriesDeletesByUID(ctx context.Context, uid string) ([]EventSeriesDelete, error) {
+	rows, err := q.db.QueryContext(ctx, listEventSeriesDeletesByUID, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventSeriesDelete
+	for rows.Next() {
+		var i EventSeriesDelete
+		if err := rows.Scan(
+			&i.ID,
+			&i.CalendarID,
+			&i.Uid,
+			&i.HiddenIds,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const moveEventSeriesDeletesUIDToCalendar = `-- name: MoveEventSeriesDeletesUIDToCalendar :exec
 UPDATE event_series_deletes SET calendar_id = ?1
 WHERE calendar_id = ?2 AND uid = ?3
@@ -117,5 +150,22 @@ type RecordEventSeriesDeleteParams struct {
 // the list: the first restore consumed the first row.
 func (q *Queries) RecordEventSeriesDelete(ctx context.Context, arg RecordEventSeriesDeleteParams) error {
 	_, err := q.db.ExecContext(ctx, recordEventSeriesDelete, arg.CalendarID, arg.Uid, arg.HiddenIds)
+	return err
+}
+
+const updateEventSeriesDeleteHiddenIds = `-- name: UpdateEventSeriesDeleteHiddenIds :exec
+UPDATE event_series_deletes SET hidden_ids = ? WHERE id = ?
+`
+
+type UpdateEventSeriesDeleteHiddenIdsParams struct {
+	HiddenIds string
+	ID        int64
+}
+
+// Rewrite the hidden rows of one log row. A restore of one logged row by
+// ID or by undo drops the row from the list, so a later series restore
+// does not reverse an independent delete of that row.
+func (q *Queries) UpdateEventSeriesDeleteHiddenIds(ctx context.Context, arg UpdateEventSeriesDeleteHiddenIdsParams) error {
+	_, err := q.db.ExecContext(ctx, updateEventSeriesDeleteHiddenIds, arg.HiddenIds, arg.ID)
 	return err
 }

@@ -242,6 +242,29 @@ func (s *Service) SeriesOverride(ctx context.Context, calendarID int64, uid, rec
 	return e, nil
 }
 
+// SeriesOccurrence finds the master of the series of uid in calendarID
+// (see findSeriesMasterTx) and the stored override of the occurrence
+// recID in that series, in one pass. override is nil with no stored
+// override. The CLI resolves an occurrence edit with it.
+func (s *Service) SeriesOccurrence(ctx context.Context, calendarID int64, uid, recID string) (Event, *Event, error) {
+	m, err := findSeriesMasterTx(ctx, s.q, calendarID, uid)
+	if err != nil {
+		return Event{}, nil, err
+	}
+	master := FromStorage(m)
+	s.populateSingleCategories(ctx, &master)
+	r, err := findInstanceOverrideTx(ctx, s.q, m, recID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return master, nil, nil
+	}
+	if err != nil {
+		return Event{}, nil, err
+	}
+	override := FromStorage(r)
+	s.populateSingleCategories(ctx, &override)
+	return master, &override, nil
+}
+
 // ListLiveOverridesInCalendar returns the live override rows of uid in
 // calendarID with no series rule. The sync export of a calendar that holds
 // orphan instances reads it (see ListLiveOverridesInCalendarByUID).

@@ -632,14 +632,23 @@ func deleteCollidingLogRowsTx(ctx context.Context, qtx *storage.Queries, arg sto
 	return nil
 }
 
-// deleteLogRowsTx drops the delete-log rows of one UID in one calendar:
-// the occurrence log, the truncation log, and the series log.
-func deleteLogRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) error {
+// deleteOccurrenceLogRowsTx drops the occurrence log and the truncation
+// log of one UID in one calendar.
+func deleteOccurrenceLogRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) error {
 	if err := qtx.DeleteEventExdateDeletesByCalendarUID(ctx, storage.DeleteEventExdateDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
 		return fmt.Errorf("delete event_exdate_deletes: %w", err)
 	}
 	if err := qtx.DeleteEventTruncateDeletesByCalendarUID(ctx, storage.DeleteEventTruncateDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
 		return fmt.Errorf("delete event_truncate_deletes: %w", err)
+	}
+	return nil
+}
+
+// deleteLogRowsTx drops the delete-log rows of one UID in one calendar:
+// the occurrence log, the truncation log, and the series log.
+func deleteLogRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) error {
+	if err := deleteOccurrenceLogRowsTx(ctx, qtx, calendarID, uid); err != nil {
+		return err
 	}
 	if err := qtx.DeleteEventSeriesDeletesByCalendarUID(ctx, storage.DeleteEventSeriesDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
 		return fmt.Errorf("delete event_series_deletes: %w", err)

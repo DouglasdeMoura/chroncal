@@ -49,22 +49,18 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 		return e, false, false, err
 	}
 	if calendarID != 0 {
-		// The override of the occurrence in the series of the calendar:
-		// the row beside the master, or a legacy override in another
-		// calendar. A generated occurrence would overwrite that row.
-		e, err := a.Events.SeriesOverride(ctx, calendarID, ref, recurrenceID)
-		if err == nil {
-			return e, false, true, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
-		}
-		master, err := a.Events.SeriesMaster(ctx, calendarID, ref)
-		if err == nil {
+		// One lookup gives the master of the series of the calendar and
+		// the stored override of the occurrence: the row beside the
+		// master, or a legacy override in another calendar. A generated
+		// occurrence would overwrite that row.
+		master, override, err := a.Events.SeriesOccurrence(ctx, calendarID, ref, recurrenceID)
+		switch {
+		case err == nil && override != nil:
+			return *override, false, true, nil
+		case err == nil:
 			occ, create, err := generatedOccurrence(master, ref, recurrenceID)
 			return occ, create, true, err
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		case !errors.Is(err, sql.ErrNoRows):
 			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
 		}
 	}

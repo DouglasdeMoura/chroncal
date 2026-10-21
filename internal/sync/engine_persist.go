@@ -254,17 +254,9 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 	// an EXDATE on the master); see pruneStaleOverrides for the safety gates.
 	if err := pruneStaleOverrides(ctx, e, calendarID, eventKeep, dirtyBefore, revs,
 		func(ctx context.Context, uid string) ([]storage.Event, error) {
-			rows, err := e.q.ListOverridesByUID(ctx, uid)
-			if err != nil {
-				return nil, err
-			}
-			out := make([]storage.Event, 0, len(rows))
-			for _, r := range rows {
-				if r.CalendarID == calendarID {
-					out = append(out, r)
-				}
-			}
-			return out, nil
+			return e.q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{
+				CalendarID: calendarID, Uid: uid,
+			})
 		},
 		func(v storage.Event) int64 { return v.ID },
 		func(v storage.Event) string { return v.RecurrenceID },
