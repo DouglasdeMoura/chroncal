@@ -137,7 +137,7 @@ func dirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerTyp
 	switch ownerType {
 	case "event":
 		own = func() (int64, int64, error) {
-			r, err := q.CountEventUIDRowsInCalendar(ctx, CountEventUIDRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
+			r, err := q.CountEventUIDRowsInCalendar(ctx, CountEventUIDRowsInCalendarParams{CalendarID: calendarID, Uid: uid, IncludeDeleted: true})
 			return r.Masters, r.Overrides, err
 		}
 		masterCalendars = func() (int64, int64, error) {

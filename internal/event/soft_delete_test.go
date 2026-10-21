@@ -256,8 +256,13 @@ func TestSoftDelete_RestoreByUIDClearsOverrideEXDATEs(t *testing.T) {
 	if err := svc.Delete(ctx, override.ID); err != nil {
 		t.Fatalf("Delete override: %v", err)
 	}
-	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
-		t.Fatalf("RestoreByUID: %v", err)
+	// The restore by UID reverses a series delete only. An occurrence
+	// deleted on its own comes back by its row ID, with its EXDATE.
+	if err := svc.RestoreByUID(ctx, master.UID); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("RestoreByUID of an own-deleted occurrence err = %v, want ErrNotDeleted", err)
+	}
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID(override): %v", err)
 	}
 	restoredMaster, err := svc.Get(ctx, master.ID)
 	if err != nil {

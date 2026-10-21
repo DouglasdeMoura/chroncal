@@ -67,7 +67,7 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 			occ, create, err := generatedOccurrence(master, ref, recurrenceID)
 			return occ, create, scope != 0, err
 		case !errors.Is(err, sql.ErrNoRows):
-			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
+			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName, scope != 0)
 		}
 	}
 	e, err = a.Events.OrphanOccurrence(ctx, ref, recurrenceID)
@@ -77,12 +77,17 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 	return e, false, false, nil
 }
 
-// ambiguousSeriesErr maps a lookup error of a UID reference. With a
-// --calendar that holds no series of the UID, the generic hint ("pass
-// --calendar NAME") would repeat what the user did. The error names that
-// calendar instead.
-func ambiguousSeriesErr(err error, ref string, calendarID int64, calendarName string) error {
+// ambiguousSeriesErr maps a lookup error of a UID reference. inCalendar
+// reports that the lookup in the --calendar calendar found the ambiguity.
+// That calendar holds legacy rows of a UID with two live masters, and the
+// rows belong to no series. Else the --calendar calendar holds no series
+// of the UID, and the lookup with no calendar found two live masters. The
+// generic hint ("pass --calendar NAME") would repeat what the user did.
+func ambiguousSeriesErr(err error, ref string, calendarID int64, calendarName string, inCalendar bool) error {
 	if calendarID != 0 && errors.Is(err, event.ErrAmbiguousUID) {
+		if inCalendar {
+			return errInvalidInputf("the rows of event %s in calendar %q belong to no series, because two calendars hold a live master of the UID; use the ID of the row", ref, calendarName)
+		}
 		return errInvalidInputf("calendar %q holds no series of event %s, and the UID is in more than one calendar; use the ID of the row, or name the calendar of the series with --calendar", calendarName, ref)
 	}
 	return notFoundErr(err, "event", ref)

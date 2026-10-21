@@ -236,7 +236,7 @@ err := svc.DeleteFromInstance(ctx, calendarID, uid, at) // truncates the series 
 
 // Restore:
 err := svc.RestoreByID(ctx, id)    // un-hides one row; a master also reverses its logged series delete
-err := svc.RestoreByUID(ctx, uid)  // un-hides master + all overrides
+err := svc.RestoreByUID(ctx, uid)  // reverses the one series delete of the UID; ErrAmbiguousUID for two
 // Returns svc.ErrNotDeleted when the row is live or missing.
 
 // Purge (hard-delete soft-deleted rows):

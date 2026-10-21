@@ -113,7 +113,22 @@ FROM events AS e
 WHERE NOT EXISTS (
     SELECT 1 FROM events AS m WHERE m.uid = e.uid AND m.recurrence_id = '');
 
+-- A master that comes back from the trash by any path consumes the
+-- series-delete log of its calendar. The restore of the series reads and
+-- drops the log before it un-hides the master. A pull, an import, or a
+-- re-import un-hides the master with no log read. The log is then stale.
+-- A later restore must not replay it (issue #287).
+-- +goose StatementBegin
+CREATE TRIGGER events_master_revive_drops_series_log
+AFTER UPDATE OF deleted_at ON events
+WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id = ''
+BEGIN
+    DELETE FROM event_series_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS events_master_revive_drops_series_log;
 DROP VIEW IF EXISTS event_series_rows;
 DROP INDEX IF EXISTS idx_event_series_deletes_deleted_at;
 DROP INDEX IF EXISTS idx_event_series_deletes_calendar;

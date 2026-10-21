@@ -210,16 +210,6 @@ WHERE dst.calendar_id = sqlc.arg(to_calendar_id) AND dst.uid = sqlc.arg(uid)
 UPDATE events SET calendar_id = sqlc.arg(to_calendar_id)
 WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
 
--- name: CountEventUIDRowsInCalendar :one
--- Count the master rows and the override rows (live or soft-deleted) of
--- one UID in one calendar. The dirty-mark rule for a legacy override reads
--- it. See storage.MarkResourceDirty.
-SELECT
-    CAST(COALESCE(SUM(recurrence_id = ''), 0) AS INTEGER) AS masters,
-    CAST(COALESCE(SUM(recurrence_id != ''), 0) AS INTEGER) AS overrides
-FROM events
-WHERE calendar_id = ? AND uid = ?;
-
 -- name: EventUIDMasterCalendars :one
 -- Count the calendars with a live master row of one UID, and give the
 -- lowest of them. With one calendar, that calendar is the only one.
@@ -243,16 +233,6 @@ SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' LI
 -- query below takes its rows from the same view.
 SELECT * FROM events
 WHERE events.recurrence_id != '' AND events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
-ORDER BY events.recurrence_id;
-
--- name: ListDeletedSeriesOverrideRecurrenceIDs :many
--- The recurrence IDs of the soft-deleted override rows of the series of
--- one UID in one calendar (see ListSeriesOverridesInCalendar).
-SELECT events.recurrence_id FROM events
-WHERE events.recurrence_id != '' AND events.deleted_at IS NOT NULL
   AND events.id IN (
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
@@ -318,18 +298,6 @@ WHERE events.deleted_at IS NULL
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id));
 
--- name: RestoreSeriesRowsInCalendar :execrows
--- Un-hide every soft-deleted row of the series of one UID in one calendar
--- (see SoftDeleteSeriesRowsInCalendar).
-UPDATE events SET
-    deleted_at = NULL,
-    sequence = sequence + 1,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.deleted_at IS NOT NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id));
-
 -- name: CountSeriesRowsInTrash :one
 -- Count the soft-deleted rows of the series of one UID in one calendar
 -- (see SoftDeleteSeriesRowsInCalendar). A restore by UID reads it to
@@ -349,45 +317,10 @@ SELECT DISTINCT s.calendar_id FROM event_series_rows AS s
 WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
 ORDER BY s.calendar_id;
 
--- name: SeriesOwnerCalendarIDs :many
--- The calendars whose series own one event row (see event_series_rows).
--- A test compares it with uidmove.LegacyOwner.
-SELECT s.owner_calendar_id FROM event_series_rows AS s WHERE s.id = ? ORDER BY s.owner_calendar_id;
-
 -- name: ListEventCalendarIDsByUID :many
 -- Every calendar that holds a row of one UID, live or in the trash. The
 -- access guard of a UID-wide delete or restore reads it.
 SELECT DISTINCT calendar_id FROM events WHERE uid = ? ORDER BY calendar_id;
-
--- name: RestoreEventByCalendarUIDAndRecurrenceID :execrows
--- Un-hide the soft-deleted override of one occurrence in one calendar.
--- The undo of a delete of a legacy override uses it: the row belongs to
--- no single series, so the restore touches that row only.
-UPDATE events SET
-    deleted_at = NULL,
-    sequence = sequence + 1,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NOT NULL;
-
--- name: GetLiveSeriesMasterOfCalendar :one
--- The live master whose series owns the live rows of one UID in one
--- calendar (see the view event_series_rows). A calendar with its own live
--- master gives that master. A calendar with a live legacy override gives
--- the owner of that override. Else no row.
-SELECT m.* FROM events AS m
-WHERE m.uid = sqlc.arg(uid) AND m.recurrence_id = '' AND m.deleted_at IS NULL
-  AND m.calendar_id IN (
-    SELECT s.owner_calendar_id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.calendar_id = sqlc.arg(calendar_id) AND s.deleted_at IS NULL);
-
--- name: GetSeriesMasterOfCalendarIncludingDeleted :one
--- GetLiveSeriesMasterOfCalendar for a restore: the master and the rows of
--- the calendar can be in the trash.
-SELECT m.* FROM events AS m
-WHERE m.uid = sqlc.arg(uid) AND m.recurrence_id = ''
-  AND m.calendar_id IN (
-    SELECT s.owner_calendar_id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.calendar_id = sqlc.arg(calendar_id));
 
 -- name: ListSeriesOverridesAtRecurrenceID :many
 -- The live override rows of one occurrence of the series in one calendar (see
@@ -408,13 +341,6 @@ SELECT * FROM events
 WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NULL
 ORDER BY recurrence_id;
 
--- name: CountLiveEventUIDRowsInCalendar :one
--- Count the live rows of one UID in one calendar, master and overrides. The
--- series rule of a live edit reads it when no series owns the rows of the
--- calendar. A calendar with live rows of a UID that has two live masters
--- cannot choose. A calendar with rows in the trash only holds no live series.
-SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
-
 -- name: ListLiveSeriesOverridesAtOrAfter :many
 -- The live override rows that a truncation of the series in one calendar
 -- is about to hide (see ListLiveSeriesOverrideRecurrenceIDsAtOrAfter).
@@ -425,15 +351,6 @@ WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
 ORDER BY events.recurrence_id;
-
--- name: RestoreEventByID :execrows
--- Un-hide one soft-deleted row by ID. The restores that read a delete
--- log use it, and the count tells a purged row from a restored one.
-UPDATE events SET
-    deleted_at = NULL,
-    sequence = sequence + 1,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? AND deleted_at IS NOT NULL;
 
 -- name: ListEventCalendarIDsByIDs :many
 -- The calendars of a set of rows, live or in the trash. The access guard
@@ -465,3 +382,30 @@ WHERE events.deleted_at IS NOT NULL
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
 ORDER BY events.id;
+
+-- name: GetSeriesMasterOfCalendar :one
+-- The master whose series owns the rows of one UID in one calendar (see
+-- the view event_series_rows). A calendar with its own master gives that
+-- master. A calendar with a legacy override gives the owner of that
+-- override. Else no row. Without include_deleted, the master and the rows
+-- of the calendar must be live. With it, a restore finds them in the
+-- trash too.
+SELECT m.* FROM events AS m
+WHERE m.uid = sqlc.arg(uid) AND m.recurrence_id = ''
+  AND (m.deleted_at IS NULL OR CAST(sqlc.arg(include_deleted) AS BOOLEAN))
+  AND m.calendar_id IN (
+    SELECT s.owner_calendar_id FROM event_series_rows AS s
+    WHERE s.uid = sqlc.arg(uid) AND s.calendar_id = sqlc.arg(calendar_id)
+      AND (s.deleted_at IS NULL OR CAST(sqlc.arg(include_deleted) AS BOOLEAN)));
+
+-- name: CountEventUIDRowsInCalendar :one
+-- Count the master rows and the override rows of one UID in one calendar.
+-- Without include_deleted, the count takes the live rows only. With it,
+-- the rows in the trash count too. The dirty-mark rule for a legacy
+-- override, the move rule, and the series rule read it.
+SELECT
+    CAST(COALESCE(SUM(recurrence_id = ''), 0) AS INTEGER) AS masters,
+    CAST(COALESCE(SUM(recurrence_id != ''), 0) AS INTEGER) AS overrides
+FROM events
+WHERE calendar_id = sqlc.arg(calendar_id) AND uid = sqlc.arg(uid)
+  AND (deleted_at IS NULL OR CAST(sqlc.arg(include_deleted) AS BOOLEAN));

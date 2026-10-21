@@ -63,12 +63,14 @@ SELECT
     CAST(COALESCE(SUM(recurrence_id = ''), 0) AS INTEGER) AS masters,
     CAST(COALESCE(SUM(recurrence_id != ''), 0) AS INTEGER) AS overrides
 FROM events
-WHERE calendar_id = ? AND uid = ?
+WHERE calendar_id = ?1 AND uid = ?2
+  AND (deleted_at IS NULL OR CAST(?3 AS BOOLEAN))
 `
 
 type CountEventUIDRowsInCalendarParams struct {
-	CalendarID int64
-	Uid        string
+	CalendarID     int64
+	Uid            string
+	IncludeDeleted bool
 }
 
 type CountEventUIDRowsInCalendarRow struct {
@@ -76,11 +78,12 @@ type CountEventUIDRowsInCalendarRow struct {
 	Overrides int64
 }
 
-// Count the master rows and the override rows (live or soft-deleted) of
-// one UID in one calendar. The dirty-mark rule for a legacy override reads
-// it. See storage.MarkResourceDirty.
+// Count the master rows and the override rows of one UID in one calendar.
+// Without include_deleted, the count takes the live rows only. With it,
+// the rows in the trash count too. The dirty-mark rule for a legacy
+// override, the move rule, and the series rule read it.
 func (q *Queries) CountEventUIDRowsInCalendar(ctx context.Context, arg CountEventUIDRowsInCalendarParams) (CountEventUIDRowsInCalendarRow, error) {
-	row := q.db.QueryRowContext(ctx, countEventUIDRowsInCalendar, arg.CalendarID, arg.Uid)
+	row := q.db.QueryRowContext(ctx, countEventUIDRowsInCalendar, arg.CalendarID, arg.Uid, arg.IncludeDeleted)
 	var i CountEventUIDRowsInCalendarRow
 	err := row.Scan(&i.Masters, &i.Overrides)
 	return i, err
@@ -92,26 +95,6 @@ SELECT COUNT(*) FROM events WHERE calendar_id = ? AND deleted_at IS NULL
 
 func (q *Queries) CountEventsByCalendar(ctx context.Context, calendarID int64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countEventsByCalendar, calendarID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countLiveEventUIDRowsInCalendar = `-- name: CountLiveEventUIDRowsInCalendar :one
-SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
-`
-
-type CountLiveEventUIDRowsInCalendarParams struct {
-	CalendarID int64
-	Uid        string
-}
-
-// Count the live rows of one UID in one calendar, master and overrides. The
-// series rule of a live edit reads it when no series owns the rows of the
-// calendar. A calendar with live rows of a UID that has two live masters
-// cannot choose. A calendar with rows in the trash only holds no live series.
-func (q *Queries) CountLiveEventUIDRowsInCalendar(ctx context.Context, arg CountLiveEventUIDRowsInCalendarParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countLiveEventUIDRowsInCalendar, arg.CalendarID, arg.Uid)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -519,75 +502,30 @@ func (q *Queries) GetEventIncludingDeleted(ctx context.Context, id int64) (Event
 	return i, err
 }
 
-const getLiveSeriesMasterOfCalendar = `-- name: GetLiveSeriesMasterOfCalendar :one
-SELECT m.id, m.uid, m.calendar_id, m.title, m.description, m.location, m.start_time, m.end_time, m.all_day, m.recurrence_rule, m.timezone, m.status, m.transp, m.sequence, m.priority, m.class, m.url, m.exdates, m.rdates, m.recurrence_id, m.geo, m.created_at, m.updated_at, m.duration, m.dtstamp, m.conference_uri, m.deleted_at FROM events AS m
-WHERE m.uid = ?1 AND m.recurrence_id = '' AND m.deleted_at IS NULL
-  AND m.calendar_id IN (
-    SELECT s.owner_calendar_id FROM event_series_rows AS s
-    WHERE s.uid = ?1 AND s.calendar_id = ?2 AND s.deleted_at IS NULL)
-`
-
-type GetLiveSeriesMasterOfCalendarParams struct {
-	Uid        string
-	CalendarID int64
-}
-
-// The live master whose series owns the live rows of one UID in one
-// calendar (see the view event_series_rows). A calendar with its own live
-// master gives that master. A calendar with a live legacy override gives
-// the owner of that override. Else no row.
-func (q *Queries) GetLiveSeriesMasterOfCalendar(ctx context.Context, arg GetLiveSeriesMasterOfCalendarParams) (Event, error) {
-	row := q.db.QueryRowContext(ctx, getLiveSeriesMasterOfCalendar, arg.Uid, arg.CalendarID)
-	var i Event
-	err := row.Scan(
-		&i.ID,
-		&i.Uid,
-		&i.CalendarID,
-		&i.Title,
-		&i.Description,
-		&i.Location,
-		&i.StartTime,
-		&i.EndTime,
-		&i.AllDay,
-		&i.RecurrenceRule,
-		&i.Timezone,
-		&i.Status,
-		&i.Transp,
-		&i.Sequence,
-		&i.Priority,
-		&i.Class,
-		&i.Url,
-		&i.Exdates,
-		&i.Rdates,
-		&i.RecurrenceID,
-		&i.Geo,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Duration,
-		&i.Dtstamp,
-		&i.ConferenceUri,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const getSeriesMasterOfCalendarIncludingDeleted = `-- name: GetSeriesMasterOfCalendarIncludingDeleted :one
+const getSeriesMasterOfCalendar = `-- name: GetSeriesMasterOfCalendar :one
 SELECT m.id, m.uid, m.calendar_id, m.title, m.description, m.location, m.start_time, m.end_time, m.all_day, m.recurrence_rule, m.timezone, m.status, m.transp, m.sequence, m.priority, m.class, m.url, m.exdates, m.rdates, m.recurrence_id, m.geo, m.created_at, m.updated_at, m.duration, m.dtstamp, m.conference_uri, m.deleted_at FROM events AS m
 WHERE m.uid = ?1 AND m.recurrence_id = ''
+  AND (m.deleted_at IS NULL OR CAST(?2 AS BOOLEAN))
   AND m.calendar_id IN (
     SELECT s.owner_calendar_id FROM event_series_rows AS s
-    WHERE s.uid = ?1 AND s.calendar_id = ?2)
+    WHERE s.uid = ?1 AND s.calendar_id = ?3
+      AND (s.deleted_at IS NULL OR CAST(?2 AS BOOLEAN)))
 `
 
-type GetSeriesMasterOfCalendarIncludingDeletedParams struct {
-	Uid        string
-	CalendarID int64
+type GetSeriesMasterOfCalendarParams struct {
+	Uid            string
+	IncludeDeleted bool
+	CalendarID     int64
 }
 
-// GetLiveSeriesMasterOfCalendar for a restore: the master and the rows of
-// the calendar can be in the trash.
-func (q *Queries) GetSeriesMasterOfCalendarIncludingDeleted(ctx context.Context, arg GetSeriesMasterOfCalendarIncludingDeletedParams) (Event, error) {
-	row := q.db.QueryRowContext(ctx, getSeriesMasterOfCalendarIncludingDeleted, arg.Uid, arg.CalendarID)
+// The master whose series owns the rows of one UID in one calendar (see
+// the view event_series_rows). A calendar with its own master gives that
+// master. A calendar with a legacy override gives the owner of that
+// override. Else no row. Without include_deleted, the master and the rows
+// of the calendar must be live. With it, a restore finds them in the
+// trash too.
+func (q *Queries) GetSeriesMasterOfCalendar(ctx context.Context, arg GetSeriesMasterOfCalendarParams) (Event, error) {
+	row := q.db.QueryRowContext(ctx, getSeriesMasterOfCalendar, arg.Uid, arg.IncludeDeleted, arg.CalendarID)
 	var i Event
 	err := row.Scan(
 		&i.ID,
@@ -668,45 +606,6 @@ func (q *Queries) ListDeletedEventsByCalendar(ctx context.Context, calendarID in
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listDeletedSeriesOverrideRecurrenceIDs = `-- name: ListDeletedSeriesOverrideRecurrenceIDs :many
-SELECT events.recurrence_id FROM events
-WHERE events.recurrence_id != '' AND events.deleted_at IS NOT NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
-ORDER BY events.recurrence_id
-`
-
-type ListDeletedSeriesOverrideRecurrenceIDsParams struct {
-	Uid        string
-	CalendarID int64
-}
-
-// The recurrence IDs of the soft-deleted override rows of the series of
-// one UID in one calendar (see ListSeriesOverridesInCalendar).
-func (q *Queries) ListDeletedSeriesOverrideRecurrenceIDs(ctx context.Context, arg ListDeletedSeriesOverrideRecurrenceIDsParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listDeletedSeriesOverrideRecurrenceIDs, arg.Uid, arg.CalendarID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var recurrence_id string
-		if err := rows.Scan(&recurrence_id); err != nil {
-			return nil, err
-		}
-		items = append(items, recurrence_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -1696,49 +1595,6 @@ func (q *Queries) RestoreEvent(ctx context.Context, id int64) error {
 	return err
 }
 
-const restoreEventByCalendarUIDAndRecurrenceID = `-- name: RestoreEventByCalendarUIDAndRecurrenceID :execrows
-UPDATE events SET
-    deleted_at = NULL,
-    sequence = sequence + 1,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NOT NULL
-`
-
-type RestoreEventByCalendarUIDAndRecurrenceIDParams struct {
-	CalendarID   int64
-	Uid          string
-	RecurrenceID string
-}
-
-// Un-hide the soft-deleted override of one occurrence in one calendar.
-// The undo of a delete of a legacy override uses it: the row belongs to
-// no single series, so the restore touches that row only.
-func (q *Queries) RestoreEventByCalendarUIDAndRecurrenceID(ctx context.Context, arg RestoreEventByCalendarUIDAndRecurrenceIDParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, restoreEventByCalendarUIDAndRecurrenceID, arg.CalendarID, arg.Uid, arg.RecurrenceID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const restoreEventByID = `-- name: RestoreEventByID :execrows
-UPDATE events SET
-    deleted_at = NULL,
-    sequence = sequence + 1,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? AND deleted_at IS NOT NULL
-`
-
-// Un-hide one soft-deleted row by ID. The restores that read a delete
-// log use it, and the count tells a purged row from a restored one.
-func (q *Queries) RestoreEventByID(ctx context.Context, id int64) (int64, error) {
-	result, err := q.db.ExecContext(ctx, restoreEventByID, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const restoreEventsByIDs = `-- name: RestoreEventsByIDs :execrows
 UPDATE events SET
     deleted_at = NULL,
@@ -1832,61 +1688,6 @@ type RestoreSeriesOverridesAtOrAfterParams struct {
 func (q *Queries) RestoreSeriesOverridesAtOrAfter(ctx context.Context, arg RestoreSeriesOverridesAtOrAfterParams) error {
 	_, err := q.db.ExecContext(ctx, restoreSeriesOverridesAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
 	return err
-}
-
-const restoreSeriesRowsInCalendar = `-- name: RestoreSeriesRowsInCalendar :execrows
-UPDATE events SET
-    deleted_at = NULL,
-    sequence = sequence + 1,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.deleted_at IS NOT NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
-`
-
-type RestoreSeriesRowsInCalendarParams struct {
-	Uid        string
-	CalendarID int64
-}
-
-// Un-hide every soft-deleted row of the series of one UID in one calendar
-// (see SoftDeleteSeriesRowsInCalendar).
-func (q *Queries) RestoreSeriesRowsInCalendar(ctx context.Context, arg RestoreSeriesRowsInCalendarParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, restoreSeriesRowsInCalendar, arg.Uid, arg.CalendarID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const seriesOwnerCalendarIDs = `-- name: SeriesOwnerCalendarIDs :many
-SELECT s.owner_calendar_id FROM event_series_rows AS s WHERE s.id = ? ORDER BY s.owner_calendar_id
-`
-
-// The calendars whose series own one event row (see event_series_rows).
-// A test compares it with uidmove.LegacyOwner.
-func (q *Queries) SeriesOwnerCalendarIDs(ctx context.Context, id int64) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, seriesOwnerCalendarIDs, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var owner_calendar_id int64
-		if err := rows.Scan(&owner_calendar_id); err != nil {
-			return nil, err
-		}
-		items = append(items, owner_calendar_id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const softDeleteEvent = `-- name: SoftDeleteEvent :exec
