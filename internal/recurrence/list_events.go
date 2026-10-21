@@ -505,11 +505,11 @@ type EventListParams struct {
 	IncludeDeleted bool
 }
 
-// ListFilteredEvents returns events that match all supplied filters. Calendar,
-// status, and date-range filters compose freely. When a date range is
-// provided, recurring events are expanded within it, with overrides applied.
-// Otherwise recurring masters are returned as-is. This matches the
-// todo/journal contract.
+// ListFilteredEvents returns the events that match all the filters. The
+// calendar, status, and date-range filters compose freely. With a date
+// range, the function expands each series in it and applies the
+// overrides. With no range, it returns the series masters as they are.
+// The todo and journal lists use the same contract.
 func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]event.Event, error) {
 	fromStr := rangeBoundUTC(p.From)
 	toStr := rangeBoundUTC(p.To)

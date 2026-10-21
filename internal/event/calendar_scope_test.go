@@ -4245,3 +4245,172 @@ func TestRestoreTruncation_MasterInTrash(t *testing.T) {
 		t.Errorf("restoreTruncationByLogID err = %v, want ErrMasterInTrash", err)
 	}
 }
+
+// TestOrphanLog_RestoreWithMasterElsewhereDropsIt: the orphan log of a row
+// lives in the calendar of the row. When a master of the UID arrives in
+// another calendar, the restore of the row still drops that log, and the
+// trash of the row's calendar lists nothing.
+func TestOrphanLog_RestoreWithMasterElsewhereDropsIt(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-master-elsewhere"
+	calL := insertCalendar(t, svc, "Legacy")
+	at := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
+	row, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: calL, Title: "Orphan",
+		StartTime: at, EndTime: at.Add(time.Hour), RecurrenceID: at.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert orphan: %v", err)
+	}
+	if err := svc.Delete(ctx, row.ID); err != nil {
+		t.Fatalf("Delete(orphan): %v", err)
+	}
+	start := at.Add(-24 * time.Hour)
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: 1, Title: "Master",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	}); err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, row.ID); err != nil {
+		t.Fatalf("RestoreByID(row): %v", err)
+	}
+	logs, err := svc.q.ListEventExdateDeletesByCalendarUID(ctx, storage.ListEventExdateDeletesByCalendarUIDParams{CalendarID: calL, Uid: uid})
+	if err != nil || len(logs) != 0 {
+		t.Errorf("occurrence logs of the row calendar = %d, %v; want 0", len(logs), err)
+	}
+	entries, err := svc.ListTrash(ctx, calL)
+	if err != nil || len(entries) != 0 {
+		t.Errorf("trash entries of the row calendar = %d, %v; want 0", len(entries), err)
+	}
+}
+
+// TestOrphanDelete_NoMasterWritesFreshLog: a series delete of orphan rows
+// in a calendar with no master writes a fresh log. A restore by UID then
+// brings back the rows of that delete only.
+func TestOrphanDelete_NoMasterWritesFreshLog(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-fresh-log"
+	rows := orphanRows(t, svc, uid, 2)
+	if err := svc.DeleteSeries(ctx, 1, uid); err != nil {
+		t.Fatalf("first DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, rows[0].ID); err != nil {
+		t.Fatalf("RestoreByID(row 0): %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, uid); err != nil {
+		t.Fatalf("second DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	for i, wantLive := range []bool{true, false} {
+		r, err := svc.GetIncludingDeleted(ctx, rows[i].ID)
+		if err != nil {
+			t.Fatalf("get row %d: %v", i, err)
+		}
+		if live := r.DeletedAt == nil; live != wantLive {
+			t.Errorf("row %d live = %v, want %v (only the second delete comes back)", i, live, wantLive)
+		}
+	}
+}
+
+// TestEmptiedSeriesLog_StaysBesideTrashedMaster: a restore by ID of the
+// last row of a series-delete log keeps the log, with an empty list, while
+// the master of its calendar is in the trash. RestoreByUID then still
+// ranks that calendar above a trashed copy with no log.
+func TestEmptiedSeriesLog_StaysBesideTrashedMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	if err := svc.DeleteSeries(ctx, masterB.CalendarID, masterB.UID); err != nil {
+		t.Fatalf("DeleteSeries(B): %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `DELETE FROM event_series_deletes WHERE calendar_id = ?`, masterB.CalendarID); err != nil {
+		t.Fatalf("purge the log of B: %v", err)
+	}
+	overrideA, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: masterA.CalendarID, Uid: masterA.UID, RecurrenceID: second.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get override A: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, masterA.CalendarID, masterA.UID); err != nil {
+		t.Fatalf("DeleteSeries(A): %v", err)
+	}
+	if err := svc.RestoreByID(ctx, overrideA.ID); err != nil {
+		t.Fatalf("RestoreByID(override A): %v", err)
+	}
+	log, err := svc.q.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: masterA.CalendarID, Uid: masterA.UID})
+	if err != nil || log.HiddenIds != "" {
+		t.Fatalf("series log of A = %q, %v; want an empty list that stays", log.HiddenIds, err)
+	}
+	if err := svc.RestoreByUID(ctx, masterA.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	if a, err := svc.GetIncludingDeleted(ctx, masterA.ID); err != nil || a.DeletedAt != nil {
+		t.Errorf("master A after the restore = trashed %v, %v; want it live", a.DeletedAt != nil, err)
+	}
+}
+
+// TestMoveLegacyHome_DropsSourceOccurrenceLogs: a legacy row that goes home
+// to its master leaves the occurrence logs of its calendar. They record no
+// delete of the master, and in the master calendar they would strip an
+// imported EXDATE (issue #86).
+func TestMoveLegacyHome_DropsSourceOccurrenceLogs(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	calL := insertCalendar(t, svc, "Legacy")
+	fourth := third.Add(24 * time.Hour)
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calL, Title: "Legacy",
+		StartTime: fourth, EndTime: fourth.Add(time.Hour), RecurrenceID: fourth.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	stale := second.Add(-24 * time.Hour).Format(time.RFC3339)
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id) VALUES (?, ?, ?)`, calL, master.UID, stale); err != nil {
+		t.Fatalf("seed the source log: %v", err)
+	}
+	if _, err := svc.Update(ctx, legacy.ID, UpdateParams{
+		CalendarID: 1, Title: legacy.Title, StartTime: legacy.StartTime, EndTime: legacy.EndTime,
+	}); err != nil {
+		t.Fatalf("move the legacy row home: %v", err)
+	}
+	for _, cal := range []int64{1, calL} {
+		if _, err := svc.q.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
+			CalendarID: cal, Uid: master.UID, RecurrenceID: stale,
+		}); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("source log in calendar %d after the move: err = %v, want none", cal, err)
+		}
+	}
+}
+
+// TestRestoreByID_LiveMasterIsAlreadyRestored: a restore by ID of a live
+// master returns ErrAlreadyRestored, which still matches ErrNotDeleted.
+func TestRestoreByID_LiveMasterIsAlreadyRestored(t *testing.T) {
+	svc := newTestService(t)
+	master, _, _ := singleSeriesWithOverrides(t, svc)
+	err := svc.RestoreByID(context.Background(), master.ID)
+	if !errors.Is(err, ErrAlreadyRestored) || !errors.Is(err, ErrNotDeleted) {
+		t.Errorf("RestoreByID(live master) err = %v, want ErrAlreadyRestored and ErrNotDeleted", err)
+	}
+}
+
+// TestListTrash_HidesStaleOccurrenceLog: an occurrence log in a calendar with
+// no master of its UID and no row names nothing to restore. The trash lists
+// no entry for it.
+func TestListTrash_HidesStaleOccurrenceLog(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	calL := insertCalendar(t, svc, "Stale")
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id) VALUES (?, 'stale-uid', '2026-05-05T09:00:00Z')`, calL); err != nil {
+		t.Fatalf("seed the stale log: %v", err)
+	}
+	entries, err := svc.ListTrash(ctx, calL)
+	if err != nil || len(entries) != 0 {
+		t.Errorf("trash entries = %d, %v; want 0", len(entries), err)
+	}
+}

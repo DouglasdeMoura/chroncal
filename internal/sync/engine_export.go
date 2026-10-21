@@ -132,7 +132,7 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 	if err == nil {
 		// The row with its categories. The hydrate step of the export
 		// loads the relations and owns their failure mode.
-		return e.events.Get(ctx, own.ID)
+		return e.events.FromStorageWithCategories(ctx, own), nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return event.Event{}, fmt.Errorf("get master: %w", err)

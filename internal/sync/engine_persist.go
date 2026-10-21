@@ -261,30 +261,43 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 				CalendarID: calendarID, Uid: uid,
 			})
 		},
-		func(v storage.Event) int64 { return v.ID },
 		func(v storage.Event) string { return v.RecurrenceID },
-		(*storage.Queries).SoftDeleteEvent,
+		pruneEventOverride,
 	); err != nil {
 		return nil, nil, fmt.Errorf("prune stale event overrides: %w", err)
 	}
 	if err := pruneStaleOverrides(ctx, e, calendarID, todoKeep, dirtyBefore, revs,
 		e.q.ListTodoOverridesByUID,
-		func(v storage.Todo) int64 { return v.ID },
 		func(v storage.Todo) string { return v.RecurrenceID },
-		(*storage.Queries).SoftDeleteTodo,
+		func(q *storage.Queries, ctx context.Context, v storage.Todo) error {
+			return q.SoftDeleteTodo(ctx, v.ID)
+		},
 	); err != nil {
 		return nil, nil, fmt.Errorf("prune stale todo overrides: %w", err)
 	}
 	if err := pruneStaleOverrides(ctx, e, calendarID, journalKeep, dirtyBefore, revs,
 		e.q.ListJournalOverridesByUID,
-		func(v storage.Journal) int64 { return v.ID },
 		func(v storage.Journal) string { return v.RecurrenceID },
-		(*storage.Queries).SoftDeleteJournal,
+		func(q *storage.Queries, ctx context.Context, v storage.Journal) error {
+			return q.SoftDeleteJournal(ctx, v.ID)
+		},
 	); err != nil {
 		return nil, nil, fmt.Errorf("prune stale journal overrides: %w", err)
 	}
 
 	return revs, alarmWarnings, nil
+}
+
+// pruneEventOverride hides an event override that the server dropped. It
+// writes the pruned marker of the occurrence, so the restore of a master
+// with no series-delete log leaves the row in the trash.
+func pruneEventOverride(q *storage.Queries, ctx context.Context, v storage.Event) error {
+	if err := q.SoftDeleteEvent(ctx, v.ID); err != nil {
+		return err
+	}
+	return q.RecordEventExdatePrune(ctx, storage.RecordEventExdatePruneParams{
+		CalendarID: v.CalendarID, Uid: v.Uid, RecurrenceID: v.RecurrenceID,
+	})
 }
 
 // keepSets groups imported components into per-UID keep-sets of their
@@ -373,9 +386,8 @@ func pruneStaleOverrides[R any](
 	dirtyBefore map[string]bool,
 	revs map[string]int64,
 	list func(context.Context, string) ([]R, error),
-	idOf func(R) int64,
 	ridOf func(R) string,
-	del func(*storage.Queries, context.Context, int64) error,
+	del func(*storage.Queries, context.Context, R) error,
 ) error {
 	for uid, keep := range keepByUID {
 		if !keep[""] || dirtyBefore[uid] {
@@ -385,10 +397,10 @@ func pruneStaleOverrides[R any](
 		if err != nil {
 			return fmt.Errorf("list overrides %q: %w", uid, err)
 		}
-		var stale []int64
+		var stale []R
 		for _, o := range existing {
 			if !keep[ridOf(o)] {
-				stale = append(stale, idOf(o))
+				stale = append(stale, o)
 			}
 		}
 		// The common case — a resource with no stale overrides — ends here,
@@ -405,8 +417,8 @@ func pruneStaleOverrides[R any](
 			if rev != revs[uid] {
 				return nil
 			}
-			for _, id := range stale {
-				if err := del(qtx, ctx, id); err != nil {
+			for _, o := range stale {
+				if err := del(qtx, ctx, o); err != nil {
 					return err
 				}
 			}

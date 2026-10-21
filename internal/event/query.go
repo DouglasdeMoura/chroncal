@@ -223,6 +223,14 @@ func (s *Service) GetByCalendarUIDAndRecurrenceID(ctx context.Context, calendarI
 
 // Category hydration
 
+// FromStorageWithCategories converts r and loads its categories. A caller
+// that read the row already uses it in place of Get.
+func (s *Service) FromStorageWithCategories(ctx context.Context, r storage.Event) Event {
+	e := FromStorage(r)
+	s.populateSingleCategories(ctx, &e)
+	return e
+}
+
 func (s *Service) populateSingleCategories(ctx context.Context, e *Event) {
 	cats, err := s.ListCategories(ctx, e.ID)
 	if err != nil {

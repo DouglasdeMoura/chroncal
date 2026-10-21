@@ -1,14 +1,25 @@
 -- name: RecordEventExdateDelete :exec
 -- Idempotent: a second delete of the same occurrence in one calendar keeps
--- one log row. Each calendar keeps its own row (issue #842).
+-- one log row. Each calendar keeps its own row (issue #842). A delete of
+-- the user turns a pruned marker of the occurrence into a delete log.
 INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id)
 VALUES (?, ?, ?)
 ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    pruned = 0;
+
+-- name: RecordEventExdatePrune :exec
+-- Write the pruned marker of an override row that a pull prune hid. A
+-- delete log of the same occurrence stays as it is.
+INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, pruned)
+VALUES (?, ?, ?, 1)
+ON CONFLICT(calendar_id, uid, recurrence_id) DO NOTHING;
 
 -- name: ListEventExdateDeletesByCalendar :many
+-- The occurrence delete logs of one calendar for the trash. A pruned marker
+-- is no delete of the user, so it stays out.
 SELECT * FROM event_exdate_deletes
-WHERE calendar_id = ?
+WHERE calendar_id = ? AND pruned = 0
 ORDER BY deleted_at DESC;
 
 -- name: GetEventExdateDelete :one
@@ -17,8 +28,9 @@ SELECT * FROM event_exdate_deletes WHERE id = ?;
 
 -- name: GetEventExdateDeleteByCalendarUIDRecurrence :one
 -- The delete log of one occurrence of the series in one calendar. Two
--- calendars can hold the same UID.
-SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?;
+-- calendars can hold the same UID. A pruned marker is no delete log: the
+-- EXDATE contract must not strip an EXDATE of the server for it.
+SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND pruned = 0;
 
 -- name: DeleteEventExdateDelete :exec
 DELETE FROM event_exdate_deletes WHERE id = ?;
@@ -50,6 +62,7 @@ WHERE event_exdate_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_ex
     WHERE t.calendar_id = sqlc.arg(to_calendar_id) AND t.uid = sqlc.arg(uid));
 
 -- name: ListEventExdateDeletesByCalendarUID :many
--- The occurrence logs of one series in one calendar. The restore of a
--- master with no series-delete log reads them in one query.
+-- The occurrence logs of one series in one calendar, the pruned markers
+-- too. The restore of a master with no series-delete log reads them in one
+-- query, and leaves the rows they name in the trash.
 SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id;
