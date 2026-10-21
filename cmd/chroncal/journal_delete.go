@@ -20,9 +20,11 @@ var journalResource = resource{
 		}
 		return row{ID: j.ID, UID: j.UID, CalendarID: j.CalendarID, Summary: j.Summary}, nil
 	},
-	del: func(ctx context.Context, a *app.App, id int64) error { return a.Journals.Delete(ctx, id) },
-	delSeries: func(ctx context.Context, a *app.App, target row) error {
-		return a.Journals.DeleteSeries(ctx, target.UID)
+	del: func(ctx context.Context, a *app.App, target row) (int64, error) {
+		return target.CalendarID, a.Journals.Delete(ctx, target.ID)
+	},
+	delSeries: func(ctx context.Context, a *app.App, target row) (int64, error) {
+		return target.CalendarID, a.Journals.DeleteSeries(ctx, target.UID)
 	},
 	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Journals.RestoreByID(ctx, id) },
 	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Journals.RestoreByUID(ctx, uid) },

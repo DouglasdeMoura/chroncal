@@ -65,3 +65,38 @@ func TestCheckRowInCalendar_AcceptsEachOwnedLegacyRow(t *testing.T) {
 		}
 	}
 }
+
+// TestEventDeleteHooks_PushTheMasterCalendar: the delete hooks of the event
+// resource return the calendar that the delete wrote. A plain delete of a
+// legacy override and a series delete through the legacy calendar both
+// write the calendar of the master.
+func TestEventDeleteHooks_PushTheMasterCalendar(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid, legacyID := seedLegacyOverrideInHome(t)
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	work, err := resolveCalendarID(ctx, a, "Work")
+	if err != nil {
+		t.Fatalf("resolve Work: %v", err)
+	}
+	home, err := resolveCalendarID(ctx, a, "Home")
+	if err != nil {
+		t.Fatalf("resolve Home: %v", err)
+	}
+	got, err := eventResource.del(ctx, a, row{ID: legacyID, UID: uid, CalendarID: home})
+	if err != nil || got != work {
+		t.Fatalf("del(legacy row) = calendar %d, %v; want Work %d", got, err, work)
+	}
+	if err := a.Events.RestoreByID(ctx, legacyID); err != nil {
+		t.Fatalf("RestoreByID(legacy row): %v", err)
+	}
+	got, err = eventResource.delSeries(ctx, a, row{UID: uid, CalendarID: home})
+	if err != nil || got != work {
+		t.Errorf("delSeries(through Home) = calendar %d, %v; want Work %d", got, err, work)
+	}
+}

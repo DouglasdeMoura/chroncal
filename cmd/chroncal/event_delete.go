@@ -26,7 +26,10 @@ var eventResource = resource{
 		}
 		return row{ID: e.ID, UID: e.UID, CalendarID: e.CalendarID, Summary: e.Title}, nil
 	},
-	del: func(ctx context.Context, a *app.App, id int64) error { return a.Events.Delete(ctx, id) },
+	del: func(ctx context.Context, a *app.App, target row) (int64, error) {
+		meta, err := a.Events.DeleteWithUndo(ctx, target.ID)
+		return meta.PushCalendar(target.CalendarID), err
+	},
 	resolveIn: func(ctx context.Context, a *app.App, ref, calendarName string, series bool) (row, error) {
 		calendarID, err := resolveCalendarID(ctx, a, calendarName)
 		if err != nil {
@@ -50,19 +53,9 @@ var eventResource = resource{
 		}
 		return row{ID: e.ID, UID: e.UID, CalendarID: e.CalendarID, Summary: e.Title}, nil
 	},
-	delSeries: func(ctx context.Context, a *app.App, target row) error {
-		err := a.Events.DeleteSeries(ctx, target.CalendarID, target.UID)
-		if errors.Is(err, event.ErrNotDeleted) {
-			return errNotFoundf("event series %s has no live row in calendar %q", target.UID, calendarName(ctx, a, target.CalendarID))
-		}
-		if errors.Is(err, event.ErrAmbiguousUID) {
-			return ambiguousSeriesErr(err, target.UID, target.CalendarID, calendarName(ctx, a, target.CalendarID), true)
-		}
-		if errors.Is(err, event.ErrSeriesInTrash) {
-			return errInvalidInputf("the series %s is in the trash in calendar %q; restore it first (chroncal event restore), or name the calendar of the live series with --calendar",
-				target.UID, calendarName(ctx, a, target.CalendarID))
-		}
-		return err
+	delSeries: func(ctx context.Context, a *app.App, target row) (int64, error) {
+		meta, err := a.Events.DeleteSeriesWithUndo(ctx, target.CalendarID, target.UID)
+		return meta.PushCalendar(target.CalendarID), seriesDeleteErr(ctx, a, target, err)
 	},
 	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Events.RestoreByID(ctx, id) },
 	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Events.RestoreByUID(ctx, uid) },
@@ -370,4 +363,20 @@ any override at that time). --following truncates the series at that date.`,
 			fmt.Sprintf("Deleted occurrence of %q at %s.\n", safeText(e.Title), occurrenceAt.Format(time.RFC3339)))
 	}
 	return cmd
+}
+
+// seriesDeleteErr maps the error of a series delete of target to the CLI
+// error of that case.
+func seriesDeleteErr(ctx context.Context, a *app.App, target row, err error) error {
+	if errors.Is(err, event.ErrNotDeleted) {
+		return errNotFoundf("event series %s has no live row in calendar %q", target.UID, calendarName(ctx, a, target.CalendarID))
+	}
+	if errors.Is(err, event.ErrAmbiguousUID) {
+		return ambiguousSeriesErr(err, target.UID, target.CalendarID, calendarName(ctx, a, target.CalendarID), true)
+	}
+	if errors.Is(err, event.ErrSeriesInTrash) {
+		return errInvalidInputf("the series %s is in the trash in calendar %q; restore it first (chroncal event restore), or name the calendar of the live series with --calendar",
+			target.UID, calendarName(ctx, a, target.CalendarID))
+	}
+	return err
 }

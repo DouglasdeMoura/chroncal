@@ -137,13 +137,7 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 	case pendingActionEventDelete:
 		ev := act.target.ev
 		return m, func() tea.Msg {
-			meta, err := m.app.Events.DeleteWithUndo(context.Background(), ev.ID)
-			return eventDeletedMsg{
-				calendarID: ev.CalendarID,
-				meta:       meta,
-				title:      ev.Title,
-				err:        err,
-			}
+			return runEventDelete(context.Background(), m.app, ev)
 		}
 	default:
 		// Nothing destructive waits behind this confirm. No fallback
@@ -178,11 +172,14 @@ func runEventDeleteScope(ctx context.Context, a *app.App, ev event.Event, choice
 	default:
 		return eventDeletedMsg{calendarID: ev.CalendarID}
 	}
-	calendarID := ev.CalendarID
-	if err == nil && meta.CalendarID != 0 {
-		calendarID = meta.CalendarID
-	}
-	return eventDeletedMsg{calendarID: calendarID, meta: meta, title: ev.Title, err: err}
+	return eventDeletedMsg{calendarID: meta.PushCalendar(ev.CalendarID), meta: meta, title: ev.Title, err: err}
+}
+
+// runEventDelete deletes the row of ev. The message names the calendar that
+// the delete wrote (event.UndoMeta.PushCalendar), as the CLI does.
+func runEventDelete(ctx context.Context, a *app.App, ev event.Event) eventDeletedMsg {
+	meta, err := a.Events.DeleteWithUndo(ctx, ev.ID)
+	return eventDeletedMsg{calendarID: meta.PushCalendar(ev.CalendarID), meta: meta, title: ev.Title, err: err}
 }
 
 // validateEventDeleteScope checks an instance-scoped recurring delete against

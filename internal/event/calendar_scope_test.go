@@ -3851,3 +3851,208 @@ func TestRestoreTruncationByLogID_GuardsReadOnlyCalendar(t *testing.T) {
 		t.Errorf("restoreTruncationByLogID err = %v, want ErrReadOnly", err)
 	}
 }
+
+// TestSeriesView_BesideMaster: the view column beside_master is 1 for an
+// override beside its master and 0 for a legacy override.
+func TestSeriesView_BesideMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	calL := insertCalendar(t, svc, "Legacy")
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calL, Title: "Legacy",
+		StartTime: second, EndTime: second.Add(time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	own, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get own override: %v", err)
+	}
+	for id, want := range map[int64]int64{own.ID: 1, legacy.ID: 0} {
+		var got int64
+		if err := svc.db.QueryRowContext(ctx, `SELECT beside_master FROM event_series_rows WHERE id = ?`, id).Scan(&got); err != nil || got != want {
+			t.Errorf("beside_master of row %d = %d, %v; want %d", id, got, err, want)
+		}
+	}
+}
+
+// TestTruncation_SecondOverLogWithoutRowIDs: a second truncation at the
+// cutoff of a log from before migration 057, with no hidden_ids, resolves
+// the recurrence IDs of that log to its trashed rows. The merged log then
+// names the rows of both truncations.
+func TestTruncation_SecondOverLogWithoutRowIDs(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	truncate := func() {
+		t.Helper()
+		tx, err := svc.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer tx.Rollback()
+		qtx := svc.q.WithTx(tx)
+		m, err := qtx.GetEventIncludingDeleted(ctx, master.ID)
+		if err != nil {
+			t.Fatalf("get master: %v", err)
+		}
+		if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, m, second, master.RecurrenceRule); err != nil {
+			t.Fatalf("truncate: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	}
+	truncate()
+	if _, err := svc.db.ExecContext(ctx, `UPDATE event_truncate_deletes SET hidden_ids = NULL WHERE uid = ?`, master.UID); err != nil {
+		t.Fatalf("make the log pre-057: %v", err)
+	}
+	fourth := third.Add(24 * time.Hour)
+	late, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Late import",
+		StartTime: fourth, EndTime: fourth.Add(time.Hour), RecurrenceID: fourth.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert late override: %v", err)
+	}
+	truncate()
+	log, err := svc.q.GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx, storage.GetEventTruncateDeleteByCalendarUIDAndCutoffParams{
+		CalendarID: 1, Uid: master.UID, CutoffTime: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get truncation log: %v", err)
+	}
+	ids, err := parseRowIDs(storage.NullableToString(log.HiddenIds))
+	if err != nil {
+		t.Fatalf("parse hidden ids: %v", err)
+	}
+	if len(ids) != 3 || !strings.Contains(storage.NullableToString(log.HiddenIds), strconv.FormatInt(late.ID, 10)) {
+		t.Errorf("hidden_ids = %q, want the two first rows and the late row %d", storage.NullableToString(log.HiddenIds), late.ID)
+	}
+}
+
+// TestUndoLegacyOverrideDelete_ClearsMasterEXDATE: the undo of a delete of
+// a legacy override names the master that the delete wrote, so it clears
+// the EXDATE on that master.
+func TestUndoLegacyOverrideDelete_ClearsMasterEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	calL := insertCalendar(t, svc, "Legacy")
+	fourth := second.Add(48 * time.Hour)
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calL, Title: "Legacy",
+		StartTime: fourth, EndTime: fourth.Add(time.Hour), RecurrenceID: fourth.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	meta, err := svc.DeleteWithUndo(ctx, legacy.ID)
+	if err != nil {
+		t.Fatalf("DeleteWithUndo(legacy): %v", err)
+	}
+	if meta.MasterID != master.ID || meta.CalendarID != 1 {
+		t.Fatalf("undo meta = master %d, calendar %d; want master %d, calendar 1", meta.MasterID, meta.CalendarID, master.ID)
+	}
+	exdates := func() string {
+		t.Helper()
+		m, err := svc.GetIncludingDeleted(ctx, master.ID)
+		if err != nil {
+			t.Fatalf("get master: %v", err)
+		}
+		return m.ExDates
+	}
+	if !strings.Contains(exdates(), fourth.Format("20060102")) && !strings.Contains(exdates(), fourth.Format(time.RFC3339)) {
+		t.Fatalf("master EXDATE after the delete = %q, want the occurrence", exdates())
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if got := exdates(); got != "" {
+		t.Errorf("master EXDATE after the undo = %q, want none", got)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("legacy row after the undo = trashed %v, %v; want it live", r.DeletedAt != nil, err)
+	}
+}
+
+// TestRestoreByUID_OrphanFallbackTakesNewestDelete: with no master and no
+// series-delete log, the restore by UID takes the one calendar with rows in
+// the trash, and brings back its rows of the newest delete. An older delete
+// and a row that an occurrence log names stay in the trash. Two calendars
+// give ErrAmbiguousUID.
+func TestRestoreByUID_OrphanFallbackTakesNewestDelete(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-newest"
+	base := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
+	ids := make([]int64, 0, 4)
+	for i := 0; i < 4; i++ {
+		at := base.Add(time.Duration(i) * 24 * time.Hour)
+		r, err := svc.UpsertByUID(ctx, UpsertParams{
+			UID: uid, CalendarID: 1, Title: "Orphan",
+			StartTime: at, EndTime: at.Add(time.Hour), RecurrenceID: at.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("upsert orphan %d: %v", i, err)
+		}
+		ids = append(ids, r.ID)
+	}
+	trash := func(id int64, at string) {
+		t.Helper()
+		if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = ? WHERE id = ?`, at, id); err != nil {
+			t.Fatalf("trash row %d: %v", id, err)
+		}
+	}
+	trash(ids[0], "2026-05-01T10:00:00Z")
+	for _, id := range ids[1:] {
+		trash(id, "2026-05-02T10:00:00Z")
+	}
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id) VALUES (1, ?, ?)`,
+		uid, base.Add(72*time.Hour).Format(time.RFC3339)); err != nil {
+		t.Fatalf("seed the occurrence log: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	for i, wantLive := range []bool{false, true, true, false} {
+		r, err := svc.GetIncludingDeleted(ctx, ids[i])
+		if err != nil {
+			t.Fatalf("get row %d: %v", i, err)
+		}
+		if live := r.DeletedAt == nil; live != wantLive {
+			t.Errorf("row %d live = %v, want %v", i, live, wantLive)
+		}
+	}
+	calY := insertCalendar(t, svc, "Y")
+	other, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: calY, Title: "Orphan Y",
+		StartTime: base, EndTime: base.Add(time.Hour), RecurrenceID: base.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert orphan in Y: %v", err)
+	}
+	trash(other.ID, "2026-05-03T10:00:00Z")
+	if err := svc.RestoreByUID(ctx, uid); !errors.Is(err, ErrAmbiguousUID) {
+		t.Errorf("RestoreByUID with trashed rows in two calendars = %v, want ErrAmbiguousUID", err)
+	}
+}
+
+// TestCommaList_EmptyFields: the comma-list helpers skip an empty field and
+// keep the order of the union.
+func TestCommaList_EmptyFields(t *testing.T) {
+	ids, err := parseRowIDs("1,,2,")
+	if err != nil || len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
+		t.Fatalf("parseRowIDs = %v, %v; want [1 2]", ids, err)
+	}
+	merged, err := unionCommaList([]int64{2, 3}, "1,,2", parseRowID)
+	if err != nil || formatRowIDs(merged) != "2,3,1" {
+		t.Errorf("unionCommaList = %v, %v; want 2,3,1", merged, err)
+	}
+	recIDs, err := unionCommaList([]string{"b"}, ",a,b", parseRecurrenceID)
+	if err != nil || strings.Join(recIDs, ",") != "b,a" {
+		t.Errorf("unionCommaList(recurrence IDs) = %v, %v; want b,a", recIDs, err)
+	}
+}

@@ -209,6 +209,7 @@ type EventSeriesRow struct {
 	RecurrenceID    string
 	DeletedAt       *string
 	OwnerCalendarID int64
+	BesideMaster    int64
 }
 
 type EventTruncateDelete struct {

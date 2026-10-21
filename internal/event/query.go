@@ -127,7 +127,7 @@ func (s *Service) GetByCalendarUID(ctx context.Context, calendarID int64, uid st
 // ErrAmbiguousOverride with the row IDs: the CLI delete and get resolve a
 // UID and a recurrence ID with it, and the user chooses the row. A live
 // master with no override at the occurrence gives the one live row outside
-// the live series (occurrenceOutsideSeries). A UID with no live master
+// the live series (oneLiveRowAt). A UID with no live master
 // reads its orphan instances (OrphanOccurrence). To name the series, use
 // SeriesOverride or GetByCalendarUIDAndRecurrenceID.
 func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID string) (Event, error) {
@@ -139,42 +139,45 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 		// The live series has no row at the occurrence. A calendar with
 		// its own master in the trash can hold a live row there, outside
 		// the live series.
-		return s.occurrenceOutsideSeries(ctx, master, uid, recurrenceID)
+		return s.oneLiveRowAt(ctx, uid, recurrenceID, master.CalendarID)
 	case !errors.Is(err, sql.ErrNoRows):
 		return Event{}, err
 	}
 	return s.OrphanOccurrence(ctx, uid, recurrenceID)
 }
 
-// occurrenceOutsideSeries returns the one live row of the occurrence that
-// the live series of master does not own. More rows give an
-// *AmbiguousOverrideError. No row gives sql.ErrNoRows.
-func (s *Service) occurrenceOutsideSeries(ctx context.Context, master Event, uid, recurrenceID string) (Event, error) {
+// oneLiveRowAt returns the one live row of uid at recurrenceID outside the
+// calendar skip, in one query. 0 skips no calendar. No row gives
+// sql.ErrNoRows. More rows give an *AmbiguousOverrideError beside a live
+// series (skip set), and ErrAmbiguousUID for orphan rows (skip 0).
+func (s *Service) oneLiveRowAt(ctx context.Context, uid, recurrenceID string, skip int64) (Event, error) {
 	rows, err := s.q.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
 		Uid: uid, RecurrenceID: recurrenceID,
 	})
 	if err != nil {
 		return Event{}, err
 	}
-	outside := make([]storage.Event, 0, len(rows))
+	kept := make([]storage.Event, 0, len(rows))
 	for _, r := range rows {
-		if r.CalendarID != master.CalendarID {
-			outside = append(outside, r)
+		if r.CalendarID != skip {
+			kept = append(kept, r)
 		}
 	}
-	switch len(outside) {
-	case 0:
+	switch {
+	case len(kept) == 0:
 		return Event{}, sql.ErrNoRows
-	case 1:
-		e := FromStorage(outside[0])
-		s.populateSingleCategories(ctx, &e)
-		return e, nil
+	case len(kept) > 1 && skip == 0:
+		return Event{}, ErrAmbiguousUID
+	case len(kept) > 1:
+		ids := make([]int64, len(kept))
+		for i, r := range kept {
+			ids[i] = r.ID
+		}
+		return Event{}, &AmbiguousOverrideError{IDs: ids}
 	}
-	ids := make([]int64, len(outside))
-	for i, r := range outside {
-		ids[i] = r.ID
-	}
-	return Event{}, &AmbiguousOverrideError{IDs: ids}
+	e := FromStorage(kept[0])
+	s.populateSingleCategories(ctx, &e)
+	return e, nil
 }
 
 // OrphanOccurrence returns the live row of one occurrence of a UID with no
@@ -182,23 +185,7 @@ func (s *Service) occurrenceOutsideSeries(ctx context.Context, master Event, uid
 // Google instance under its own UID. With one row, that row is the result.
 // With more, the lookup cannot choose, so it returns ErrAmbiguousUID.
 func (s *Service) OrphanOccurrence(ctx context.Context, uid, recurrenceID string) (Event, error) {
-	rows, err := s.q.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
-		Uid:          uid,
-		RecurrenceID: recurrenceID,
-	})
-	if err != nil {
-		return Event{}, err
-	}
-	switch len(rows) {
-	case 0:
-		return Event{}, sql.ErrNoRows
-	case 1:
-	default:
-		return Event{}, ErrAmbiguousUID
-	}
-	e := FromStorage(rows[0])
-	s.populateSingleCategories(ctx, &e)
-	return e, nil
+	return s.oneLiveRowAt(ctx, uid, recurrenceID, 0)
 }
 
 func (s *Service) GetByCalendarUIDAndRecurrenceID(ctx context.Context, calendarID int64, uid, recurrenceID string) (Event, error) {

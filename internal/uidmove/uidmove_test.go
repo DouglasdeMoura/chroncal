@@ -276,3 +276,26 @@ func TestLegacyOwner(t *testing.T) {
 		}
 	}
 }
+
+// TestTieBefore: the tie rule orders by recurrence ID, then the row beside
+// the master, then the lowest ID.
+func TestTieBefore(t *testing.T) {
+	own := OverrideTie{RecurrenceID: "2026-05-05T09:00:00Z", BesideMaster: true, ID: 9}
+	legacyLow := OverrideTie{RecurrenceID: "2026-05-05T09:00:00Z", ID: 3}
+	legacyHigh := OverrideTie{RecurrenceID: "2026-05-05T09:00:00Z", ID: 7}
+	earlier := OverrideTie{RecurrenceID: "2026-05-04T09:00:00Z", ID: 99}
+	for _, tc := range []struct {
+		name string
+		a, b OverrideTie
+		want bool
+	}{
+		{"own row before a legacy row of lower ID", own, legacyLow, true},
+		{"legacy row after the own row", legacyLow, own, false},
+		{"lower ID first among legacy rows", legacyLow, legacyHigh, true},
+		{"earlier occurrence first", earlier, own, true},
+	} {
+		if got := TieBefore(tc.a, tc.b); got != tc.want {
+			t.Errorf("%s: TieBefore = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

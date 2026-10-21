@@ -322,6 +322,30 @@ func (r Rows) Record(ctx context.Context, fromCalendarID, toCalendarID int64, ta
 	})
 }
 
+// OverrideTie names one override row for the tie rule of one occurrence.
+// BesideMaster is true for a row in the calendar of the master that owns
+// it, and false for a legacy override.
+type OverrideTie struct {
+	RecurrenceID string
+	BesideMaster bool
+	ID           int64
+}
+
+// TieBefore reports whether a comes before b in the order of the tie rule:
+// the recurrence ID, then the row beside the master, then the lowest ID. The
+// first row of an occurrence wins. The view column beside_master of
+// migration 057 is the SQL form, and the series override queries order by
+// it. The expansion sorts in Go with this function.
+func TieBefore(a, b OverrideTie) bool {
+	if a.RecurrenceID != b.RecurrenceID {
+		return a.RecurrenceID < b.RecurrenceID
+	}
+	if a.BesideMaster != b.BesideMaster {
+		return a.BesideMaster
+	}
+	return a.ID < b.ID
+}
+
 // LegacyOwner names the calendar whose series owns a legacy override of the
 // UID. A legacy override is an override row in a calendar with no master row
 // of its UID (see storage.LegacyOverride). masters holds every master row of

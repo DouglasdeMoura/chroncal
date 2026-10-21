@@ -74,7 +74,7 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if !includeDeleted {
 		// A live edit sees the live masters only: two masters in the
 		// trash make no ambiguity for a live legacy override.
-		masters = filterMasters(masters, false)
+		masters = liveMasters(masters)
 	}
 	if _, _, ambiguous := uidmove.LegacyOwner(masters); !ambiguous {
 		return storage.Event{}, sql.ErrNoRows
@@ -107,7 +107,7 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 	if !includeDeleted {
 		// A live lookup wants a live master. With none, the UID is not
 		// found, also when two calendars hold it in the trash.
-		masters = filterMasters(masters, false)
+		masters = liveMasters(masters)
 	}
 	owner, ok, ambiguous := uidmove.LegacyOwner(masters)
 	if ambiguous {
@@ -124,12 +124,11 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 	return storage.Event{}, sql.ErrNoRows
 }
 
-// filterMasters returns the masters in the trash (trashed true) or the
-// live masters (trashed false).
-func filterMasters(masters []uidmove.Master, trashed bool) []uidmove.Master {
+// liveMasters returns the live masters of masters.
+func liveMasters(masters []uidmove.Master) []uidmove.Master {
 	out := make([]uidmove.Master, 0, len(masters))
 	for _, m := range masters {
-		if m.Trashed == trashed {
+		if !m.Trashed {
 			out = append(out, m)
 		}
 	}
@@ -229,9 +228,10 @@ func (s *Service) seriesOccurrence(ctx context.Context, calendarID int64, uid, r
 		return Event{}, nil, err
 	}
 	master := FromStorage(m)
-	s.populateSingleCategories(ctx, &master)
 	r, err := findInstanceOverrideTx(ctx, s.q, m, recID, strict)
 	if errors.Is(err, sql.ErrNoRows) {
+		// The caller uses the master, so its categories load now only.
+		s.populateSingleCategories(ctx, &master)
 		return master, nil, nil
 	}
 	if err != nil {
