@@ -8,11 +8,6 @@ SELECT * FROM events
 WHERE calendar_id = ? AND start_time < ? AND end_time > ? AND deleted_at IS NULL
 ORDER BY start_time;
 
--- name: ListOverridesByUID :many
-SELECT * FROM events
-WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL
-ORDER BY recurrence_id;
-
 -- name: GetEvent :one
 SELECT * FROM events WHERE id = ? AND deleted_at IS NULL;
 
@@ -294,16 +289,6 @@ UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id));
-
--- name: CountSeriesRowsInTrash :one
--- Count the soft-deleted rows of the series of one UID in one calendar
--- (see SoftDeleteSeriesRowsInCalendar). A restore by UID reads it to
--- learn whether the series of the live master has rows to restore.
-SELECT COUNT(*) FROM events
-WHERE events.deleted_at IS NOT NULL
   AND events.id IN (
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id));

@@ -16,9 +16,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
-// overrideQueryMarker is the SQL fragment shared by every override-fetch query
-// (both the per-master ListOverridesByUID and the batched ListOverridesByUIDs).
-// A count of queries that contain it measures the N+1 the fix eliminates.
+// overrideQueryMarker is the SQL fragment of each override query: the batched
+// ListOverridesByUIDs and its owner lookup ListSeriesOwnersByUIDs. A count of
+// queries that contain it measures the N+1 the fix eliminates.
 const overrideQueryMarker = "recurrence_id != ''"
 
 // countingDriver wraps another database/sql driver and counts executed override
@@ -127,8 +127,9 @@ func TestListExpandedByDateRange_BatchesOverrideFetch(t *testing.T) {
 		t.Fatalf("ListExpandedByDateRange: %v", err)
 	}
 
-	if got := atomic.LoadInt64(counter); got != 1 {
-		t.Errorf("override fetch issued %d queries for %d masters, want 1 (no N+1)", got, masters)
+	// One override fetch and one owner lookup, for any count of masters.
+	if got := atomic.LoadInt64(counter); got != 2 {
+		t.Errorf("override fetch issued %d queries for %d masters, want 2 (no N+1)", got, masters)
 	}
 
 	// Behavior check: each master yields two in-window occurrences (Jan 5 master

@@ -29,9 +29,35 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 	if err != nil {
 		return nil, err
 	}
+	// The owner rule of the view event_series_rows attaches a legacy
+	// override to the master that owns it, as delete, export, edit, and
+	// restore do. A row with no owner keeps its own calendar.
+	owners, err := s.q.ListSeriesOwnersByUIDs(ctx, uids)
+	if err != nil {
+		return nil, err
+	}
+	ownerOf := make(map[int64]int64, len(owners))
+	for _, o := range owners {
+		ownerOf[o.ID] = o.OwnerCalendarID
+	}
 	byUID := make(map[string][]storage.Event, len(rows))
+	// One row per occurrence and series: the row of the owner calendar
+	// wins over a legacy row, as in event.Service.ListSeriesOverrides.
+	at := make(map[string]int, len(rows))
 	for _, r := range rows {
-		key := seriesKey(r.CalendarID, r.Uid)
+		owner, ok := ownerOf[r.ID]
+		if !ok {
+			owner = r.CalendarID
+		}
+		key := seriesKey(owner, r.Uid)
+		occ := key + "\x00" + r.RecurrenceID
+		if i, seen := at[occ]; seen {
+			if r.CalendarID == owner && byUID[key][i].CalendarID != owner {
+				byUID[key][i] = r
+			}
+			continue
+		}
+		at[occ] = len(byUID[key])
 		byUID[key] = append(byUID[key], r)
 	}
 	return byUID, nil

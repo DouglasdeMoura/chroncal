@@ -3,9 +3,8 @@ package storage
 import "context"
 
 // ListOverridesByUIDs returns all recurrence overrides (rows with a non-empty
-// recurrence_id) for the given master UIDs. It is the batched form of
-// ListOverridesByUID, used by recurrence expansion to avoid one SELECT per
-// master. Results are ordered by uid then recurrence_id; soft-deleted rows are
+// recurrence_id) for the given master UIDs. Recurrence expansion uses it
+// to avoid one SELECT per master. Results are ordered by uid then recurrence_id; soft-deleted rows are
 // excluded. The UIDs are chunked so the IN clause never exceeds SQLite's
 // parameter limit. Hand-written because database/sql has no slice-parameter
 // support.
@@ -19,6 +18,44 @@ func (q *Queries) ListOverridesByUIDs(ctx context.Context, uids []string) ([]Eve
 			return nil, err
 		}
 		out = append(out, rows...)
+	}
+	return out, nil
+}
+
+// SeriesOwner names the owner calendar of one override row.
+type SeriesOwner struct {
+	ID              int64
+	OwnerCalendarID int64
+}
+
+// ListSeriesOwnersByUIDs returns the owner calendar of each live override
+// row of the UIDs. It reads the view event_series_rows of migration 057.
+// The result has no row for an override with no owner. The UIDs go in
+// chunks, as in ListOverridesByUIDs.
+func (q *Queries) ListSeriesOwnersByUIDs(ctx context.Context, uids []string) ([]SeriesOwner, error) {
+	var out []SeriesOwner
+	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
+		placeholders, args := expandStringPlaceholders(chunk)
+		query := "SELECT id, owner_calendar_id FROM event_series_rows WHERE uid IN (" + placeholders +
+			") AND recurrence_id != '' AND deleted_at IS NULL /* ListSeriesOwnersByUIDs */"
+		rows, err := q.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var o SeriesOwner
+			if err := rows.Scan(&o.ID, &o.OwnerCalendarID); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out = append(out, o)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

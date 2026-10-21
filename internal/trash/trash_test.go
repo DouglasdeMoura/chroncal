@@ -329,3 +329,23 @@ func TestService_ListPopulatesCategories(t *testing.T) {
 		}
 	}
 }
+
+// TestService_PurgeOldCountsSeriesLogs: PurgeOld reports the old
+// series-delete logs that it drops.
+func TestService_PurgeOldCountsSeriesLogs(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, deleted_at) VALUES (1, 'old-series', '', '2020-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed series log: %v", err)
+	}
+	counts, err := svc.PurgeOld(ctx, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("PurgeOld: %v", err)
+	}
+	if counts.EventSeriesLogs != 1 {
+		t.Errorf("EventSeriesLogs = %d, want 1", counts.EventSeriesLogs)
+	}
+}

@@ -241,7 +241,7 @@ func TestPush_OwnedElsewhereKeepsServerObject(t *testing.T) {
 // is in the trash, while another calendar holds a live master, exports a
 // live override beside the trashed master (a restore by ID) as an orphan
 // instance, so the row reaches the server.
-func TestExportResource_LiveRowBesideTrashedMaster(t *testing.T) {
+func TestExportResource_LiveRowBesideTrashedMaster_Refused(t *testing.T) {
 	t.Parallel()
 	engine, _, _, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
@@ -255,12 +255,48 @@ func TestExportResource_LiveRowBesideTrashedMaster(t *testing.T) {
 	if err := engine.events.RestoreByID(ctx, overrideB.ID); err != nil {
 		t.Fatalf("RestoreByID(override B): %v", err)
 	}
-	data, err := engine.exportResource(ctx, calB, "event", masterA.UID)
-	if err != nil {
-		t.Fatalf("exportResource(B): %v", err)
+	if _, err := engine.exportResource(ctx, calB, "event", masterA.UID); !errors.Is(err, errResourceMissing) {
+		t.Fatalf("exportResource(B) err = %v, want errResourceMissing (the master of B is in the trash)", err)
 	}
-	if !strings.Contains(string(data), "SUMMARY:Late") || strings.Contains(string(data), "RRULE") {
-		t.Errorf("export of B = want the live override as an orphan instance and no master:\n%s", data)
+}
+
+// TestPush_LiveRowBesideTrashedMasterKeepsServerSeries: a dirty UID whose
+// calendar holds its own master in the trash and a live override does not
+// PUT the override alone. The server object of the series stays.
+func TestPush_LiveRowBesideTrashedMasterKeepsServerSeries(t *testing.T) {
+	t.Parallel()
+	engine, _, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	masterA := createSeries(t, engine, calA)
+	masterB, overrideB, _ := createSeriesWithOverride(t, engine, calB)
+	sameUID(t, engine, masterB.ID, masterA.UID)
+	sameUID(t, engine, overrideB.ID, masterA.UID)
+	if err := engine.events.DeleteSeries(ctx, calB, masterA.UID); err != nil {
+		t.Fatalf("DeleteSeries(B): %v", err)
+	}
+	if err := engine.events.RestoreByID(ctx, overrideB.ID); err != nil {
+		t.Fatalf("RestoreByID(override B): %v", err)
+	}
+	path := "/cal/b/" + masterA.UID + ".ics"
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:" + masterA.UID +
+		"\r\nDTSTART:20260518T090000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Series\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	srv.mu.Lock()
+	srv.objects[path] = body
+	srv.mu.Unlock()
+	if _, err := engine.db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, remote_url) VALUES (?, ?, 'event', 1, 'sync-token', ?)
+		 ON CONFLICT DO UPDATE SET dirty = 1, remote_url = excluded.remote_url`,
+		calB, masterA.UID, path); err != nil {
+		t.Fatalf("seed sync row: %v", err)
+	}
+	if res, err := engine.PushLocalEdits(ctx, calB); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("push B = %+v, %v", res, err)
+	}
+	srv.mu.Lock()
+	got := srv.objects[path]
+	srv.mu.Unlock()
+	if got != body {
+		t.Errorf("server object after the push = %q, want the series body unchanged", got)
 	}
 }
 

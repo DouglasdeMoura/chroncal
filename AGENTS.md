@@ -91,6 +91,8 @@ A calendar move of a UID moves every row of that UID as one unit. The move rules
 
 Two calendars can hold an event series with the same UID (issue #842). A series lookup takes the calendar of the series (`findSeriesMasterTx` in `internal/event/series_scope.go`). A legacy override is an override row in a calendar with no master of its UID. `uidmove.LegacyOwner` names the series that owns it. The one live master of the UID owns it. With no live master, the one master in the trash owns it. The view `event_series_rows` of migration 057 holds that rule in SQL, and the series queries in `db/queries/events.sql` read the view. To change the rule, add a new migration. The migration drops the view and creates it again with the new rule. Change `uidmove.LegacyOwner` in the same change. See `db/migrations/README.md` for the view and for a rebuild of the `events` table.
 
+A calendar with its own master in the trash keeps its live rows local. A restore of such a row writes no sync state. The export refuses the UID, so a push never sends a body with no master over the object of the series.
+
 ### Alarms
 
 Triggers are RFC 5545 duration strings (`-PT15M` = 15 minutes before). Absolute triggers use RFC 3339. The `alarm_state` and `todo_alarm_state` tables store the state (`fired_at`, `acknowledged_at`, `snooze_until`). The service skips alarms older than 24 hours (`alarm.StaleThreshold`). The service fires extra alarms at `Duration` intervals, up to the `Repeat` count.
@@ -140,7 +142,7 @@ Confirm dialogs focus Cancel by default (`form.FocusCancel()`). A quick Enter ca
 Three rules keep the suite fast. Follow them in every new test.
 
 1. Never touch the real OS keyring. `TestMain` in `cmd/chroncal/main_test.go` sets `CHRONCAL_SECURITY_DISABLE_KEYRING=1` for the test binary and its child processes. A locked desktop keyring blocks each D-Bus call for the full method timeout. One credential command then stalls a test for tens of seconds.
-2. Take test databases from `internal/testutil`. Use `testutil.NewTestDB(t)` or `testutil.DBPath(t)`. Do not call `storage.Open` on a fresh path per test. A fresh open runs the full migration set and costs about a quarter second of CPU.
+2. Take test databases from `internal/testutil`. Use `testutil.NewTestDB(t)` or `testutil.DBPath(t)`. Do not call `storage.Open` on a fresh path per test. A fresh open runs the full migration set and costs about a quarter second of CPU. Migration up/down tests in internal/storage are the one exception, because they must run the migration set.
 3. Keep `tea.Tick` on the fake clock. A `tea.Tick` starts its timer when the code builds the command, not when the command runs. Run the model update and the command check inside one `synctest.Test` bubble. See `batchEmits` in `internal/tui/oauth_wiring_test.go`.
 
 ## Common Tasks

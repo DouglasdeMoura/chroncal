@@ -3202,10 +3202,10 @@ func TestListSeriesOverrides_OneRowPerOccurrence(t *testing.T) {
 	}
 }
 
-// TestUndoOverrideOfTrashedMaster_ReconcilesSync: the undo of an override
-// delete while the master is in the trash reconciles the sync state, as
-// the restore by ID does.
-func TestUndoOverrideOfTrashedMaster_ReconcilesSync(t *testing.T) {
+// TestUndoOverrideOfTrashedMaster_KeepsTombstone: the undo of an override
+// delete while the master is in the trash keeps the series tombstone, as
+// the restore by ID does. The row stays local until the master comes back.
+func TestUndoOverrideOfTrashedMaster_KeepsTombstone(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	master, second, _ := singleSeriesWithOverrides(t, svc)
@@ -3236,9 +3236,10 @@ func TestUndoOverrideOfTrashedMaster_ReconcilesSync(t *testing.T) {
 	if err := svc.RestoreUndo(ctx, meta); err != nil {
 		t.Fatalf("RestoreUndo: %v", err)
 	}
+	// The master stays in the trash, so the tombstone of the series stays.
 	tombstones, err := svc.q.ListTombstonesByCalendar(ctx, 1)
-	if err != nil || len(tombstones) != 0 {
-		t.Errorf("tombstones after the undo = %d, %v; want 0", len(tombstones), err)
+	if err != nil || len(tombstones) != 1 {
+		t.Errorf("tombstones after the undo = %d, %v; want 1 (the series is in the trash)", len(tombstones), err)
 	}
 }
 
@@ -3287,5 +3288,98 @@ func TestRestoreUndo_SingleWithoutRecord(t *testing.T) {
 	meta := UndoMeta{Kind: UndoKindSingle, UID: master.UID, CalendarID: 1, RecurrenceID: second.Format(time.RFC3339)}
 	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrNotDeleted) {
 		t.Fatalf("RestoreUndo without a record err = %v, want ErrNotDeleted", err)
+	}
+}
+
+// TestRestoreOverrideByID_TrashedOwnMasterKeepsTombstone: a restore by ID
+// of an override beside its own master in the trash keeps the series
+// tombstone and gives the UID no dirty mark.
+func TestRestoreOverrideByID_TrashedOwnMasterKeepsTombstone(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	override, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	if err := svc.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: 1, Uid: master.UID, OwnerType: "event",
+		RemoteUrl: "https://example.com/cal/series.ics", Etag: "etag-1", SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("upsert sync resource: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if tombstones, err := svc.q.ListTombstonesByCalendar(ctx, 1); err != nil || len(tombstones) != 1 {
+		t.Fatalf("tombstones after the series delete = %d, %v; want 1", len(tombstones), err)
+	}
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID(override): %v", err)
+	}
+	if tombstones, err := svc.q.ListTombstonesByCalendar(ctx, 1); err != nil || len(tombstones) != 1 {
+		t.Errorf("tombstones after the restore = %d, %v; want 1 (the master is in the trash)", len(tombstones), err)
+	}
+	var dirty int64
+	if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_resources WHERE calendar_id = 1 AND uid = ? AND dirty = 1`, master.UID).Scan(&dirty); err != nil || dirty != 0 {
+		t.Errorf("dirty sync rows after the restore = %d, %v; want 0", dirty, err)
+	}
+}
+
+// liveRowBesideTrashedMaster adds a series of uid to a new calendar,
+// moves the series to the trash, and restores its override at at by ID.
+// The calendar then holds one live row outside the live series.
+func liveRowBesideTrashedMaster(t *testing.T, svc *Service, name, uid string, start, at time.Time) Event {
+	t.Helper()
+	ctx := context.Background()
+	cal := insertCalendar(t, svc, name)
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: cal, Title: name,
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	}); err != nil {
+		t.Fatalf("upsert master %s: %v", name, err)
+	}
+	row, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: cal, Title: name + " late",
+		StartTime: at.Add(time.Hour), EndTime: at.Add(2 * time.Hour), RecurrenceID: at.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert override %s: %v", name, err)
+	}
+	if err := svc.DeleteSeries(ctx, cal, uid); err != nil {
+		t.Fatalf("DeleteSeries(%s): %v", name, err)
+	}
+	if err := svc.RestoreByID(ctx, row.ID); err != nil {
+		t.Fatalf("RestoreByID(%s override): %v", name, err)
+	}
+	return row
+}
+
+// TestGetByUIDAndRecurrenceID_RowOutsideLiveSeries: with a live master and
+// no override at the occurrence, the one live row of another calendar at
+// the occurrence is the result. Two such rows give an
+// *AmbiguousOverrideError.
+func TestGetByUIDAndRecurrenceID_RowOutsideLiveSeries(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "outside-uid"
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: 1, Title: "Live",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	}); err != nil {
+		t.Fatalf("upsert live master: %v", err)
+	}
+	rowB := liveRowBesideTrashedMaster(t, svc, "B", uid, start, second)
+	got, err := svc.GetByUIDAndRecurrenceID(ctx, uid, second.Format(time.RFC3339))
+	if err != nil || got.ID != rowB.ID {
+		t.Fatalf("GetByUIDAndRecurrenceID = %d, %v; want the row %d of calendar B", got.ID, err, rowB.ID)
+	}
+	rowC := liveRowBesideTrashedMaster(t, svc, "C", uid, start, second)
+	_, err = svc.GetByUIDAndRecurrenceID(ctx, uid, second.Format(time.RFC3339))
+	var amb *AmbiguousOverrideError
+	if !errors.As(err, &amb) || len(amb.IDs) != 2 || amb.IDs[0] != rowB.ID || amb.IDs[1] != rowC.ID {
+		t.Errorf("GetByUIDAndRecurrenceID err = %v; want an AmbiguousOverrideError with IDs %d and %d", err, rowB.ID, rowC.ID)
 	}
 }

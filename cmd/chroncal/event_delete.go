@@ -37,7 +37,7 @@ var eventResource = resource{
 				// A series delete of a UID in a calendar goes straight to
 				// the service. Its errors decide: the orphan rows of a
 				// calendar with no live master, or a series in the trash.
-				return row{UID: ref, CalendarID: calendarID, Summary: ref}, nil
+				return row{UID: ref, CalendarID: calendarID, Summary: seriesSummary(ctx, a, calendarID, ref)}, nil
 			}
 		}
 		resolve := resolveRowIn
@@ -160,6 +160,19 @@ func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID
 		return event.Event{}, ambiguousSeriesErr(err, ref, calendarID, wantCalendar, true)
 	}
 	return e, nil
+}
+
+// seriesSummary returns the title of the series of uid in calendarID for
+// a prompt: the title of its master, live or in the trash, or else of the
+// first live row of the UID in the calendar. With neither, it is the UID.
+func seriesSummary(ctx context.Context, a *app.App, calendarID int64, uid string) string {
+	if m, err := a.Events.SeriesMasterIncludingDeleted(ctx, calendarID, uid); err == nil {
+		return m.Title
+	}
+	if rows, err := a.Events.ListLiveOverridesInCalendar(ctx, calendarID, uid); err == nil && len(rows) > 0 {
+		return rows[0].Title
+	}
+	return uid
 }
 
 // checkRowInCalendar accepts a row of calendarID. It also accepts a legacy
