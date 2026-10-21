@@ -252,9 +252,13 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 
 	// Prune overrides the server dropped (e.g. a deleted instance that became
 	// an EXDATE on the master); see pruneStaleOverrides for the safety gates.
+	// The server object holds the series of the calendar: its own overrides
+	// and the legacy overrides it owns in other calendars (the view
+	// event_series_rows). A legacy row that the object no longer carries goes
+	// too.
 	if err := pruneStaleOverrides(ctx, e, calendarID, eventKeep, dirtyBefore, revs,
 		func(ctx context.Context, uid string) ([]storage.Event, error) {
-			return e.q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{
+			return e.q.ListSeriesOverridesInCalendar(ctx, storage.ListSeriesOverridesInCalendarParams{
 				CalendarID: calendarID, Uid: uid,
 			})
 		},

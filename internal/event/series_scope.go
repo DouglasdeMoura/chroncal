@@ -252,6 +252,12 @@ func (s *Service) SeriesMasterIncludingDeleted(ctx context.Context, calendarID i
 	return FromStorage(r), nil
 }
 
+// IsSeriesRowOf reports whether the series of calendarID owns the row id:
+// a row of that calendar, or a legacy override that the series owns.
+func (s *Service) IsSeriesRowOf(ctx context.Context, calendarID, id int64) (bool, error) {
+	return s.q.IsSeriesRowOfCalendar(ctx, storage.IsSeriesRowOfCalendarParams{ID: id, CalendarID: calendarID})
+}
+
 // ListLiveOverridesInCalendar returns the live override rows of uid in
 // calendarID with no series rule. The sync export of a calendar that holds
 // orphan instances reads it (see ListLiveOverridesInCalendarByUID).

@@ -10,10 +10,11 @@ import (
 
 // TestMarkResourceDirtyKeepsTrashedSeriesInItsCalendar holds one UID in A
 // and B. A holds a master and an override, both in the trash, as a delete
-// of the series leaves them. B holds a live master. A mark of A must stay
-// in A: a master in the trash still owns its calendar, so the override of
-// A is not a legacy override (see uidmove). A legacy override in C, a
-// calendar with no master row, sends its mark to B.
+// of the series leaves them. B holds a live master. A mark of A goes to no
+// calendar: a master in the trash still owns its calendar, so the override
+// of A is not a legacy override (see uidmove), and the rows of A stay local
+// until the master comes back. A legacy override in C, a calendar with no
+// master row, sends its mark to B.
 func TestMarkResourceDirtyKeepsTrashedSeriesInItsCalendar(t *testing.T) {
 	t.Parallel()
 	db, q := testutil.NewTestDB(t)
@@ -63,8 +64,8 @@ func TestMarkResourceDirtyKeepsTrashedSeriesInItsCalendar(t *testing.T) {
 	if err := storage.MarkResourceDirty(ctx, db, calA, "u1", "event"); err != nil {
 		t.Fatalf("MarkResourceDirty A: %v", err)
 	}
-	if !dirty(calA) || dirty(calB) {
-		t.Fatalf("after a mark of A: A dirty = %v, B dirty = %v; want only A", dirty(calA), dirty(calB))
+	if dirty(calA) || dirty(calB) {
+		t.Fatalf("after a mark of A: A dirty = %v, B dirty = %v; want neither", dirty(calA), dirty(calB))
 	}
 	if err := storage.MarkResourceDirty(ctx, db, calC, "u1", "event"); err != nil {
 		t.Fatalf("MarkResourceDirty C: %v", err)
