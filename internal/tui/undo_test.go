@@ -189,3 +189,24 @@ func TestUndoStack_Remove_DistinguishesTruncationsByCutoff(t *testing.T) {
 			top.Meta.CutoffTime, cutoffC)
 	}
 }
+
+// TestUndoStack_Remove_DistinguishesCalendars: two calendars hold one UID
+// (issue #842). Remove of the series delete of one calendar must not
+// drop the entry of the other calendar.
+func TestUndoStack_Remove_DistinguishesCalendars(t *testing.T) {
+	s := NewUndoStack()
+	entryA := UndoEntry{Meta: event.UndoMeta{Kind: event.UndoKindSeries, UID: "series-X", CalendarID: 1}}
+	entryB := UndoEntry{Meta: event.UndoMeta{Kind: event.UndoKindSeries, UID: "series-X", CalendarID: 2}}
+	s.Push(entryA)
+	s.Push(entryB)
+	if !s.Remove(entryA.Meta) {
+		t.Fatal("Remove(A) reported no match")
+	}
+	if s.Len() != 1 {
+		t.Fatalf("Len after Remove(A) = %d, want 1", s.Len())
+	}
+	top, ok := s.Peek()
+	if !ok || top.Meta.CalendarID != 2 {
+		t.Fatalf("Remove removed the wrong calendar: surviving CalendarID = %d, want 2", top.Meta.CalendarID)
+	}
+}

@@ -435,3 +435,22 @@ UPDATE events SET
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
+
+-- name: ListEventCalendarIDsByIDs :many
+-- The calendars of a set of rows, live or in the trash. The access guard
+-- of a log-driven restore reads it in one query.
+SELECT DISTINCT calendar_id FROM events WHERE id IN (sqlc.slice(ids)) ORDER BY calendar_id;
+
+-- name: RestoreEventsByIDs :execrows
+-- Un-hide a set of soft-deleted rows by ID in one statement. The count
+-- tells the rows that came back from the rows that were live or purged.
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id IN (sqlc.slice(ids)) AND deleted_at IS NOT NULL;
+
+-- name: ListLiveEventCalendarIDsByUID :many
+-- Every calendar that holds a live row of one UID. A series delete with
+-- no calendar and no live master picks the one calendar of the rows.
+SELECT DISTINCT calendar_id FROM events WHERE uid = ? AND deleted_at IS NULL ORDER BY calendar_id;

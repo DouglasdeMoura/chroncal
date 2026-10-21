@@ -421,10 +421,11 @@ func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log st
 		if err := ensureRowsWritableTx(ctx, qtx, log.CalendarID, ids); err != nil {
 			return err
 		}
-		for _, id := range ids {
-			if err := qtx.RestoreEvent(ctx, id); err != nil {
-				return fmt.Errorf("restore override row %d: %w", id, err)
-			}
+		if len(ids) == 0 {
+			return nil
+		}
+		if _, err := qtx.RestoreEventsByIDs(ctx, ids); err != nil {
+			return fmt.Errorf("restore override rows: %w", err)
 		}
 		return nil
 	}

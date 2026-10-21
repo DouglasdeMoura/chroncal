@@ -186,6 +186,43 @@ func (q *Queries) ListEventTruncateDeletesByCalendarUID(ctx context.Context, arg
 	return items, nil
 }
 
+const listEventTruncateDeletesByUID = `-- name: ListEventTruncateDeletesByUID :many
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes WHERE uid = ? ORDER BY calendar_id, cutoff_time
+`
+
+func (q *Queries) ListEventTruncateDeletesByUID(ctx context.Context, uid string) ([]EventTruncateDelete, error) {
+	rows, err := q.db.QueryContext(ctx, listEventTruncateDeletesByUID, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventTruncateDelete
+	for rows.Next() {
+		var i EventTruncateDelete
+		if err := rows.Scan(
+			&i.ID,
+			&i.CalendarID,
+			&i.Uid,
+			&i.CutoffTime,
+			&i.PreviousRrule,
+			&i.DeletedAt,
+			&i.HiddenOverrides,
+			&i.RemovedRdates,
+			&i.HiddenIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const moveEventTruncateDeletesUIDToCalendar = `-- name: MoveEventTruncateDeletesUIDToCalendar :exec
 UPDATE event_truncate_deletes SET calendar_id = ?1
 WHERE calendar_id = ?2 AND uid = ?3
@@ -248,5 +285,21 @@ func (q *Queries) RecordEventTruncateDelete(ctx context.Context, arg RecordEvent
 		arg.RemovedRdates,
 		arg.HiddenIds,
 	)
+	return err
+}
+
+const updateEventTruncateDeleteHiddenIds = `-- name: UpdateEventTruncateDeleteHiddenIds :exec
+UPDATE event_truncate_deletes SET hidden_ids = ? WHERE id = ?
+`
+
+type UpdateEventTruncateDeleteHiddenIdsParams struct {
+	HiddenIds *string
+	ID        int64
+}
+
+// Rewrite the hidden rows of one log row (see
+// UpdateEventSeriesDeleteHiddenIds).
+func (q *Queries) UpdateEventTruncateDeleteHiddenIds(ctx context.Context, arg UpdateEventTruncateDeleteHiddenIdsParams) error {
+	_, err := q.db.ExecContext(ctx, updateEventTruncateDeleteHiddenIds, arg.HiddenIds, arg.ID)
 	return err
 }
