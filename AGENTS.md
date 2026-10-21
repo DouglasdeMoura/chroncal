@@ -91,7 +91,9 @@ A calendar move of a UID moves every row of that UID as one unit. The move rules
 
 Two calendars can hold an event series with the same UID (issue #842). A series lookup takes the calendar of the series (`findSeriesMasterTx` in `internal/event/series_scope.go`). A legacy override is an override row in a calendar with no master of its UID. `uidmove.LegacyOwner` names the series that owns it. The one live master of the UID owns it. With no live master, the one master in the trash owns it. The view `event_series_rows` of migration 057 holds that rule in SQL, and the series queries in `db/queries/events.sql` read the view. To change the rule, add a new migration. The migration drops the view and creates it again with the new rule. Change `uidmove.LegacyOwner` in the same change. See `db/migrations/README.md` for the view and for a rebuild of the `events` table.
 
-A calendar with its own master in the trash keeps its live rows local. A restore of such a row writes no sync state. The export refuses the UID, so a push never sends a body with no master over the object of the series.
+A series with its master in the trash keeps its live rows local. This rule applies to the rows beside the master and to the legacy overrides that it owns. A restore or an edit of such a row writes no sync state. The export refuses the UID, so a push never sends a body with no master over the object of the series.
+
+Two legacy overrides of one series can hold the same occurrence. The expansion, the export, and the edit of the occurrence use one rule: the row of the owner calendar wins, then the lowest ID. Only a delete by UID and recurrence ID returns `ErrAmbiguousOverride`, so the user chooses the row.
 
 ### Alarms
 

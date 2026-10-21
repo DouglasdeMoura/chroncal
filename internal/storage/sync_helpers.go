@@ -21,7 +21,7 @@ func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 		return nil
 	}
 	calendarID, err := dirtyCalendar(ctx, db, calendarID, uid, ownerType)
-	if err != nil {
+	if err != nil || calendarID == 0 {
 		return err
 	}
 	// Only act if the calendar is linked to an account.
@@ -113,54 +113,72 @@ func LegacyOverride(ownMasterRows int64) bool {
 }
 
 // dirtyCalendar returns the calendar whose sync row a write of a row of uid
-// in calendarID must mark dirty.
+// in calendarID must mark dirty. 0 means no calendar gets the mark.
 //
 // The export of a UID in one calendar holds the master of that calendar, its
-// overrides, and the legacy overrides of the UID. See LegacyOverride and the
-// query ListSeriesOverridesInCalendar (issue #842). A calendar with a legacy
-// override and no master exports no master, so a dirty mark on it pushes
-// nothing useful. So the mark can move. Take a calendarID with a legacy
-// override row of uid, live or in the trash. When exactly one calendar holds
-// a live master, the mark goes to that calendar. Each other case marks
-// calendarID. A master in the trash keeps the mark in its calendar. A delete
-// of a series in A must not send its mark to a live copy of the UID in B.
+// overrides, and the legacy overrides that its series owns. See
+// LegacyOverride and the view event_series_rows (issue #842). A calendar with
+// a legacy override and no master exports nothing of it, so the mark moves.
+// For a legacy override of an event, the owner rule of the view decides:
+//   - A live owner master gets the mark in its calendar.
+//   - An owner master in the trash gets no mark. The rows stay local until
+//     the master comes back, as the export rule of sync requires.
+//   - With no owner, calendarID gets the mark.
+//
+// For a todo or a journal, the one calendar with a live master gets the
+// mark. Else calendarID gets it.
 //
 // The common case (calendarID holds the master) costs one aggregate lookup
 // on the UNIQUE(calendar_id, uid, recurrence_id) key. Only the legacy case
-// reads the masters of the UID.
+// reads the owner.
 func dirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) (int64, error) {
 	q := New(db)
 	// own counts the master rows and the override rows of uid in
-	// calendarID. masterCalendars counts the calendars with a live master
-	// and gives the lowest of them.
-	var own, masterCalendars func() (int64, int64, error)
+	// calendarID. owner gives the calendar of a legacy override.
+	var own func() (int64, int64, error)
+	var owner func() (int64, error)
+	oneLiveMaster := func(calendars, first int64) int64 {
+		if calendars == 1 {
+			return first
+		}
+		return calendarID
+	}
 	switch ownerType {
 	case "event":
 		own = func() (int64, int64, error) {
 			r, err := q.CountEventUIDRowsInCalendar(ctx, CountEventUIDRowsInCalendarParams{CalendarID: calendarID, Uid: uid, IncludeDeleted: true})
 			return r.Masters, r.Overrides, err
 		}
-		masterCalendars = func() (int64, int64, error) {
-			r, err := q.EventUIDMasterCalendars(ctx, uid)
-			return r.Calendars, r.CalendarID, err
+		owner = func() (int64, error) {
+			m, err := q.GetSeriesMasterOfCalendar(ctx, GetSeriesMasterOfCalendarParams{CalendarID: calendarID, Uid: uid, IncludeDeleted: true})
+			found, err := Found(err)
+			switch {
+			case err != nil:
+				return 0, err
+			case !found:
+				return calendarID, nil
+			case m.DeletedAt != nil:
+				return 0, nil
+			}
+			return m.CalendarID, nil
 		}
 	case "todo":
 		own = func() (int64, int64, error) {
 			r, err := q.CountTodoUIDRowsInCalendar(ctx, CountTodoUIDRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
 			return r.Masters, r.Overrides, err
 		}
-		masterCalendars = func() (int64, int64, error) {
+		owner = func() (int64, error) {
 			r, err := q.TodoUIDMasterCalendars(ctx, uid)
-			return r.Calendars, r.CalendarID, err
+			return oneLiveMaster(r.Calendars, r.CalendarID), err
 		}
 	case "journal":
 		own = func() (int64, int64, error) {
 			r, err := q.CountJournalUIDRowsInCalendar(ctx, CountJournalUIDRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
 			return r.Masters, r.Overrides, err
 		}
-		masterCalendars = func() (int64, int64, error) {
+		owner = func() (int64, error) {
 			r, err := q.JournalUIDMasterCalendars(ctx, uid)
-			return r.Calendars, r.CalendarID, err
+			return oneLiveMaster(r.Calendars, r.CalendarID), err
 		}
 	default:
 		return calendarID, nil
@@ -172,14 +190,11 @@ func dirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerTyp
 	if ownOverrides == 0 || !LegacyOverride(ownMasters) {
 		return calendarID, nil
 	}
-	calendars, first, err := masterCalendars()
+	target, err := owner()
 	if err != nil {
-		return 0, fmt.Errorf("find master calendars: %w", err)
+		return 0, fmt.Errorf("find the owner calendar: %w", err)
 	}
-	if calendars == 1 {
-		return first, nil
-	}
-	return calendarID, nil
+	return target, nil
 }
 
 // ErrMoveOpenConflict reports a move of a UID that has an open sync conflict

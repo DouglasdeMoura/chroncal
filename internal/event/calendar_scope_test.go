@@ -1725,8 +1725,8 @@ func TestUndo_OrphanOverride(t *testing.T) {
 }
 
 // TestDeleteInstance_TwoLegacyOverridesAtOneOccurrence: two legacy rows
-// of one occurrence, both owned by the one master, give an error that
-// names the rows.
+// of one occurrence, both owned by the one master, give a delete error
+// that names the rows. A lookup of the occurrence takes the lowest ID.
 func TestDeleteInstance_TwoLegacyOverridesAtOneOccurrence(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1760,8 +1760,8 @@ func TestDeleteInstance_TwoLegacyOverridesAtOneOccurrence(t *testing.T) {
 			t.Errorf("error %q does not name row %d", err, id)
 		}
 	}
-	if _, err := svc.SeriesOverride(ctx, 1, master.UID, second.Format(time.RFC3339)); !errors.Is(err, ErrAmbiguousOverride) {
-		t.Errorf("SeriesOverride err = %v, want ErrAmbiguousOverride", err)
+	if got, err := svc.SeriesOverride(ctx, 1, master.UID, second.Format(time.RFC3339)); err != nil || got.ID != ids[0] {
+		t.Errorf("SeriesOverride = %d, %v; want the lowest ID %d", got.ID, err, ids[0])
 	}
 }
 
@@ -3381,5 +3381,178 @@ func TestGetByUIDAndRecurrenceID_RowOutsideLiveSeries(t *testing.T) {
 	var amb *AmbiguousOverrideError
 	if !errors.As(err, &amb) || len(amb.IDs) != 2 || amb.IDs[0] != rowB.ID || amb.IDs[1] != rowC.ID {
 		t.Errorf("GetByUIDAndRecurrenceID err = %v; want an AmbiguousOverrideError with IDs %d and %d", err, rowB.ID, rowC.ID)
+	}
+}
+
+// TestTwoLegacyRowsAtOneOccurrence_OneWinner: with two legacy rows of one
+// occurrence, the lookup, the edit, and the export list take the same row:
+// the lowest ID.
+func TestTwoLegacyRowsAtOneOccurrence_OneWinner(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "winner-uid", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	ids := make([]int64, 0, 2)
+	for _, name := range []string{"Legacy C", "Legacy D"} {
+		cal := insertCalendar(t, svc, name)
+		row, err := svc.UpsertByUID(ctx, UpsertParams{
+			UID: master.UID, CalendarID: cal, Title: name,
+			StartTime: second, EndTime: second.Add(time.Hour), RecurrenceID: second.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("upsert %s: %v", name, err)
+		}
+		ids = append(ids, row.ID)
+	}
+	listed := mustListSeriesOverrides(t, svc, 1, master.UID)
+	if len(listed) != 1 || listed[0].ID != ids[0] {
+		t.Fatalf("ListSeriesOverrides = %+v, want the row %d once", listed, ids[0])
+	}
+	edited, err := svc.UpdateInstance(ctx, 1, master.UID, second, UpdateParams{
+		Title: "Edited", StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour),
+	})
+	if err != nil || edited.ID != ids[0] {
+		t.Fatalf("UpdateInstance = %d, %v; want the row %d", edited.ID, err, ids[0])
+	}
+	other, err := svc.Get(ctx, ids[1])
+	if err != nil || other.Title != "Legacy D" {
+		t.Errorf("the other row = %q, %v; want it unchanged", other.Title, err)
+	}
+}
+
+// TestInsertMaster_DropsOrphanSeriesLog: a new live master in a calendar
+// consumes the series-delete log of its orphan rows. A later series delete
+// then writes a fresh log, and its restore leaves the old orphan rows in
+// the trash.
+func TestInsertMaster_DropsOrphanSeriesLog(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-then-master"
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	orphan, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: 1, Title: "Orphan",
+		StartTime: second, EndTime: second.Add(time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert orphan: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, uid); err != nil {
+		t.Fatalf("DeleteSeries(orphan rows): %v", err)
+	}
+	logs := func() int64 {
+		t.Helper()
+		var n int64
+		if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_series_deletes WHERE calendar_id = 1 AND uid = ?`, uid).Scan(&n); err != nil {
+			t.Fatalf("count logs: %v", err)
+		}
+		return n
+	}
+	if n := logs(); n != 1 {
+		t.Fatalf("series logs after the orphan delete = %d, want 1", n)
+	}
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: 1, Title: "Master",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	}); err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	if n := logs(); n != 0 {
+		t.Fatalf("series logs after the master insert = %d, want 0", n)
+	}
+	if err := svc.DeleteSeries(ctx, 1, uid); err != nil {
+		t.Fatalf("DeleteSeries(master): %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, orphan.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("old orphan row after the restore = trashed %v, %v; want it still in the trash", r.DeletedAt != nil, err)
+	}
+}
+
+// TestRestoreByUID_LogBeatsTrashedCopy: a calendar with a series-delete log
+// wins over a calendar with a master in the trash and no log, for example
+// an old copy whose log the purge dropped.
+func TestRestoreByUID_LogBeatsTrashedCopy(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, _ := twoCalendarSeries(t, svc)
+	if err := svc.DeleteSeries(ctx, masterB.CalendarID, masterB.UID); err != nil {
+		t.Fatalf("DeleteSeries(B): %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `DELETE FROM event_series_deletes WHERE calendar_id = ?`, masterB.CalendarID); err != nil {
+		t.Fatalf("purge the log of B: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, masterA.CalendarID, masterA.UID); err != nil {
+		t.Fatalf("DeleteSeries(A): %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, masterA.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	if a, err := svc.GetIncludingDeleted(ctx, masterA.ID); err != nil || a.DeletedAt != nil {
+		t.Errorf("master A after the restore = trashed %v, %v; want it live", a.DeletedAt != nil, err)
+	}
+	if b, err := svc.GetIncludingDeleted(ctx, masterB.ID); err != nil || b.DeletedAt == nil {
+		t.Errorf("master B after the restore = trashed %v, %v; want it still in the trash", b.DeletedAt != nil, err)
+	}
+	// With no log anywhere, two trashed masters stay ambiguous.
+	if err := svc.DeleteSeries(ctx, masterA.CalendarID, masterA.UID); err != nil {
+		t.Fatalf("DeleteSeries(A) again: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `DELETE FROM event_series_deletes`); err != nil {
+		t.Fatalf("purge the logs: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, masterA.UID); !errors.Is(err, ErrAmbiguousUID) {
+		t.Errorf("RestoreByUID with two trashed masters and no log = %v, want ErrAmbiguousUID", err)
+	}
+}
+
+// TestRestoreByUID_NoMasterReconcilesRestoredCalendarsOnly: the restore of
+// a UID with no master row reconciles the calendars where rows came back.
+// The tombstone of a calendar where no row came back stays.
+func TestRestoreByUID_NoMasterReconcilesRestoredCalendarsOnly(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-reconcile"
+	calY := insertCalendar(t, svc, "Y")
+	at := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
+	rows := make(map[int64]int64, 2)
+	for _, cal := range []int64{1, calY} {
+		r, err := svc.UpsertByUID(ctx, UpsertParams{
+			UID: uid, CalendarID: cal, Title: "Orphan",
+			StartTime: at, EndTime: at.Add(time.Hour), RecurrenceID: at.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("upsert orphan in %d: %v", cal, err)
+		}
+		rows[cal] = r.ID
+		if err := svc.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+			CalendarID: cal, Uid: uid, OwnerType: "event",
+			RemoteUrl: "https://example.com/" + strconv.FormatInt(cal, 10) + ".ics", Etag: "e", SyncStrategy: "sync-token",
+		}); err != nil {
+			t.Fatalf("upsert sync resource: %v", err)
+		}
+		if _, err := storage.CreateTombstoneIfSynced(ctx, svc.db, cal, uid); err != nil {
+			t.Fatalf("tombstone: %v", err)
+		}
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE id = ?`, rows[1]); err != nil {
+		t.Fatalf("trash the row of calendar 1: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	for cal, want := range map[int64]int{1: 0, calY: 1} {
+		if got, err := svc.q.ListTombstonesByCalendar(ctx, cal); err != nil || len(got) != want {
+			t.Errorf("tombstones of calendar %d = %d, %v; want %d", cal, len(got), err, want)
+		}
 	}
 }

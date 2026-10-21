@@ -251,45 +251,18 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 		if err := ensureSeriesWritableIn(ctx, s.q, 0, uid); err != nil {
 			return err
 		}
-		n, err := s.restoreEventsByUID(ctx, uid)
+		calendars, err := s.q.RestoreEventsByUID(ctx, uid)
 		if err != nil {
-			return err
+			return fmt.Errorf("restore by uid: %w", err)
 		}
-		if n == 0 {
+		if len(calendars) == 0 {
 			return ErrNotDeleted
 		}
-		return s.reconcileRestoredCalendars(ctx, uid)
+		return s.reconcileRestoredCalendars(ctx, uid, calendars)
 	}
-	// candidates maps the calendar of a candidate to whether it holds a
-	// master row of the UID.
-	candidates := make(map[int64]bool)
-	for _, m := range rows {
-		if m.DeletedAt != nil {
-			candidates[m.CalendarID] = true
-		}
-	}
-	for _, log := range logs {
-		if _, ok := candidates[log.CalendarID]; ok {
-			continue
-		}
-		holds := false
-		for _, m := range rows {
-			if m.CalendarID == log.CalendarID {
-				holds = true
-			}
-		}
-		candidates[log.CalendarID] = holds
-	}
-	switch {
-	case len(candidates) == 0:
-		return ErrNotDeleted
-	case len(candidates) > 1:
-		return ErrAmbiguousUID
-	}
-	var calendarID int64
-	var holdsMaster bool
-	for id, holds := range candidates {
-		calendarID, holdsMaster = id, holds
+	calendarID, holdsMaster, err := restoreCandidate(rows, logs)
+	if err != nil {
+		return err
 	}
 	if err := ensureSeriesWritableIn(ctx, s.q, calendarID, uid); err != nil {
 		return err
@@ -304,16 +277,55 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	return s.reconcileSyncAfterRestore(ctx, calendarID, uid)
 }
 
-// reconcileRestoredCalendars reconciles the sync state of every calendar that
-// holds a row of uid. The restore of a UID with no master row uses it.
-// Without this, a pending tombstone survives the restore. The next sync would
-// then DELETE the series from the server right after a successful restore.
-func (s *Service) reconcileRestoredCalendars(ctx context.Context, uid string) error {
-	ids, err := s.q.ListEventCalendarIDsByUID(ctx, uid)
-	if err != nil {
-		return err
+// restoreCandidate chooses the calendar whose series delete RestoreByUID
+// reverses. holdsMaster reports whether that calendar holds a master row
+// of the UID. The candidates have two ranks:
+//  1. A calendar with a series-delete log of the UID. The log records a
+//     series delete that no restore consumed.
+//  2. A calendar with a master in the trash and no log, for example an
+//     old copy whose log the purge dropped.
+//
+// The highest rank with a candidate decides. One candidate there is the
+// result. Two or more give ErrAmbiguousUID. No candidate gives
+// ErrNotDeleted.
+func restoreCandidate(masters []storage.Event, logs []storage.EventSeriesDelete) (calendarID int64, holdsMaster bool, err error) {
+	holds := make(map[int64]bool, len(masters))
+	var trashed []int64
+	for _, m := range masters {
+		holds[m.CalendarID] = true
+		if m.DeletedAt != nil {
+			trashed = append(trashed, m.CalendarID)
+		}
 	}
-	for _, id := range ids {
+	ranked := make([]int64, 0, len(logs))
+	for _, l := range logs {
+		ranked = append(ranked, l.CalendarID)
+	}
+	if len(ranked) == 0 {
+		ranked = trashed
+	}
+	switch len(ranked) {
+	case 0:
+		return 0, false, ErrNotDeleted
+	case 1:
+		return ranked[0], holds[ranked[0]], nil
+	}
+	return 0, false, ErrAmbiguousUID
+}
+
+// reconcileRestoredCalendars reconciles the sync state of each calendar in
+// calendars for uid. The restore of a UID with no master row passes the
+// calendars where rows came back. Without this, a pending tombstone
+// survives the restore. The next sync would then DELETE the series from
+// the server right after a successful restore. A calendar where no row
+// came back keeps its sync state.
+func (s *Service) reconcileRestoredCalendars(ctx context.Context, uid string, calendars []int64) error {
+	done := make(map[int64]bool, len(calendars))
+	for _, id := range calendars {
+		if done[id] {
+			continue
+		}
+		done[id] = true
 		if err := s.reconcileSyncAfterRestore(ctx, id, uid); err != nil {
 			return err
 		}
@@ -1071,19 +1083,6 @@ func truncationHidden(ctx context.Context, qtx *storage.Queries, calendarID int6
 	}, nil
 }
 
-// restoreEventsByUID un-hides every soft-deleted row for uid in every
-// calendar. The restore of a UID with no master row uses it: the rows
-// belong to no series, so no EXDATE needs a clear. Returns the number of
-// rows un-hidden so callers can distinguish a real restore from a no-op
-// (live/unknown UID).
-func (s *Service) restoreEventsByUID(ctx context.Context, uid string) (int64, error) {
-	n, err := s.q.RestoreEventsByUID(ctx, uid)
-	if err != nil {
-		return 0, fmt.Errorf("restore by uid: %w", err)
-	}
-	return n, nil
-}
-
 // clearMasterEXDATE reverses the EXDATE an instance-delete added for
 // recurrenceID on the live master event with uid in calendarID. The
 // provenance contract lives in softdelete.ClearMasterEXDATE; this wrapper
@@ -1385,7 +1384,7 @@ func (s *Service) deleteInstance(ctx context.Context, calendarID int64, uid stri
 	}
 
 	recID := instanceTime.UTC().Format(time.RFC3339)
-	override, oErr := findInstanceOverrideTx(ctx, qtx, master, recID)
+	override, oErr := findInstanceOverrideTx(ctx, qtx, master, recID, true)
 	// Only ErrNoRows means "this occurrence has no override row". A genuine
 	// lookup error must abort. Otherwise the EXDATE and its provenance commit
 	// while the live override row stays. The deleted occurrence then stays
@@ -1509,12 +1508,10 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 	hiddenList := strings.Join(recIDs, ",")
 	hiddenIDs := formatRowIDs(rowIDs)
 
-	if err := qtx.SoftDeleteSeriesOverridesAtOrAfter(ctx, storage.SoftDeleteSeriesOverridesAtOrAfterParams{
-		CalendarID:   master.CalendarID,
-		Uid:          uid,
-		RecurrenceID: cutoff,
-	}); err != nil {
-		return fmt.Errorf("soft-delete future overrides: %w", err)
+	if len(rowIDs) > 0 {
+		if err := qtx.SoftDeleteEventsByIDs(ctx, rowIDs); err != nil {
+			return fmt.Errorf("soft-delete future overrides: %w", err)
+		}
 	}
 
 	if err := qtx.RecordEventTruncateDelete(ctx, storage.RecordEventTruncateDeleteParams{

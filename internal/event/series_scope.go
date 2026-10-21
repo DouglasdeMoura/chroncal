@@ -204,7 +204,7 @@ func (s *Service) SeriesOverride(ctx context.Context, calendarID int64, uid, rec
 	if err != nil {
 		return Event{}, err
 	}
-	r, err := findInstanceOverrideTx(ctx, s.q, master, recID)
+	r, err := findInstanceOverrideTx(ctx, s.q, master, recID, false)
 	if err != nil {
 		return Event{}, err
 	}
@@ -218,13 +218,19 @@ func (s *Service) SeriesOverride(ctx context.Context, calendarID int64, uid, rec
 // occurrence recID in that series. override is nil with no stored override.
 // The CLI resolves an occurrence edit with it.
 func (s *Service) SeriesOccurrence(ctx context.Context, calendarID int64, uid, recID string) (Event, *Event, error) {
+	return s.seriesOccurrence(ctx, calendarID, uid, recID, false)
+}
+
+// seriesOccurrence is SeriesOccurrence. strict names the rule for two
+// legacy rows of the occurrence (see findInstanceOverrideTx).
+func (s *Service) seriesOccurrence(ctx context.Context, calendarID int64, uid, recID string, strict bool) (Event, *Event, error) {
 	m, err := findSeriesMasterTx(ctx, s.q, calendarID, uid)
 	if err != nil {
 		return Event{}, nil, err
 	}
 	master := FromStorage(m)
 	s.populateSingleCategories(ctx, &master)
-	r, err := findInstanceOverrideTx(ctx, s.q, m, recID)
+	r, err := findInstanceOverrideTx(ctx, s.q, m, recID, strict)
 	if errors.Is(err, sql.ErrNoRows) {
 		return master, nil, nil
 	}

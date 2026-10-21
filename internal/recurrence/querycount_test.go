@@ -17,7 +17,7 @@ import (
 )
 
 // overrideQueryMarker is the SQL fragment of each override query: the batched
-// ListOverridesByUIDs and its owner lookup ListSeriesOwnersByUIDs. A count of
+// ListOverridesByUIDs and the owner lookup ListSeriesOwnersByUIDs. A count of
 // queries that contain it measures the N+1 the fix eliminates.
 const overrideQueryMarker = "recurrence_id != ''"
 
@@ -127,9 +127,10 @@ func TestListExpandedByDateRange_BatchesOverrideFetch(t *testing.T) {
 		t.Fatalf("ListExpandedByDateRange: %v", err)
 	}
 
-	// One override fetch and one owner lookup, for any count of masters.
-	if got := atomic.LoadInt64(counter); got != 2 {
-		t.Errorf("override fetch issued %d queries for %d masters, want 2 (no N+1)", got, masters)
+	// One override fetch. Each override sits beside its master, so the
+	// owner lookup does not run.
+	if got := atomic.LoadInt64(counter); got != 1 {
+		t.Errorf("override fetch issued %d queries for %d masters, want 1 (no N+1)", got, masters)
 	}
 
 	// Behavior check: each master yields two in-window occurrences (Jan 5 master

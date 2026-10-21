@@ -144,12 +144,12 @@ func TestExportResource_LegacyOverrideCalendarHasNoResource(t *testing.T) {
 	}
 }
 
-// TestExportResource_OrphanRowsBesideTrashedMaster: a calendar whose rows
+// TestExportResource_LegacyRowsOfTrashedOwnerRefused: a calendar whose rows
 // of a UID are live legacy overrides, while the one master of the UID is
-// in the trash of another calendar, exports those rows as orphan
-// instances. A row that a restore by ID brought back then reaches the
-// server.
-func TestExportResource_OrphanRowsBesideTrashedMaster(t *testing.T) {
+// in the trash of another calendar, exports nothing. The series in the
+// trash owns the rows, so an orphan export would put the occurrence on the
+// server twice after the restore. An edit of the row marks no calendar.
+func TestExportResource_LegacyRowsOfTrashedOwnerRefused(t *testing.T) {
 	t.Parallel()
 	engine, _, _, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
@@ -171,18 +171,48 @@ func TestExportResource_OrphanRowsBesideTrashedMaster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert legacy override: %v", err)
 	}
+	dirty := func(calendarID int64) int64 {
+		t.Helper()
+		var n int64
+		if err := engine.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_resources WHERE calendar_id = ? AND uid = ? AND dirty = 1`, calendarID, master.UID).Scan(&n); err != nil {
+			t.Fatalf("count dirty rows: %v", err)
+		}
+		return n
+	}
+	clearDirty := func() {
+		t.Helper()
+		if _, err := engine.db.ExecContext(ctx, `UPDATE sync_resources SET dirty = 0 WHERE uid = ?`, master.UID); err != nil {
+			t.Fatalf("clear dirty: %v", err)
+		}
+	}
+	edit := func(title string) {
+		t.Helper()
+		if _, err := engine.events.Update(ctx, legacy.ID, event.UpdateParams{
+			CalendarID: calB, Title: title, StartTime: legacy.StartTime, EndTime: legacy.EndTime,
+		}); err != nil {
+			t.Fatalf("Update(legacy, %s): %v", title, err)
+		}
+	}
+	// A live owner gets the mark of an edit of its legacy row.
+	clearDirty()
+	edit("Legacy edited")
+	if a, b := dirty(calA), dirty(calB); a != 1 || b != 0 {
+		t.Fatalf("dirty rows with a live owner = A %d, B %d; want A 1, B 0", a, b)
+	}
 	if err := engine.events.DeleteSeries(ctx, calA, master.UID); err != nil {
 		t.Fatalf("DeleteSeries(A): %v", err)
 	}
 	if err := engine.events.RestoreByID(ctx, legacy.ID); err != nil {
 		t.Fatalf("RestoreByID(legacy): %v", err)
 	}
-	data, err := engine.exportResource(ctx, calB, "event", master.UID)
-	if err != nil {
-		t.Fatalf("exportResource(B): %v", err)
+	// An owner in the trash gets no mark, and no other calendar gets it.
+	clearDirty()
+	edit("Legacy late")
+	if a, b := dirty(calA), dirty(calB); a != 0 || b != 0 {
+		t.Errorf("dirty rows with the owner in the trash = A %d, B %d; want 0 and 0", a, b)
 	}
-	if !strings.Contains(string(data), "SUMMARY:Legacy late") {
-		t.Errorf("export of B lacks the restored orphan row:\n%s", data)
+	if _, err := engine.exportResource(ctx, calB, "event", master.UID); !errors.Is(err, errResourceMissing) {
+		t.Errorf("exportResource(B) err = %v, want errResourceMissing (the owner is in the trash)", err)
 	}
 }
 

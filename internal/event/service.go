@@ -542,9 +542,12 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 // findInstanceOverrideTx finds the stored override of recID for master. A
 // row in the calendar of the master wins. Else it takes a legacy override
 // (see storage.LegacyOverride) that the series of master owns. The view
-// event_series_rows holds the rule. More than one legacy row gives an
-// *AmbiguousOverrideError. No row gives sql.ErrNoRows.
-func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, recID string) (storage.Event, error) {
+// event_series_rows holds the rule. Of two or more legacy rows, the lowest
+// ID wins, as in the expansion and the export. With strict, two or more
+// legacy rows give an *AmbiguousOverrideError instead: a delete by UID
+// and recurrence ID lets the user choose the row. No row gives
+// sql.ErrNoRows.
+func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.Event, recID string, strict bool) (storage.Event, error) {
 	rows, err := qtx.ListSeriesOverridesAtRecurrenceID(ctx, storage.ListSeriesOverridesAtRecurrenceIDParams{
 		CalendarID:   master.CalendarID,
 		Uid:          master.Uid,
@@ -558,11 +561,19 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 			return r, nil
 		}
 	}
-	switch len(rows) {
-	case 0:
+	switch {
+	case len(rows) == 0:
 		return storage.Event{}, sql.ErrNoRows
-	case 1:
-		return rows[0], nil
+	case len(rows) == 1 || !strict:
+		// The lowest ID wins, as in ListSeriesOverrides and in the
+		// expansion.
+		winner := rows[0]
+		for _, r := range rows[1:] {
+			if r.ID < winner.ID {
+				winner = r
+			}
+		}
+		return winner, nil
 	}
 	ids := make([]int64, len(rows))
 	for i, r := range rows {
@@ -857,7 +868,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
 		return Event{}, err
 	}
-	existing, existErr := findInstanceOverrideTx(ctx, qtx, master, recID)
+	existing, existErr := findInstanceOverrideTx(ctx, qtx, master, recID, false)
 	if existErr != nil && !errors.Is(existErr, sql.ErrNoRows) {
 		return Event{}, wrapLookup("get override", existErr)
 	}
@@ -890,6 +901,15 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if p.CalendarID != master.CalendarID && p.CalendarID != fromCalendarID {
 		if err := calendaraccess.EnsureWritable(ctx, qtx, p.CalendarID, "VEVENT"); err != nil {
 			return Event{}, err
+		}
+	}
+
+	// The move rule reads the target before the write, as
+	// uidmove.Rows.Update does.
+	targetHoldsMaster := false
+	if existErr == nil && p.CalendarID != existing.CalendarID {
+		if targetHoldsMaster, err = move.HoldsMaster(ctx, p.CalendarID); err != nil {
+			return Event{}, fmt.Errorf("check target master: %w", err)
 		}
 	}
 
@@ -944,9 +964,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int6
 	// gets a tombstone. Without it that stale object keeps the UID, and
 	// iCloud refuses the later PUT (issue #828).
 	if storedCalendarID != 0 {
-		// A legacy override goes back to the calendar of its master, so
-		// the target held rows of the UID.
-		if err := move.Record(ctx, storedCalendarID, r.CalendarID, true); err != nil {
+		if err := move.Record(ctx, storedCalendarID, r.CalendarID, targetHoldsMaster); err != nil {
 			return Event{}, fmt.Errorf("record override calendar move: %w", err)
 		}
 	}

@@ -16,12 +16,14 @@ must follow these steps:
 1. Drop the view: `DROP VIEW IF EXISTS event_series_rows;`
 2. Rebuild the table as migration 050 does.
 3. Create the view again with the statement below.
-4. Create the trigger `events_master_revive_drops_series_log` again. The
-   drop of `events` drops it. Copy its statement from migration 057.
+4. Create the triggers `events_master_revive_drops_series_log` and
+   `events_master_insert_drops_series_log` again. The drop of `events`
+   drops them. Copy their statements from migration 057.
 
-The trigger drops the series-delete log of a calendar when a master of
-that calendar comes back from the trash. Without it, a log that a pull or
-an import left behind brings back the wrong rows on the next restore.
+The triggers drop the series-delete log of a calendar when a master of
+that calendar comes back from the trash or a new live master arrives.
+Without them, a log that a pull or an import left behind brings back the
+wrong rows on the next restore.
 
 The statement must stay equal to the one in migration 057. The storage
 test `TestEventsRebuildKeepsSeriesView` runs this sequence against the
