@@ -670,3 +670,56 @@ func TestEventDelete_CalendarWithTwoMastersElsewhereNamesIt(t *testing.T) {
 		t.Fatalf("stderr = %q, want the named calendar and no generic hint", stderr)
 	}
 }
+
+// TestEventDelete_PlainWithCalendarTargetsTheRowThere: a plain delete with
+// --calendar on the calendar of a legacy override deletes that row, not
+// the master of its series in another calendar. A row ID of the legacy
+// override with the calendar of its master is accepted too.
+func TestEventDelete_PlainWithCalendarTargetsTheRowThere(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid, legacyID := seedLegacyOverrideInHome(t)
+	stdout, stderr, err := runChroncalCommand(t, "event", "delete", uid, "--calendar", "Home", "--yes")
+	if err != nil {
+		t.Fatalf("plain delete in Home: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Deleted event "+strconv.FormatInt(legacyID, 10)) {
+		t.Fatalf("stdout = %q, want the legacy row %d deleted", stdout, legacyID)
+	}
+	if _, _, err := runChroncalCommand(t, "event", "get", "1"); err != nil {
+		t.Fatalf("the Work master after the delete in Home: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t, "event", "restore", strconv.FormatInt(legacyID, 10)); err != nil {
+		t.Fatalf("restore the legacy row: %v", err)
+	}
+	stdout, stderr, err = runChroncalCommand(t, "event", "delete", strconv.FormatInt(legacyID, 10), "--calendar", "Work", "--yes")
+	if err != nil {
+		t.Fatalf("delete the legacy row by ID with --calendar Work: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+}
+
+// TestEventDelete_PlainWithCalendarRefusesSeveralRows: a plain delete with
+// --calendar on a calendar that holds several rows of the UID and no
+// master names the rows to choose from.
+func TestEventDelete_PlainWithCalendarRefusesSeveralRows(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid, legacyID := seedLegacyOverrideInHome(t)
+	ics := filepath.Join(t.TempDir(), "legacy2.ics")
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
+		"\r\nDTSTAMP:20260401T000000Z\r\nRECURRENCE-ID:20260408T090000Z\r\nDTSTART:20260408T100000Z\r\nDTEND:20260408T103000Z\r\n" +
+		"SUMMARY:Legacy two\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Home"); err != nil {
+		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "delete", uid, "--calendar", "Home", "--yes")
+	if err == nil {
+		t.Fatal("plain delete of several rows in Home succeeded")
+	}
+	if !strings.Contains(stderr, "rows of event") || !strings.Contains(stderr, strconv.FormatInt(legacyID, 10)) {
+		t.Fatalf("stderr = %q, want the row IDs", stderr)
+	}
+}

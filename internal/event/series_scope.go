@@ -69,6 +69,15 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if err != nil {
 		return storage.Event{}, err
 	}
+	// A calendar with its own master row owns its rows, also when that
+	// master is in the trash. The view found no live owner, so the series
+	// of the calendar is not live. The masters of other calendars make no
+	// ambiguity here.
+	for _, m := range rows {
+		if m.CalendarID == calendarID {
+			return storage.Event{}, sql.ErrNoRows
+		}
+	}
 	masters := uidMasters(rows)
 	if !includeDeleted {
 		// A live edit sees the live masters only: two masters in the

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,12 +27,16 @@ var eventResource = resource{
 		return row{ID: e.ID, UID: e.UID, CalendarID: e.CalendarID, Summary: e.Title}, nil
 	},
 	del: func(ctx context.Context, a *app.App, id int64) error { return a.Events.Delete(ctx, id) },
-	resolveIn: func(ctx context.Context, a *app.App, ref, calendarName string) (row, error) {
+	resolveIn: func(ctx context.Context, a *app.App, ref, calendarName string, series bool) (row, error) {
 		calendarID, err := resolveCalendarID(ctx, a, calendarName)
 		if err != nil {
 			return row{}, err
 		}
-		e, err := resolveSeriesMaster(ctx, a, ref, calendarID, calendarName)
+		resolve := resolveRowIn
+		if series {
+			resolve = resolveSeriesMaster
+		}
+		e, err := resolve(ctx, a, ref, calendarID, calendarName)
 		if err != nil {
 			return row{}, err
 		}
@@ -71,10 +76,6 @@ var eventResource = resource{
 // The check runs on the raw rule set, so the original RECURRENCE-ID of a moved
 // override stays deletable.
 func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at time.Time) error {
-	master, err := masterForScope(ctx, a, master)
-	if err != nil {
-		return err
-	}
 	if recurrence.OccurrenceExistsAt(master, at) {
 		return nil
 	}
@@ -94,10 +95,6 @@ func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at
 // requireOccurrenceFrom verifies that truncating at at removes at least one
 // instance, so --following cannot silently do nothing.
 func requireOccurrenceFrom(ctx context.Context, a *app.App, master event.Event, at time.Time) error {
-	master, err := masterForScope(ctx, a, master)
-	if err != nil {
-		return err
-	}
 	if recurrence.HasOccurrenceFrom(master, at) {
 		return nil
 	}
@@ -140,8 +137,10 @@ func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID
 		if err != nil {
 			return event.Event{}, err
 		}
-		if calendarID != 0 && e.CalendarID != calendarID {
-			return event.Event{}, errInvalidInputf("event %d is in calendar %q, not in --calendar %q", e.ID, calendarName(ctx, a, e.CalendarID), wantCalendar)
+		if calendarID != 0 {
+			if err := checkRowInCalendar(ctx, a, e, calendarID, wantCalendar); err != nil {
+				return event.Event{}, err
+			}
 		}
 		return e, nil
 	}
@@ -150,6 +149,60 @@ func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID
 		return event.Event{}, ambiguousSeriesErr(err, ref, calendarID, wantCalendar)
 	}
 	return e, nil
+}
+
+// checkRowInCalendar accepts a row of calendarID. It also accepts a legacy
+// override in another calendar that the series of calendarID owns. Every
+// other row is a contradiction of the row ID and --calendar.
+func checkRowInCalendar(ctx context.Context, a *app.App, e event.Event, calendarID int64, wantCalendar string) error {
+	if e.CalendarID == calendarID {
+		return nil
+	}
+	if e.RecurrenceID != "" {
+		owned, err := a.Events.SeriesOverride(ctx, calendarID, e.UID, e.RecurrenceID)
+		if err == nil && owned.ID == e.ID {
+			return nil
+		}
+	}
+	return errInvalidInputf("event %d is in calendar %q, not in --calendar %q", e.ID, calendarName(ctx, a, e.CalendarID), wantCalendar)
+}
+
+// resolveRowIn resolves the row of a plain delete with --calendar. A
+// numeric ref names one row (see checkRowInCalendar). A UID names the
+// master of the UID in the calendar. With no master there, it names the
+// one live row of the UID in the calendar. More rows give the row IDs to
+// choose from. A plain delete never reaches a master in another
+// calendar through a legacy override.
+func resolveRowIn(ctx context.Context, a *app.App, ref string, calendarID int64, wantCalendar string) (event.Event, error) {
+	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
+		e, err := resolveEvent(ctx, a, ref, "")
+		if err != nil {
+			return event.Event{}, err
+		}
+		return e, checkRowInCalendar(ctx, a, e, calendarID, wantCalendar)
+	}
+	master, err := a.Events.GetByCalendarUID(ctx, calendarID, ref)
+	if err == nil {
+		return master, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return event.Event{}, err
+	}
+	rows, err := a.Events.ListLiveOverridesInCalendar(ctx, calendarID, ref)
+	if err != nil {
+		return event.Event{}, err
+	}
+	switch len(rows) {
+	case 0:
+		return event.Event{}, errNotFoundf("event %s not found in calendar %q", ref, wantCalendar)
+	case 1:
+		return rows[0], nil
+	}
+	ids := make([]string, len(rows))
+	for i, r := range rows {
+		ids[i] = strconv.FormatInt(r.ID, 10)
+	}
+	return event.Event{}, errInvalidInputf("calendar %q holds %d rows of event %s (IDs %s); delete one by its ID", wantCalendar, len(rows), ref, strings.Join(ids, ", "))
 }
 
 func noSuchOccurrenceErr(master event.Event, at time.Time) error {

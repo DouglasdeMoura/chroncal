@@ -89,7 +89,7 @@ The database stores a recurring event as one row with `recurrence_rule`. Each ov
 
 A calendar move of a UID moves every row of that UID as one unit. The move rules live in `internal/uidmove`: the override rule, the target-collision check, and the move record. The event, todo, and journal services bind their queries to `uidmove.Rows` and call it inside the update transaction. Fix a move rule in `uidmove`. Do not fix it per domain.
 
-Two calendars can hold an event series with the same UID (issue #842). A series lookup takes the calendar of the series (`findSeriesMasterTx` in `internal/event/series_scope.go`). A legacy override is an override row in a calendar with no master of its UID. `uidmove.LegacyOwner` names the series that owns it. The one live master of the UID owns it. With no live master, the one master in the trash owns it. The series queries in `db/queries/events.sql` repeat that rule in SQL (see `ListSeriesOverridesInCalendar`). Change the rule in `LegacyOwner` and in that SQL clause together.
+Two calendars can hold an event series with the same UID (issue #842). A series lookup takes the calendar of the series (`findSeriesMasterTx` in `internal/event/series_scope.go`). A legacy override is an override row in a calendar with no master of its UID. `uidmove.LegacyOwner` names the series that owns it. The one live master of the UID owns it. With no live master, the one master in the trash owns it. The view `event_series_rows` of migration 057 holds that rule in SQL, and the series queries in `db/queries/events.sql` read the view. To change the rule, add a new migration. The migration drops the view and creates it again with the new rule. Change `uidmove.LegacyOwner` in the same change. See `db/migrations/README.md` for the view and for a rebuild of the `events` table.
 
 ### Alarms
 
@@ -235,7 +235,7 @@ err := svc.DeleteInstance(ctx, calendarID, uid, at)     // one occurrence: EXDAT
 err := svc.DeleteFromInstance(ctx, calendarID, uid, at) // truncates the series (RRULE UNTIL) at that time
 
 // Restore:
-err := svc.RestoreByID(ctx, id)    // un-hides one row
+err := svc.RestoreByID(ctx, id)    // un-hides one row; a master also reverses its logged series delete
 err := svc.RestoreByUID(ctx, uid)  // un-hides master + all overrides
 // Returns svc.ErrNotDeleted when the row is live or missing.
 
