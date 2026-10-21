@@ -64,42 +64,9 @@ func (m Model) handleChoiceDialogResult(msg ChoiceDialogResultMsg) (tea.Model, t
 		}
 	case pendingActionEventDeleteScope:
 		ev := act.target.ev
+		choice := msg.Choice
 		return m, func() tea.Msg {
-			if verr := validateEventDeleteScope(context.Background(), m.app, ev, msg.Choice); verr != nil {
-				return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title, err: verr}
-			}
-			scopeAt, dErr := recurrence.ScopeInstanceTime(ev)
-			if dErr != nil {
-				return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title,
-					err: fmt.Errorf("invalid recurrence id %q: %w", ev.RecurrenceID, dErr)}
-			}
-			switch msg.Choice {
-			case 0: // This event
-				meta, err := m.app.Events.DeleteInstanceWithUndo(context.Background(), ev.CalendarID, ev.UID, scopeAt)
-				return eventDeletedMsg{
-					calendarID: ev.CalendarID,
-					meta:       meta,
-					title:      ev.Title,
-					err:        err,
-				}
-			case 1: // This and following
-				meta, err := m.app.Events.DeleteFromInstanceWithUndo(context.Background(), ev.CalendarID, ev.UID, scopeAt)
-				return eventDeletedMsg{
-					calendarID: ev.CalendarID,
-					meta:       meta,
-					title:      ev.Title,
-					err:        err,
-				}
-			case 2: // All events
-				meta, err := m.app.Events.DeleteSeriesWithUndo(context.Background(), ev.CalendarID, ev.UID)
-				return eventDeletedMsg{
-					calendarID: ev.CalendarID,
-					meta:       meta,
-					title:      ev.Title,
-					err:        err,
-				}
-			}
-			return eventDeletedMsg{calendarID: ev.CalendarID}
+			return runEventDeleteScope(context.Background(), m.app, ev, choice)
 		}
 	default:
 		return m, nil
@@ -183,6 +150,39 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 		// action fires.
 		return m, nil
 	}
+}
+
+// runEventDeleteScope runs the scope delete of the occurrence ev. choice 0
+// deletes the occurrence, 1 the occurrence and the ones after it, 2 the
+// series. The message names the calendar that the delete wrote: the calendar
+// of the series master. A legacy override lives in another calendar than its
+// master, so the push of its own calendar would send nothing.
+func runEventDeleteScope(ctx context.Context, a *app.App, ev event.Event, choice int) eventDeletedMsg {
+	if verr := validateEventDeleteScope(ctx, a, ev, choice); verr != nil {
+		return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title, err: verr}
+	}
+	scopeAt, dErr := recurrence.ScopeInstanceTime(ev)
+	if dErr != nil {
+		return eventDeletedMsg{calendarID: ev.CalendarID, title: ev.Title,
+			err: fmt.Errorf("invalid recurrence id %q: %w", ev.RecurrenceID, dErr)}
+	}
+	var meta event.UndoMeta
+	var err error
+	switch choice {
+	case 0: // This event
+		meta, err = a.Events.DeleteInstanceWithUndo(ctx, ev.CalendarID, ev.UID, scopeAt)
+	case 1: // This and following
+		meta, err = a.Events.DeleteFromInstanceWithUndo(ctx, ev.CalendarID, ev.UID, scopeAt)
+	case 2: // All events
+		meta, err = a.Events.DeleteSeriesWithUndo(ctx, ev.CalendarID, ev.UID)
+	default:
+		return eventDeletedMsg{calendarID: ev.CalendarID}
+	}
+	calendarID := ev.CalendarID
+	if err == nil && meta.CalendarID != 0 {
+		calendarID = meta.CalendarID
+	}
+	return eventDeletedMsg{calendarID: calendarID, meta: meta, title: ev.Title, err: err}
 }
 
 // validateEventDeleteScope checks an instance-scoped recurring delete against

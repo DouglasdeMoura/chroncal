@@ -243,9 +243,13 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	if err != nil {
 		return fmt.Errorf("list masters: %w", err)
 	}
-	logs, err := s.q.ListEventSeriesDeletesByUID(ctx, uid)
+	allLogs, err := s.q.ListEventSeriesDeletesByUID(ctx, uid)
 	if err != nil {
 		return fmt.Errorf("list series delete logs: %w", err)
+	}
+	logs, err := s.liveSeriesLogs(ctx, uid, rows, allLogs)
+	if err != nil {
+		return err
 	}
 	if len(rows) == 0 && len(logs) == 0 {
 		if err := ensureSeriesWritableIn(ctx, s.q, 0, uid); err != nil {
@@ -277,11 +281,50 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	return s.reconcileSyncAfterRestore(ctx, calendarID, uid)
 }
 
+// liveSeriesLogs keeps the series-delete logs of uid that a restore can
+// still reverse. A log counts when it names a row in the trash, or when its
+// calendar holds a master in the trash. A log that names only purged rows,
+// or no row, is not a candidate of RestoreByUID.
+func (s *Service) liveSeriesLogs(ctx context.Context, uid string, masters []storage.Event, logs []storage.EventSeriesDelete) ([]storage.EventSeriesDelete, error) {
+	if len(logs) == 0 {
+		return nil, nil
+	}
+	ids, err := s.q.ListTrashedEventIDsByUID(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("list trashed rows: %w", err)
+	}
+	trashed := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		trashed[id] = true
+	}
+	trashedMaster := make(map[int64]bool, len(masters))
+	for _, m := range masters {
+		if m.DeletedAt != nil {
+			trashedMaster[m.CalendarID] = true
+		}
+	}
+	kept := make([]storage.EventSeriesDelete, 0, len(logs))
+	for _, l := range logs {
+		named, err := parseRowIDs(l.HiddenIds)
+		if err != nil {
+			return nil, err
+		}
+		ok := trashedMaster[l.CalendarID]
+		for _, id := range named {
+			ok = ok || trashed[id]
+		}
+		if ok {
+			kept = append(kept, l)
+		}
+	}
+	return kept, nil
+}
+
 // restoreCandidate chooses the calendar whose series delete RestoreByUID
 // reverses. holdsMaster reports whether that calendar holds a master row
 // of the UID. The candidates have two ranks:
-//  1. A calendar with a series-delete log of the UID. The log records a
-//     series delete that no restore consumed.
+//  1. A calendar with a series-delete log of the UID that a restore can
+//     still reverse (see liveSeriesLogs).
 //  2. A calendar with a master in the trash and no log, for example an
 //     old copy whose log the purge dropped.
 //
@@ -356,7 +399,7 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 		if err := calendaraccess.EnsureWritable(ctx, s.q, r.CalendarID, "VEVENT"); err != nil {
 			return err
 		}
-		masterTrashed, err := s.restoreOverrideByID(ctx, r)
+		seriesCalendarID, masterTrashed, err := s.restoreOverrideByID(ctx, r)
 		if err != nil {
 			return err
 		}
@@ -367,7 +410,10 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 			// object of the whole series.
 			return nil
 		}
-		return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid)
+		// The export of the series calendar carries the row. A legacy
+		// override in another calendar leaves the tombstone of that
+		// calendar: the old server object there still needs its delete.
+		return s.reconcileSyncAfterRestore(ctx, seriesCalendarID, r.Uid)
 	}
 	if err := ensureSeriesWritableIn(ctx, s.q, r.CalendarID, r.Uid); err != nil {
 		return err
@@ -689,7 +735,6 @@ func ensureRowsWritableTx(ctx context.Context, qtx *storage.Queries, calendarID 
 	return nil
 }
 
-// formatRowIDs is the inverse of parseRowIDs.
 // unionRowIDs adds the IDs of the list earlier to ids, with no duplicate.
 // A delete log that a second delete extends uses it.
 func unionRowIDs(ids []int64, earlier string) ([]int64, error) {
@@ -725,6 +770,7 @@ func unionRecurrenceIDs(ids []string, earlier string) []string {
 	return ids
 }
 
+// formatRowIDs is the inverse of parseRowIDs.
 func formatRowIDs(ids []int64) string {
 	fields := make([]string, len(ids))
 	for i, id := range ids {
@@ -938,16 +984,16 @@ func (s *Service) restoreRows(ctx context.Context, calendarID int64, uid string,
 	return n, nil
 }
 
-func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) (masterTrashed bool, err error) {
+func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) (seriesCalendarID int64, masterTrashed bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, fmt.Errorf("begin tx: %w", err)
+		return 0, false, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
 	if err := restoreRowByIDTx(ctx, qtx, r.Uid, r.ID); err != nil {
-		return false, err
+		return 0, false, err
 	}
 	// The master of the override is in the calendar of the row. Else the row is
 	// a legacy override of the one master of the UID. No master leaves no EXDATE
@@ -957,22 +1003,24 @@ func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) (mas
 	// master, so its own restore shows the occurrence again.
 	master, err := findSeriesMasterIncludingDeletedTx(ctx, qtx, r.CalendarID, r.Uid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrAmbiguousUID) {
-		return false, fmt.Errorf("get master: %w", err)
+		return 0, false, fmt.Errorf("get master: %w", err)
 	}
+	// With no master, the row is an orphan instance of its own calendar.
+	seriesCalendarID = r.CalendarID
 	if err == nil {
 		// The EXDATE lives on the master, so its calendar takes the
 		// write too. A legacy override lives in another calendar.
 		if master.CalendarID != r.CalendarID {
 			if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
-				return false, err
+				return 0, false, err
 			}
 		}
 		if err := clearMasterEXDATEIncludingDeleted(ctx, qtx, master.CalendarID, r.Uid, r.RecurrenceID); err != nil {
-			return false, err
+			return 0, false, err
 		}
-		masterTrashed = master.DeletedAt != nil
+		seriesCalendarID, masterTrashed = master.CalendarID, master.DeletedAt != nil
 	}
-	return masterTrashed, tx.Commit()
+	return seriesCalendarID, masterTrashed, tx.Commit()
 }
 
 // restoreEXDATEOnly reverses an occurrence delete of the series in

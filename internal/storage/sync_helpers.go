@@ -119,6 +119,9 @@ func LegacyOverride(ownMasterRows int64) bool {
 // overrides, and the legacy overrides that its series owns. See
 // LegacyOverride and the view event_series_rows (issue #842). A calendar with
 // a legacy override and no master exports nothing of it, so the mark moves.
+// A calendar with its own event master in the trash gets no mark. Its rows
+// stay local until the master comes back.
+//
 // For a legacy override of an event, the owner rule of the view decides:
 //   - A live owner master gets the mark in its calendar.
 //   - An owner master in the trash gets no mark. The rows stay local until
@@ -137,6 +140,9 @@ func dirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerTyp
 	// calendarID. owner gives the calendar of a legacy override.
 	var own func() (int64, int64, error)
 	var owner func() (int64, error)
+	// ownTrashed reports an event master of calendarID in the trash, with
+	// no live master beside it.
+	ownTrashed := false
 	oneLiveMaster := func(calendars, first int64) int64 {
 		if calendars == 1 {
 			return first
@@ -147,6 +153,7 @@ func dirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerTyp
 	case "event":
 		own = func() (int64, int64, error) {
 			r, err := q.CountEventUIDRowsInCalendar(ctx, CountEventUIDRowsInCalendarParams{CalendarID: calendarID, Uid: uid, IncludeDeleted: true})
+			ownTrashed = r.Masters > 0 && r.LiveMasters == 0
 			return r.Masters, r.Overrides, err
 		}
 		owner = func() (int64, error) {
@@ -186,6 +193,9 @@ func dirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerTyp
 	ownMasters, ownOverrides, err := own()
 	if err != nil {
 		return 0, fmt.Errorf("count rows of the UID: %w", err)
+	}
+	if ownTrashed {
+		return 0, nil
 	}
 	if ownOverrides == 0 || !LegacyOverride(ownMasters) {
 		return calendarID, nil

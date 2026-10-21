@@ -348,6 +348,11 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+	// The restore writes the master and the hidden rows of the series in
+	// the calendar of the log, so those calendars must take the write.
+	if err := ensureSeriesWritableIn(ctx, qtx, log.CalendarID, log.Uid); err != nil {
+		return err
+	}
 
 	// Read the master inside the transaction. Then a concurrent purge or
 	// soft-delete between the read and the in-tx UPDATE cannot make

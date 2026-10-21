@@ -993,6 +993,12 @@ func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.
 	if err := qtx.RestoreEvent(ctx, row.ID); err != nil {
 		return fmt.Errorf("revive override: %w", err)
 	}
+	// The revived row leaves the delete logs, as a restore by ID does. A
+	// later restore of the series or of a truncation then does not reverse
+	// a delete of the row on its own.
+	if err := dropHiddenRowsTx(ctx, qtx, row.Uid, []int64{row.ID}); err != nil {
+		return err
+	}
 	if err := clearMasterEXDATE(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID); err != nil {
 		return err
 	}
