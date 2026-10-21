@@ -70,9 +70,27 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName, scope != 0)
 		}
 	}
-	e, err = a.Events.OrphanOccurrence(ctx, ref, recurrenceID)
+	// An orphan row of the --calendar calendar comes first, and that
+	// calendar names the row.
+	if calendarID != 0 {
+		e, err = a.Events.OrphanOccurrence(ctx, calendarID, ref, recurrenceID)
+		if err == nil {
+			return e, false, true, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return event.Event{}, false, false, notFoundErr(err, "event", ref)
+		}
+	}
+	e, err = a.Events.OrphanOccurrence(ctx, 0, ref, recurrenceID)
 	if err != nil {
 		return event.Event{}, false, false, notFoundErr(err, "event", ref)
+	}
+	if calendarID != 0 {
+		// The orphan row lives in another calendar. --calendar must not turn
+		// the edit of one occurrence into a move, so the edit stops and
+		// names the calendar of the row.
+		return event.Event{}, false, false, errInvalidInputf("calendar %q holds no row of event %s at %s; the row is in calendar %q, so name that calendar with --calendar",
+			calendarName, ref, recurrenceID, nameOfCalendar(ctx, a, e.CalendarID))
 	}
 	return e, false, false, nil
 }
@@ -639,4 +657,9 @@ func validateAlarmTrigger(trigger string) error {
 		return errInvalidInputf("invalid alarm trigger %q: a floating time has no timezone; add a Z suffix or use an RFC 3339 datetime with an offset", trigger)
 	}
 	return errInvalidInputf("invalid alarm trigger %q (use an ISO 8601 duration such as -PT15M, or an RFC 3339 datetime)", trigger)
+}
+
+// nameOfCalendar is calendarName for a function whose parameter shadows it.
+func nameOfCalendar(ctx context.Context, a *app.App, id int64) string {
+	return calendarName(ctx, a, id)
 }

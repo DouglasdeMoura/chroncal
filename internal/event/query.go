@@ -143,7 +143,7 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 	case !errors.Is(err, sql.ErrNoRows):
 		return Event{}, err
 	}
-	return s.OrphanOccurrence(ctx, uid, recurrenceID)
+	return s.OrphanOccurrence(ctx, 0, uid, recurrenceID)
 }
 
 // oneLiveRowAt returns the one live row of uid at recurrenceID outside the
@@ -151,6 +151,13 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 // sql.ErrNoRows. More rows give an *AmbiguousOverrideError beside a live
 // series (skip set), and ErrAmbiguousUID for orphan rows (skip 0).
 func (s *Service) oneLiveRowAt(ctx context.Context, uid, recurrenceID string, skip int64) (Event, error) {
+	return s.liveRowAt(ctx, uid, recurrenceID, func(r storage.Event) bool { return r.CalendarID != skip }, skip == 0)
+}
+
+// liveRowAt returns the one live row of uid at recurrenceID that keep
+// accepts. orphan picks the error for more rows: ErrAmbiguousUID for orphan
+// rows, else an *AmbiguousOverrideError.
+func (s *Service) liveRowAt(ctx context.Context, uid, recurrenceID string, keep func(storage.Event) bool, orphan bool) (Event, error) {
 	rows, err := s.q.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
 		Uid: uid, RecurrenceID: recurrenceID,
 	})
@@ -159,23 +166,30 @@ func (s *Service) oneLiveRowAt(ctx context.Context, uid, recurrenceID string, sk
 	}
 	kept := make([]storage.Event, 0, len(rows))
 	for _, r := range rows {
-		if r.CalendarID != skip {
+		if keep(r) {
 			kept = append(kept, r)
 		}
 	}
+	return s.oneRow(ctx, kept, orphan)
+}
+
+// oneRow returns the one row of rows. No row gives sql.ErrNoRows. More rows
+// give ErrAmbiguousUID when orphan is true, else an *AmbiguousOverrideError
+// with their IDs.
+func (s *Service) oneRow(ctx context.Context, rows []storage.Event, orphan bool) (Event, error) {
 	switch {
-	case len(kept) == 0:
+	case len(rows) == 0:
 		return Event{}, sql.ErrNoRows
-	case len(kept) > 1 && skip == 0:
+	case len(rows) > 1 && orphan:
 		return Event{}, ErrAmbiguousUID
-	case len(kept) > 1:
-		ids := make([]int64, len(kept))
-		for i, r := range kept {
+	case len(rows) > 1:
+		ids := make([]int64, len(rows))
+		for i, r := range rows {
 			ids[i] = r.ID
 		}
 		return Event{}, &AmbiguousOverrideError{IDs: ids}
 	}
-	e := FromStorage(kept[0])
+	e := FromStorage(rows[0])
 	s.populateSingleCategories(ctx, &e)
 	return e, nil
 }
@@ -184,8 +198,13 @@ func (s *Service) oneLiveRowAt(ctx context.Context, uid, recurrenceID string, sk
 // live master anywhere. Such a row is an orphan instance, for example a
 // Google instance under its own UID. With one row, that row is the result.
 // With more, the lookup cannot choose, so it returns ErrAmbiguousUID.
-func (s *Service) OrphanOccurrence(ctx context.Context, uid, recurrenceID string) (Event, error) {
-	return s.oneLiveRowAt(ctx, uid, recurrenceID, 0)
+// calendarID 0 reads every calendar. Another calendarID reads that calendar
+// only, so --calendar can choose one of two orphan rows.
+func (s *Service) OrphanOccurrence(ctx context.Context, calendarID int64, uid, recurrenceID string) (Event, error) {
+	if calendarID == 0 {
+		return s.oneLiveRowAt(ctx, uid, recurrenceID, 0)
+	}
+	return s.liveRowAt(ctx, uid, recurrenceID, func(r storage.Event) bool { return r.CalendarID == calendarID }, true)
 }
 
 func (s *Service) GetByCalendarUIDAndRecurrenceID(ctx context.Context, calendarID int64, uid, recurrenceID string) (Event, error) {

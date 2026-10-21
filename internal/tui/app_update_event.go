@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -518,6 +519,13 @@ func (m Model) handleDeferredPush(msg deferredPushMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 	// The restore has landed; allow the next undo to dispatch.
 	m.undoRestoreInFlight = false
+	if errors.Is(msg.err, event.ErrNotDeleted) {
+		// Another path restored the delete already: the trash, the CLI,
+		// or a pull. The entry has nothing left to undo, so it leaves the
+		// stack, and the next undo reaches the entry below it.
+		m.undoStack.Remove(msg.meta)
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed("already restored"))
+	}
 	if msg.err != nil {
 		// Route the dismiss tick — previously dropped, so failed toasts
 		// never auto-cleared in the live app.
