@@ -724,7 +724,7 @@ func TestEventDelete_PlainWithCalendarRefusesSeveralRows(t *testing.T) {
 	if err == nil {
 		t.Fatal("plain delete of several rows in Home succeeded")
 	}
-	if !strings.Contains(stderr, "rows of event") || !strings.Contains(stderr, strconv.FormatInt(legacyID, 10)) {
+	if !strings.Contains(stderr, "more than one override row") || !strings.Contains(stderr, strconv.FormatInt(legacyID, 10)) {
 		t.Fatalf("stderr = %q, want the row IDs", stderr)
 	}
 }

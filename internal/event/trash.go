@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -447,7 +446,11 @@ func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log st
 	if *log.HiddenOverrides == "" {
 		return nil
 	}
-	for _, recID := range strings.Split(*log.HiddenOverrides, ",") {
+	recIDs, err := parseCommaList(*log.HiddenOverrides, parseRecurrenceID)
+	if err != nil {
+		return err
+	}
+	for _, recID := range recIDs {
 		if _, err := qtx.RestoreSeriesOverrideByRecurrenceID(ctx, storage.RestoreSeriesOverrideByRecurrenceIDParams{
 			CalendarID:   log.CalendarID,
 			Uid:          log.Uid,

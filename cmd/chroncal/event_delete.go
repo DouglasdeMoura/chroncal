@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -37,13 +36,15 @@ var eventResource = resource{
 		}
 		if series {
 			if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr != nil {
-				// A series delete of a UID in a calendar needs a live series
-				// or live orphan rows there. The check runs before the
-				// prompt, so a delete with nothing to delete asks nothing.
-				target := row{UID: ref, CalendarID: calendarID, Summary: seriesSummary(ctx, a, calendarID, ref)}
-				if err := checkSeriesInCalendar(ctx, a, target); err != nil {
-					return row{}, err
+				// A series delete of a UID in a calendar reads its target
+				// with the rule of the service before the prompt. A delete
+				// that the service would refuse asks nothing.
+				target := row{UID: ref, CalendarID: calendarID}
+				label, err := a.Events.SeriesDeleteTarget(ctx, calendarID, ref)
+				if err != nil {
+					return row{}, seriesDeleteErr(ctx, a, target, err)
 				}
+				target.Summary = label
 				return target, nil
 			}
 		}
@@ -166,19 +167,6 @@ func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID
 	return e, nil
 }
 
-// seriesSummary returns the title of the series of uid in calendarID for
-// a prompt: the title of its master, live or in the trash, or else of the
-// first live row of the UID in the calendar. With neither, it is the UID.
-func seriesSummary(ctx context.Context, a *app.App, calendarID int64, uid string) string {
-	if m, err := a.Events.SeriesMasterIncludingDeleted(ctx, calendarID, uid); err == nil {
-		return m.Title
-	}
-	if rows, err := a.Events.ListLiveOverridesInCalendar(ctx, calendarID, uid); err == nil && len(rows) > 0 {
-		return rows[0].Title
-	}
-	return uid
-}
-
 // checkRowInCalendar accepts a row of calendarID. It also accepts each
 // legacy override in another calendar that the series of calendarID owns,
 // also a row that loses the tie rule at its occurrence. Every other row is
@@ -220,21 +208,14 @@ func resolveRowIn(ctx context.Context, a *app.App, ref string, calendarID int64,
 	if !errors.Is(err, sql.ErrNoRows) {
 		return event.Event{}, err
 	}
-	rows, err := a.Events.ListLiveOverridesInCalendar(ctx, calendarID, ref)
-	if err != nil {
-		return event.Event{}, err
-	}
-	switch len(rows) {
-	case 0:
+	e, err := a.Events.LiveRowInCalendar(ctx, calendarID, ref)
+	if errors.Is(err, sql.ErrNoRows) {
 		return event.Event{}, errNotFoundf("event %s not found in calendar %q", ref, wantCalendar)
-	case 1:
-		return rows[0], nil
 	}
-	ids := make([]string, len(rows))
-	for i, r := range rows {
-		ids[i] = strconv.FormatInt(r.ID, 10)
+	if err != nil {
+		return event.Event{}, notFoundErr(err, "event", ref)
 	}
-	return event.Event{}, errInvalidInputf("calendar %q holds %d rows of event %s (IDs %s); delete one by its ID", wantCalendar, len(rows), ref, strings.Join(ids, ", "))
+	return e, nil
 }
 
 func noSuchOccurrenceErr(master event.Event, at time.Time) error {
@@ -390,29 +371,4 @@ func seriesDeleteErr(ctx context.Context, a *app.App, target row, err error) err
 			target.UID, calendarName(ctx, a, target.CalendarID))
 	}
 	return err
-}
-
-// checkSeriesInCalendar refuses a series delete of target.UID in
-// target.CalendarID that has nothing to delete. The calendar must hold a
-// live series of the UID, or live orphan rows of it. A series in the trash
-// gives the trash message, and else the delete is not found.
-func checkSeriesInCalendar(ctx context.Context, a *app.App, target row) error {
-	_, err := a.Events.SeriesMaster(ctx, target.CalendarID, target.UID)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return seriesDeleteErr(ctx, a, target, err)
-	}
-	live, err := a.Events.ListLiveOverridesInCalendar(ctx, target.CalendarID, target.UID)
-	if err != nil {
-		return err
-	}
-	if len(live) > 0 {
-		return nil
-	}
-	if m, err := a.Events.SeriesMasterIncludingDeleted(ctx, target.CalendarID, target.UID); err == nil && m.DeletedAt != nil {
-		return seriesDeleteErr(ctx, a, target, event.ErrSeriesInTrash)
-	}
-	return seriesDeleteErr(ctx, a, target, event.ErrNotDeleted)
 }

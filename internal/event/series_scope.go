@@ -242,20 +242,23 @@ func (s *Service) seriesOccurrence(ctx context.Context, calendarID int64, uid, r
 	return master, &override, nil
 }
 
-// SeriesMasterIncludingDeleted is SeriesMaster for a master that can be in
-// the trash. The CLI reads the title of a series for a prompt with it.
-func (s *Service) SeriesMasterIncludingDeleted(ctx context.Context, calendarID int64, uid string) (Event, error) {
-	r, err := findSeriesMasterIncludingDeletedTx(ctx, s.q, calendarID, uid)
-	if err != nil {
-		return Event{}, err
-	}
-	return FromStorage(r), nil
-}
-
 // IsSeriesRowOf reports whether the series of calendarID owns the row id:
 // a row of that calendar, or a legacy override that the series owns.
 func (s *Service) IsSeriesRowOf(ctx context.Context, calendarID, id int64) (bool, error) {
 	return s.q.IsSeriesRowOfCalendar(ctx, storage.IsSeriesRowOfCalendarParams{ID: id, CalendarID: calendarID})
+}
+
+// LiveRowInCalendar returns the one live override row of uid in calendarID,
+// with no series rule. No row gives sql.ErrNoRows. More rows give an
+// *AmbiguousOverrideError with their IDs, so the user chooses one.
+func (s *Service) LiveRowInCalendar(ctx context.Context, calendarID int64, uid string) (Event, error) {
+	rows, err := s.q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{
+		CalendarID: calendarID, Uid: uid,
+	})
+	if err != nil {
+		return Event{}, err
+	}
+	return s.oneRow(ctx, rows, false)
 }
 
 // ListLiveOverridesInCalendar returns the live override rows of uid in

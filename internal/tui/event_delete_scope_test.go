@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
@@ -72,4 +73,52 @@ func TestRunEventDelete_LegacyOverrideNamesMasterCalendar(t *testing.T) {
 	msg := runEventDelete(ctx, a, legacy)
 	require.NoError(t, msg.err)
 	require.Equal(t, masterCal, msg.calendarID, "the message names the calendar of the master")
+}
+
+// TestUndo_AlreadyRestoredEntryLeavesTheStack: the top undo entry names a
+// delete that another path restored already. The first press of u drops
+// that entry and shows "already restored". The second press restores the
+// entry below it.
+func TestUndo_AlreadyRestoredEntryLeavesTheStack(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+	cals, err := a.Calendars.List(ctx)
+	require.NoError(t, err)
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	metas := make([]event.UndoMeta, 0, 2)
+	for _, title := range []string{"First", "Second"} {
+		ev, err := a.Events.Create(ctx, event.CreateParams{CalendarID: cals[0].ID, Title: title, StartTime: start, EndTime: start.Add(time.Hour)})
+		require.NoError(t, err)
+		meta, err := a.Events.DeleteWithUndo(ctx, ev.ID)
+		require.NoError(t, err)
+		m.undoStack.Push(UndoEntry{Meta: meta, DeletedAt: time.Now()})
+		metas = append(metas, meta)
+	}
+	// Another path restores the second delete.
+	require.NoError(t, a.Events.RestoreUndo(ctx, metas[1]))
+
+	m.focus = focusCalendar
+	undo := tea.KeyPressMsg{Code: 'u', Text: "u"}
+	press := func() eventRestoredMsg {
+		t.Helper()
+		next, cmd, handled := m.interceptGlobalKeys(undo)
+		require.True(t, handled)
+		require.NotNil(t, cmd)
+		msg, ok := cmd().(eventRestoredMsg)
+		require.True(t, ok)
+		updated, _ := next.Update(msg)
+		m = updated.(Model)
+		return msg
+	}
+	first := press()
+	require.ErrorIs(t, first.err, event.ErrNotDeleted)
+	require.Equal(t, 1, m.undoStack.Len(), "the restored entry leaves the stack")
+	require.Equal(t, ToastFailed, m.toast.State())
+
+	second := press()
+	require.NoError(t, second.err)
+	require.Equal(t, 0, m.undoStack.Len())
+	got, err := a.Events.GetIncludingDeleted(ctx, metas[0].MasterID)
+	require.NoError(t, err)
+	require.Nil(t, got.DeletedAt, "the second press restores the first delete")
 }

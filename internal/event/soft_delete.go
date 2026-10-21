@@ -670,8 +670,14 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 			return err
 		}
 	}
-	if err := dropOrphanDeleteLogTx(ctx, qtx, r.CalendarID, r.Uid, r.RecurrenceID); err != nil {
-		return err
+	if r.RecurrenceID != "" {
+		masters, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, r.Uid)
+		if err != nil {
+			return fmt.Errorf("list masters: %w", err)
+		}
+		if err := dropOrphanDeleteLogTx(ctx, qtx, r.CalendarID, r.Uid, r.RecurrenceID, len(masters) > 0); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -932,7 +938,11 @@ func (s *Service) restoreOverrideRow(ctx context.Context, calendarID int64, uid,
 	if err := restoreRowByIDTx(ctx, qtx, uid, rowID); err != nil {
 		return err
 	}
-	if err := dropOrphanDeleteLogTx(ctx, qtx, calendarID, uid, recurrenceID); err != nil {
+	masters, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("list masters: %w", err)
+	}
+	if err := dropOrphanDeleteLogTx(ctx, qtx, calendarID, uid, recurrenceID, len(masters) > 0); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1081,7 +1091,9 @@ func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) (ser
 	// With no master, the row is an orphan instance of its own calendar.
 	seriesCalendarID = r.CalendarID
 	if errors.Is(err, sql.ErrNoRows) {
-		if err := dropOrphanDeleteLogTx(ctx, qtx, r.CalendarID, r.Uid, r.RecurrenceID); err != nil {
+		// ErrNoRows from the lookup with the trash means no master row of
+		// the UID anywhere.
+		if err := dropOrphanDeleteLogTx(ctx, qtx, r.CalendarID, r.Uid, r.RecurrenceID, false); err != nil {
 			return 0, false, err
 		}
 	}
@@ -1196,10 +1208,12 @@ func truncationHidden(ctx context.Context, qtx *storage.Queries, calendarID int6
 				ids[id] = true
 			}
 		case log.HiddenOverrides != nil:
-			for _, recID := range strings.Split(*log.HiddenOverrides, ",") {
-				if recID != "" {
-					recIDs[recID] = true
-				}
+			hidden, err := parseCommaList(*log.HiddenOverrides, parseRecurrenceID)
+			if err != nil {
+				return nil, err
+			}
+			for _, recID := range hidden {
+				recIDs[recID] = true
 			}
 		default:
 			cutoffs = append(cutoffs, log.CutoffTime)
@@ -1461,10 +1475,16 @@ func (s *Service) deleteRow(ctx context.Context, id int64, undoMaster *storage.E
 			}
 		}
 
-		if errors.Is(err, sql.ErrNoRows) {
-			// An orphan row (no master row anywhere) gets an occurrence log
-			// of its own delete. A restore by UID then leaves the row to its
-			// own restore, as for an occurrence of a series.
+		// The master of the row, live or in the trash, for the undo and for
+		// the orphan rule. ErrNoRows here means no master row anywhere.
+		anyMaster, anyErr := findSeriesMasterIncludingDeletedTx(ctx, qtx, evt.CalendarID, evt.UID)
+		if anyErr != nil && !errors.Is(anyErr, sql.ErrNoRows) && !errors.Is(anyErr, ErrAmbiguousUID) {
+			return fmt.Errorf("get master: %w", anyErr)
+		}
+		if errors.Is(anyErr, sql.ErrNoRows) {
+			// An orphan row gets an occurrence log of its own delete. A
+			// restore by UID then leaves the row to its own restore, as for
+			// an occurrence of a series.
 			if err := recordOrphanDeleteTx(ctx, qtx, evt.CalendarID, evt.UID, evt.RecurrenceID); err != nil {
 				return err
 			}
@@ -1478,14 +1498,8 @@ func (s *Service) deleteRow(ctx context.Context, id int64, undoMaster *storage.E
 		if err := storage.MarkResourceDirty(ctx, tx, evt.CalendarID, evt.UID, "event"); err != nil {
 			return fmt.Errorf("mark resource dirty: %w", err)
 		}
-		if undoMaster != nil {
-			m, err := findSeriesMasterIncludingDeletedTx(ctx, qtx, evt.CalendarID, evt.UID)
-			switch {
-			case err == nil:
-				*undoMaster = m
-			case !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrAmbiguousUID):
-				return fmt.Errorf("get master for undo: %w", err)
-			}
+		if undoMaster != nil && anyErr == nil {
+			*undoMaster = anyMaster
 		}
 		return tx.Commit()
 	}
@@ -1495,16 +1509,9 @@ func (s *Service) deleteRow(ctx context.Context, id int64, undoMaster *storage.E
 }
 
 // recordOrphanDeleteTx writes the occurrence log of a delete by ID of an
-// orphan row. A UID with a master row, live or in the trash, gets no log
-// here: the master holds the record of an occurrence delete.
+// orphan row. The caller knows that the UID has no master row, live or in
+// the trash: a master holds the record of an occurrence delete.
 func recordOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string) error {
-	masters, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
-	if err != nil {
-		return fmt.Errorf("list masters: %w", err)
-	}
-	if len(masters) > 0 {
-		return nil
-	}
 	if err := qtx.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{
 		CalendarID: calendarID, Uid: uid, RecurrenceID: recurrenceID,
 	}); err != nil {
@@ -1514,17 +1521,11 @@ func recordOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID 
 }
 
 // dropOrphanDeleteLogTx drops the occurrence log that recordOrphanDeleteTx
-// wrote for an orphan row. The restore and the purge of the row call it. A
-// UID with a master row keeps its logs: the EXDATE contract owns them.
-func dropOrphanDeleteLogTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string) error {
-	if recurrenceID == "" {
-		return nil
-	}
-	masters, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
-	if err != nil {
-		return fmt.Errorf("list masters: %w", err)
-	}
-	if len(masters) > 0 {
+// wrote for an orphan row. The restore and the purge of the row call it.
+// hasMasters reports a master row of the UID, live or in the trash: such a
+// UID keeps its logs, because the EXDATE contract owns them.
+func dropOrphanDeleteLogTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string, hasMasters bool) error {
+	if recurrenceID == "" || hasMasters {
 		return nil
 	}
 	log, err := qtx.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
@@ -1908,17 +1909,101 @@ func (s *Service) deleteSeries(ctx context.Context, calendarID int64, uid string
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	// Look up the master to get calendarID for tombstone creation. The
-	// tombstone and the soft-delete commit together so a failed tombstone
-	// write can't leave a tombstone for a still-live series whose next sync
-	// would DELETE it from the server (issue #107).
+	t, err := resolveSeriesDeleteTx(ctx, qtx, calendarID, uid)
+	if err != nil {
+		return seriesDeletion{}, err
+	}
+	// The tombstone and the soft-delete commit together, so a failed
+	// tombstone write cannot leave a tombstone for a live series whose next
+	// sync would DELETE it from the server (issue #107).
+	if t.master.ID == 0 {
+		// No live master anywhere: the live rows of the calendar are orphans.
+		// The log of an earlier series delete in this calendar can still name
+		// rows, because the master of the calendar is in the trash. The new
+		// rows join that list.
+		ids := make([]int64, 0, len(t.orphans))
+		for _, o := range t.orphans {
+			ids = append(ids, o.ID)
+		}
+		if err := recordSeriesDeleteTx(ctx, qtx, t.calendarID, uid, ids, true); err != nil {
+			return seriesDeletion{}, err
+		}
+		// The rows of a synced calendar have a server object. A tombstone
+		// queues its delete, as for a series with a master, or the next
+		// pull brings the rows back.
+		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, t.calendarID, uid); err != nil {
+			return seriesDeletion{}, fmt.Errorf("create tombstone: %w", err)
+		}
+		if err := qtx.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{
+			CalendarID: t.calendarID, Uid: uid,
+		}); err != nil {
+			return seriesDeletion{}, fmt.Errorf("soft-delete orphan rows: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return seriesDeletion{}, err
+		}
+		return seriesDeletion{Label: t.label(), CalendarID: t.calendarID, Hidden: ids}, nil
+	}
+	if _, err := storage.CreateTombstoneIfSynced(ctx, tx, t.master.CalendarID, uid); err != nil {
+		return seriesDeletion{}, fmt.Errorf("create tombstone: %w", err)
+	}
+	// Record the live override rows that this delete hides, by ID, so a
+	// restore of the series brings back exactly those rows.
+	live, err := qtx.ListSeriesOverridesInCalendar(ctx, storage.ListSeriesOverridesInCalendarParams{
+		CalendarID: t.master.CalendarID, Uid: uid,
+	})
+	if err != nil {
+		return seriesDeletion{}, fmt.Errorf("list overrides: %w", err)
+	}
+	hidden := make([]int64, 0, len(live))
+	for _, o := range live {
+		hidden = append(hidden, o.ID)
+	}
+	if err := recordSeriesDeleteTx(ctx, qtx, t.master.CalendarID, uid, hidden, false); err != nil {
+		return seriesDeletion{}, err
+	}
+	if err := qtx.SoftDeleteSeriesRowsInCalendar(ctx, storage.SoftDeleteSeriesRowsInCalendarParams{
+		CalendarID: t.calendarID, Uid: uid,
+	}); err != nil {
+		return seriesDeletion{}, fmt.Errorf("soft-delete series: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return seriesDeletion{}, err
+	}
+	return seriesDeletion{Master: t.master, Label: t.label(), CalendarID: t.master.CalendarID}, nil
+}
+
+// seriesDeleteTarget is what a series delete of a UID in a calendar takes.
+type seriesDeleteTarget struct {
+	// master is the live master of the series. ID 0 means orphan rows.
+	master storage.Event
+	// calendarID is the calendar of the delete.
+	calendarID int64
+	// orphans holds the live orphan rows of the calendar when master has
+	// ID 0.
+	orphans []storage.Event
+}
+
+// label names the delete: the title of the master, or of the first orphan
+// row.
+func (t seriesDeleteTarget) label() string {
+	if t.master.ID != 0 {
+		return t.master.Title
+	}
+	return t.orphans[0].Title
+}
+
+// resolveSeriesDeleteTx resolves the target of a series delete of uid in
+// calendarID, with no write. It returns the exact error of the delete: a
+// series in the trash, an ambiguous UID, a refused calendar, or nothing to
+// delete. deleteSeries and SeriesDeleteTarget share it.
+func resolveSeriesDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (seriesDeleteTarget, error) {
 	master, mErr := findSeriesMasterTx(ctx, qtx, calendarID, uid)
 	// Only ErrNoRows means "no master to track". A genuine lookup error must
 	// abort. Otherwise the series is soft-deleted locally with no tombstone.
-	// The next pull would then resurrect the series. This mirrors the guard
-	// the todo and journal services already carry (issue #290).
+	// The next pull would then resurrect the series (issue #290).
 	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
-		return seriesDeletion{}, wrapMasterLookup(mErr)
+		return seriesDeleteTarget{}, wrapMasterLookup(mErr)
 	}
 	if mErr == nil {
 		calendarID = master.CalendarID
@@ -1931,7 +2016,7 @@ func (s *Service) deleteSeries(ctx context.Context, calendarID int64, uid string
 		// them.
 		n, err := qtx.EventUIDMasterCalendars(ctx, uid)
 		if err != nil {
-			return seriesDeletion{}, fmt.Errorf("find master calendars: %w", err)
+			return seriesDeleteTarget{}, fmt.Errorf("find master calendars: %w", err)
 		}
 		if n.Calendars > 0 {
 			_, err := qtx.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{
@@ -1939,106 +2024,64 @@ func (s *Service) deleteSeries(ctx context.Context, calendarID int64, uid string
 			})
 			found, err := storage.Found(err)
 			if err != nil {
-				return seriesDeletion{}, fmt.Errorf("get master: %w", err)
+				return seriesDeleteTarget{}, fmt.Errorf("get master: %w", err)
 			}
 			if found {
-				return seriesDeletion{}, ErrSeriesInTrash
+				return seriesDeleteTarget{}, ErrSeriesInTrash
 			}
-			return seriesDeletion{}, wrapMasterLookup(mErr)
+			return seriesDeleteTarget{}, wrapMasterLookup(mErr)
 		}
 	}
-
 	if calendarID == 0 {
-		// No calendar and no live master: the UID holds orphan rows
-		// only. One calendar with live rows is the target, so the
-		// delete logs the rows for the undo like a named calendar.
+		// No calendar and no live master: the UID holds orphan rows only.
+		// One calendar with live rows is the target.
 		calendars, err := qtx.ListLiveEventCalendarIDsByUID(ctx, uid)
 		if err != nil {
-			return seriesDeletion{}, fmt.Errorf("list calendars: %w", err)
+			return seriesDeleteTarget{}, fmt.Errorf("list calendars: %w", err)
 		}
 		switch len(calendars) {
 		case 0:
-			return seriesDeletion{}, ErrNotDeleted
+			return seriesDeleteTarget{}, ErrNotDeleted
 		case 1:
 			calendarID = calendars[0]
 		default:
-			return seriesDeletion{}, ErrAmbiguousUID
+			return seriesDeleteTarget{}, ErrAmbiguousUID
 		}
 	}
 	// The access guard covers the calendars of the series only, after the
 	// resolve of the target calendar. A read-only copy of the UID in
 	// another calendar does not block the delete (issue #842).
 	if err := ensureSeriesWritableIn(ctx, qtx, calendarID, uid); err != nil {
-		return seriesDeletion{}, err
+		return seriesDeleteTarget{}, err
 	}
+	t := seriesDeleteTarget{master: master, calendarID: calendarID}
 	if mErr == nil {
-		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, master.CalendarID, uid); err != nil {
-			return seriesDeletion{}, fmt.Errorf("create tombstone: %w", err)
-		}
-		// Record the live override rows that this delete hides, by ID,
-		// so a restore of the series brings back exactly those rows.
-		live, err := qtx.ListSeriesOverridesInCalendar(ctx, storage.ListSeriesOverridesInCalendarParams{
-			CalendarID: master.CalendarID, Uid: uid,
-		})
-		if err != nil {
-			return seriesDeletion{}, fmt.Errorf("list overrides: %w", err)
-		}
-		hidden := make([]int64, 0, len(live))
-		for _, o := range live {
-			hidden = append(hidden, o.ID)
-		}
-		if err := recordSeriesDeleteTx(ctx, qtx, master.CalendarID, uid, hidden, false); err != nil {
-			return seriesDeletion{}, err
-		}
+		return t, nil
 	}
-
-	if mErr != nil {
-		// No live master anywhere: the live rows of the calendar are orphans. The
-		// series rule assigns them to a master in the trash, if any. The delete
-		// takes the rows of the calendar as they are, and logs them for the undo.
-		// No row means nothing to delete, before any write.
-		live, err := qtx.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{
-			CalendarID: calendarID, Uid: uid,
-		})
-		if err != nil {
-			return seriesDeletion{}, fmt.Errorf("list orphan rows: %w", err)
-		}
-		if len(live) == 0 {
-			return seriesDeletion{}, ErrNotDeleted
-		}
-		// The log of an earlier series delete in this calendar can still name rows,
-		// because the master of the calendar is in the trash. The new rows join
-		// that list.
-		ids := make([]int64, 0, len(live))
-		for _, o := range live {
-			ids = append(ids, o.ID)
-		}
-		if err := recordSeriesDeleteTx(ctx, qtx, calendarID, uid, ids, true); err != nil {
-			return seriesDeletion{}, err
-		}
-		// The rows of a synced calendar have a server object. A tombstone
-		// queues its delete, as for a series with a master, or the next
-		// pull brings the rows back.
-		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, calendarID, uid); err != nil {
-			return seriesDeletion{}, fmt.Errorf("create tombstone: %w", err)
-		}
-		if err := qtx.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{
-			CalendarID: calendarID, Uid: uid,
-		}); err != nil {
-			return seriesDeletion{}, fmt.Errorf("soft-delete orphan rows: %w", err)
-		}
-		if err := tx.Commit(); err != nil {
-			return seriesDeletion{}, err
-		}
-		return seriesDeletion{Label: live[0].Title, CalendarID: calendarID, Hidden: ids}, nil
-	}
-	if err := qtx.SoftDeleteSeriesRowsInCalendar(ctx, storage.SoftDeleteSeriesRowsInCalendarParams{
+	// No live master anywhere: the live rows of the calendar are orphans.
+	// The series rule assigns them to a master in the trash, if any. No row
+	// means nothing to delete.
+	live, err := qtx.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{
 		CalendarID: calendarID, Uid: uid,
-	}); err != nil {
-		return seriesDeletion{}, fmt.Errorf("soft-delete series: %w", err)
+	})
+	if err != nil {
+		return seriesDeleteTarget{}, fmt.Errorf("list orphan rows: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return seriesDeletion{}, err
+	if len(live) == 0 {
+		return seriesDeleteTarget{}, ErrNotDeleted
 	}
-	return seriesDeletion{Master: master, Label: master.Title, CalendarID: master.CalendarID}, nil
+	t.master, t.orphans = storage.Event{}, live
+	return t, nil
+}
+
+// SeriesDeleteTarget reports what DeleteSeries of uid in calendarID would
+// delete, with no write. It returns the label of the delete, or the exact
+// error that DeleteSeries would return. The CLI reads it before the
+// confirm prompt.
+func (s *Service) SeriesDeleteTarget(ctx context.Context, calendarID int64, uid string) (string, error) {
+	t, err := resolveSeriesDeleteTx(ctx, s.q, calendarID, uid)
+	if err != nil {
+		return "", err
+	}
+	return t.label(), nil
 }

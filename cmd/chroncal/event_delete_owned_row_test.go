@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -125,5 +129,102 @@ func TestEventDeleteSeries_NumericLegacyIDTakesTheCalendar(t *testing.T) {
 	}
 	if got.CalendarID != work {
 		t.Errorf("target calendar = %d, want Work %d", got.CalendarID, work)
+	}
+}
+
+// TestEventDeleteSeries_OwnTrashedMasterRefusedBeforePrompt: a calendar with
+// its own master in the trash and a live override beside it holds no series
+// to delete. The resolver refuses it with the trash message before the
+// prompt, as the service would after it.
+func TestEventDeleteSeries_OwnTrashedMasterRefusedBeforePrompt(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	home, err := resolveCalendarID(ctx, a, "Home")
+	if err != nil {
+		t.Fatalf("resolve Home: %v", err)
+	}
+	at := time.Date(2026, 4, 7, 9, 0, 0, 0, time.UTC)
+	override, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
+		UID: uid, CalendarID: home, Title: "Home late",
+		StartTime: at.Add(time.Hour), EndTime: at.Add(2 * time.Hour), RecurrenceID: at.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert Home override: %v", err)
+	}
+	if err := a.Events.DeleteSeries(ctx, home, uid); err != nil {
+		t.Fatalf("DeleteSeries(Home): %v", err)
+	}
+	if err := a.Events.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID(override): %v", err)
+	}
+	_, err = eventResource.resolveIn(ctx, a, uid, "Home", true)
+	if err == nil || !strings.Contains(err.Error(), "is in the trash in calendar") {
+		t.Fatalf("resolveIn(uid, Home) err = %v, want the trash message before the prompt", err)
+	}
+	if _, serr := a.Events.DeleteSeriesWithUndo(ctx, home, uid); !errors.Is(serr, event.ErrSeriesInTrash) {
+		t.Errorf("DeleteSeries(Home) err = %v, want ErrSeriesInTrash (the same rule)", serr)
+	}
+}
+
+// importOrphan imports one orphan instance of uid into calendar.
+func importOrphan(t *testing.T, uid, calendar, summary string) {
+	t.Helper()
+	ics := filepath.Join(t.TempDir(), "orphan.ics")
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
+		"\r\nDTSTAMP:20260401T000000Z\r\nRECURRENCE-ID:20260407T090000Z\r\nDTSTART:20260407T100000Z\r\nDTEND:20260407T103000Z\r\n" +
+		"SUMMARY:" + summary + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", calendar); err != nil {
+		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+}
+
+// TestResolveEventOccurrence_OrphanByCalendar: --calendar picks one of two
+// orphan rows, and that calendar names the row. An orphan row in another
+// calendar than --calendar stops the edit with a hint that names its
+// calendar, so the edit is not a move.
+func TestResolveEventOccurrence_OrphanByCalendar(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	for _, name := range []string{"Work", "Home", "Other"} {
+		if _, _, err := runChroncalCommand(t, "calendar", "create", name); err != nil {
+			t.Fatalf("calendar create %s: %v", name, err)
+		}
+	}
+	const twin, single = "orphan-twin", "orphan-single-cal"
+	importOrphan(t, twin, "Work", "Twin Work")
+	importOrphan(t, twin, "Home", "Twin Home")
+	importOrphan(t, single, "Work", "Single")
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	home, err := resolveCalendarID(ctx, a, "Home")
+	if err != nil {
+		t.Fatalf("resolve Home: %v", err)
+	}
+	other, err := resolveCalendarID(ctx, a, "Other")
+	if err != nil {
+		t.Fatalf("resolve Other: %v", err)
+	}
+	const rid = "2026-04-07T09:00:00Z"
+	e, _, viaCalendar, err := resolveEventOccurrence(ctx, a, twin, rid, home, "Home")
+	if err != nil || e.CalendarID != home || !viaCalendar || e.Title != "Twin Home" {
+		t.Fatalf("resolve twin in Home = %q calendar %d via %v, %v; want the Home row via the calendar", e.Title, e.CalendarID, viaCalendar, err)
+	}
+	_, _, _, err = resolveEventOccurrence(ctx, a, single, rid, other, "Other")
+	if err == nil || !strings.Contains(err.Error(), `the row is in calendar "Work"`) {
+		t.Errorf("resolve single in Other err = %v, want a hint that names Work", err)
 	}
 }
