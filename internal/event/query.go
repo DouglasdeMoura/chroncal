@@ -142,6 +142,14 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 	case !errors.Is(err, sql.ErrNoRows):
 		return Event{}, err
 	}
+	return s.OrphanOccurrence(ctx, uid, recurrenceID)
+}
+
+// OrphanOccurrence returns the live row of one occurrence of a UID with
+// no live master anywhere (an orphan instance, for example a Google
+// instance under its own UID). With one row, that row is the result.
+// With more, the lookup cannot choose, so it returns ErrAmbiguousUID.
+func (s *Service) OrphanOccurrence(ctx context.Context, uid, recurrenceID string) (Event, error) {
 	rows, err := s.q.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
 		Uid:          uid,
 		RecurrenceID: recurrenceID,

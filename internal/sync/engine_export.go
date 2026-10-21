@@ -125,36 +125,45 @@ var ownerOpsByType = map[string]ownerOps{
 // anywhere keeps the orphan-instance path: sql.ErrNoRows, and the
 // override rows export on their own.
 func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid string) (event.Event, error) {
-	master, err := e.events.GetByCalendarUID(ctx, calendarID, uid)
-	if !errors.Is(err, sql.ErrNoRows) {
-		return master, err
+	// The view event_series_rows names the series that owns the rows of
+	// the calendar. A live owner in this calendar is the master of the
+	// export. A live owner in another calendar means the rows here are
+	// legacy overrides of that series, and its calendar exports them.
+	owner, err := e.q.GetLiveSeriesMasterOfCalendar(ctx, storage.GetLiveSeriesMasterOfCalendarParams{CalendarID: calendarID, Uid: uid})
+	found, err := storage.Found(err)
+	if err != nil {
+		return event.Event{}, fmt.Errorf("get series master: %w", err)
 	}
-	n, qErr := e.q.EventUIDMasterCalendars(ctx, uid)
-	if qErr != nil {
-		return event.Event{}, qErr
+	if found && owner.CalendarID == calendarID {
+		// The row with its categories. The hydrate step of the export
+		// loads the relations and owns their failure mode.
+		return e.events.Get(ctx, owner.ID)
 	}
-	if n.Calendars == 0 {
+	if found {
+		return event.Event{}, fmt.Errorf("%w: event uid %s has its master in another calendar", errResourceMissing, uid)
+	}
+	// No live owner. An owner in the trash (this calendar's own master,
+	// or a master elsewhere that owns legacy rows here) leaves the live
+	// rows of the calendar as orphan instances, and so does a UID with
+	// no master anywhere: sql.ErrNoRows makes the export take them. Live
+	// masters elsewhere with no owner (two live masters) leave nothing
+	// for this calendar to export.
+	_, err = e.q.GetSeriesMasterOfCalendarIncludingDeleted(ctx, storage.GetSeriesMasterOfCalendarIncludingDeletedParams{CalendarID: calendarID, Uid: uid})
+	found, err = storage.Found(err)
+	if err != nil {
+		return event.Event{}, fmt.Errorf("get series master: %w", err)
+	}
+	if found {
+		return event.Event{}, sql.ErrNoRows
+	}
+	n, err := e.q.EventUIDMasterCalendars(ctx, uid)
+	if err != nil {
 		return event.Event{}, err
 	}
-	// A live master exists in another calendar. The rows of this calendar
-	// are legacy overrides of that series, unless this calendar holds its
-	// own master in the trash: a live row beside it (a restore by ID) is
-	// an orphan instance of this calendar, and the export carries it.
-	own, qErr := e.q.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: calendarID, Uid: uid})
-	found, qErr := storage.Found(qErr)
-	if qErr != nil {
-		return event.Event{}, qErr
+	if n.Calendars > 0 {
+		return event.Event{}, fmt.Errorf("%w: event uid %s has its master in another calendar", errResourceMissing, uid)
 	}
-	if found && own.DeletedAt != nil {
-		live, qErr := e.events.ListLiveOverridesInCalendar(ctx, calendarID, uid)
-		if qErr != nil {
-			return event.Event{}, qErr
-		}
-		if len(live) > 0 {
-			return event.Event{}, err
-		}
-	}
-	return event.Event{}, fmt.Errorf("%w: event uid %s has its master in another calendar", errResourceMissing, uid)
+	return event.Event{}, sql.ErrNoRows
 }
 
 // eventOverridesForExport lists the override rows of the export of uid in
