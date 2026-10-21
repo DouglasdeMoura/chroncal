@@ -22,6 +22,22 @@ func (q *Queries) ListOverridesByUIDs(ctx context.Context, uids []string) ([]Eve
 	return out, nil
 }
 
+// FirstPerRecurrenceID keeps the first row of each recurrence ID, in the
+// order of rows. The rows come in the order of the tie rule (see the query
+// ListSeriesOverridesInCalendar), so the first row of an occurrence wins.
+// The export, the edit, and the expansion share it.
+func FirstPerRecurrenceID(rows []Event) []Event {
+	seen := make(map[string]bool, len(rows))
+	kept := make([]Event, 0, len(rows))
+	for _, r := range rows {
+		if !seen[r.RecurrenceID] {
+			seen[r.RecurrenceID] = true
+			kept = append(kept, r)
+		}
+	}
+	return kept
+}
+
 // SeriesOwner names the owner calendar of one override row.
 type SeriesOwner struct {
 	ID              int64

@@ -962,8 +962,8 @@ func resolvePushIdentity(cal storage.Calendar, account storage.Account) string {
 // (case-insensitive, mailto: prefix tolerated). Returns false only when
 // we can prove the user is just an attendee. A missing master row counts
 // as "no organizer" so an orphaned dirty row can still push. Any other
-// failed lookup returns an error; the caller keeps the row dirty instead
-// of guessing. The master is the one in calendarID: two calendars can
+// failed lookup returns an error; the caller keeps the row dirty and makes
+// no guess. The master is the one in calendarID: two calendars can
 // hold the same UID (issue #842).
 func (e *Engine) userOrganizesEvent(ctx context.Context, calendarID int64, uid, identity string) (bool, error) {
 	row, err := e.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})

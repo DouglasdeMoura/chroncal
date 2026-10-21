@@ -63,7 +63,7 @@ func overridesByUID[T any](list func(context.Context, string) ([]T, error)) func
 var ownerOpsByType = map[string]ownerOps{
 	ownerTypeEvent: {
 		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
-			_, err := e.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+			err := e.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 			return err
 		},
 		lookupID: func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error) {
@@ -125,8 +125,19 @@ var ownerOpsByType = map[string]ownerOps{
 // orphan-instance path: sql.ErrNoRows, and the override rows export on their
 // own.
 func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid string) (event.Event, error) {
-	// One query of the view event_series_rows names the series that owns
-	// the rows of the calendar, live or in the trash.
+	// The common case: the live master of the calendar. One lookup on the
+	// UNIQUE(calendar_id, uid, recurrence_id) key, with no view.
+	own, err := e.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+	if err == nil {
+		// The row with its categories. The hydrate step of the export
+		// loads the relations and owns their failure mode.
+		return e.events.Get(ctx, own.ID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return event.Event{}, fmt.Errorf("get master: %w", err)
+	}
+	// The view event_series_rows names the series that owns the rows of
+	// the calendar, live or in the trash.
 	owner, err := e.q.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{
 		CalendarID: calendarID, Uid: uid, IncludeDeleted: true,
 	})
@@ -135,10 +146,6 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 		return event.Event{}, fmt.Errorf("get series master: %w", err)
 	}
 	switch {
-	case found && owner.DeletedAt == nil && owner.CalendarID == calendarID:
-		// The row with its categories. The hydrate step of the export
-		// loads the relations and owns their failure mode.
-		return e.events.Get(ctx, owner.ID)
 	case found && owner.DeletedAt == nil:
 		// The live series of another calendar owns the rows here, and its
 		// calendar exports them.
@@ -152,14 +159,15 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 		// back.
 		return event.Event{}, fmt.Errorf("%w: event uid %s has its series master in the trash", errResourceMissing, uid)
 	}
-	// No owner. Two or more live masters own no legacy row, and a calendar
-	// with no row has nothing to own: nothing to export. A UID with no
-	// master anywhere leaves orphan instances.
-	n, err := e.q.EventUIDMasterCalendars(ctx, uid)
+	// No owner. The rows here belong to no series: two or more masters
+	// exist, live or in the trash, or the calendar holds no row. A PUT of
+	// the rows would store a body with no master. Only a UID with no master
+	// row anywhere leaves orphan instances to export.
+	masters, err := e.q.ListEventMastersByUIDIncludingDeleted(ctx, uid)
 	if err != nil {
-		return event.Event{}, err
+		return event.Event{}, fmt.Errorf("list masters: %w", err)
 	}
-	if n.Calendars > 0 {
+	if len(masters) > 0 {
 		return event.Event{}, fmt.Errorf("%w: event uid %s has no owner here", errResourceMissing, uid)
 	}
 	return event.Event{}, sql.ErrNoRows

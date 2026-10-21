@@ -536,6 +536,32 @@ func (q *Queries) GetSeriesMasterOfCalendar(ctx context.Context, arg GetSeriesMa
 	return i, err
 }
 
+const hasLiveSeriesOverrideAtOrAfter = `-- name: HasLiveSeriesOverrideAtOrAfter :one
+SELECT CAST(EXISTS (
+    SELECT 1 FROM events
+    WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NULL
+      AND events.id IN (
+        SELECT s.id FROM event_series_rows AS s
+        WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
+) AS BOOLEAN) AS has_override
+`
+
+type HasLiveSeriesOverrideAtOrAfterParams struct {
+	RecurrenceID string
+	Uid          string
+	CalendarID   int64
+}
+
+// Report whether the series of one UID in one calendar holds a live
+// override at or after the cutoff (see ListSeriesOverridesInCalendar). The
+// CLI and the TUI read it before a truncation.
+func (q *Queries) HasLiveSeriesOverrideAtOrAfter(ctx context.Context, arg HasLiveSeriesOverrideAtOrAfterParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, hasLiveSeriesOverrideAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
+	var has_override bool
+	err := row.Scan(&has_override)
+	return has_override, err
+}
+
 const listDeletedEventsByCalendar = `-- name: ListDeletedEventsByCalendar :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
 WHERE calendar_id = ? AND deleted_at IS NOT NULL
@@ -997,48 +1023,6 @@ func (q *Queries) ListLiveOverridesInCalendarByUID(ctx context.Context, arg List
 	return items, nil
 }
 
-const listLiveSeriesOverrideRecurrenceIDsAtOrAfter = `-- name: ListLiveSeriesOverrideRecurrenceIDsAtOrAfter :many
-SELECT events.recurrence_id FROM events
-WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
-`
-
-type ListLiveSeriesOverrideRecurrenceIDsAtOrAfterParams struct {
-	RecurrenceID string
-	Uid          string
-	CalendarID   int64
-}
-
-// The recurrence IDs that a truncation of the series in one calendar is about
-// to hide. These are the live overrides of that series at or after the cutoff
-// (see ListSeriesOverridesInCalendar). The caller reads them before
-// SoftDeleteSeriesOverridesAtOrAfter, so a restore shows only these rows
-// again (issue #287).
-func (q *Queries) ListLiveSeriesOverrideRecurrenceIDsAtOrAfter(ctx context.Context, arg ListLiveSeriesOverrideRecurrenceIDsAtOrAfterParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listLiveSeriesOverrideRecurrenceIDsAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var recurrence_id string
-		if err := rows.Scan(&recurrence_id); err != nil {
-			return nil, err
-		}
-		items = append(items, recurrence_id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listLiveSeriesOverridesAtOrAfter = `-- name: ListLiveSeriesOverridesAtOrAfter :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
 WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NULL
@@ -1055,7 +1039,7 @@ type ListLiveSeriesOverridesAtOrAfterParams struct {
 }
 
 // The live override rows that a truncation of the series in one calendar
-// is about to hide (see ListLiveSeriesOverrideRecurrenceIDsAtOrAfter).
+// is about to hide (see ListSeriesOverridesInCalendar).
 // The truncation log records their IDs and their recurrence IDs.
 func (q *Queries) ListLiveSeriesOverridesAtOrAfter(ctx context.Context, arg ListLiveSeriesOverridesAtOrAfterParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listLiveSeriesOverridesAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
@@ -1207,7 +1191,7 @@ WHERE events.recurrence_id = ?1 AND events.deleted_at IS NULL
   AND events.id IN (
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
-ORDER BY events.id
+ORDER BY EXISTS (SELECT 1 FROM events AS m WHERE m.uid = events.uid AND m.calendar_id = events.calendar_id AND m.recurrence_id = '') DESC, events.id
 `
 
 type ListSeriesOverridesAtRecurrenceIDParams struct {
@@ -1218,7 +1202,8 @@ type ListSeriesOverridesAtRecurrenceIDParams struct {
 
 // The live override rows of one occurrence of the series in one calendar (see
 // ListSeriesOverridesInCalendar). These are the row of the calendar of the
-// master, or the legacy rows the series owns.
+// master, or the legacy rows the series owns. The order is the tie rule of
+// ListSeriesOverridesInCalendar, so the first row wins.
 func (q *Queries) ListSeriesOverridesAtRecurrenceID(ctx context.Context, arg ListSeriesOverridesAtRecurrenceIDParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesOverridesAtRecurrenceID, arg.RecurrenceID, arg.Uid, arg.CalendarID)
 	if err != nil {
@@ -1276,7 +1261,7 @@ WHERE events.recurrence_id != '' AND events.deleted_at IS NULL
   AND events.id IN (
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
-ORDER BY events.recurrence_id
+ORDER BY events.recurrence_id, EXISTS (SELECT 1 FROM events AS m WHERE m.uid = events.uid AND m.calendar_id = events.calendar_id AND m.recurrence_id = '') DESC, events.id
 `
 
 type ListSeriesOverridesInCalendarParams struct {
@@ -1289,7 +1274,10 @@ type ListSeriesOverridesInCalendarParams struct {
 // that the series owns. The view event_series_rows in migration 057 and
 // uidmove.LegacyOwner hold the rule. Two calendars can hold the same UID, so
 // the override rows of the other master stay out (issue #842). Every series
-// query below takes its rows from the same view.
+// query below takes its rows from the same view. Within one recurrence ID,
+// the row of a calendar with a master row of the UID comes first, then the
+// lowest ID: the tie rule of the export, the expansion, and the edit. A
+// legacy row is in a calendar with no master row.
 func (q *Queries) ListSeriesOverridesInCalendar(ctx context.Context, arg ListSeriesOverridesInCalendarParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesOverridesInCalendar, arg.Uid, arg.CalendarID)
 	if err != nil {
@@ -1640,7 +1628,7 @@ func (q *Queries) SoftDeleteEvent(ctx context.Context, id int64) error {
 	return err
 }
 
-const softDeleteEventsByCalendarUID = `-- name: SoftDeleteEventsByCalendarUID :execrows
+const softDeleteEventsByCalendarUID = `-- name: SoftDeleteEventsByCalendarUID :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
@@ -1656,12 +1644,9 @@ type SoftDeleteEventsByCalendarUIDParams struct {
 // the server object of the UID gone in that calendar uses it. Another
 // calendar can hold the same UID (a move, or a copy), so the delete stays
 // in the pulled calendar.
-func (q *Queries) SoftDeleteEventsByCalendarUID(ctx context.Context, arg SoftDeleteEventsByCalendarUIDParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, softDeleteEventsByCalendarUID, arg.CalendarID, arg.Uid)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+func (q *Queries) SoftDeleteEventsByCalendarUID(ctx context.Context, arg SoftDeleteEventsByCalendarUIDParams) error {
+	_, err := q.db.ExecContext(ctx, softDeleteEventsByCalendarUID, arg.CalendarID, arg.Uid)
+	return err
 }
 
 const softDeleteEventsByIDs = `-- name: SoftDeleteEventsByIDs :exec
