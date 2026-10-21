@@ -136,16 +136,50 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 	// row of another calendar's trashed series is not the occurrence.
 	// Only a UID with no live master (an orphan instance) keeps the plain
 	// lookup below.
-	_, override, err := s.SeriesOccurrence(ctx, 0, uid, recurrenceID)
+	master, override, err := s.SeriesOccurrence(ctx, 0, uid, recurrenceID)
 	switch {
 	case err == nil && override != nil:
 		return *override, nil
 	case err == nil:
-		return Event{}, sql.ErrNoRows
+		// The live series has no row at the occurrence. A calendar with
+		// its own master in the trash can hold a live row there, outside
+		// the live series.
+		return s.occurrenceOutsideSeries(ctx, master, uid, recurrenceID)
 	case !errors.Is(err, sql.ErrNoRows):
 		return Event{}, err
 	}
 	return s.OrphanOccurrence(ctx, uid, recurrenceID)
+}
+
+// occurrenceOutsideSeries returns the one live row of the occurrence that
+// the live series of master does not own. More rows give an
+// *AmbiguousOverrideError. No row gives sql.ErrNoRows.
+func (s *Service) occurrenceOutsideSeries(ctx context.Context, master Event, uid, recurrenceID string) (Event, error) {
+	rows, err := s.q.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
+		Uid: uid, RecurrenceID: recurrenceID,
+	})
+	if err != nil {
+		return Event{}, err
+	}
+	outside := make([]storage.Event, 0, len(rows))
+	for _, r := range rows {
+		if r.CalendarID != master.CalendarID {
+			outside = append(outside, r)
+		}
+	}
+	switch len(outside) {
+	case 0:
+		return Event{}, sql.ErrNoRows
+	case 1:
+		e := FromStorage(outside[0])
+		s.populateSingleCategories(ctx, &e)
+		return e, nil
+	}
+	ids := make([]int64, len(outside))
+	for i, r := range outside {
+		ids[i] = r.ID
+	}
+	return Event{}, &AmbiguousOverrideError{IDs: ids}
 }
 
 // OrphanOccurrence returns the live row of one occurrence of a UID with no

@@ -143,9 +143,15 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 		// The live series of another calendar owns the rows here, and its
 		// calendar exports them.
 		return event.Event{}, fmt.Errorf("%w: event uid %s has its series in another calendar", errResourceMissing, uid)
+	case found && owner.CalendarID == calendarID:
+		// The master of this calendar is in the trash, so the server
+		// object of the calendar holds a whole series. A PUT of the live
+		// rows alone would replace it with a body with no master. The
+		// rows stay local until the master comes back.
+		return event.Event{}, fmt.Errorf("%w: event uid %s has its master in the trash", errResourceMissing, uid)
 	case found:
-		// The owner is in the trash. The live rows of the calendar are
-		// orphan instances.
+		// The owner is a master in the trash of another calendar. The
+		// live rows here are orphan instances of this calendar.
 		return event.Event{}, sql.ErrNoRows
 	}
 	// No owner. Two or more live masters own no legacy row, and a calendar

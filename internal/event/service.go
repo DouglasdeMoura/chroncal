@@ -631,9 +631,6 @@ func deleteCollidingLogRowsTx(ctx context.Context, qtx *storage.Queries, arg sto
 	if err := qtx.DeleteEventTruncateDeletesCollidingWithMove(ctx, storage.DeleteEventTruncateDeletesCollidingWithMoveParams{FromCalendarID: arg.FromCalendarID, ToCalendarID: arg.ToCalendarID, Uid: arg.Uid}); err != nil {
 		return fmt.Errorf("delete colliding event_truncate_deletes: %w", err)
 	}
-	if err := qtx.DeleteEventSeriesDeletesCollidingWithMove(ctx, storage.DeleteEventSeriesDeletesCollidingWithMoveParams{FromCalendarID: arg.FromCalendarID, ToCalendarID: arg.ToCalendarID, Uid: arg.Uid}); err != nil {
-		return fmt.Errorf("delete colliding event_series_deletes: %w", err)
-	}
 	return nil
 }
 

@@ -26,15 +26,6 @@ DELETE FROM event_series_deletes WHERE deleted_at < ?;
 UPDATE event_series_deletes SET calendar_id = sqlc.arg(to_calendar_id)
 WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
 
--- name: DeleteEventSeriesDeletesCollidingWithMove :exec
--- Drop the log row of the source calendar when the target calendar holds
--- one (see DeleteEventExdateDeletesCollidingWithMove).
-DELETE FROM event_series_deletes
-WHERE event_series_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_series_deletes.uid = sqlc.arg(uid)
-  AND EXISTS (
-    SELECT 1 FROM event_series_deletes AS t
-    WHERE t.calendar_id = sqlc.arg(to_calendar_id) AND t.uid = sqlc.arg(uid));
-
 -- name: ListEventSeriesDeletesByUID :many
 SELECT * FROM event_series_deletes WHERE uid = ? ORDER BY calendar_id;
 

@@ -236,6 +236,16 @@ func (s *Service) SeriesOccurrence(ctx context.Context, calendarID int64, uid, r
 	return master, &override, nil
 }
 
+// SeriesMasterIncludingDeleted is SeriesMaster for a master that can be in
+// the trash. The CLI reads the title of a series for a prompt with it.
+func (s *Service) SeriesMasterIncludingDeleted(ctx context.Context, calendarID int64, uid string) (Event, error) {
+	r, err := findSeriesMasterIncludingDeletedTx(ctx, s.q, calendarID, uid)
+	if err != nil {
+		return Event{}, err
+	}
+	return FromStorage(r), nil
+}
+
 // ListLiveOverridesInCalendar returns the live override rows of uid in
 // calendarID with no series rule. The sync export of a calendar that holds
 // orphan instances reads it (see ListLiveOverridesInCalendarByUID).

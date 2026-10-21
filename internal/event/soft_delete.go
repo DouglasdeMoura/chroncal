@@ -347,6 +347,13 @@ func (s *Service) RestoreByID(ctx context.Context, id int64) error {
 		if err := s.restoreOverrideByID(ctx, r); err != nil {
 			return err
 		}
+		if s.masterInTrash(ctx, r.CalendarID, r.Uid) {
+			// The row stays local until the master comes back. The
+			// tombstone of the series stays, and the UID gets no dirty
+			// mark: a push would PUT the override alone over the server
+			// object of the whole series.
+			return nil
+		}
 		return s.reconcileSyncAfterRestore(ctx, r.CalendarID, r.Uid)
 	}
 	if err := ensureSeriesWritableIn(ctx, s.q, r.CalendarID, r.Uid); err != nil {
@@ -593,10 +600,9 @@ func (s *Service) restoreSingle(ctx context.Context, meta UndoMeta) error {
 		// one occurrence. The undo un-hides the row of the delete, never
 		// the master. The EXDATE of the occurrence goes from the trashed
 		// master.
-		if err := s.restoreOverrideOfTrashedMaster(ctx, r, recurrenceID, rowID); err != nil {
-			return err
-		}
-		return s.reconcileSyncAfterRestore(ctx, r.CalendarID, uid)
+		// The row stays local until the master comes back, as a restore
+		// by ID beside a trashed master does: no sync reconcile.
+		return s.restoreOverrideOfTrashedMaster(ctx, r, recurrenceID, rowID)
 	}
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		if recurrenceID != "" {
@@ -806,6 +812,13 @@ func (s *Service) undoMaster(ctx context.Context, meta UndoMeta) (storage.Event,
 	return r, err
 }
 
+// masterInTrash reports whether the series that owns the rows of uid in
+// calendarID has its master in the trash. A lookup error counts as no.
+func (s *Service) masterInTrash(ctx context.Context, calendarID int64, uid string) bool {
+	m, err := findSeriesMasterIncludingDeletedTx(ctx, s.q, calendarID, uid)
+	return err == nil && m.DeletedAt != nil
+}
+
 // restoreOverrideOfTrashedMaster reverses an occurrence delete of the
 // series of master, which is in the trash. It un-hides the override row
 // that the delete hid (rowID, 0 with no stored override). It clears the
@@ -984,21 +997,22 @@ func sameDeleteRowsTx(ctx context.Context, qtx *storage.Queries, master storage.
 	if err != nil {
 		return nil, err
 	}
+	exdateLogs, err := qtx.ListEventExdateDeletesByCalendarUID(ctx, storage.ListEventExdateDeletesByCalendarUIDParams{
+		CalendarID: master.CalendarID, Uid: master.Uid,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list exdate logs: %w", err)
+	}
+	ownDeletes := make(map[string]bool, len(exdateLogs))
+	for _, l := range exdateLogs {
+		ownDeletes[l.RecurrenceID] = true
+	}
 	var ids []int64
 	for _, r := range trashed {
-		if r.RecurrenceID == "" || r.DeletedAt == nil || *r.DeletedAt != *master.DeletedAt || truncated(r) {
+		if r.RecurrenceID == "" || r.DeletedAt == nil || *r.DeletedAt != *master.DeletedAt || truncated(r) || ownDeletes[r.RecurrenceID] {
 			continue
 		}
-		_, err := qtx.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
-			CalendarID: master.CalendarID, Uid: master.Uid, RecurrenceID: r.RecurrenceID,
-		})
-		logged, err := storage.Found(err)
-		if err != nil {
-			return nil, fmt.Errorf("get exdate log: %w", err)
-		}
-		if !logged {
-			ids = append(ids, r.ID)
-		}
+		ids = append(ids, r.ID)
 	}
 	return ids, nil
 }

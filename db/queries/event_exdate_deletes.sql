@@ -48,3 +48,8 @@ WHERE event_exdate_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_ex
   AND event_exdate_deletes.recurrence_id IN (
     SELECT t.recurrence_id FROM event_exdate_deletes AS t
     WHERE t.calendar_id = sqlc.arg(to_calendar_id) AND t.uid = sqlc.arg(uid));
+
+-- name: ListEventExdateDeletesByCalendarUID :many
+-- The occurrence logs of one series in one calendar. The restore of a
+-- master with no series-delete log reads them in one query.
+SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id;

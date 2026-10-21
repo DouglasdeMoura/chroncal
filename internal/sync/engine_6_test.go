@@ -248,7 +248,7 @@ func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
 		t.Fatalf("first persistImported: %v", err)
 	}
 
-	overrides, err := q.ListOverridesByUID(ctx, uid)
+	overrides, err := q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{CalendarID: calendarID, Uid: uid})
 	if err != nil {
 		t.Fatalf("ListOverridesByUID after first import: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
 	}
 
 	// Only the kept override should remain live.
-	overrides, err = q.ListOverridesByUID(ctx, uid)
+	overrides, err = q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{CalendarID: calendarID, Uid: uid})
 	if err != nil {
 		t.Fatalf("ListOverridesByUID after second import: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestPersistImportedPruneSkipsDirtyResource(t *testing.T) {
 		t.Fatalf("second persistImported: %v", err)
 	}
 
-	overrides, err := q.ListOverridesByUID(ctx, uid)
+	overrides, err := q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{CalendarID: calendarID, Uid: uid})
 	if err != nil {
 		t.Fatalf("ListOverridesByUID: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestPersistImportedPrunesCleanSyncedResource(t *testing.T) {
 		t.Fatalf("second persistImported: %v", err)
 	}
 
-	overrides, err := q.ListOverridesByUID(ctx, uid)
+	overrides, err := q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{CalendarID: calendarID, Uid: uid})
 	if err != nil {
 		t.Fatalf("ListOverridesByUID: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestPersistImportedPruneSkipsIncompleteParse(t *testing.T) {
 		t.Fatalf("second persistImported: %v", err)
 	}
 
-	overrides, err := q.ListOverridesByUID(ctx, uid)
+	overrides, err := q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{CalendarID: calendarID, Uid: uid})
 	if err != nil {
 		t.Fatalf("ListOverridesByUID: %v", err)
 	}
@@ -525,14 +525,14 @@ func TestPersistImportedPrunePerUID(t *testing.T) {
 		t.Fatalf("mixed persistImported: %v", err)
 	}
 
-	overridesA, err := q.ListOverridesByUID(ctx, uidA)
+	overridesA, err := q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{CalendarID: calendarID, Uid: uidA})
 	if err != nil {
 		t.Fatalf("ListOverridesByUID(A): %v", err)
 	}
 	if len(overridesA) != 0 {
 		t.Fatalf("A's stale override not pruned; live overrides = %d", len(overridesA))
 	}
-	overridesB, err := q.ListOverridesByUID(ctx, uidB)
+	overridesB, err := q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{CalendarID: calendarID, Uid: uidB})
 	if err != nil {
 		t.Fatalf("ListOverridesByUID(B): %v", err)
 	}

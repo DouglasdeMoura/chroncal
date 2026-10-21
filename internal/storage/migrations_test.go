@@ -773,21 +773,13 @@ func rebuildEvents(ctx context.Context, conn *sql.DB) error {
 func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 	ctx := context.Background()
 	t.Run("rename fails with the view in place", func(t *testing.T) {
-		conn, _, err := Open(t.TempDir() + "/rebuild-view.db")
-		if err != nil {
-			t.Fatalf("open: %v", err)
-		}
-		defer conn.Close()
+		conn := openFixtureDB(t)
 		if err := rebuildEvents(ctx, conn); err == nil {
 			t.Fatal("the rebuild succeeded with the view in place, want the rename to fail")
 		}
 	})
 	t.Run("drop, rebuild, create again", func(t *testing.T) {
-		conn, _, err := Open(t.TempDir() + "/rebuild-ok.db")
-		if err != nil {
-			t.Fatalf("open: %v", err)
-		}
-		defer conn.Close()
+		conn := openFixtureDB(t)
 		mustExec, count := migHelpers(t, ctx, conn)
 		mustExec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time)
 			VALUES (1, 'rebuild', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
@@ -799,5 +791,40 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 		if n := count(`SELECT COUNT(*) FROM event_series_rows WHERE uid = 'rebuild' AND owner_calendar_id = 1`); n != 1 {
 			t.Errorf("event_series_rows after the rebuild = %d, want 1", n)
 		}
+		// README step 4: the DROP TABLE of the rebuild drops the trigger.
+		const trigger = `SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'events_master_revive_drops_series_log'`
+		if n := count(trigger); n != 0 {
+			t.Fatalf("revive trigger after the rebuild = %d, want 0 before step 4", n)
+		}
+		mustExec(reviveTriggerStatement(t))
+		if n := count(trigger); n != 1 {
+			t.Fatalf("revive trigger after step 4 = %d, want 1", n)
+		}
+		mustExec(`UPDATE events SET deleted_at = '2026-01-02T00:00:00Z' WHERE id = 1`)
+		mustExec(`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids) VALUES (1, 'rebuild', '')`)
+		mustExec(`UPDATE events SET deleted_at = NULL WHERE id = 1`)
+		if n := count(`SELECT COUNT(*) FROM event_series_deletes WHERE calendar_id = 1 AND uid = 'rebuild'`); n != 0 {
+			t.Errorf("series log after the revive = %d, want 0 (the trigger drops it)", n)
+		}
 	})
+}
+
+// reviveTriggerStatement reads the CREATE TRIGGER statement of
+// events_master_revive_drops_series_log from migration 057, so the rebuild
+// test runs step 4 of the migrations README.
+func reviveTriggerStatement(t *testing.T) string {
+	t.Helper()
+	src, err := dbembed.Migrations.ReadFile("migrations/057_delete_logs_uid_unique_per_calendar.sql")
+	if err != nil {
+		t.Fatalf("read migration 057: %v", err)
+	}
+	start := strings.Index(string(src), "CREATE TRIGGER events_master_revive_drops_series_log")
+	if start < 0 {
+		t.Fatal("migration 057 has no CREATE TRIGGER events_master_revive_drops_series_log")
+	}
+	end := strings.Index(string(src[start:]), "END;")
+	if end < 0 {
+		t.Fatal("the CREATE TRIGGER statement has no end")
+	}
+	return string(src[start : start+end+len("END;")])
 }

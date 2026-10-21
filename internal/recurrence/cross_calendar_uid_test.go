@@ -93,3 +93,69 @@ func TestListExpandedEvents_SameUIDOnTwoCalendars(t *testing.T) {
 		t.Errorf("calendar 2 instance = %s, want %s", cal2[0].InstanceTime, start)
 	}
 }
+
+// TestListExpandedEvents_LegacyOverrideJoinsItsOwner: an override row in a
+// calendar with no master of its UID belongs to the one live master (the
+// owner rule of event_series_rows). The expansion shows it once in place
+// of the master occurrence. A row of the owner calendar at the same
+// occurrence wins over the legacy row.
+func TestListExpandedEvents_LegacyOverrideJoinsItsOwner(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+	res, err := db.ExecContext(ctx, `INSERT INTO calendars (name) VALUES ('Legacy')`)
+	if err != nil {
+		t.Fatalf("insert calendar: %v", err)
+	}
+	legacyCal, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("calendar id: %v", err)
+	}
+	start := time.Date(2026, 4, 6, 9, 0, 0, 0, time.UTC)
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	second := start.AddDate(0, 0, 7)
+	legacy, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: legacyCal, Title: "Standup (legacy)",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour),
+		RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	from, to := start, start.AddDate(0, 0, 14)
+	atSecond := func() []ExpandedEvent {
+		t.Helper()
+		got, err := recurSvc.ListExpandedEvents(ctx, from, to)
+		if err != nil {
+			t.Fatalf("ListExpandedEvents: %v", err)
+		}
+		var out []ExpandedEvent
+		for _, ev := range got {
+			if ev.UID == master.UID && ev.StartTime.Before(second.AddDate(0, 0, 1)) && !ev.StartTime.Before(second) {
+				out = append(out, ev)
+			}
+		}
+		return out
+	}
+	if got := atSecond(); len(got) != 1 || got[0].ID != legacy.ID {
+		t.Fatalf("rows at the second occurrence = %+v, want the legacy row %d once", got, legacy.ID)
+	}
+	own, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Standup (own)",
+		StartTime: second.Add(2 * time.Hour), EndTime: second.Add(3 * time.Hour),
+		RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert own override: %v", err)
+	}
+	if got := atSecond(); len(got) != 1 || got[0].ID != own.ID {
+		t.Errorf("rows at the second occurrence = %+v, want the own row %d once", got, own.ID)
+	}
+}

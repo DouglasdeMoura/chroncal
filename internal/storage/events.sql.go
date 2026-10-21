@@ -100,29 +100,6 @@ func (q *Queries) CountEventsByCalendar(ctx context.Context, calendarID int64) (
 	return count, err
 }
 
-const countSeriesRowsInTrash = `-- name: CountSeriesRowsInTrash :one
-SELECT COUNT(*) FROM events
-WHERE events.deleted_at IS NOT NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
-`
-
-type CountSeriesRowsInTrashParams struct {
-	Uid        string
-	CalendarID int64
-}
-
-// Count the soft-deleted rows of the series of one UID in one calendar
-// (see SoftDeleteSeriesRowsInCalendar). A restore by UID reads it to
-// learn whether the series of the live master has rows to restore.
-func (q *Queries) CountSeriesRowsInTrash(ctx context.Context, arg CountSeriesRowsInTrashParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countSeriesRowsInTrash, arg.Uid, arg.CalendarID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const createEvent = `-- name: CreateEvent :one
 INSERT INTO events (
     uid, calendar_id, title, description, location,
@@ -1082,63 +1059,6 @@ type ListLiveSeriesOverridesAtOrAfterParams struct {
 // The truncation log records their IDs and their recurrence IDs.
 func (q *Queries) ListLiveSeriesOverridesAtOrAfter(ctx context.Context, arg ListLiveSeriesOverridesAtOrAfterParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listLiveSeriesOverridesAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Event
-	for rows.Next() {
-		var i Event
-		if err := rows.Scan(
-			&i.ID,
-			&i.Uid,
-			&i.CalendarID,
-			&i.Title,
-			&i.Description,
-			&i.Location,
-			&i.StartTime,
-			&i.EndTime,
-			&i.AllDay,
-			&i.RecurrenceRule,
-			&i.Timezone,
-			&i.Status,
-			&i.Transp,
-			&i.Sequence,
-			&i.Priority,
-			&i.Class,
-			&i.Url,
-			&i.Exdates,
-			&i.Rdates,
-			&i.RecurrenceID,
-			&i.Geo,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.Duration,
-			&i.Dtstamp,
-			&i.ConferenceUri,
-			&i.DeletedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listOverridesByUID = `-- name: ListOverridesByUID :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
-WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL
-ORDER BY recurrence_id
-`
-
-func (q *Queries) ListOverridesByUID(ctx context.Context, uid string) ([]Event, error) {
-	rows, err := q.db.QueryContext(ctx, listOverridesByUID, uid)
 	if err != nil {
 		return nil, err
 	}
