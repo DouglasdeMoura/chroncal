@@ -589,6 +589,12 @@ func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEv
 		if err := deleteCollidingLogRowsTx(ctx, qtx, arg); err != nil {
 			return err
 		}
+		// A legacy row that goes home carries no series delete: the
+		// series of the target owns it. The series-delete log of the
+		// source stays out of the target.
+		if err := qtx.DeleteEventSeriesDeletesByCalendarUID(ctx, storage.DeleteEventSeriesDeletesByCalendarUIDParams{CalendarID: arg.FromCalendarID, Uid: arg.Uid}); err != nil {
+			return fmt.Errorf("delete source event_series_deletes: %w", err)
+		}
 	} else {
 		// The same queries with the calendars swapped drop the target
 		// rows whose keys the source holds. A series-delete log in a

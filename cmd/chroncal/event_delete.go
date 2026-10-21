@@ -32,6 +32,14 @@ var eventResource = resource{
 		if err != nil {
 			return row{}, err
 		}
+		if series {
+			if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr != nil {
+				// A series delete of a UID in a calendar goes straight to
+				// the service. Its errors decide: the orphan rows of a
+				// calendar with no live master, or a series in the trash.
+				return row{UID: ref, CalendarID: calendarID, Summary: ref}, nil
+			}
+		}
 		resolve := resolveRowIn
 		if series {
 			resolve = resolveSeriesMaster
@@ -46,6 +54,9 @@ var eventResource = resource{
 		err := a.Events.DeleteSeries(ctx, target.CalendarID, target.UID)
 		if errors.Is(err, event.ErrNotDeleted) {
 			return errNotFoundf("event series %s has no live row in calendar %q", target.UID, calendarName(ctx, a, target.CalendarID))
+		}
+		if errors.Is(err, event.ErrAmbiguousUID) {
+			return ambiguousSeriesErr(err, target.UID, target.CalendarID, calendarName(ctx, a, target.CalendarID), true)
 		}
 		if errors.Is(err, event.ErrSeriesInTrash) {
 			return errInvalidInputf("the series %s is in the trash in calendar %q; restore it first (chroncal event restore), or name the calendar of the live series with --calendar",
