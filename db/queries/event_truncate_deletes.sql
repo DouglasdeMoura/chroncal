@@ -4,8 +4,8 @@
 -- the FIRST previous_rrule, hidden_overrides, and removed_rdates, so a
 -- second truncation does not overwrite the pre-truncation state with an
 -- already-truncated rule or an empty override/rdate set.
-INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, hidden_ids)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid, cutoff_time) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
 
