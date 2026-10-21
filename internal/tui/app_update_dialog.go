@@ -210,9 +210,9 @@ func validateEventDeleteScope(ctx context.Context, a *app.App, ev event.Event, c
 		if recurrence.OccurrenceExistsAt(master, scopeAt) {
 			return nil
 		}
-		// The override must belong to this series: a row of the same
-		// UID in another calendar, or a row in the trash, does not make
-		// the occurrence deletable here (issue #842).
+		// The override must belong to this series. A row of the same UID in another
+		// calendar, or a row in the trash, does not make the occurrence deletable
+		// here (issue #842).
 		if _, oErr := a.Events.SeriesOverride(
 			ctx, master.CalendarID, ev.UID, scopeAt.UTC().Format(time.RFC3339)); oErr == nil {
 			return nil

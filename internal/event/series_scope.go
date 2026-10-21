@@ -12,9 +12,9 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
-// findSeriesMasterTx finds the live master of the series of uid for an
-// edit of the series: a truncation, an occurrence delete, a series delete,
-// or an export. Two calendars can hold the same UID (issue #842), so
+// findSeriesMasterTx finds the live master of the series of uid for an edit
+// of the series. Such an edit is a truncation, an occurrence delete, a series
+// delete, or an export. Two calendars can hold the same UID (issue #842), so
 // calendarID names the calendar of the series.
 //
 // A calendar with a live master of the UID gives that master. A calendar
@@ -31,14 +31,13 @@ func findSeriesMasterTx(ctx context.Context, qtx *storage.Queries, calendarID in
 	return findSeriesMaster(ctx, qtx, calendarID, uid, false)
 }
 
-// findSeriesMasterIncludingDeletedTx is findSeriesMasterTx for a restore.
-// The master can be in the trash, so a master row in the trash counts as
-// the master of its calendar. With calendarID 0, or for a legacy
-// override, the owner rule (uidmove.LegacyOwner) applies in full: one
-// live master is the choice, and with no live master one master in the
-// trash is the choice. A copy of the UID in the trash of another
-// calendar, for example a purge-pending copy, then never blocks a
-// restore.
+// findSeriesMasterIncludingDeletedTx is findSeriesMasterTx for a restore. The
+// master can be in the trash, so a master row in the trash counts as the
+// master of its calendar. With calendarID 0, or for a legacy override, the
+// owner rule (uidmove.LegacyOwner) applies in full. One live master is the
+// choice. With no live master, one master in the trash is the choice. A copy
+// of the UID in the trash of another calendar, for example a purge-pending
+// copy, then never blocks a restore.
 func findSeriesMasterIncludingDeletedTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (storage.Event, error) {
 	return findSeriesMaster(ctx, qtx, calendarID, uid, true)
 }
@@ -63,9 +62,9 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if !errors.Is(err, sql.ErrNoRows) {
 		return master, err
 	}
-	// No series owns the rows of the calendar. When the UID has more
-	// than one live master and the calendar holds a row of the UID, the
-	// rule cannot choose, so the caller can name the series.
+	// No series owns the rows of the calendar. When the UID has more than one
+	// live master and the calendar holds a row of the UID, the rule cannot
+	// choose. The caller can then name the series.
 	rows, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
 	if err != nil {
 		return storage.Event{}, err
@@ -74,14 +73,14 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if !includeDeleted {
 		// A live edit sees the live masters only: two masters in the
 		// trash make no ambiguity for a live legacy override.
-		masters = liveMasters(masters)
+		masters = filterMasters(masters, false)
 	}
 	if _, _, ambiguous := uidmove.LegacyOwner(masters); !ambiguous {
 		return storage.Event{}, sql.ErrNoRows
 	}
-	// A live edit counts the live rows of the calendar only: a calendar
-	// whose rows of the UID are all in the trash holds no live series,
-	// so it gets sql.ErrNoRows, not the ambiguity.
+	// A live edit counts the live rows of the calendar only. A calendar whose
+	// rows of the UID are all in the trash holds no live series. It gets
+	// sql.ErrNoRows, not the ambiguity.
 	var held int64
 	if includeDeleted {
 		n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
@@ -106,9 +105,9 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	return storage.Event{}, ErrAmbiguousUID
 }
 
-// seriesMasterOfUID is findSeriesMaster for calendar 0: no calendar
-// anchors the lookup, so the owner rule (uidmove.LegacyOwner) picks the
-// master among every master row of the UID.
+// seriesMasterOfUID is findSeriesMaster for calendar 0. No calendar anchors
+// the lookup, so the owner rule (uidmove.LegacyOwner) picks the master among
+// every master row of the UID.
 func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, includeDeleted bool) (storage.Event, error) {
 	rows, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
 	if err != nil {
@@ -118,10 +117,7 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 	if !includeDeleted {
 		// A live lookup wants a live master. With none, the UID is not
 		// found, also when two calendars hold it in the trash.
-		masters = liveMasters(masters)
-		if len(masters) == 0 {
-			return storage.Event{}, sql.ErrNoRows
-		}
+		masters = filterMasters(masters, false)
 	}
 	owner, ok, ambiguous := uidmove.LegacyOwner(masters)
 	if ambiguous {
@@ -131,38 +127,23 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 		return storage.Event{}, sql.ErrNoRows
 	}
 	for _, m := range rows {
-		if m.CalendarID != owner {
-			continue
+		if m.CalendarID == owner {
+			return m, nil
 		}
-		if m.DeletedAt != nil && !includeDeleted {
-			// The owner is in the trash, so no live series exists.
-			return storage.Event{}, sql.ErrNoRows
-		}
-		return m, nil
 	}
 	return storage.Event{}, sql.ErrNoRows
 }
 
-// trashedMasters returns the masters that are in the trash.
-func trashedMasters(masters []uidmove.Master) []uidmove.Master {
-	trashed := make([]uidmove.Master, 0, len(masters))
+// filterMasters returns the masters in the trash (trashed true) or the
+// live masters (trashed false).
+func filterMasters(masters []uidmove.Master, trashed bool) []uidmove.Master {
+	out := make([]uidmove.Master, 0, len(masters))
 	for _, m := range masters {
-		if m.Trashed {
-			trashed = append(trashed, m)
+		if m.Trashed == trashed {
+			out = append(out, m)
 		}
 	}
-	return trashed
-}
-
-// liveMasters returns the masters that are not in the trash.
-func liveMasters(masters []uidmove.Master) []uidmove.Master {
-	live := make([]uidmove.Master, 0, len(masters))
-	for _, m := range masters {
-		if !m.Trashed {
-			live = append(live, m)
-		}
-	}
-	return live
+	return out
 }
 
 // wrapLookup keeps ErrAmbiguousUID and ErrAmbiguousOverride bare, so a
@@ -179,14 +160,14 @@ func wrapMasterLookup(err error) error {
 	return wrapLookup("get master", err)
 }
 
-// ensureSeriesWritableIn enforces the remote access and component policy
-// on every calendar that holds a row of the series of uid in calendarID:
-// that calendar and each calendar with a legacy override of the UID (see
-// storage.LegacyOverride). The other calendars that hold the UID stay
-// out, so a read-only copy of the UID in calendar A does not block a
-// delete or a restore of the series in calendar B. calendarID 0 names no
-// calendar: the guard then covers every calendar that holds a row of the
-// UID, live or in the trash.
+// ensureSeriesWritableIn enforces the remote access and component policy on
+// every calendar that holds a row of the series of uid in calendarID. These
+// are that calendar and each calendar with a legacy override of the UID (see
+// storage.LegacyOverride). The other calendars that hold the UID stay out. A
+// read-only copy of the UID in calendar A then does not block a delete or a
+// restore of the series in calendar B. calendarID 0 names no calendar: the
+// guard then covers every calendar that holds a row of the UID, live or in
+// the trash.
 func ensureSeriesWritableIn(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error {
 	var ids []int64
 	var err error
@@ -242,10 +223,10 @@ func (s *Service) SeriesOverride(ctx context.Context, calendarID int64, uid, rec
 	return e, nil
 }
 
-// SeriesOccurrence finds the master of the series of uid in calendarID
-// (see findSeriesMasterTx) and the stored override of the occurrence
-// recID in that series, in one pass. override is nil with no stored
-// override. The CLI resolves an occurrence edit with it.
+// SeriesOccurrence finds the master of the series of uid in calendarID (see
+// findSeriesMasterTx). In the same pass it finds the stored override of the
+// occurrence recID in that series. override is nil with no stored override.
+// The CLI resolves an occurrence edit with it.
 func (s *Service) SeriesOccurrence(ctx context.Context, calendarID int64, uid, recID string) (Event, *Event, error) {
 	m, err := findSeriesMasterTx(ctx, s.q, calendarID, uid)
 	if err != nil {
@@ -280,8 +261,8 @@ func (s *Service) ListLiveOverridesInCalendar(ctx context.Context, calendarID in
 	return events, nil
 }
 
-// ListSeriesOverrides returns the live override rows of the series of uid
-// in calendarID: the rows of that calendar and the legacy overrides of
+// ListSeriesOverrides returns the live override rows of the series of uid in
+// calendarID. These are the rows of that calendar and the legacy overrides of
 // the UID (see storage.LegacyOverride). The override rows of a master in
 // another calendar stay out.
 func (s *Service) ListSeriesOverrides(ctx context.Context, calendarID int64, uid string) ([]Event, error) {

@@ -106,11 +106,10 @@ type CountLiveEventUIDRowsInCalendarParams struct {
 	Uid        string
 }
 
-// Count the live rows of one UID in one calendar, master and overrides.
-// The series rule of a live edit reads it when no series owns the rows
-// of the calendar: a calendar with live rows of a UID that has two live
-// masters cannot choose, and a calendar with rows in the trash only
-// holds no live series.
+// Count the live rows of one UID in one calendar, master and overrides. The
+// series rule of a live edit reads it when no series owns the rows of the
+// calendar. A calendar with live rows of a UID that has two live masters
+// cannot choose. A calendar with rows in the trash only holds no live series.
 func (q *Queries) CountLiveEventUIDRowsInCalendar(ctx context.Context, arg CountLiveEventUIDRowsInCalendarParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countLiveEventUIDRowsInCalendar, arg.CalendarID, arg.Uid)
 	var count int64
@@ -1136,8 +1135,8 @@ type ListLiveSeriesOverrideRecurrenceIDsAtOrAfterParams struct {
 	CalendarID   int64
 }
 
-// The recurrence IDs that a truncation of the series in one calendar is
-// about to hide: the live overrides of that series at or after the cutoff
+// The recurrence IDs that a truncation of the series in one calendar is about
+// to hide. These are the live overrides of that series at or after the cutoff
 // (see ListSeriesOverridesInCalendar). The caller reads them before
 // SoftDeleteSeriesOverridesAtOrAfter, so a restore shows only these rows
 // again (issue #287).
@@ -1356,10 +1355,10 @@ type ListSeriesCalendarIDsParams struct {
 	CalendarID int64
 }
 
-// The calendars that hold a row of the series of one UID in one calendar:
-// that calendar, plus each calendar with a legacy override that the
-// series owns (see ListSeriesOverridesInCalendar). Rows in the trash
-// count. The access guard of a series delete or restore reads it.
+// The calendars that hold a row of the series of one UID in one calendar.
+// These are that calendar, plus each calendar with a legacy override that the
+// series owns (see ListSeriesOverridesInCalendar). Rows in the trash count.
+// The access guard of a series delete or restore reads it.
 func (q *Queries) ListSeriesCalendarIDs(ctx context.Context, arg ListSeriesCalendarIDsParams) ([]int64, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesCalendarIDs, arg.Uid, arg.CalendarID)
 	if err != nil {
@@ -1398,8 +1397,8 @@ type ListSeriesOverridesAtRecurrenceIDParams struct {
 	CalendarID   int64
 }
 
-// The live override rows of one occurrence of the series in one calendar
-// (see ListSeriesOverridesInCalendar): the row of the calendar of the
+// The live override rows of one occurrence of the series in one calendar (see
+// ListSeriesOverridesInCalendar). These are the row of the calendar of the
 // master, or the legacy rows the series owns.
 func (q *Queries) ListSeriesOverridesAtRecurrenceID(ctx context.Context, arg ListSeriesOverridesAtRecurrenceIDParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesOverridesAtRecurrenceID, arg.RecurrenceID, arg.Uid, arg.CalendarID)
@@ -1466,14 +1465,83 @@ type ListSeriesOverridesInCalendarParams struct {
 	CalendarID int64
 }
 
-// The live override rows of the series of one UID in one calendar: the
-// override rows of that calendar, plus the legacy overrides of the UID
-// that the series owns (see the view event_series_rows in migration 057
-// and uidmove.LegacyOwner). Two calendars can hold the same UID, so the
-// override rows of the other master stay out (issue #842). Every series
+// The live override rows of the series of one UID in one calendar. These are
+// the override rows of that calendar, plus the legacy overrides of the UID
+// that the series owns. The view event_series_rows in migration 057 and
+// uidmove.LegacyOwner hold the rule. Two calendars can hold the same UID, so
+// the override rows of the other master stay out (issue #842). Every series
 // query below takes its rows from the same view.
 func (q *Queries) ListSeriesOverridesInCalendar(ctx context.Context, arg ListSeriesOverridesInCalendarParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesOverridesInCalendar, arg.Uid, arg.CalendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.Geo,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Duration,
+			&i.Dtstamp,
+			&i.ConferenceUri,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTrashedSeriesRowsInCalendar = `-- name: ListTrashedSeriesRowsInCalendar :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
+WHERE events.deleted_at IS NOT NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
+ORDER BY events.id
+`
+
+type ListTrashedSeriesRowsInCalendarParams struct {
+	Uid        string
+	CalendarID int64
+}
+
+// Every soft-deleted row of the series of one UID in one calendar (see
+// SoftDeleteSeriesRowsInCalendar). The restore by UID reads it, so it
+// can leave the rows that a truncation hid to the restore of that
+// truncation.
+func (q *Queries) ListTrashedSeriesRowsInCalendar(ctx context.Context, arg ListTrashedSeriesRowsInCalendarParams) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listTrashedSeriesRowsInCalendar, arg.Uid, arg.CalendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -1907,9 +1975,9 @@ type SoftDeleteSeriesRowsInCalendarParams struct {
 	CalendarID int64
 }
 
-// Soft-delete every live row of the series of one UID in one calendar: the
-// master, the overrides of that calendar, and the legacy overrides the
-// series owns (see ListSeriesOverridesInCalendar). A delete of a whole
+// Soft-delete every live row of the series of one UID in one calendar. The
+// series holds the master, the overrides of that calendar, and the legacy
+// overrides it owns (see ListSeriesOverridesInCalendar). A delete of a whole
 // series uses it.
 func (q *Queries) SoftDeleteSeriesRowsInCalendar(ctx context.Context, arg SoftDeleteSeriesRowsInCalendarParams) error {
 	_, err := q.db.ExecContext(ctx, softDeleteSeriesRowsInCalendar, arg.Uid, arg.CalendarID)

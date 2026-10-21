@@ -127,14 +127,13 @@ func masterForScope(ctx context.Context, a *app.App, resolved event.Event) (even
 	return a.Events.SeriesMaster(ctx, resolved.CalendarID, resolved.UID)
 }
 
-// resolveSeriesMaster resolves the row that event delete addresses. A
-// numeric ref addresses one row by ID. A UID ref addresses the live
-// master of the UID. Two calendars can hold the same UID (issue #842):
-// calendarID names the calendar of the series, and 0 accepts a UID with
-// one live master only. A calendar that holds the series through a legacy
-// override only names the master of that override (see
-// event.Service.SeriesMaster). A numeric ref with a calendar must be a
-// row of that calendar.
+// resolveSeriesMaster resolves the row that event delete addresses. A numeric
+// ref addresses one row by ID. A UID ref addresses the live master of the
+// UID. Two calendars can hold the same UID (issue #842). calendarID names the
+// calendar of the series. 0 accepts a UID with one live master only. A
+// calendar that holds the series through a legacy override only names the
+// master of that override (see event.Service.SeriesMaster). A numeric ref
+// with a calendar must be a row of that calendar.
 func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID int64, wantCalendar string) (event.Event, error) {
 	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil || calendarID == 0 {
 		e, err := resolveEvent(ctx, a, ref, "")
@@ -148,7 +147,7 @@ func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID
 	}
 	e, err := a.Events.SeriesMaster(ctx, calendarID, ref)
 	if err != nil {
-		return event.Event{}, notFoundErr(err, "event", ref)
+		return event.Event{}, ambiguousSeriesErr(err, ref, calendarID, wantCalendar)
 	}
 	return e, nil
 }
@@ -243,10 +242,10 @@ any override at that time). --following truncates the series at that date.`,
 			}
 		}
 
-		// Occurrence scopes address the series through its master row.
-		// A reference to a legacy override resolves to the master of its
-		// series: the delete writes the master, and the push after the
-		// delete must reach the calendar of the master.
+		// Occurrence scopes address the series through its master row. A reference
+		// to a legacy override resolves to the master of its series. The delete
+		// writes the master. The push after the delete must reach the calendar of
+		// the master.
 		e, err := resolveSeriesMaster(ctx, a, args[0], calendarID, calendarName)
 		if err != nil {
 			return fmt.Errorf("get event: %w", err)

@@ -641,3 +641,32 @@ func TestEventGet_TwoLegacyOverridesNameTheRows(t *testing.T) {
 		t.Fatalf("stderr = %q, want the override rows named", stderr)
 	}
 }
+
+// TestEventDelete_CalendarWithTwoMastersElsewhereNamesIt: --calendar on a
+// legacy calendar of a UID with two live masters names that calendar in
+// the error of a scoped delete, not the generic --calendar hint.
+func TestEventDelete_CalendarWithTwoMastersElsewhereNamesIt(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Other"); err != nil {
+		t.Fatalf("calendar create Other: %v", err)
+	}
+	ics := filepath.Join(t.TempDir(), "legacy.ics")
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
+		"\r\nDTSTAMP:20260401T000000Z\r\nRECURRENCE-ID:20260407T090000Z\r\nDTSTART:20260407T100000Z\r\nDTEND:20260407T103000Z\r\n" +
+		"SUMMARY:Legacy\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Other"); err != nil {
+		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "delete", uid, "--calendar", "Other", "--following", "2026-04-08T09:00:00Z", "--yes")
+	if err == nil {
+		t.Fatal("delete through a legacy calendar with two live masters succeeded")
+	}
+	if !strings.Contains(stderr, `calendar "Other" holds no series`) || strings.Contains(stderr, "pass --calendar") {
+		t.Fatalf("stderr = %q, want the named calendar and no generic hint", stderr)
+	}
+}

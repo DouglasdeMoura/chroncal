@@ -119,11 +119,10 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 				p.Location = location
 			}
 			if cmd.Flags().Changed("calendar") && !viaCalendar {
-				// The flag names the move target. When the lookup found
-				// the series through the flag, the occurrence keeps the
-				// calendar of its row (p.CalendarID), so an edit of an
-				// occurrence of a series with a legacy override in the
-				// named calendar is not a move.
+				// The flag names the move target. When the lookup found the series
+				// through the flag, the occurrence keeps the calendar of its row
+				// (p.CalendarID). An edit of an occurrence of a series with a legacy
+				// override in the named calendar is then not a move.
 				p.CalendarID = calID
 			}
 			if cmd.Flags().Changed("status") {

@@ -261,3 +261,40 @@ func TestExportResource_LiveRowBesideTrashedMaster(t *testing.T) {
 		t.Errorf("export of B = want the live override as an orphan instance and no master:\n%s", data)
 	}
 }
+
+// TestPush_MissingResourceLocalAnomalyClearsOnly: a dirty sync row with a
+// remote URL and no local row at all (a purge that outran its tombstone)
+// is a local anomaly. The push clears the dirty flag and writes no
+// tombstone, so the server object stays.
+func TestPush_MissingResourceLocalAnomalyClearsOnly(t *testing.T) {
+	t.Parallel()
+	engine, _, srv, _, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	const uid = "anomaly-uid"
+	path := "/cal/b/" + uid + ".ics"
+	srv.mu.Lock()
+	srv.objects[path] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:" + uid + "\r\nDTSTART:20260518T090000Z\r\nSUMMARY:Kept\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	srv.mu.Unlock()
+	if _, err := engine.db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, remote_url) VALUES (?, ?, 'event', 1, 'sync-token', ?)`,
+		calB, uid, path); err != nil {
+		t.Fatalf("seed sync row: %v", err)
+	}
+	if res, err := engine.PushLocalEdits(ctx, calB); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("push B = %+v, %v", res, err)
+	}
+	n, err := engine.q.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calB, Uid: uid})
+	if err != nil || n != 0 {
+		t.Fatalf("tombstones after the push = %d, %v; want 0", n, err)
+	}
+	srv.mu.Lock()
+	_, kept := srv.objects[path]
+	srv.mu.Unlock()
+	if !kept {
+		t.Fatalf("the server object %s went for a local anomaly", path)
+	}
+	dirty, err := engine.q.ListDirtySyncResources(ctx, calB)
+	if err != nil || len(dirty) != 0 {
+		t.Fatalf("dirty rows after the push = %d, %v; want 0", len(dirty), err)
+	}
+}
