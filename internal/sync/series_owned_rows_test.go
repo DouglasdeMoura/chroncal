@@ -6,6 +6,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 // insertLegacyRow adds a calendar and a live override row of uid there at
@@ -43,10 +44,10 @@ func trashed(t *testing.T, engine *Engine, id int64) bool {
 	return deletedAt != nil
 }
 
-// TestPersistImportedPrunesOwnedLegacyOverride: the server object of a
-// series holds the legacy overrides that the series owns. A pull of the
-// object without the occurrence of a legacy row soft-deletes that row.
-func TestPersistImportedPrunesOwnedLegacyOverride(t *testing.T) {
+// TestPersistImportedKeepsLegacyRowOfOtherCalendar: a pull writes the rows
+// of the pulled calendar only. A legacy override in another calendar keeps
+// its row, also when the server object no longer carries its occurrence.
+func TestPersistImportedKeepsLegacyRowOfOtherCalendar(t *testing.T) {
 	t.Parallel()
 	engine, _, q := newTestEngine(t)
 	ctx := context.Background()
@@ -71,15 +72,15 @@ func TestPersistImportedPrunesOwnedLegacyOverride(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("second persistImported: %v", err)
 	}
-	if !trashed(t, engine, legacy) {
-		t.Errorf("the owned legacy row is live after a pull without its occurrence, want it in the trash")
+	if trashed(t, engine, legacy) {
+		t.Errorf("the legacy row of another calendar is in the trash after a pull, want it live")
 	}
 }
 
-// TestDeleteLocalResource_TakesOwnedLegacyRows: a remote DELETE of the
-// object of a series soft-deletes the rows of the calendar and the legacy
-// overrides that the series owns.
-func TestDeleteLocalResource_TakesOwnedLegacyRows(t *testing.T) {
+// TestDeleteLocalResource_KeepsLegacyRowOfOtherCalendar: a remote DELETE
+// of the object of a series soft-deletes the rows of the pulled calendar.
+// A legacy override in another calendar keeps its row.
+func TestDeleteLocalResource_KeepsLegacyRowOfOtherCalendar(t *testing.T) {
 	t.Parallel()
 	engine, _, q := newTestEngine(t)
 	ctx := context.Background()
@@ -98,7 +99,11 @@ func TestDeleteLocalResource_TakesOwnedLegacyRows(t *testing.T) {
 	if err := engine.deleteLocalResourceByUID(ctx, calendarID, ownerTypeEvent, uid); err != nil {
 		t.Fatalf("deleteLocalResourceByUID: %v", err)
 	}
-	if !trashed(t, engine, legacy) {
-		t.Errorf("the owned legacy row is live after a remote delete of its series, want it in the trash")
+	if trashed(t, engine, legacy) {
+		t.Errorf("the legacy row of another calendar is in the trash after a remote delete, want it live")
+	}
+	master, err := q.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: calendarID, Uid: uid})
+	if err != nil || master.DeletedAt == nil {
+		t.Errorf("master of the pulled calendar after the remote delete = trashed %v, %v; want it in the trash", master.DeletedAt != nil, err)
 	}
 }

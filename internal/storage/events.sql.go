@@ -1706,31 +1706,6 @@ func (q *Queries) SoftDeleteEvent(ctx context.Context, id int64) error {
 	return err
 }
 
-const softDeleteEventSeriesAndCalendarRows = `-- name: SoftDeleteEventSeriesAndCalendarRows :exec
-UPDATE events SET
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.uid = ?1 AND events.deleted_at IS NULL
-  AND (events.calendar_id = ?2 OR events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2))
-`
-
-type SoftDeleteEventSeriesAndCalendarRowsParams struct {
-	Uid        string
-	CalendarID int64
-}
-
-// Soft-delete the live rows of one UID in one calendar, and the live legacy
-// overrides in other calendars that the series of that calendar owns (see
-// the view event_series_rows). A pull that sees the server object of the UID
-// gone uses it: the object held the owned legacy overrides too. The view
-// subquery reads the rows before the update.
-func (q *Queries) SoftDeleteEventSeriesAndCalendarRows(ctx context.Context, arg SoftDeleteEventSeriesAndCalendarRowsParams) error {
-	_, err := q.db.ExecContext(ctx, softDeleteEventSeriesAndCalendarRows, arg.Uid, arg.CalendarID)
-	return err
-}
-
 const softDeleteEventsByCalendarUID = `-- name: SoftDeleteEventsByCalendarUID :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),

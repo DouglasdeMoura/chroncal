@@ -403,20 +403,6 @@ WHERE calendar_id = sqlc.arg(calendar_id) AND uid = sqlc.arg(uid)
 -- the newest delete.
 SELECT * FROM events WHERE uid = ? AND deleted_at IS NOT NULL ORDER BY id;
 
--- name: SoftDeleteEventSeriesAndCalendarRows :exec
--- Soft-delete the live rows of one UID in one calendar, and the live legacy
--- overrides in other calendars that the series of that calendar owns (see
--- the view event_series_rows). A pull that sees the server object of the UID
--- gone uses it: the object held the owned legacy overrides too. The view
--- subquery reads the rows before the update.
-UPDATE events SET
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE events.uid = sqlc.arg(uid) AND events.deleted_at IS NULL
-  AND (events.calendar_id = sqlc.arg(calendar_id) OR events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)));
-
 -- name: IsSeriesRowOfCalendar :one
 -- Report whether the series of one calendar owns one row (see the view
 -- event_series_rows). A row of that calendar, or a legacy override that
