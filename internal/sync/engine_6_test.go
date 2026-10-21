@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	gosync "sync"
 	"testing"
@@ -285,12 +284,12 @@ func TestPersistImportedPrunesStaleOverrides(t *testing.T) {
 	}
 
 	// The stale override should be soft-deleted (not hard-deleted).
-	deletedRIDs, err := q.ListDeletedSeriesOverrideRecurrenceIDs(ctx, storage.ListDeletedSeriesOverrideRecurrenceIDsParams{CalendarID: 1, Uid: uid})
+	stale, err := q.GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams{CalendarID: 1, Uid: uid, RecurrenceID: deletedRID})
 	if err != nil {
-		t.Fatalf("ListDeletedOverrideRecurrenceIDs: %v", err)
+		t.Fatalf("get stale override: %v", err)
 	}
-	if !slices.Contains(deletedRIDs, deletedRID) {
-		t.Fatalf("stale override %q was not soft-deleted; deleted = %v", deletedRID, deletedRIDs)
+	if stale.DeletedAt == nil {
+		t.Fatalf("stale override %q was not soft-deleted", deletedRID)
 	}
 
 	// The master should still exist with the EXDATE.

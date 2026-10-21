@@ -870,10 +870,11 @@ func TestRestoreSeries_LeavesLegacyOverrideOfLiveMaster(t *testing.T) {
 	}
 }
 
-// TestRestoreByUID_PrefersLiveMaster: a stale trashed copy of the UID in
-// calendar A does not take the restore of a deleted override of the live
-// series in calendar B.
-func TestRestoreByUID_PrefersLiveMaster(t *testing.T) {
+// TestRestoreByUID_OwnDeletedOccurrenceIsNoCandidate: the restore by UID
+// reverses a series delete. The trashed series of A is the one candidate.
+// The occurrence of B that the user deleted on its own is no candidate,
+// so it stays deleted with its EXDATE (issue #287).
+func TestRestoreByUID_OwnDeletedOccurrenceIsNoCandidate(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	masterA, masterB, second := twoCalendarSeries(t, svc)
@@ -886,9 +887,13 @@ func TestRestoreByUID_PrefersLiveMaster(t *testing.T) {
 	if err := svc.RestoreByUID(ctx, masterB.UID); err != nil {
 		t.Fatalf("RestoreByUID: %v", err)
 	}
-	wantSeriesIntact(t, svc, masterB.CalendarID)
-	if mA, _ := seriesState(t, svc, masterA.CalendarID); mA.DeletedAt == nil {
-		t.Errorf("the stale copy in A is live after the restore of B, want it still in the trash")
+	wantSeriesIntact(t, svc, masterA.CalendarID)
+	mB, overridesB := seriesState(t, svc, masterB.CalendarID)
+	if got := storage.NullableToString(mB.Exdates); !strings.Contains(got, second.Format(time.RFC3339)) {
+		t.Errorf("exdates of B = %q, want the own deleted occurrence still excluded", got)
+	}
+	if len(overridesB) != 0 {
+		t.Errorf("live overrides of B = %d, want 0", len(overridesB))
 	}
 }
 
@@ -1200,21 +1205,20 @@ func TestSeriesOwnerView_MatchesLegacyOwner(t *testing.T) {
 				t.Fatalf("list masters: %v", err)
 			}
 			want, ok, _ := uidmove.LegacyOwner(uidMasters(rows))
-			got, err := svc.q.SeriesOwnerCalendarIDs(ctx, legacy.ID)
+			// The production lookup of the view: the master that owns the
+			// rows of the calendar of the legacy row, live or in the trash.
+			owner, err := svc.q.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{
+				Uid: "owner-uid", CalendarID: legacy.CalendarID, IncludeDeleted: true,
+			})
+			found, err := storage.Found(err)
 			if err != nil {
-				t.Fatalf("SeriesOwnerCalendarIDs: %v", err)
+				t.Fatalf("GetSeriesMasterOfCalendar: %v", err)
 			}
 			switch {
-			case len(rows) == 0:
-				// No master anywhere: the row is an orphan of its own
-				// calendar in the view, and LegacyOwner names no master.
-				if ok || len(got) != 1 || got[0] != legacy.CalendarID {
-					t.Errorf("view owners = %v, LegacyOwner ok = %v; want the own calendar %d and no master", got, ok, legacy.CalendarID)
-				}
-			case !ok && len(got) != 0:
-				t.Errorf("view owners = %v, want none (LegacyOwner ok = false)", got)
-			case ok && (len(got) != 1 || got[0] != want):
-				t.Errorf("view owners = %v, want [%d] (LegacyOwner)", got, want)
+			case found != ok:
+				t.Errorf("view owner found = %v, LegacyOwner ok = %v; want them equal", found, ok)
+			case ok && owner.CalendarID != want:
+				t.Errorf("view owner = calendar %d, want %d (LegacyOwner)", owner.CalendarID, want)
 			}
 		})
 	}
@@ -2851,30 +2855,144 @@ func TestDeleteSeries_FreshLogAfterRevivalByUpsert(t *testing.T) {
 	}
 }
 
-// TestRestoreByUID_OneOfTwoLiveSeriesInTrash: two live masters, and only
-// the series of B has a row in the trash. The restore by UID restores it.
-func TestRestoreByUID_OneOfTwoLiveSeriesInTrash(t *testing.T) {
+// TestRestoreByUID_CandidatesAreSeriesDeletes: the restore by UID takes
+// only a series delete as its target. A live series with an occurrence
+// deleted on its own, or with rows that a truncation hid, is no
+// candidate. With no candidate the restore reports ErrNotDeleted. With one
+// it restores that series. With two it needs the ID of the master.
+func TestRestoreByUID_CandidatesAreSeriesDeletes(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	masterA, masterB, second := twoCalendarSeries(t, svc)
+	third := second.Add(24 * time.Hour)
+	// B: an occurrence deleted on its own. A: a truncation.
 	if err := svc.DeleteInstance(ctx, masterB.CalendarID, masterB.UID, second); err != nil {
 		t.Fatalf("DeleteInstance(B): %v", err)
 	}
-	if err := svc.RestoreByUID(ctx, masterB.UID); err != nil {
-		t.Fatalf("RestoreByUID: %v", err)
+	if err := svc.DeleteFromInstance(ctx, masterA.CalendarID, masterA.UID, third); err != nil {
+		t.Fatalf("DeleteFromInstance(A): %v", err)
 	}
-	if got := mustListSeriesOverrides(t, svc, masterB.CalendarID, masterB.UID); len(got) != 1 {
-		t.Errorf("live overrides of B after the restore = %d, want 1", len(got))
+	if err := svc.RestoreByUID(ctx, masterA.UID); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("RestoreByUID with no series delete err = %v, want ErrNotDeleted", err)
 	}
-	wantSeriesIntact(t, svc, masterA.CalendarID)
-	// Both series with rows in the trash: the UID names no single series.
-	for _, m := range []Event{masterA, masterB} {
-		if err := svc.DeleteInstance(ctx, m.CalendarID, m.UID, second); err != nil {
-			t.Fatalf("DeleteInstance(%d): %v", m.CalendarID, err)
+	mA, _ := seriesState(t, svc, masterA.CalendarID)
+	if got := storage.NullableToString(mA.RecurrenceRule); !strings.Contains(got, "UNTIL=") {
+		t.Errorf("rule of A after the refused restore = %q, want it still truncated", got)
+	}
+	// A third series with a series delete is the one candidate.
+	calC := insertCalendar(t, svc, "Third")
+	masterC, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: masterA.UID, CalendarID: calC, Title: "Standup C",
+		StartTime: masterA.StartTime, EndTime: masterA.EndTime, RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("upsert master C: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, calC, masterA.UID); err != nil {
+		t.Fatalf("DeleteSeries(C): %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, masterA.UID); err != nil {
+		t.Fatalf("RestoreByUID with one series delete: %v", err)
+	}
+	if m, err := svc.Get(ctx, masterC.ID); err != nil || m.DeletedAt != nil {
+		t.Errorf("master C after the restore = %+v, %v; want it live", m, err)
+	}
+	if got := mustListSeriesOverrides(t, svc, masterB.CalendarID, masterB.UID); len(got) != 0 {
+		t.Errorf("live overrides of B after the restore of C = %d, want 0", len(got))
+	}
+	// Two series deletes: the UID names no single series.
+	for _, cal := range []int64{masterB.CalendarID, calC} {
+		if err := svc.DeleteSeries(ctx, cal, masterA.UID); err != nil {
+			t.Fatalf("DeleteSeries(%d): %v", cal, err)
 		}
 	}
 	if err := svc.RestoreByUID(ctx, masterA.UID); !errors.Is(err, ErrAmbiguousUID) {
-		t.Errorf("RestoreByUID with two series in the trash err = %v, want ErrAmbiguousUID", err)
+		t.Errorf("RestoreByUID with two series deletes err = %v, want ErrAmbiguousUID", err)
+	}
+}
+
+// TestRestoreByID_StaleLogAfterRevival is the five-step sequence of the
+// stale series log: a series delete logs its rows, a pull revives the
+// master (the trigger drops the log), the user deletes an override on its
+// own, a pull hides the series with no log, and the restore by ID of the
+// master brings the master back alone.
+func TestRestoreByID_StaleLogAfterRevival(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	o1, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get o1: %v", err)
+	}
+	o2, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get o2: %v", err)
+	}
+	// 1. The series delete logs o1 and o2.
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	// 2. A pull revives the series by upsert.
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: master.Title,
+		StartTime: master.StartTime, EndTime: master.EndTime, RecurrenceRule: master.RecurrenceRule,
+	}); err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	if _, err := svc.q.RestoreEventsByIDs(ctx, []int64{o1.ID, o2.ID}); err != nil {
+		t.Fatalf("revive overrides: %v", err)
+	}
+	if _, err := svc.q.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("series log after the revival err = %v, want sql.ErrNoRows (dropped by the trigger)", err)
+	}
+	// 3. The user deletes o1 on its own.
+	if err := svc.Delete(ctx, o1.ID); err != nil {
+		t.Fatalf("Delete(o1): %v", err)
+	}
+	// 4. A pull hides the series with no log.
+	if _, err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); err != nil {
+		t.Fatalf("hide the series: %v", err)
+	}
+	// 5. The restore by ID of the master brings it back alone.
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	if m, err := svc.Get(ctx, master.ID); err != nil || m.DeletedAt != nil {
+		t.Errorf("master after the restore = %+v, %v; want it live", m, err)
+	}
+	for _, id := range []int64{o1.ID, o2.ID} {
+		if r, err := svc.GetIncludingDeleted(ctx, id); err != nil || r.DeletedAt == nil {
+			t.Errorf("row %d after the restore = %+v, %v; want it still hidden", id, r, err)
+		}
+	}
+}
+
+// TestRestoreSeriesRows_DropsRestoredRowsFromLogs: the restore of the rows
+// of a series in the trash drops each restored row from the other delete
+// logs of the UID.
+func TestRestoreSeriesRows_DropsRestoredRowsFromLogs(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	o1, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get o1: %v", err)
+	}
+	if err := svc.q.SoftDeleteEvent(ctx, o1.ID); err != nil {
+		t.Fatalf("hide o1: %v", err)
+	}
+	calB := insertCalendar(t, svc, "Other")
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids) VALUES (?, ?, ?)`, calB, master.UID, strconv.FormatInt(o1.ID, 10)); err != nil {
+		t.Fatalf("seed another log: %v", err)
+	}
+	if _, err := svc.restoreSeriesRowsClearingExdates(ctx, 1, master.UID); err != nil {
+		t.Fatalf("restoreSeriesRowsClearingExdates: %v", err)
+	}
+	if r, err := svc.Get(ctx, o1.ID); err != nil || r.DeletedAt != nil {
+		t.Fatalf("o1 after the restore = %+v, %v; want it live", r, err)
+	}
+	if _, err := svc.q.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: calB, Uid: master.UID}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("the other log after the restore err = %v, want sql.ErrNoRows (o1 dropped, log empty)", err)
 	}
 }
 

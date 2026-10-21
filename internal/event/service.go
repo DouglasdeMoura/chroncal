@@ -289,19 +289,6 @@ func (s *Service) ensureEventWritable(ctx context.Context, eventID int64) error 
 	return calendaraccess.EnsureWritable(ctx, s.q, r.CalendarID, "VEVENT")
 }
 
-// distinctCalendarIDsByUID returns every calendar that any event row with the
-// given UID lives on: master, overrides, or series-tail leftovers. A recurring
-// series can leave orphaned rows behind after the master is purged on its own
-// (the trash view supports series tails). A UID-keyed mutation must then
-// enforce policy on each of these calendars, not only the master's.
-func (s *Service) distinctCalendarIDsByUID(ctx context.Context, uid string) ([]int64, error) {
-	ids, err := s.q.ListEventCalendarIDsByUID(ctx, uid)
-	if err != nil {
-		return nil, fmt.Errorf("distinct calendar ids: %w", err)
-	}
-	return ids, nil
-}
-
 // validateDurationValue applies the span rule that the todo service
 // applies in validateTiming. The import path drops a bad value with a
 // warning instead, so sync never reaches this error. The start time
@@ -545,7 +532,7 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 		},
 		HoldsMaster: func(ctx context.Context, calendarID int64) (bool, error) {
 			n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
-				CalendarID: calendarID, Uid: uid,
+				CalendarID: calendarID, Uid: uid, IncludeDeleted: true,
 			})
 			return n.Masters > 0, err
 		},

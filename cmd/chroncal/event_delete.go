@@ -146,7 +146,7 @@ func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID
 	}
 	e, err := a.Events.SeriesMaster(ctx, calendarID, ref)
 	if err != nil {
-		return event.Event{}, ambiguousSeriesErr(err, ref, calendarID, wantCalendar)
+		return event.Event{}, ambiguousSeriesErr(err, ref, calendarID, wantCalendar, true)
 	}
 	return e, nil
 }

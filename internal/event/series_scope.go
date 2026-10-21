@@ -48,17 +48,9 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	}
 	// The view event_series_rows answers the rule for a calendar in one
 	// query: the master whose series owns the rows of the calendar.
-	var master storage.Event
-	var err error
-	if includeDeleted {
-		master, err = qtx.GetSeriesMasterOfCalendarIncludingDeleted(ctx, storage.GetSeriesMasterOfCalendarIncludingDeletedParams{
-			CalendarID: calendarID, Uid: uid,
-		})
-	} else {
-		master, err = qtx.GetLiveSeriesMasterOfCalendar(ctx, storage.GetLiveSeriesMasterOfCalendarParams{
-			CalendarID: calendarID, Uid: uid,
-		})
-	}
+	master, err := qtx.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{
+		Uid: uid, CalendarID: calendarID, IncludeDeleted: includeDeleted,
+	})
 	if !errors.Is(err, sql.ErrNoRows) {
 		return master, err
 	}
@@ -87,27 +79,16 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if _, _, ambiguous := uidmove.LegacyOwner(masters); !ambiguous {
 		return storage.Event{}, sql.ErrNoRows
 	}
-	// A live edit counts the live rows of the calendar only. A calendar whose
-	// rows of the UID are all in the trash holds no live series. It gets
-	// sql.ErrNoRows, not the ambiguity.
-	var held int64
-	if includeDeleted {
-		n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
-			CalendarID: calendarID, Uid: uid,
-		})
-		if err != nil {
-			return storage.Event{}, err
-		}
-		held = n.Masters + n.Overrides
-	} else {
-		n, err := qtx.CountLiveEventUIDRowsInCalendar(ctx, storage.CountLiveEventUIDRowsInCalendarParams{
-			CalendarID: calendarID, Uid: uid,
-		})
-		if err != nil {
-			return storage.Event{}, err
-		}
-		held = n
+	// A live edit counts the live rows of the calendar only. A calendar
+	// whose rows of the UID are all in the trash holds no live series. It
+	// gets sql.ErrNoRows, not the ambiguity.
+	n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
+		CalendarID: calendarID, Uid: uid, IncludeDeleted: includeDeleted,
+	})
+	if err != nil {
+		return storage.Event{}, err
 	}
+	held := n.Masters + n.Overrides
 	if held == 0 {
 		return storage.Event{}, sql.ErrNoRows
 	}

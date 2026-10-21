@@ -609,8 +609,8 @@ func TestEventUpdate_LegacyCalendarWithTwoMastersNamesIt(t *testing.T) {
 	if err == nil {
 		t.Fatal("update through a legacy calendar with two live masters succeeded")
 	}
-	if !strings.Contains(stderr, `calendar "Other" holds no series`) || strings.Contains(stderr, "pass --calendar") {
-		t.Fatalf("stderr = %q, want the named calendar and no generic hint", stderr)
+	if !strings.Contains(stderr, `in calendar "Other" belong to no series`) || !strings.Contains(stderr, "use the ID of the row") || strings.Contains(stderr, "pass --calendar") {
+		t.Fatalf("stderr = %q, want the cause in the named calendar and the row-ID remedy", stderr)
 	}
 }
 
@@ -666,8 +666,8 @@ func TestEventDelete_CalendarWithTwoMastersElsewhereNamesIt(t *testing.T) {
 	if err == nil {
 		t.Fatal("delete through a legacy calendar with two live masters succeeded")
 	}
-	if !strings.Contains(stderr, `calendar "Other" holds no series`) || strings.Contains(stderr, "pass --calendar") {
-		t.Fatalf("stderr = %q, want the named calendar and no generic hint", stderr)
+	if !strings.Contains(stderr, `in calendar "Other" belong to no series`) || !strings.Contains(stderr, "use the ID of the row") || strings.Contains(stderr, "pass --calendar") {
+		t.Fatalf("stderr = %q, want the cause in the named calendar and the row-ID remedy", stderr)
 	}
 }
 

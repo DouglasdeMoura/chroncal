@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
@@ -350,5 +351,54 @@ func TestPush_LegacyRowsBesideTwoLiveMastersKeepServerObject(t *testing.T) {
 	}
 	if r, err := engine.events.Get(ctx, legacy.ID); err != nil || r.DeletedAt != nil {
 		t.Errorf("legacy row after the push = %+v, %v; want it live", r, err)
+	}
+}
+
+// TestPush_OwnedElsewhereInAnotherAccountKeepsServerObject: calendar B of
+// a second account holds a legacy row of a series that lives in A. The
+// server object of B is a real resource of that account, not a copy of an
+// old whole-series upload, so the push of B writes no tombstone.
+func TestPush_OwnedElsewhereInAnotherAccountKeepsServerObject(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	second, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "second", ServerUrl: srv.srv.URL, AuthType: "basic", Username: "user2",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	engine.credStore.(*mockCredStore).creds[second.ID] = auth.Credential{AccountID: second.ID, Username: "user2", Password: "pw"}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: calB, AccountID: &second.ID, RemoteUrl: storage.StringToNullable("/cal/b/"),
+	}); err != nil {
+		t.Fatalf("relink B: %v", err)
+	}
+	master := createSeries(t, engine, calA)
+	at := master.StartTime.Add(24 * time.Hour)
+	if _, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: calB, Title: "Instance",
+		StartTime: at.Add(time.Hour), EndTime: at.Add(2 * time.Hour), RecurrenceID: at.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	path := "/cal/b/" + master.UID + ".ics"
+	srv.mu.Lock()
+	srv.objects[path] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:" + master.UID + "\r\nRECURRENCE-ID:20260519T090000Z\r\nDTSTART:20260519T100000Z\r\nSUMMARY:Instance\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	srv.mu.Unlock()
+	if _, err := engine.db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, remote_url) VALUES (?, ?, 'event', 1, 'sync-token', ?)
+		 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, remote_url = excluded.remote_url`,
+		calB, master.UID, path); err != nil {
+		t.Fatalf("seed sync row: %v", err)
+	}
+	if res, err := engine.PushLocalEdits(ctx, calB); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("push B = %+v, %v", res, err)
+	}
+	srv.mu.Lock()
+	_, kept := srv.objects[path]
+	srv.mu.Unlock()
+	if !kept {
+		t.Fatal("the server object of B in the second account went, want it kept")
 	}
 }
