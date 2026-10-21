@@ -133,10 +133,28 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 	if qErr != nil {
 		return event.Event{}, qErr
 	}
-	if n.Calendars > 0 {
-		return event.Event{}, fmt.Errorf("%w: event uid %s has its master in another calendar", errResourceMissing, uid)
+	if n.Calendars == 0 {
+		return event.Event{}, err
 	}
-	return event.Event{}, err
+	// A live master exists in another calendar. The rows of this calendar
+	// are legacy overrides of that series, unless this calendar holds its
+	// own master in the trash: a live row beside it (a restore by ID) is
+	// an orphan instance of this calendar, and the export carries it.
+	own, qErr := e.q.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: calendarID, Uid: uid})
+	found, qErr := storage.Found(qErr)
+	if qErr != nil {
+		return event.Event{}, qErr
+	}
+	if found && own.DeletedAt != nil {
+		live, qErr := e.events.ListLiveOverridesInCalendar(ctx, calendarID, uid)
+		if qErr != nil {
+			return event.Event{}, qErr
+		}
+		if len(live) > 0 {
+			return event.Event{}, err
+		}
+	}
+	return event.Event{}, fmt.Errorf("%w: event uid %s has its master in another calendar", errResourceMissing, uid)
 }
 
 // eventOverridesForExport lists the override rows of the export of uid in
