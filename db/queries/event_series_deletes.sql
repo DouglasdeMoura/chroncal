@@ -1,6 +1,7 @@
 -- name: RecordEventSeriesDelete :exec
--- One log row per series in one calendar. A second series delete replaces
--- the list: the first restore consumed the first row.
+-- One log row per series in one calendar. The service writes the merged
+-- list of an earlier unconsumed row and the new rows (see
+-- recordSeriesDeleteTx), so the upsert replaces the column with it.
 INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids)
 VALUES (?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET
@@ -11,9 +12,9 @@ ON CONFLICT(calendar_id, uid) DO UPDATE SET
 SELECT * FROM event_series_deletes WHERE calendar_id = ? AND uid = ?;
 
 -- name: DeleteEventSeriesDeletesByCalendarUID :exec
--- Drop the log row of one series. A restore of the series consumes it, a
--- purge of the master drops it, and a calendar move clears a stale row in
--- the target calendar before the move.
+-- Drop the log row of one series. A restore of the series consumes it. A
+-- purge of the master keeps it for the undo. A calendar move clears a stale
+-- row in the target calendar before the move.
 DELETE FROM event_series_deletes WHERE calendar_id = ? AND uid = ?;
 
 -- name: PurgeOldEventSeriesDeletes :execrows
@@ -38,7 +39,7 @@ WHERE event_series_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_se
 SELECT * FROM event_series_deletes WHERE uid = ? ORDER BY calendar_id;
 
 -- name: UpdateEventSeriesDeleteHiddenIds :exec
--- Rewrite the hidden rows of one log row. A restore of one logged row by
--- ID or by undo drops the row from the list, so a later series restore
--- does not reverse an independent delete of that row.
+-- Rewrite the hidden rows of one log row. A restore of one logged row by ID
+-- or by undo drops the row from the list. A later series restore then does
+-- not reverse an independent delete of that row.
 UPDATE event_series_deletes SET hidden_ids = ? WHERE id = ?;

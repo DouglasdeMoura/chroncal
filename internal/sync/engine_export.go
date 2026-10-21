@@ -116,14 +116,14 @@ var ownerOpsByType = map[string]ownerOps{
 }
 
 // eventMasterForExport finds the live master of uid in calendarID for the
-// export. With no master there, the override rows of the calendar are
-// legacy overrides (see storage.LegacyOverride) when the UID has a live
-// master in another calendar. They belong to the series of that master,
-// and the export of its calendar carries them, so the export of this
-// calendar has no resource (errResourceMissing). A PUT of the overrides
-// alone would store an object with no master. A UID with no live master
-// anywhere keeps the orphan-instance path: sql.ErrNoRows, and the
-// override rows export on their own.
+// export. With no master there, the override rows of the calendar are legacy
+// overrides (see storage.LegacyOverride) when the UID has a live master in
+// another calendar. They belong to the series of that master, and the export
+// of its calendar carries them. The export of this calendar then has no
+// resource (errResourceMissing). A PUT of the overrides alone would store an
+// object with no master. A UID with no live master anywhere keeps the
+// orphan-instance path: sql.ErrNoRows, and the override rows export on their
+// own.
 func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid string) (event.Event, error) {
 	// The view event_series_rows names the series that owns the rows of
 	// the calendar. A live owner in this calendar is the master of the
@@ -140,14 +140,14 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 		return e.events.Get(ctx, owner.ID)
 	}
 	if found {
-		return event.Event{}, fmt.Errorf("%w: event uid %s has its master in another calendar", errResourceMissing, uid)
+		return event.Event{}, fmt.Errorf("%w: event uid %s: %w", errResourceMissing, uid, errOwnedElsewhere)
 	}
-	// No live owner. An owner in the trash (this calendar's own master,
-	// or a master elsewhere that owns legacy rows here) leaves the live
-	// rows of the calendar as orphan instances, and so does a UID with
-	// no master anywhere: sql.ErrNoRows makes the export take them. Live
-	// masters elsewhere with no owner (two live masters) leave nothing
-	// for this calendar to export.
+	// No live owner. An owner in the trash leaves the live rows of the calendar
+	// as orphan instances. That owner is this calendar's own master, or a master
+	// elsewhere that owns legacy rows here. A UID with no master anywhere leaves
+	// orphan instances too. sql.ErrNoRows makes the export take them. Live
+	// masters elsewhere with no owner (two live masters) leave nothing for this
+	// calendar to export.
 	_, err = e.q.GetSeriesMasterOfCalendarIncludingDeleted(ctx, storage.GetSeriesMasterOfCalendarIncludingDeletedParams{CalendarID: calendarID, Uid: uid})
 	found, err = storage.Found(err)
 	if err != nil {
@@ -161,19 +161,18 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 		return event.Event{}, err
 	}
 	if n.Calendars > 0 {
-		return event.Event{}, fmt.Errorf("%w: event uid %s has its master in another calendar", errResourceMissing, uid)
+		return event.Event{}, fmt.Errorf("%w: event uid %s: %w", errResourceMissing, uid, errOwnedElsewhere)
 	}
 	return event.Event{}, sql.ErrNoRows
 }
 
 // eventOverridesForExport lists the override rows of the export of uid in
-// calendarID. masterFound reports the outcome of eventMasterForExport.
-// With a master in the calendar, the series rule (ListSeriesOverrides)
-// gives the overrides. With no master in the calendar, so no live master
-// anywhere, the rows of the UID in the calendar are orphan instances,
-// and the lookup takes them with no series rule. A row that a restore by
-// ID brought back beside a master in the trash then still reaches the
-// server.
+// calendarID. masterFound reports the outcome of eventMasterForExport. With a
+// master in the calendar, the series rule (ListSeriesOverrides) gives the
+// overrides. With no master in the calendar, no live master exists anywhere.
+// The rows of the UID in the calendar are then orphan instances, and the
+// lookup takes them with no series rule. A row that a restore by ID brought
+// back beside a master in the trash then still reaches the server.
 func (e *Engine) eventOverridesForExport(ctx context.Context, calendarID int64, uid string, masterFound bool) ([]event.Event, error) {
 	if !masterFound {
 		return e.events.ListLiveOverridesInCalendar(ctx, calendarID, uid)
@@ -317,6 +316,14 @@ func (e *Engine) lookupOwnerID(ctx context.Context, calendarID int64, ownerType,
 // that is gone (clear the dirty flag, stop the retry) from a real export
 // failure.
 var errResourceMissing = errors.New("local resource missing for uid")
+
+// errOwnedElsewhere is the errResourceMissing of a calendar that owns nothing
+// of a UID. Its rows belong to the live series of another calendar, or it
+// holds no row of a UID with live masters elsewhere. The push then writes a
+// tombstone for a server object of that calendar: nothing local backs it.
+// Every other errResourceMissing is a local anomaly, and the push clears the
+// dirty flag only.
+var errOwnedElsewhere = errors.New("the series of the uid lives in another calendar")
 
 // exportResource exports the local resource of uid in calendarID to iCal
 // bytes. It dispatches on owner type. See exportResourceFor for the

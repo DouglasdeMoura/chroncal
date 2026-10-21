@@ -2719,3 +2719,62 @@ func TestRestoreUndo_SeriesWithoutRecord(t *testing.T) {
 		t.Errorf("master after the undo without a record = trashed %v, %v; want it still in the trash", m.DeletedAt != nil, err)
 	}
 }
+
+// TestRestoreByUID_LeavesTruncatedRowsToTheirLog: the restore by UID
+// leaves the rows that a truncation hid. The trash entry of the
+// truncation restores them with the rule.
+func TestRestoreByUID_LeavesTruncatedRowsToTheirLog(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	tail, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get tail override: %v", err)
+	}
+	if err := svc.DeleteFromInstance(ctx, 1, master.UID, third); err != nil {
+		t.Fatalf("DeleteFromInstance: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	m, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("master after RestoreByUID: %v", err)
+	}
+	if !strings.Contains(m.RecurrenceRule, "UNTIL=") {
+		t.Errorf("rule after RestoreByUID = %q, want the truncated rule", m.RecurrenceRule)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, tail.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("tail override after RestoreByUID = %+v, %v; want it still hidden", r, err)
+	}
+	if _, err := svc.SeriesOverride(ctx, 1, master.UID, second.Format(time.RFC3339)); err != nil {
+		t.Errorf("override before the cutoff after RestoreByUID: %v, want it live", err)
+	}
+	entries, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	var restored bool
+	for _, e := range entries {
+		if e.Kind == TrashKindTruncation {
+			if err := svc.RestoreTrash(ctx, e); err != nil {
+				t.Fatalf("RestoreTrash(truncation): %v", err)
+			}
+			restored = true
+		}
+	}
+	if !restored {
+		t.Fatal("no truncation entry in the trash after RestoreByUID")
+	}
+	if r, err := svc.Get(ctx, tail.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("tail override after the truncation restore = %+v, %v; want it live", r, err)
+	}
+	if m, err := svc.Get(ctx, master.ID); err != nil || strings.Contains(m.RecurrenceRule, "UNTIL=") {
+		t.Errorf("rule after the truncation restore = %q, %v; want the original rule", m.RecurrenceRule, err)
+	}
+}

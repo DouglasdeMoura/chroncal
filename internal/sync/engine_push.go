@@ -104,17 +104,17 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 		icalData, err := e.exportResource(ctx, calendarID, res.OwnerType, res.Uid)
 		if err != nil {
 			if errors.Is(err, errResourceMissing) {
-				// No live local row backs this dirty sync_resource (the user
-				// purged it from trash, the calendar owns nothing of the
-				// UID, or the master/override pair got into an inconsistent
-				// state). Retrying every sync just races the same null
-				// lookup, so clear the flag. A sync row with a remote URL
-				// names a server object that nothing local backs, for
-				// example a duplicate that an old whole-series upload of a
-				// legacy override made: a tombstone queues its delete, and
+				// No live local row backs this dirty sync_resource. The user purged it
+				// from the trash, or the master and the override rows got into an
+				// inconsistent state. A retry on every sync races the same null lookup,
+				// so the push clears the flag. One case gets more: the calendar owns
+				// nothing of the UID because the series lives in another calendar
+				// (errOwnedElsewhere). A sync row with a remote URL then names a server
+				// object that nothing local backs. An old whole-series upload of a legacy
+				// override made such a duplicate. A tombstone queues its delete, and
 				// processTombstones sends it.
 				e.logger.Info("clear dirty: local resource missing", "uid", res.Uid, "owner_type", res.OwnerType)
-				if res.RemoteUrl != "" {
+				if res.RemoteUrl != "" && errors.Is(err, errOwnedElsewhere) {
 					if _, terr := storage.CreateTombstoneIfSynced(ctx, e.db, calendarID, res.Uid); terr != nil {
 						e.logger.Error("tombstone for missing resource", "uid", res.Uid, "error", terr)
 					}

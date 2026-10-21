@@ -45,10 +45,10 @@ var ErrMoveTargetHasUID = errors.New("event: the target calendar already holds t
 // occurrence and no master. The service refuses the edit.
 var ErrAmbiguousUID = errors.New("event: the UID has a series in more than one calendar; name the calendar of the series")
 
-// ErrAmbiguousOverride reports an occurrence whose series owns more than
-// one legacy override row at the same recurrence ID (an older version
-// saved them in different calendars). No rule can choose the row. The
-// error names the row IDs, so the user can delete or move one by ID.
+// ErrAmbiguousOverride reports an occurrence whose series owns more than one
+// legacy override row at the same recurrence ID. An older version saved them
+// in different calendars. No rule can choose the row. The error names the row
+// IDs, so the user can delete or move one by ID.
 var ErrAmbiguousOverride = errors.New("event: the occurrence has more than one override row; delete or move one by its ID")
 
 // AmbiguousOverrideError is the ErrAmbiguousOverride of one occurrence.
@@ -586,15 +586,14 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 
 // moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
 // another calendar. uidmove.Rows.Record calls it, after the write of the
-// moved row. The log keys are per calendar (migration 057).
-// targetHoldsMaster reports whether the target holds a master row of the
-// UID, live or in the trash, before that write. With a master, the move
-// is a legacy override that goes back to its master: the logs of the
-// target are the logs of that series, so they stay, and the source rows
-// whose keys collide go. Without a master, the move is a series move:
-// the logs of the moved series win, so the target rows whose keys
-// collide go, and the rest of the target (a stale row of another key)
-// stays.
+// moved row. The log keys are per calendar (migration 057). targetHoldsMaster
+// reports whether the target holds a master row of the UID, live or in the
+// trash, before that write. With a master, the move is a legacy override that
+// goes back to its master. The logs of the target are the logs of that
+// series, so they stay. The source rows whose keys collide go. Without a
+// master, the move is a series move. The logs of the moved series win, so the
+// target rows whose keys collide go. The rest of the target (a stale row of
+// another key) stays.
 func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams, targetHoldsMaster bool) error {
 	if err := qtx.MoveEventUIDToCalendar(ctx, arg); err != nil {
 		return fmt.Errorf("move events: %w", err)

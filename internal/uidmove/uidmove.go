@@ -42,11 +42,11 @@ type Rows struct {
 	// cannot occur.
 	CountCollisions func(ctx context.Context, fromCalendarID, toCalendarID int64) (live, trashed int64, err error)
 	// MoveRows moves every row of the UID and its delete-log rows from one
-	// calendar to another.
-	// MoveRows moves the other rows of the UID with the moved row.
-	// targetHoldsMaster reports whether the target calendar holds a
-	// master row of the UID, live or in the trash: a legacy override
-	// that goes back to its master, as opposed to a series move.
+	// calendar to another. MoveRows moves the other rows of the UID with the
+	// moved row. targetHoldsMaster reports whether the target calendar holds a
+	// master row of the UID, live or in the trash. With a master, the move is a
+	// legacy override that goes back to its master. Without one, it is a series
+	// move.
 	MoveRows func(ctx context.Context, fromCalendarID, toCalendarID int64, targetHoldsMaster bool) error
 	// HoldsMaster reports whether one calendar holds a master row of the
 	// UID, live or in the trash. Update reads it before the write of the
@@ -322,10 +322,10 @@ func (r Rows) Record(ctx context.Context, fromCalendarID, toCalendarID int64, ta
 	})
 }
 
-// LegacyOwner names the calendar whose series owns a legacy override of
-// the UID: an override row in a calendar with no master row of its UID
-// (see storage.LegacyOverride). masters holds every master row of the
-// UID, live and in the trash, one per calendar.
+// LegacyOwner names the calendar whose series owns a legacy override of the
+// UID. A legacy override is an override row in a calendar with no master row
+// of its UID (see storage.LegacyOverride). masters holds every master row of
+// the UID, live and in the trash, one per calendar.
 //
 // This is the one rule. The series queries of the event service repeat
 // it in SQL (see ListSeriesOverridesInCalendar in db/queries/events.sql),

@@ -244,7 +244,7 @@ func (s *Service) PurgeOldTruncationDeletes(ctx context.Context, olderThan time.
 
 // PurgeOldSeriesDeletes drops event_series_deletes rows older than
 // olderThan. Returns the number of rows purged. A restore of the series
-// then un-hides the overrides that no other log names.
+// then brings the master back alone.
 func (s *Service) PurgeOldSeriesDeletes(ctx context.Context, olderThan time.Time) (int, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
 	n, err := s.q.PurgeOldEventSeriesDeletes(ctx, cutoff)
@@ -411,23 +411,15 @@ func restoreTruncatedRDates(ctx context.Context, qtx *storage.Queries, master st
 // rows of the series in the calendar of the log row (issue #842).
 func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log storage.EventTruncateDelete) error {
 	if log.HiddenIds != nil {
-		// A log row of migration 057 and later names the hidden rows by
-		// ID, so the restore does not depend on the series owner of
-		// today. The calendar of each row takes the write.
+		// A log row of migration 057 and later names the hidden rows by ID. The
+		// restore then does not depend on the series owner of today. The calendar
+		// of each row takes the write.
 		ids, err := parseRowIDs(*log.HiddenIds)
 		if err != nil {
 			return err
 		}
-		if err := ensureRowsWritableTx(ctx, qtx, log.CalendarID, ids); err != nil {
-			return err
-		}
-		if len(ids) == 0 {
-			return nil
-		}
-		if _, err := qtx.RestoreEventsByIDs(ctx, ids); err != nil {
-			return fmt.Errorf("restore override rows: %w", err)
-		}
-		return nil
+		_, err = restoreLoggedIDsTx(ctx, qtx, log.CalendarID, log.Uid, ids)
+		return err
 	}
 	if log.HiddenOverrides == nil {
 		return qtx.RestoreSeriesOverridesAtOrAfter(ctx, storage.RestoreSeriesOverridesAtOrAfterParams{

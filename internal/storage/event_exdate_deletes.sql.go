@@ -28,8 +28,8 @@ type DeleteEventExdateDeletesByCalendarUIDParams struct {
 }
 
 // Drop the log rows of one series in one calendar. A purge of the master
-// drops them, and a calendar move clears stale rows in the target
-// calendar before the move (the keys are per calendar).
+// drops them. A calendar move clears stale rows in the target calendar before
+// the move, because the keys are per calendar.
 func (q *Queries) DeleteEventExdateDeletesByCalendarUID(ctx context.Context, arg DeleteEventExdateDeletesByCalendarUIDParams) error {
 	_, err := q.db.ExecContext(ctx, deleteEventExdateDeletesByCalendarUID, arg.CalendarID, arg.Uid)
 	return err
@@ -50,9 +50,9 @@ type DeleteEventExdateDeletesCollidingWithMoveParams struct {
 }
 
 // Drop the log rows of the source calendar whose key the target calendar
-// already holds. A move of the UID into a calendar with rows of the UID
-// (a legacy override that goes back to its master) keeps the logs of the
-// target.
+// already holds. A move of the UID into a calendar with a master of the UID
+// is a legacy override that goes back to its master. That move keeps the logs
+// of the target.
 func (q *Queries) DeleteEventExdateDeletesCollidingWithMove(ctx context.Context, arg DeleteEventExdateDeletesCollidingWithMoveParams) error {
 	_, err := q.db.ExecContext(ctx, deleteEventExdateDeletesCollidingWithMove, arg.FromCalendarID, arg.Uid, arg.ToCalendarID)
 	return err

@@ -33,12 +33,12 @@ import (
 // the series and not a move target.
 //
 // Two calendars can hold the same UID (issue #842). calendarID names the
-// calendar of the series for a UID reference: the override or the master
-// of that calendar is the target. A calendar that holds no series of the
-// UID names a move target instead, so the lookup then runs without it,
-// and the service refuses the move of one occurrence with its hint. When
-// that lookup cannot choose the series, the error names calendarName as
-// a calendar with no series of the UID.
+// calendar of the series for a UID reference: the override or the master of
+// that calendar is the target. A calendar that holds no series of the UID
+// names a move target instead. The lookup then runs without it, and the
+// service refuses the move of one occurrence with its hint. When that lookup
+// cannot choose the series, the error names calendarName as a calendar with
+// no series of the UID.
 func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64, calendarName string) (e event.Event, createOverride, viaCalendar bool, err error) {
 	if recurrenceID == "" {
 		e, err := resolveEvent(ctx, a, ref, "")
@@ -48,13 +48,12 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 		e, err := resolveEvent(ctx, a, ref, recurrenceID)
 		return e, false, false, err
 	}
-	// One lookup gives the master of the series and the stored override
-	// of the occurrence: the row beside the master, or a legacy override
-	// in another calendar. A generated occurrence would overwrite that
-	// row. The named calendar comes first; a calendar with no series of
-	// the UID names a move target, so the lookup runs again with no
-	// calendar. With no live master anywhere, the row is an orphan
-	// instance.
+	// One lookup gives the master of the series and the stored override of the
+	// occurrence. That override is the row beside the master, or a legacy
+	// override in another calendar. A generated occurrence would overwrite that
+	// row. The named calendar comes first; a calendar with no series of the UID
+	// names a move target, so the lookup runs again with no calendar. With no
+	// live master anywhere, the row is an orphan instance.
 	scopes := []int64{0}
 	if calendarID != 0 {
 		scopes = []int64{calendarID, 0}
@@ -80,8 +79,8 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 
 // ambiguousSeriesErr maps a lookup error of a UID reference. With a
 // --calendar that holds no series of the UID, the generic hint ("pass
-// --calendar NAME") would repeat what the user did, so the error names
-// that calendar instead.
+// --calendar NAME") would repeat what the user did. The error names that
+// calendar instead.
 func ambiguousSeriesErr(err error, ref string, calendarID int64, calendarName string) error {
 	if calendarID != 0 && errors.Is(err, event.ErrAmbiguousUID) {
 		return errInvalidInputf("calendar %q holds no series of event %s, and the UID is in more than one calendar; use the ID of the row, or name the calendar of the series with --calendar", calendarName, ref)
