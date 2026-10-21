@@ -538,10 +538,16 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 			})
 			return n.Live, n.Trashed, err
 		},
-		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
+		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64, targetHeldRows bool) error {
 			return moveUIDRowsTx(ctx, qtx, storage.MoveEventUIDToCalendarParams{
 				FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid,
+			}, targetHeldRows)
+		},
+		CountRowsIn: func(ctx context.Context, calendarID int64) (int64, error) {
+			n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
+				CalendarID: calendarID, Uid: uid,
 			})
+			return n.Masters + n.Overrides, err
 		},
 	}
 }
@@ -579,24 +585,20 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 }
 
 // moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
-// another calendar. uidmove.Rows.Record calls it. The log keys are per
-// calendar (migration 057). A target calendar with no event row of the
-// UID (a series move) holds stale log rows at most, for example rows that
-// a purge of the master left, so the move drops them first and the moved
-// rows take their keys. A target calendar with event rows of the UID (a
-// legacy override that goes back to its master) keeps its log rows: the
-// move drops the source rows whose keys collide, and moves the rest.
-func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams) error {
-	held, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
-		CalendarID: arg.ToCalendarID, Uid: arg.Uid,
-	})
-	if err != nil {
-		return fmt.Errorf("count target rows: %w", err)
-	}
+// another calendar. uidmove.Rows.Record calls it, after the write of the
+// moved row. The log keys are per calendar (migration 057).
+// targetHeldRows reports the state of the target before that write. A
+// target with no event row of the UID (a series move) holds stale log
+// rows at most, for example rows that a purge of the master left, so the
+// move drops them first and the moved rows take their keys. A target with
+// event rows of the UID (a legacy override that goes back to its master)
+// keeps its log rows: the move drops the source rows whose keys collide,
+// and moves the rest.
+func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams, targetHeldRows bool) error {
 	if err := qtx.MoveEventUIDToCalendar(ctx, arg); err != nil {
 		return fmt.Errorf("move events: %w", err)
 	}
-	if held.Masters+held.Overrides == 0 {
+	if !targetHeldRows {
 		if err := deleteLogRowsTx(ctx, qtx, arg.ToCalendarID, arg.Uid); err != nil {
 			return err
 		}
@@ -943,7 +945,9 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int6
 	// gets a tombstone. Without it that stale object keeps the UID, and
 	// iCloud refuses the later PUT (issue #828).
 	if storedCalendarID != 0 {
-		if err := move.Record(ctx, storedCalendarID, r.CalendarID); err != nil {
+		// A legacy override goes back to the calendar of its master, so
+		// the target held rows of the UID.
+		if err := move.Record(ctx, storedCalendarID, r.CalendarID, true); err != nil {
 			return Event{}, fmt.Errorf("record override calendar move: %w", err)
 		}
 	}

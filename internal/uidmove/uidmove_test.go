@@ -217,7 +217,7 @@ func TestSingleMasterRows(t *testing.T) {
 	if m, err := rows.Masters(ctx); err != nil || len(m) != 1 || m[0].ID != 7 {
 		t.Fatalf("Masters = %+v, %v; want master 7", m, err)
 	}
-	err := rows.MoveRows(ctx, 1, 2)
+	err := rows.MoveRows(ctx, 1, 2, false)
 	if !errors.Is(err, boom) || !strings.Contains(err.Error(), "move log") {
 		t.Fatalf("MoveRows = %v, want the failed step named", err)
 	}
@@ -242,7 +242,7 @@ func TestUpdateKeepsCalendarForZeroTarget(t *testing.T) {
 	}
 	r := fakeRows(nil, 0)
 	r.Q = q
-	r.MoveRows = func(context.Context, int64, int64) error { return nil }
+	r.MoveRows = func(context.Context, int64, int64, bool) error { return nil }
 	var got int64 = -1
 	if err := r.Update(ctx, "VEVENT", "event", "", cal.ID, 0, func(_ context.Context, calendarID int64) error {
 		got = calendarID

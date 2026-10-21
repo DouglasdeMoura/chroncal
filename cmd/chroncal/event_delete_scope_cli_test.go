@@ -613,3 +613,31 @@ func TestEventUpdate_LegacyCalendarWithTwoMastersNamesIt(t *testing.T) {
 		t.Fatalf("stderr = %q, want the named calendar and no generic hint", stderr)
 	}
 }
+
+// TestEventGet_TwoLegacyOverridesNameTheRows: a get of one occurrence by
+// UID with two legacy rows names the rows.
+func TestEventGet_TwoLegacyOverridesNameTheRows(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid, legacyID := seedLegacyOverrideInHome(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Other"); err != nil {
+		t.Fatalf("calendar create Other: %v", err)
+	}
+	ics := filepath.Join(t.TempDir(), "legacy2.ics")
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
+		"\r\nDTSTAMP:20260401T000000Z\r\nRECURRENCE-ID:20260407T090000Z\r\nDTSTART:20260407T110000Z\r\nDTEND:20260407T113000Z\r\n" +
+		"SUMMARY:Legacy other\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Other"); err != nil {
+		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "get", uid, "--recurrence-id", "2026-04-07T09:00:00Z")
+	if err == nil {
+		t.Fatal("get with two override rows of one occurrence succeeded")
+	}
+	if !strings.Contains(stderr, "more than one override row") || !strings.Contains(stderr, strconv.FormatInt(legacyID, 10)) {
+		t.Fatalf("stderr = %q, want the override rows named", stderr)
+	}
+}

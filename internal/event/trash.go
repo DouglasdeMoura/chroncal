@@ -294,12 +294,11 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	// reflects a concurrent writer's changes rather than a pre-transaction
 	// snapshot (issue #116). The log row names the calendar of the
 	// master: two calendars can hold the same UID (issue #842).
-	master, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{
+	master, err := qtx.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{
 		CalendarID: log.CalendarID, Uid: log.Uid,
 	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// The master is in the trash: restore the series first.
 			return fmt.Errorf("get master: %w", ErrNotDeleted)
 		}
 		return fmt.Errorf("get master: %w", err)
@@ -320,8 +319,12 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	if err := qtx.DeleteEventExdateDelete(ctx, logID); err != nil {
 		return fmt.Errorf("delete log row: %w", err)
 	}
-	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, log.Uid, "event"); err != nil {
-		return fmt.Errorf("mark resource dirty: %w", err)
+	// A master in the trash takes the EXDATE change as it is: its own
+	// restore shows the occurrence and marks the series dirty.
+	if master.DeletedAt == nil {
+		if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, log.Uid, "event"); err != nil {
+			return fmt.Errorf("mark resource dirty: %w", err)
+		}
 	}
 	return tx.Commit()
 }
