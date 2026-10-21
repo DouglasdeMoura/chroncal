@@ -1209,12 +1209,11 @@ func (q *Queries) ListSeriesCalendarIDs(ctx context.Context, arg ListSeriesCalen
 }
 
 const listSeriesOverridesAtRecurrenceID = `-- name: ListSeriesOverridesAtRecurrenceID :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
+SELECT events.id, events.uid, events.calendar_id, events.title, events.description, events.location, events.start_time, events.end_time, events.all_day, events.recurrence_rule, events.timezone, events.status, events.transp, events.sequence, events.priority, events.class, events.url, events.exdates, events.rdates, events.recurrence_id, events.geo, events.created_at, events.updated_at, events.duration, events.dtstamp, events.conference_uri, events.deleted_at FROM events
+JOIN event_series_rows AS s ON s.id = events.id
 WHERE events.recurrence_id = ?1 AND events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
-ORDER BY EXISTS (SELECT 1 FROM events AS m WHERE m.uid = events.uid AND m.calendar_id = events.calendar_id AND m.recurrence_id = '') DESC, events.id
+  AND s.uid = ?2 AND s.owner_calendar_id = ?3
+ORDER BY s.beside_master DESC, events.id
 `
 
 type ListSeriesOverridesAtRecurrenceIDParams struct {
@@ -1226,7 +1225,7 @@ type ListSeriesOverridesAtRecurrenceIDParams struct {
 // The live override rows of one occurrence of the series in one calendar (see
 // ListSeriesOverridesInCalendar). These are the row of the calendar of the
 // master, or the legacy rows the series owns. The order is the tie rule of
-// ListSeriesOverridesInCalendar, so the first row wins.
+// the view column beside_master, so the first row wins.
 func (q *Queries) ListSeriesOverridesAtRecurrenceID(ctx context.Context, arg ListSeriesOverridesAtRecurrenceIDParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesOverridesAtRecurrenceID, arg.RecurrenceID, arg.Uid, arg.CalendarID)
 	if err != nil {
@@ -1279,12 +1278,11 @@ func (q *Queries) ListSeriesOverridesAtRecurrenceID(ctx context.Context, arg Lis
 }
 
 const listSeriesOverridesInCalendar = `-- name: ListSeriesOverridesInCalendar :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
+SELECT events.id, events.uid, events.calendar_id, events.title, events.description, events.location, events.start_time, events.end_time, events.all_day, events.recurrence_rule, events.timezone, events.status, events.transp, events.sequence, events.priority, events.class, events.url, events.exdates, events.rdates, events.recurrence_id, events.geo, events.created_at, events.updated_at, events.duration, events.dtstamp, events.conference_uri, events.deleted_at FROM events
+JOIN event_series_rows AS s ON s.id = events.id
 WHERE events.recurrence_id != '' AND events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = ?1 AND s.owner_calendar_id = ?2)
-ORDER BY events.recurrence_id, EXISTS (SELECT 1 FROM events AS m WHERE m.uid = events.uid AND m.calendar_id = events.calendar_id AND m.recurrence_id = '') DESC, events.id
+  AND s.uid = ?1 AND s.owner_calendar_id = ?2
+ORDER BY events.recurrence_id, s.beside_master DESC, events.id
 `
 
 type ListSeriesOverridesInCalendarParams struct {
@@ -1298,9 +1296,8 @@ type ListSeriesOverridesInCalendarParams struct {
 // uidmove.LegacyOwner hold the rule. Two calendars can hold the same UID, so
 // the override rows of the other master stay out (issue #842). Every series
 // query below takes its rows from the same view. Within one recurrence ID,
-// the row of a calendar with a master row of the UID comes first, then the
-// lowest ID: the tie rule of the export, the expansion, and the edit. A
-// legacy row is in a calendar with no master row.
+// the order is the tie rule of the view column beside_master: the row beside
+// the master first, then the lowest ID.
 func (q *Queries) ListSeriesOverridesInCalendar(ctx context.Context, arg ListSeriesOverridesInCalendarParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesOverridesInCalendar, arg.Uid, arg.CalendarID)
 	if err != nil {
@@ -1352,25 +1349,54 @@ func (q *Queries) ListSeriesOverridesInCalendar(ctx context.Context, arg ListSer
 	return items, nil
 }
 
-const listTrashedEventIDsByUID = `-- name: ListTrashedEventIDsByUID :many
-SELECT id FROM events WHERE uid = ? AND deleted_at IS NOT NULL ORDER BY id
+const listTrashedEventsByUID = `-- name: ListTrashedEventsByUID :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE uid = ? AND deleted_at IS NOT NULL ORDER BY id
 `
 
-// The IDs of the rows of one UID in the trash, in every calendar. The
-// restore by UID reads it to find the logs that still name a row.
-func (q *Queries) ListTrashedEventIDsByUID(ctx context.Context, uid string) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, listTrashedEventIDsByUID, uid)
+// The rows of one UID in the trash, in every calendar. The restore by UID
+// reads it to find the logs that still name a row, and the orphan rows of
+// the newest delete.
+func (q *Queries) ListTrashedEventsByUID(ctx context.Context, uid string) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listTrashedEventsByUID, uid)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []int64
+	var items []Event
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.Geo,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Duration,
+			&i.Dtstamp,
+			&i.ConferenceUri,
+			&i.DeletedAt,
+		); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

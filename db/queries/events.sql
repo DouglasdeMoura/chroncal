@@ -229,15 +229,13 @@ SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' LI
 -- uidmove.LegacyOwner hold the rule. Two calendars can hold the same UID, so
 -- the override rows of the other master stay out (issue #842). Every series
 -- query below takes its rows from the same view. Within one recurrence ID,
--- the row of a calendar with a master row of the UID comes first, then the
--- lowest ID: the tie rule of the export, the expansion, and the edit. A
--- legacy row is in a calendar with no master row.
-SELECT * FROM events
+-- the order is the tie rule of the view column beside_master: the row beside
+-- the master first, then the lowest ID.
+SELECT events.* FROM events
+JOIN event_series_rows AS s ON s.id = events.id
 WHERE events.recurrence_id != '' AND events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
-ORDER BY events.recurrence_id, EXISTS (SELECT 1 FROM events AS m WHERE m.uid = events.uid AND m.calendar_id = events.calendar_id AND m.recurrence_id = '') DESC, events.id;
+  AND s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
+ORDER BY events.recurrence_id, s.beside_master DESC, events.id;
 
 -- name: HasLiveSeriesOverrideAtOrAfter :one
 -- Report whether the series of one UID in one calendar holds a live
@@ -314,13 +312,12 @@ SELECT DISTINCT calendar_id FROM events WHERE uid = ? ORDER BY calendar_id;
 -- The live override rows of one occurrence of the series in one calendar (see
 -- ListSeriesOverridesInCalendar). These are the row of the calendar of the
 -- master, or the legacy rows the series owns. The order is the tie rule of
--- ListSeriesOverridesInCalendar, so the first row wins.
-SELECT * FROM events
+-- the view column beside_master, so the first row wins.
+SELECT events.* FROM events
+JOIN event_series_rows AS s ON s.id = events.id
 WHERE events.recurrence_id = sqlc.arg(recurrence_id) AND events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
-ORDER BY EXISTS (SELECT 1 FROM events AS m WHERE m.uid = events.uid AND m.calendar_id = events.calendar_id AND m.recurrence_id = '') DESC, events.id;
+  AND s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
+ORDER BY s.beside_master DESC, events.id;
 
 -- name: ListLiveOverridesInCalendarByUID :many
 -- The live override rows of one UID in one calendar, with no series
@@ -400,10 +397,11 @@ FROM events
 WHERE calendar_id = sqlc.arg(calendar_id) AND uid = sqlc.arg(uid)
   AND (deleted_at IS NULL OR CAST(sqlc.arg(include_deleted) AS BOOLEAN));
 
--- name: ListTrashedEventIDsByUID :many
--- The IDs of the rows of one UID in the trash, in every calendar. The
--- restore by UID reads it to find the logs that still name a row.
-SELECT id FROM events WHERE uid = ? AND deleted_at IS NOT NULL ORDER BY id;
+-- name: ListTrashedEventsByUID :many
+-- The rows of one UID in the trash, in every calendar. The restore by UID
+-- reads it to find the logs that still name a row, and the orphan rows of
+-- the newest delete.
+SELECT * FROM events WHERE uid = ? AND deleted_at IS NOT NULL ORDER BY id;
 
 -- name: SoftDeleteEventSeriesAndCalendarRows :exec
 -- Soft-delete the live rows of one UID in one calendar, and the live legacy

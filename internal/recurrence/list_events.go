@@ -11,6 +11,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/recurset"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 // eventOverridesByUID fetches every override for the given recurring masters in
@@ -50,17 +51,10 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 		if len(group) < 2 {
 			continue
 		}
-		own := func(r storage.Event) bool { return seriesKey(r.CalendarID, r.Uid) == key }
-		sort.SliceStable(group, func(i, j int) bool {
-			a, b := group[i], group[j]
-			if a.RecurrenceID != b.RecurrenceID {
-				return a.RecurrenceID < b.RecurrenceID
-			}
-			if own(a) != own(b) {
-				return own(a)
-			}
-			return a.ID < b.ID
-		})
+		tie := func(r storage.Event) uidmove.OverrideTie {
+			return uidmove.OverrideTie{RecurrenceID: r.RecurrenceID, BesideMaster: seriesKey(r.CalendarID, r.Uid) == key, ID: r.ID}
+		}
+		sort.SliceStable(group, func(i, j int) bool { return uidmove.TieBefore(tie(group[i]), tie(group[j])) })
 		byUID[key] = storage.FirstPerRecurrenceID(group)
 	}
 	return byUID, nil

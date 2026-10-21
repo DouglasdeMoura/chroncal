@@ -50,8 +50,11 @@ type resource struct {
 	// del soft-deletes one row by ID. delSeries soft-deletes the master row
 	// of the resolved row and every override of its series. The row carries
 	// the calendar: two calendars can hold the same event UID (issue #842).
-	del       func(ctx context.Context, a *app.App, id int64) error
-	delSeries func(ctx context.Context, a *app.App, target row) error
+	// del and delSeries return the calendar that the delete wrote, so the
+	// push sends it. A legacy event override writes the calendar of its
+	// master.
+	del       func(ctx context.Context, a *app.App, target row) (int64, error)
+	delSeries func(ctx context.Context, a *app.App, target row) (int64, error)
 
 	// restoreByID clears the deletion marker on one row. restoreByUID
 	// clears it on every row that shares the UID.
@@ -168,18 +171,20 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 
 	w := cmd.OutOrStdout()
 	if opts.Series {
-		if err := r.delSeries(ctx, a, target); err != nil {
+		pushCalendarID, err := r.delSeries(ctx, a, target)
+		if err != nil {
 			return fmt.Errorf("delete series: %w", notFoundErr(err, r.name, target.UID))
 		}
-		return reportDeleted(cmd, a, w, target.CalendarID,
+		return reportDeleted(cmd, a, w, pushCalendarID,
 			map[string]any{"deleted": true, "uid": target.UID, "series": true},
 			fmt.Sprintf("Deleted %s series %q.\n", r.name, safeText(target.UID)))
 	}
 
-	if err := r.del(ctx, a, target.ID); err != nil {
+	pushCalendarID, err := r.del(ctx, a, target)
+	if err != nil {
 		return fmt.Errorf("delete %s: %w", r.name, err)
 	}
-	return reportDeleted(cmd, a, w, target.CalendarID,
+	return reportDeleted(cmd, a, w, pushCalendarID,
 		map[string]any{"deleted": true, "id": target.ID},
 		fmt.Sprintf("Deleted %s %d.\n", r.name, target.ID))
 }

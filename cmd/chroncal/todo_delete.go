@@ -20,8 +20,12 @@ var todoResource = resource{
 		}
 		return row{ID: t.ID, UID: t.UID, CalendarID: t.CalendarID, Summary: t.Summary}, nil
 	},
-	del:          func(ctx context.Context, a *app.App, id int64) error { return a.Todos.Delete(ctx, id) },
-	delSeries:    func(ctx context.Context, a *app.App, target row) error { return a.Todos.DeleteSeries(ctx, target.UID) },
+	del: func(ctx context.Context, a *app.App, target row) (int64, error) {
+		return target.CalendarID, a.Todos.Delete(ctx, target.ID)
+	},
+	delSeries: func(ctx context.Context, a *app.App, target row) (int64, error) {
+		return target.CalendarID, a.Todos.DeleteSeries(ctx, target.UID)
+	},
 	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Todos.RestoreByID(ctx, id) },
 	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Todos.RestoreByUID(ctx, uid) },
 	purgeCandidate: func(ctx context.Context, a *app.App, id int64) (row, bool, error) {

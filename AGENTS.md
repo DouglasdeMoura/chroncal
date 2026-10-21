@@ -93,7 +93,7 @@ Two calendars can hold an event series with the same UID (issue #842). A series 
 
 A series with its master in the trash keeps its live rows local. This rule applies to the rows beside the master and to the legacy overrides that it owns. A restore or an edit of such a row writes no sync state. The export refuses the UID, so a push never sends a body with no master over the object of the series.
 
-Two legacy overrides of one series can hold the same occurrence. The expansion, the export, and the edit of the occurrence use one rule: the row of the owner calendar wins, then the lowest ID. Only a delete by UID and recurrence ID returns `ErrAmbiguousOverride`, so the user chooses the row.
+Two legacy overrides of one series can hold the same occurrence. The expansion, the export, and the edit of the occurrence use one rule: the row of the owner calendar wins, then the lowest ID. Only a delete by UID and recurrence ID returns `ErrAmbiguousOverride`, so the user chooses the row. The rule has one SQL form and one Go form. The SQL form is the view column `beside_master` of migration 057, and the series override queries order by it. The Go form is `uidmove.TieBefore`, beside `uidmove.LegacyOwner`. Change the two forms together.
 
 ### Alarms
 

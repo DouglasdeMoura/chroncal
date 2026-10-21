@@ -81,6 +81,11 @@ CREATE INDEX idx_event_series_deletes_deleted_at ON event_series_deletes(deleted
 --    series of its own calendar. Google serves such an orphan instance
 --    under its own UID, and the export of the calendar still carries it.
 --
+-- beside_master is 1 for a row in the calendar of its owner master, and 0
+-- for a legacy override or an orphan row. The series override queries order
+-- by it: within one occurrence the row beside the master wins, then the
+-- lowest ID. uidmove.TieBefore is the Go form of that tie rule.
+--
 -- uidmove.LegacyOwner is the Go form of part 2 and part 3. Drop the view
 -- before a rebuild of the events table. Create it again after.
 CREATE VIEW event_series_rows AS
@@ -90,7 +95,8 @@ SELECT
     e.calendar_id AS calendar_id,
     e.recurrence_id AS recurrence_id,
     e.deleted_at AS deleted_at,
-    c.calendar_id AS owner_calendar_id
+    c.calendar_id AS owner_calendar_id,
+    CAST(c.calendar_id = e.calendar_id AS INTEGER) AS beside_master
 FROM events AS e
 JOIN events AS c ON c.uid = e.uid AND c.recurrence_id = ''
 WHERE c.calendar_id = e.calendar_id
@@ -108,7 +114,8 @@ SELECT
     e.calendar_id AS calendar_id,
     e.recurrence_id AS recurrence_id,
     e.deleted_at AS deleted_at,
-    e.calendar_id AS owner_calendar_id
+    e.calendar_id AS owner_calendar_id,
+    0 AS beside_master
 FROM events AS e
 WHERE NOT EXISTS (
     SELECT 1 FROM events AS m WHERE m.uid = e.uid AND m.recurrence_id = '');
