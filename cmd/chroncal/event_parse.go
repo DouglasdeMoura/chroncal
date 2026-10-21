@@ -48,35 +48,34 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 		e, err := resolveEvent(ctx, a, ref, recurrenceID)
 		return e, false, false, err
 	}
+	// One lookup gives the master of the series and the stored override
+	// of the occurrence: the row beside the master, or a legacy override
+	// in another calendar. A generated occurrence would overwrite that
+	// row. The named calendar comes first; a calendar with no series of
+	// the UID names a move target, so the lookup runs again with no
+	// calendar. With no live master anywhere, the row is an orphan
+	// instance.
+	scopes := []int64{0}
 	if calendarID != 0 {
-		// One lookup gives the master of the series of the calendar and
-		// the stored override of the occurrence: the row beside the
-		// master, or a legacy override in another calendar. A generated
-		// occurrence would overwrite that row.
-		master, override, err := a.Events.SeriesOccurrence(ctx, calendarID, ref, recurrenceID)
+		scopes = []int64{calendarID, 0}
+	}
+	for _, scope := range scopes {
+		master, override, err := a.Events.SeriesOccurrence(ctx, scope, ref, recurrenceID)
 		switch {
 		case err == nil && override != nil:
-			return *override, false, true, nil
+			return *override, false, scope != 0, nil
 		case err == nil:
 			occ, create, err := generatedOccurrence(master, ref, recurrenceID)
-			return occ, create, true, err
+			return occ, create, scope != 0, err
 		case !errors.Is(err, sql.ErrNoRows):
 			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
 		}
 	}
-	e, err = a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)
-	if err == nil {
-		return e, false, false, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
-	}
-	master, err := a.Events.GetByUID(ctx, ref)
+	e, err = a.Events.OrphanOccurrence(ctx, ref, recurrenceID)
 	if err != nil {
-		return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
+		return event.Event{}, false, false, notFoundErr(err, "event", ref)
 	}
-	occ, create, err := generatedOccurrence(master, ref, recurrenceID)
-	return occ, create, false, err
+	return e, false, false, nil
 }
 
 // ambiguousSeriesErr maps a lookup error of a UID reference. With a
