@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -358,9 +359,15 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
-	// The restore writes the master and the hidden rows of the series in
-	// the calendar of the log, so those calendars must take the write.
-	if err := ensureSeriesWritableIn(ctx, qtx, log.CalendarID, log.Uid); err != nil {
+	// The restore writes the master in the calendar of the log. A log
+	// with row IDs guards the calendars of its rows in restoreLoggedIDsTx.
+	// An older log restores by recurrence ID through the series, so the
+	// guard covers the calendars of the series.
+	if log.HiddenIds != nil {
+		if err := calendaraccess.EnsureWritable(ctx, qtx, log.CalendarID, "VEVENT"); err != nil {
+			return err
+		}
+	} else if err := ensureSeriesWritableIn(ctx, qtx, log.CalendarID, log.Uid); err != nil {
 		return err
 	}
 
@@ -370,7 +377,7 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	// row. That would drop the RRULE restore in silence (issue #413, mirrors
 	// restoreInstanceByLogID / #116). The log row names the calendar of
 	// the master: two calendars can hold the same UID (issue #842).
-	master, err := qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{
+	master, err := qtx.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{
 		CalendarID: log.CalendarID, Uid: log.Uid,
 	})
 	if err != nil {
@@ -378,6 +385,11 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 			return fmt.Errorf("get master: %w", ErrNotDeleted)
 		}
 		return fmt.Errorf("get master: %w", err)
+	}
+	if master.DeletedAt != nil {
+		// The truncation rewrites the rule of a live master. The entry
+		// stays, and the restore of the series comes first.
+		return ErrMasterInTrash
 	}
 
 	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{
@@ -389,11 +401,13 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 	if err := restoreTruncatedRDates(ctx, qtx, master, log); err != nil {
 		return fmt.Errorf("restore rdates: %w", err)
 	}
-	if err := restoreTruncatedOverrides(ctx, qtx, log); err != nil {
-		return fmt.Errorf("restore overrides: %w", err)
-	}
+	// The restore consumes the log row first. The drop of the restored rows
+	// from the other logs then does not rewrite this row.
 	if err := qtx.DeleteEventTruncateDelete(ctx, logID); err != nil {
 		return fmt.Errorf("delete log row: %w", err)
+	}
+	if err := restoreTruncatedOverrides(ctx, qtx, log); err != nil {
+		return fmt.Errorf("restore overrides: %w", err)
 	}
 	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, log.Uid, "event"); err != nil {
 		return fmt.Errorf("mark resource dirty: %w", err)

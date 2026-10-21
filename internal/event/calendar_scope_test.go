@@ -2803,7 +2803,15 @@ func TestDeleteSeries_FreshLogAfterRevivalByUpsert(t *testing.T) {
 			}
 		},
 		"raw revival": func(t *testing.T, svc *Service, master Event, _, _ storage.Event) {
-			if _, err := svc.q.RestoreEventsByUID(context.Background(), master.UID); err != nil {
+			rows, err := svc.q.ListTrashedEventsByUID(context.Background(), master.UID)
+			if err != nil {
+				t.Fatalf("list trashed rows: %v", err)
+			}
+			ids := make([]int64, len(rows))
+			for i, r := range rows {
+				ids[i] = r.ID
+			}
+			if _, err := svc.q.RestoreEventsByIDs(context.Background(), ids); err != nil {
 				t.Fatalf("revive rows: %v", err)
 			}
 		},
@@ -4176,5 +4184,64 @@ func TestRestoreOrphanRowByID_DropsItsRecord(t *testing.T) {
 	}
 	if r, err := svc.GetIncludingDeleted(ctx, rows[0].ID); err != nil || r.DeletedAt != nil {
 		t.Errorf("row after the restore by UID = trashed %v, %v; want it live", r.DeletedAt != nil, err)
+	}
+}
+
+// TestOrphanDeleteLog_NewMasterKeepsImportedEXDATE: the occurrence log of a
+// delete by ID of an orphan row goes when a master of the UID arrives in
+// the calendar. A restore of the row then keeps the EXDATE that the import
+// of the master brought (issue #86).
+func TestOrphanDeleteLog_NewMasterKeepsImportedEXDATE(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-then-import"
+	rows := orphanRows(t, svc, uid, 1)
+	at := rows[0].StartTime
+	if err := svc.Delete(ctx, rows[0].ID); err != nil {
+		t.Fatalf("Delete(orphan row): %v", err)
+	}
+	start := at.Add(-24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: 1, Title: "Imported",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+		ExDates: at.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	logs, err := svc.q.ListEventExdateDeletesByCalendarUID(ctx, storage.ListEventExdateDeletesByCalendarUIDParams{CalendarID: 1, Uid: uid})
+	if err != nil || len(logs) != 0 {
+		t.Fatalf("occurrence logs after the master insert = %d, %v; want 0", len(logs), err)
+	}
+	if err := svc.RestoreByID(ctx, rows[0].ID); err != nil {
+		t.Fatalf("RestoreByID(row): %v", err)
+	}
+	m, err := svc.GetIncludingDeleted(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("get master: %v", err)
+	}
+	if m.ExDates == "" {
+		t.Errorf("master EXDATE after the restore = %q, want the imported EXDATE kept", m.ExDates)
+	}
+}
+
+// TestRestoreTruncation_MasterInTrash: the restore of a truncation whose
+// master is in the trash returns ErrMasterInTrash, not ErrNotDeleted.
+func TestRestoreTruncation_MasterInTrash(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	if err := svc.DeleteFromInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("DeleteFromInstance: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	logs, err := svc.q.ListEventTruncateDeletesByCalendarUID(ctx, storage.ListEventTruncateDeletesByCalendarUIDParams{CalendarID: 1, Uid: master.UID})
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("truncation logs = %d, %v; want 1", len(logs), err)
+	}
+	if err := svc.restoreTruncationByLogID(ctx, logs[0].ID); !errors.Is(err, ErrMasterInTrash) || errors.Is(err, ErrNotDeleted) {
+		t.Errorf("restoreTruncationByLogID err = %v, want ErrMasterInTrash", err)
 	}
 }

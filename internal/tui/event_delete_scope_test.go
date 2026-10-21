@@ -122,3 +122,34 @@ func TestUndo_AlreadyRestoredEntryLeavesTheStack(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, got.DeletedAt, "the second press restores the first delete")
 }
+
+// TestUndo_TruncationWithMasterInTrashKeepsEntry: the undo of a truncation
+// whose master is in the trash keeps the entry and asks for the restore of
+// the series first.
+func TestUndo_TruncationWithMasterInTrashKeepsEntry(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+	cals, err := a.Calendars.List(ctx)
+	require.NoError(t, err)
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	ev, err := a.Events.Create(ctx, event.CreateParams{
+		CalendarID: cals[0].ID, Title: "Series", StartTime: start, EndTime: start.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	})
+	require.NoError(t, err)
+	meta, err := a.Events.DeleteFromInstanceWithUndo(ctx, cals[0].ID, ev.UID, start.Add(48*time.Hour))
+	require.NoError(t, err)
+	m.undoStack.Push(UndoEntry{Meta: meta, DeletedAt: time.Now()})
+	require.NoError(t, a.Events.DeleteSeries(ctx, cals[0].ID, ev.UID))
+
+	m.focus = focusCalendar
+	next, cmd, handled := m.interceptGlobalKeys(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	require.True(t, handled)
+	msg, ok := cmd().(eventRestoredMsg)
+	require.True(t, ok)
+	require.ErrorIs(t, msg.err, event.ErrMasterInTrash)
+	updated, _ := next.Update(msg)
+	m = updated.(Model)
+	require.Equal(t, 1, m.undoStack.Len(), "the entry stays for a later undo")
+	require.Equal(t, "restore the series first", m.toast.reason)
+}

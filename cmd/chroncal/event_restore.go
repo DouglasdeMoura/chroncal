@@ -15,7 +15,8 @@ overrides that the series delete hid come back. An occurrence deleted on
 its own before stays deleted. A UID reverses a series delete of that UID.
 An occurrence deleted on its own, or a row that a truncation hid, comes
 back by its ID. When two calendars hold a series delete of the UID, pass
-the ID of the master.
+the ID of the master. A UID with no master holds orphan rows only: the
+rows of the newest delete in one calendar come back.
 
 The event must have been deleted via chroncal (soft-delete, not purged).
 Use 'events list --include-deleted' to see deletable candidates.

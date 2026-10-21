@@ -134,21 +134,25 @@ BEGIN
 END;
 -- +goose StatementEnd
 
--- A new live master consumes the series-delete log of its calendar too. A
--- log of orphan rows describes a delete with no master. A pull or an import
--- that inserts a master makes that log stale, and a later series delete
--- writes a new log over it.
+-- A new live master consumes the delete logs of its UID in its calendar. A
+-- log there describes a delete with no master in the calendar: the delete
+-- of orphan rows, or a delete by ID of an orphan row (an occurrence log). A
+-- pull or an import that inserts a master makes such a log stale. An
+-- occurrence log would then strip an imported EXDATE of the new master on a
+-- restore (issue #86). The unique key holds one master row per calendar and
+-- UID, so the insert of a master never meets a log of a master there.
 -- +goose StatementBegin
-CREATE TRIGGER events_master_insert_drops_series_log
+CREATE TRIGGER events_master_insert_drops_stale_logs
 AFTER INSERT ON events
 WHEN NEW.recurrence_id = '' AND NEW.deleted_at IS NULL
 BEGIN
     DELETE FROM event_series_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
+    DELETE FROM event_exdate_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
 END;
 -- +goose StatementEnd
 
 -- +goose Down
-DROP TRIGGER IF EXISTS events_master_insert_drops_series_log;
+DROP TRIGGER IF EXISTS events_master_insert_drops_stale_logs;
 DROP TRIGGER IF EXISTS events_master_revive_drops_series_log;
 DROP VIEW IF EXISTS event_series_rows;
 DROP INDEX IF EXISTS idx_event_series_deletes_deleted_at;

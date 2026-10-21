@@ -15,6 +15,10 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
+// ErrMasterInTrash reports a restore that needs the live master of its
+// series, while that master is in the trash. Restore the series first.
+var ErrMasterInTrash = errors.New("event: the master of the series is in the trash; restore the series first")
+
 // ErrNotDeleted is returned by Restore when the target row is not soft-deleted.
 // The row was never deleted, or it has already been restored, or it was purged
 // from the database. The CLI collapses this with ErrNotFound.
@@ -247,8 +251,9 @@ func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
 // One candidate is the target. Two calendars can hold the same UID (issue
 // #842), so more candidates give ErrAmbiguousUID: restore the series by
 // the ID of its master instead. No candidate gives ErrNotDeleted. A UID
-// with no master row and no log holds override rows only. They all come
-// back, as before the logs.
+// with no master row and no log holds orphan rows only. The rows of the
+// newest delete of one calendar come back (see restoreOrphanDeleteTx). A
+// row that a delete by ID hid stays in the trash.
 func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1477,7 +1482,10 @@ func (s *Service) deleteRow(ctx context.Context, id int64, undoMaster *storage.E
 
 		// The master of the row, live or in the trash, for the undo and for
 		// the orphan rule. ErrNoRows here means no master row anywhere.
-		anyMaster, anyErr := findSeriesMasterIncludingDeletedTx(ctx, qtx, evt.CalendarID, evt.UID)
+		anyMaster, anyErr := master, err
+		if err != nil {
+			anyMaster, anyErr = findSeriesMasterIncludingDeletedTx(ctx, qtx, evt.CalendarID, evt.UID)
+		}
 		if anyErr != nil && !errors.Is(anyErr, sql.ErrNoRows) && !errors.Is(anyErr, ErrAmbiguousUID) {
 			return fmt.Errorf("get master: %w", anyErr)
 		}

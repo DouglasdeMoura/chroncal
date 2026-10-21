@@ -57,7 +57,7 @@ type resource struct {
 	delSeries func(ctx context.Context, a *app.App, target row) (int64, error)
 
 	// restoreByID clears the deletion marker on one row. restoreByUID
-	// clears it on every row that shares the UID.
+	// reverses the delete of the UID by the rule of the resource service.
 	restoreByID  func(ctx context.Context, a *app.App, id int64) error
 	restoreByUID func(ctx context.Context, a *app.App, uid string) error
 
@@ -190,8 +190,9 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 }
 
 // newRestoreCmd builds the restore verb for one resource. A numeric
-// reference restores one row. A UID reference restores every row that
-// shares the UID. A live or missing row reports "not_found".
+// reference restores one row. A UID reference reverses the delete of the
+// UID by the rule of the resource service. A live or absent row reports
+// "not_found".
 func newRestoreCmd(r resource, h verbHelp) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "restore <id-or-uid>",
@@ -224,7 +225,7 @@ func newRestoreCmd(r resource, h verbHelp) *cobra.Command {
 				return nil
 			}
 
-			// UID path: restore every row that shares the UID.
+			// UID path: the service reverses the delete of the UID.
 			if err := r.restoreByUID(ctx, a, ref); err != nil {
 				if errors.Is(err, r.errNotDeleted) {
 					return errNotFoundf("%s %q not found (may have been purged)", r.name, ref)

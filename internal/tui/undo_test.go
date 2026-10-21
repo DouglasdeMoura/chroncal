@@ -210,3 +210,28 @@ func TestUndoStack_Remove_DistinguishesCalendars(t *testing.T) {
 		t.Fatalf("Remove removed the wrong calendar: surviving CalendarID = %d, want 2", top.Meta.CalendarID)
 	}
 }
+
+// TestUndoStack_Remove_DistinguishesRows: two undo entries of one occurrence
+// that hide different rows are two targets. Remove takes the entry with the
+// same RowID and MasterID.
+func TestUndoStack_Remove_DistinguishesRows(t *testing.T) {
+	s := NewUndoStack()
+	base := event.UndoMeta{Kind: event.UndoKindSingle, UID: "u", CalendarID: 1, RecurrenceID: "2026-05-05T09:00:00Z"}
+	a, b := base, base
+	a.RowID, a.MasterID = 10, 1
+	b.RowID, b.MasterID = 11, 1
+	s.Push(UndoEntry{Meta: a, DeletedAt: time.Now()})
+	s.Push(UndoEntry{Meta: b, DeletedAt: time.Now()})
+	if !s.Remove(a) {
+		t.Fatal("Remove(a) found no entry")
+	}
+	top, ok := s.Peek()
+	if !ok || s.Len() != 1 || top.Meta.RowID != 11 {
+		t.Fatalf("after Remove(a): len %d, top RowID %d; want the entry of row 11", s.Len(), top.Meta.RowID)
+	}
+	other := b
+	other.MasterID = 2
+	if s.Remove(other) {
+		t.Error("Remove matched an entry with another MasterID")
+	}
+}
