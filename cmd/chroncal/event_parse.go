@@ -37,9 +37,9 @@ import (
 // that calendar is the target. A calendar that holds no series of the UID
 // names a move target instead. The lookup then runs without it, and the
 // service refuses the move of one occurrence with its hint. When that lookup
-// cannot choose the series, the error names calendarName as a calendar with
+// cannot choose the series, the error names calendarLabel as a calendar with
 // no series of the UID.
-func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64, calendarName string) (e event.Event, createOverride, viaCalendar bool, err error) {
+func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64, calendarLabel string) (e event.Event, createOverride, viaCalendar bool, err error) {
 	if recurrenceID == "" {
 		e, err := resolveEvent(ctx, a, ref, "")
 		return e, false, false, err
@@ -67,7 +67,7 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 			occ, create, err := generatedOccurrence(master, ref, recurrenceID)
 			return occ, create, scope != 0, err
 		case !errors.Is(err, sql.ErrNoRows):
-			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName, scope != 0)
+			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarLabel, scope != 0)
 		}
 	}
 	// An orphan row of the --calendar calendar comes first, and that
@@ -90,7 +90,7 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 		// the edit of one occurrence into a move, so the edit stops and
 		// names the calendar of the row.
 		return event.Event{}, false, false, errInvalidInputf("calendar %q holds no row of event %s at %s; the row is in calendar %q, so name that calendar with --calendar",
-			calendarName, ref, recurrenceID, nameOfCalendar(ctx, a, e.CalendarID))
+			calendarLabel, ref, recurrenceID, calendarName(ctx, a, e.CalendarID))
 	}
 	return e, false, false, nil
 }
@@ -657,9 +657,4 @@ func validateAlarmTrigger(trigger string) error {
 		return errInvalidInputf("invalid alarm trigger %q: a floating time has no timezone; add a Z suffix or use an RFC 3339 datetime with an offset", trigger)
 	}
 	return errInvalidInputf("invalid alarm trigger %q (use an ISO 8601 duration such as -PT15M, or an RFC 3339 datetime)", trigger)
-}
-
-// nameOfCalendar is calendarName for a function whose parameter shadows it.
-func nameOfCalendar(ctx context.Context, a *app.App, id int64) string {
-	return calendarName(ctx, a, id)
 }

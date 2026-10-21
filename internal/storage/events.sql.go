@@ -1609,40 +1609,6 @@ func (q *Queries) RestoreEventsByIDs(ctx context.Context, ids []int64) (int64, e
 	return result.RowsAffected()
 }
 
-const restoreEventsByUID = `-- name: RestoreEventsByUID :many
-UPDATE events SET
-    deleted_at = NULL,
-    sequence = sequence + 1,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NOT NULL
-RETURNING calendar_id
-`
-
-// Un-hide every soft-deleted row of one UID. The result holds the calendar
-// of each row that came back, so the caller reconciles those calendars only.
-func (q *Queries) RestoreEventsByUID(ctx context.Context, uid string) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, restoreEventsByUID, uid)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var calendar_id int64
-		if err := rows.Scan(&calendar_id); err != nil {
-			return nil, err
-		}
-		items = append(items, calendar_id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const restoreSeriesOverrideByRecurrenceID = `-- name: RestoreSeriesOverrideByRecurrenceID :execrows
 UPDATE events SET
     deleted_at = NULL,

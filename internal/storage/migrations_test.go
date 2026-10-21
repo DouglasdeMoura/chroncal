@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -676,9 +677,11 @@ func TestMigration057UpDown(t *testing.T) {
 	); err == nil {
 		t.Errorf("the series-delete log accepted a second row of one series in one calendar")
 	}
+	// The view check takes its own UID: the insert of a master drops the
+	// delete logs of its UID in its calendar (events_master_insert_drops_stale_logs).
 	mustExec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time)
-		VALUES (1, 'mig057', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
-	if n := count(`SELECT COUNT(*) FROM event_series_rows WHERE uid = 'mig057' AND owner_calendar_id = 1`); n != 1 {
+		VALUES (1, 'mig057-view', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
+	if n := count(`SELECT COUNT(*) FROM event_series_rows WHERE uid = 'mig057-view' AND owner_calendar_id = 1`); n != 1 {
 		t.Errorf("event_series_rows of the master = %d, want 1", n)
 	}
 
@@ -792,7 +795,7 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 			t.Errorf("event_series_rows after the rebuild = %d, want 1", n)
 		}
 		// README step 4: the DROP TABLE of the rebuild drops the triggers.
-		triggers := []string{"events_master_revive_drops_series_log", "events_master_insert_drops_series_log"}
+		triggers := []string{"events_master_revive_drops_series_log", "events_master_insert_drops_stale_logs"}
 		for _, name := range triggers {
 			q := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = '` + name + `'`
 			if n := count(q); n != 0 {
@@ -839,4 +842,36 @@ func triggerStatement(t *testing.T, name string) string {
 		t.Fatal("the CREATE TRIGGER statement has no end")
 	}
 	return string(src[start : start+end+len("END;")])
+}
+
+// TestMigrationsReadmeMatches057 compares each SQL block of the migrations
+// README with the statement of migration 057 that it copies: the view and
+// the two triggers. A change of migration 057 then cannot leave the README
+// copy behind.
+func TestMigrationsReadmeMatches057(t *testing.T) {
+	readme, err := os.ReadFile("../../db/migrations/README.md")
+	if err != nil {
+		t.Fatalf("read the README: %v", err)
+	}
+	var blocks []string
+	for _, part := range strings.Split(string(readme), "```sql\n")[1:] {
+		end := strings.Index(part, "```")
+		if end < 0 {
+			t.Fatal("a SQL block of the README has no end")
+		}
+		blocks = append(blocks, strings.TrimSpace(part[:end]))
+	}
+	want := []string{
+		seriesViewStatement(t),
+		triggerStatement(t, "events_master_revive_drops_series_log"),
+		triggerStatement(t, "events_master_insert_drops_stale_logs"),
+	}
+	if len(blocks) != len(want) {
+		t.Fatalf("README SQL blocks = %d, want %d", len(blocks), len(want))
+	}
+	for i := range want {
+		if blocks[i] != strings.TrimSpace(want[i]) {
+			t.Errorf("README SQL block %d differs from migration 057:\nREADME:\n%s\nmigration:\n%s", i, blocks[i], want[i])
+		}
+	}
 }

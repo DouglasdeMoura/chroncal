@@ -526,6 +526,11 @@ func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 		m.undoStack.Remove(msg.meta)
 		return m, tea.Batch(m.loadEvents(), m.toast.Failed("already restored"))
 	}
+	if errors.Is(msg.err, event.ErrMasterInTrash) {
+		// The entry needs its series back first. It stays on the stack,
+		// so the user can undo it after the restore of the series.
+		return m, m.toast.Failed("restore the series first")
+	}
 	if msg.err != nil {
 		// Route the dismiss tick — previously dropped, so failed toasts
 		// never auto-cleared in the live app.

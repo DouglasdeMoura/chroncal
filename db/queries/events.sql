@@ -129,16 +129,6 @@ UPDATE events SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
 
--- name: RestoreEventsByUID :many
--- Un-hide every soft-deleted row of one UID. The result holds the calendar
--- of each row that came back, so the caller reconciles those calendars only.
-UPDATE events SET
-    deleted_at = NULL,
-    sequence = sequence + 1,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NOT NULL
-RETURNING calendar_id;
-
 -- name: PurgeSoftDeletedEvents :execrows
 DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?;
 

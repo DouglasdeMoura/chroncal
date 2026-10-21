@@ -17,17 +17,20 @@ must follow these steps:
 2. Rebuild the table as migration 050 does.
 3. Create the view again with the statement below.
 4. Create the triggers `events_master_revive_drops_series_log` and
-   `events_master_insert_drops_series_log` again. The drop of `events`
+   `events_master_insert_drops_stale_logs` again. The drop of `events`
    drops them. Copy their statements from migration 057.
 
-The triggers drop the series-delete log of a calendar when a master of
-that calendar comes back from the trash or a new live master arrives.
-Without them, a log that a pull or an import left behind brings back the
-wrong rows on the next restore.
+The triggers drop the stale delete logs of a calendar. The revive trigger
+drops the series-delete log when a master of that calendar comes back
+from the trash. The insert trigger drops the series-delete log and the
+occurrence logs of the UID when a new live master arrives. Without them,
+a log that a pull or an import left behind brings back the wrong rows, or
+strips an imported EXDATE, on the next restore.
 
-The statement must stay equal to the one in migration 057. The storage
-test `TestEventsRebuildKeepsSeriesView` runs this sequence against the
-statement of migration 057.
+Each statement below must stay equal to the one in migration 057. The
+storage test `TestMigrationsReadmeMatches057` compares them, and the
+storage test `TestEventsRebuildKeepsSeriesView` runs this sequence
+against the statements of migration 057.
 
 ```sql
 CREATE VIEW event_series_rows AS
@@ -37,7 +40,8 @@ SELECT
     e.calendar_id AS calendar_id,
     e.recurrence_id AS recurrence_id,
     e.deleted_at AS deleted_at,
-    c.calendar_id AS owner_calendar_id
+    c.calendar_id AS owner_calendar_id,
+    CAST(c.calendar_id = e.calendar_id AS INTEGER) AS beside_master
 FROM events AS e
 JOIN events AS c ON c.uid = e.uid AND c.recurrence_id = ''
 WHERE c.calendar_id = e.calendar_id
@@ -55,8 +59,28 @@ SELECT
     e.calendar_id AS calendar_id,
     e.recurrence_id AS recurrence_id,
     e.deleted_at AS deleted_at,
-    e.calendar_id AS owner_calendar_id
+    e.calendar_id AS owner_calendar_id,
+    0 AS beside_master
 FROM events AS e
 WHERE NOT EXISTS (
     SELECT 1 FROM events AS m WHERE m.uid = e.uid AND m.recurrence_id = '');
+```
+
+```sql
+CREATE TRIGGER events_master_revive_drops_series_log
+AFTER UPDATE OF deleted_at ON events
+WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id = ''
+BEGIN
+    DELETE FROM event_series_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
+END;
+```
+
+```sql
+CREATE TRIGGER events_master_insert_drops_stale_logs
+AFTER INSERT ON events
+WHEN NEW.recurrence_id = '' AND NEW.deleted_at IS NULL
+BEGIN
+    DELETE FROM event_series_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
+    DELETE FROM event_exdate_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
+END;
 ```
