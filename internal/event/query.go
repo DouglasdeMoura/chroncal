@@ -128,11 +128,19 @@ func (s *Service) GetByCalendarUID(ctx context.Context, calendarID int64, uid st
 func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID string) (Event, error) {
 	// The series rule names the row: the one beside the master, or the
 	// legacy override that the series owns. Two legacy rows of the
-	// occurrence give ErrAmbiguousOverride with the row IDs. A UID with
-	// no live master (an orphan instance) keeps the plain lookup below.
-	e, err := s.SeriesOverride(ctx, 0, uid, recurrenceID)
-	if err == nil || !errors.Is(err, sql.ErrNoRows) {
-		return e, err
+	// occurrence give ErrAmbiguousOverride with the row IDs. A live
+	// master with no override at the occurrence gives sql.ErrNoRows: a
+	// row of another calendar's trashed series is not the occurrence.
+	// Only a UID with no live master (an orphan instance) keeps the plain
+	// lookup below.
+	_, override, err := s.SeriesOccurrence(ctx, 0, uid, recurrenceID)
+	switch {
+	case err == nil && override != nil:
+		return *override, nil
+	case err == nil:
+		return Event{}, sql.ErrNoRows
+	case !errors.Is(err, sql.ErrNoRows):
+		return Event{}, err
 	}
 	rows, err := s.q.ListEventsByUIDAndRecurrenceID(ctx, storage.ListEventsByUIDAndRecurrenceIDParams{
 		Uid:          uid,
@@ -148,7 +156,7 @@ func (s *Service) GetByUIDAndRecurrenceID(ctx context.Context, uid, recurrenceID
 	default:
 		return Event{}, ErrAmbiguousUID
 	}
-	e = FromStorage(rows[0])
+	e := FromStorage(rows[0])
 	s.populateSingleCategories(ctx, &e)
 	return e, nil
 }

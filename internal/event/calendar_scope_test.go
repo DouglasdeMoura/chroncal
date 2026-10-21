@@ -2446,3 +2446,163 @@ func mustListSeriesOverrides(t *testing.T, svc *Service, calendarID int64, uid s
 	}
 	return overrides
 }
+
+// TestOrphanDelete_MergesIntoSeriesLog: a delete of orphan rows beside
+// the trashed master of the calendar joins the log of the earlier series
+// delete, so the restore of the master brings every hidden row back.
+func TestOrphanDelete_MergesIntoSeriesLog(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	o1, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get o1: %v", err)
+	}
+	o2, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get o2: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, o1.ID); err != nil {
+		t.Fatalf("RestoreByID(o1): %v", err)
+	}
+	// o1 is an orphan beside the trashed master: its series delete logs
+	// it next to o2, and does not touch the master.
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo(orphan o1): %v", err)
+	}
+	if meta.MasterID != 0 {
+		t.Errorf("meta.MasterID = %d, want 0 (no live master)", meta.MasterID)
+	}
+	log, err := svc.q.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: 1, Uid: master.UID})
+	if err != nil {
+		t.Fatalf("series delete log: %v", err)
+	}
+	ids, _ := parseRowIDs(log.HiddenIds)
+	if len(ids) != 2 {
+		t.Fatalf("series delete log names %v, want o1 and o2", ids)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	for _, id := range []int64{master.ID, o1.ID, o2.ID} {
+		if r, err := svc.Get(ctx, id); err != nil || r.DeletedAt != nil {
+			t.Errorf("row %d after the restore of the master = %+v, %v; want it live", id, r, err)
+		}
+	}
+}
+
+// TestUndoOrphanDelete_LeavesMasterInTrash: the undo of a delete of
+// orphan rows never touches the trashed master of the calendar.
+func TestUndoOrphanDelete_LeavesMasterInTrash(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	o1, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get o1: %v", err)
+	}
+	// A pull hid the series with no log.
+	if _, err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); err != nil {
+		t.Fatalf("hide the series: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, o1.ID); err != nil {
+		t.Fatalf("RestoreByID(o1): %v", err)
+	}
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo(orphan o1): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if r, err := svc.Get(ctx, o1.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("o1 after the undo = %+v, %v; want it live", r, err)
+	}
+	if m, err := svc.GetIncludingDeleted(ctx, master.ID); err != nil || m.DeletedAt == nil {
+		t.Errorf("master after the undo = trashed %v, %v; want it still in the trash", m.DeletedAt != nil, err)
+	}
+}
+
+// TestGetByUIDAndRecurrenceID_NoFallbackWithLiveMaster: with a live
+// master and no override at the occurrence, the lookup finds nothing. A
+// row of another calendar's trashed series is not the occurrence.
+func TestGetByUIDAndRecurrenceID_NoFallbackWithLiveMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	masterA, masterB, second := twoCalendarSeries(t, svc)
+	ownA, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: masterA.CalendarID, Uid: masterA.UID, RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get override A: %v", err)
+	}
+	if err := svc.Delete(ctx, ownA.ID); err != nil {
+		t.Fatalf("Delete(override A): %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, masterB.CalendarID, masterB.UID); err != nil {
+		t.Fatalf("DeleteSeries(B): %v", err)
+	}
+	if _, err := svc.GetByUIDAndRecurrenceID(ctx, masterA.UID, second.Format(time.RFC3339)); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("GetByUIDAndRecurrenceID err = %v, want sql.ErrNoRows (no override beside the live master)", err)
+	}
+}
+
+// TestMoveSeries_TargetWithTrashedLegacyRow: a series move into a
+// calendar that holds no master of the UID, only a trashed legacy row at
+// another occurrence, lets the logs of the moved series win over the
+// stale logs of the target.
+func TestMoveSeries_TargetWithTrashedLegacyRow(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	calB := insertCalendar(t, svc, "Target")
+	fourth := third.Add(24 * time.Hour)
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calB, Title: "Stale legacy",
+		StartTime: fourth, EndTime: fourth.Add(time.Hour), RecurrenceID: fourth.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy row in the target: %v", err)
+	}
+	if err := svc.q.SoftDeleteEvent(ctx, legacy.ID); err != nil {
+		t.Fatalf("trash the legacy row: %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	var sourceLogID int64
+	if err := svc.db.QueryRowContext(ctx, `SELECT id FROM event_exdate_deletes WHERE uid = ? AND calendar_id = 1`, master.UID).Scan(&sourceLogID); err != nil {
+		t.Fatalf("source log id: %v", err)
+	}
+	// A stale log row of the target with the key of the moved row.
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id) VALUES (?, ?, ?)`, calB, master.UID, second.Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert stale target log: %v", err)
+	}
+	fresh, err := svc.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, err := svc.Update(ctx, master.ID, UpdateParams{
+		CalendarID: calB, Title: fresh.Title, StartTime: fresh.StartTime, EndTime: fresh.EndTime,
+		RecurrenceRule: fresh.RecurrenceRule, ExDates: fresh.ExDates,
+	}); err != nil {
+		t.Fatalf("move the series: %v", err)
+	}
+	var movedID int64
+	if err := svc.db.QueryRowContext(ctx, `SELECT id FROM event_exdate_deletes WHERE uid = ? AND calendar_id = ?`, master.UID, calB).Scan(&movedID); err != nil {
+		t.Fatalf("log row in the target after the move: %v", err)
+	}
+	if movedID != sourceLogID {
+		t.Errorf("log row in the target = id %d, want the moved row %d (the source logs win)", movedID, sourceLogID)
+	}
+}

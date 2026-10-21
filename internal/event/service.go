@@ -538,16 +538,16 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 			})
 			return n.Live, n.Trashed, err
 		},
-		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64, targetHeldRows bool) error {
+		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64, targetHoldsMaster bool) error {
 			return moveUIDRowsTx(ctx, qtx, storage.MoveEventUIDToCalendarParams{
 				FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID, Uid: uid,
-			}, targetHeldRows)
+			}, targetHoldsMaster)
 		},
-		CountRowsIn: func(ctx context.Context, calendarID int64) (int64, error) {
+		HoldsMaster: func(ctx context.Context, calendarID int64) (bool, error) {
 			n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
 				CalendarID: calendarID, Uid: uid,
 			})
-			return n.Masters + n.Overrides, err
+			return n.Masters > 0, err
 		},
 	}
 }
@@ -587,23 +587,35 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 // moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
 // another calendar. uidmove.Rows.Record calls it, after the write of the
 // moved row. The log keys are per calendar (migration 057).
-// targetHeldRows reports the state of the target before that write. A
-// target with no event row of the UID (a series move) holds stale log
-// rows at most, for example rows that a purge of the master left, so the
-// move drops them first and the moved rows take their keys. A target with
-// event rows of the UID (a legacy override that goes back to its master)
-// keeps its log rows: the move drops the source rows whose keys collide,
-// and moves the rest.
-func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams, targetHeldRows bool) error {
+// targetHoldsMaster reports whether the target holds a master row of the
+// UID, live or in the trash, before that write. With a master, the move
+// is a legacy override that goes back to its master: the logs of the
+// target are the logs of that series, so they stay, and the source rows
+// whose keys collide go. Without a master, the move is a series move:
+// the logs of the moved series win, so the target rows whose keys
+// collide go, and the rest of the target (a stale row of another key)
+// stays.
+func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams, targetHoldsMaster bool) error {
 	if err := qtx.MoveEventUIDToCalendar(ctx, arg); err != nil {
 		return fmt.Errorf("move events: %w", err)
 	}
-	if !targetHeldRows {
-		if err := deleteLogRowsTx(ctx, qtx, arg.ToCalendarID, arg.Uid); err != nil {
+	if targetHoldsMaster {
+		if err := deleteCollidingLogRowsTx(ctx, qtx, arg); err != nil {
 			return err
 		}
-	} else if err := deleteCollidingLogRowsTx(ctx, qtx, arg); err != nil {
-		return err
+	} else {
+		// The same queries with the calendars swapped drop the target
+		// rows whose keys the source holds. A series-delete log in a
+		// calendar with no master of the UID is stale in any case: the
+		// moved series brings its own, or none.
+		if err := deleteCollidingLogRowsTx(ctx, qtx, storage.MoveEventUIDToCalendarParams{
+			FromCalendarID: arg.ToCalendarID, ToCalendarID: arg.FromCalendarID, Uid: arg.Uid,
+		}); err != nil {
+			return err
+		}
+		if err := qtx.DeleteEventSeriesDeletesByCalendarUID(ctx, storage.DeleteEventSeriesDeletesByCalendarUIDParams{CalendarID: arg.ToCalendarID, Uid: arg.Uid}); err != nil {
+			return fmt.Errorf("delete stale event_series_deletes: %w", err)
+		}
 	}
 	if err := qtx.MoveEventExdateDeletesUIDToCalendar(ctx, storage.MoveEventExdateDeletesUIDToCalendarParams(arg)); err != nil {
 		return fmt.Errorf("move event_exdate_deletes: %w", err)
@@ -618,7 +630,8 @@ func moveUIDRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEv
 }
 
 // deleteCollidingLogRowsTx drops the delete-log rows of the source
-// calendar of a move whose keys the target calendar holds.
+// calendar of arg whose keys the target calendar of arg holds. A call
+// with the calendars swapped drops the target rows instead.
 func deleteCollidingLogRowsTx(ctx context.Context, qtx *storage.Queries, arg storage.MoveEventUIDToCalendarParams) error {
 	if err := qtx.DeleteEventExdateDeletesCollidingWithMove(ctx, storage.DeleteEventExdateDeletesCollidingWithMoveParams{FromCalendarID: arg.FromCalendarID, ToCalendarID: arg.ToCalendarID, Uid: arg.Uid}); err != nil {
 		return fmt.Errorf("delete colliding event_exdate_deletes: %w", err)
@@ -640,18 +653,6 @@ func deleteOccurrenceLogRowsTx(ctx context.Context, qtx *storage.Queries, calend
 	}
 	if err := qtx.DeleteEventTruncateDeletesByCalendarUID(ctx, storage.DeleteEventTruncateDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
 		return fmt.Errorf("delete event_truncate_deletes: %w", err)
-	}
-	return nil
-}
-
-// deleteLogRowsTx drops the delete-log rows of one UID in one calendar:
-// the occurrence log, the truncation log, and the series log.
-func deleteLogRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) error {
-	if err := deleteOccurrenceLogRowsTx(ctx, qtx, calendarID, uid); err != nil {
-		return err
-	}
-	if err := qtx.DeleteEventSeriesDeletesByCalendarUID(ctx, storage.DeleteEventSeriesDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
-		return fmt.Errorf("delete event_series_deletes: %w", err)
 	}
 	return nil
 }
