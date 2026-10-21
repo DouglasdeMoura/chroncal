@@ -1882,3 +1882,230 @@ func TestUndoOccurrence_RestoresTheHiddenRowOnly(t *testing.T) {
 		t.Errorf("legacy twin after the undo = %+v, %v; want it still in the trash", r, err)
 	}
 }
+
+// TestDeleteSeries_OrphanRowsBesideTrashedMaster: with the one master of
+// the UID in the trash of another calendar, a series delete from the
+// calendar of a live legacy override hides that calendar's own rows. A
+// second delete finds nothing.
+func TestDeleteSeries_OrphanRowsBesideTrashedMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	calL := insertCalendar(t, svc, "Legacy")
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "orphan-uid", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	}); err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "orphan-uid", CalendarID: calL, Title: "Legacy",
+		StartTime: second, EndTime: second.Add(time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, "orphan-uid"); err != nil {
+		t.Fatalf("DeleteSeries(1): %v", err)
+	}
+	// The series delete of calendar 1 hid the legacy row with it, so
+	// bring it back alone to get the exact state.
+	if err := svc.RestoreByID(ctx, legacy.ID); err != nil {
+		t.Fatalf("RestoreByID(legacy): %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, calL, "orphan-uid"); err != nil {
+		t.Fatalf("DeleteSeries(legacy calendar): %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("legacy row after the delete = %+v, %v; want it hidden", r, err)
+	}
+	if err := svc.DeleteSeries(ctx, calL, "orphan-uid"); !errors.Is(err, ErrNotDeleted) {
+		t.Errorf("second DeleteSeries(legacy calendar) err = %v, want ErrNotDeleted", err)
+	}
+	if _, err := svc.DeleteSeriesWithUndo(ctx, calL, "orphan-uid"); !errors.Is(err, ErrNotDeleted) {
+		t.Errorf("DeleteSeriesWithUndo(legacy calendar) err = %v, want ErrNotDeleted", err)
+	}
+}
+
+// TestRestoreTruncation_LoggedRowAfterOwnerChange: the truncation log
+// names the hidden rows by ID, so a legacy override comes back with the
+// truncation restore even when another master took its ownership.
+func TestRestoreTruncation_LoggedRowAfterOwnerChange(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	calB := insertCalendar(t, svc, "Other")
+	calL := insertCalendar(t, svc, "Legacy")
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	third := second.Add(24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "trunc-uid", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "trunc-uid", CalendarID: calL, Title: "Legacy",
+		StartTime: third, EndTime: third.Add(time.Hour), RecurrenceID: third.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	if err := svc.DeleteFromInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("DeleteFromInstance: %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt == nil {
+		t.Fatalf("legacy row after the truncation = %+v, %v; want it hidden", r, err)
+	}
+	// A second live master takes the ownership of the legacy row away.
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "trunc-uid", CalendarID: calB, Title: "Other",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	}); err != nil {
+		t.Fatalf("upsert master B: %v", err)
+	}
+	entries, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	var restored bool
+	for _, e := range entries {
+		if e.Kind == TrashKindTruncation {
+			if err := svc.RestoreTrash(ctx, e); err != nil {
+				t.Fatalf("RestoreTrash(truncation): %v", err)
+			}
+			restored = true
+		}
+	}
+	if !restored {
+		t.Fatal("no truncation entry in the trash")
+	}
+	if r, err := svc.Get(ctx, legacy.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("legacy row after the truncation restore = %+v, %v; want it live", r, err)
+	}
+}
+
+// TestDeleteInstance_GuardsLegacyOverrideCalendar: the occurrence delete
+// writes the calendar of a legacy override, so a read-only calendar of
+// that row refuses the delete.
+func TestDeleteInstance_GuardsLegacyOverrideCalendar(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	readOnly := insertGuardedCalendar(t, svc.db, "Read-Only", "read", "VEVENT")
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "guard-uid", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "guard-uid", CalendarID: readOnly, Title: "Legacy",
+		StartTime: second, EndTime: second.Add(time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("DeleteInstance with a read-only legacy row err = %v, want ErrReadOnly", err)
+	}
+	if r, err := svc.Get(ctx, legacy.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("legacy row after the refused delete = %+v, %v; want it live", r, err)
+	}
+	if m, err := svc.Get(ctx, master.ID); err != nil || m.ExDates != "" {
+		t.Errorf("master after the refused delete = exdates %q, %v; want none", m.ExDates, err)
+	}
+}
+
+// TestRestoreSeries_GuardsHiddenRowCalendars: the restore of a series
+// writes the calendar of each hidden legacy row, so a read-only calendar
+// of such a row refuses the restore.
+func TestRestoreSeries_GuardsHiddenRowCalendars(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	calL := insertCalendar(t, svc, "Legacy")
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "guard-uid", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "guard-uid", CalendarID: calL, Title: "Legacy",
+		StartTime: second, EndTime: second.Add(time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read', remote_components = 'VEVENT' WHERE id = ?`, calL); err != nil {
+		t.Fatalf("make the legacy calendar read-only: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("RestoreByID with a read-only hidden row err = %v, want ErrReadOnly", err)
+	}
+	if m, err := svc.GetIncludingDeleted(ctx, master.ID); err != nil || m.DeletedAt == nil {
+		t.Errorf("master after the refused restore = %+v, %v; want it still in the trash", m, err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("legacy row after the refused restore = %+v, %v; want it still in the trash", r, err)
+	}
+}
+
+// TestUndo_PurgedMasterReportsNotDeleted: the undo of a master delete
+// after a purge of the row has nothing to restore.
+func TestUndo_PurgedMasterReportsNotDeleted(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+	meta, err := svc.DeleteWithUndo(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("DeleteWithUndo: %v", err)
+	}
+	if err := svc.PurgeByID(ctx, e.ID); err != nil {
+		t.Fatalf("PurgeByID: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("RestoreUndo after the purge err = %v, want ErrNotDeleted", err)
+	}
+}
+
+// TestRestoreInstance_MasterInTrashReportsNotDeleted: the restore of an
+// occurrence delete while the master is in the trash reports
+// ErrNotDeleted, so the user restores the series first.
+func TestRestoreInstance_MasterInTrashReportsNotDeleted(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	entries, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	var checked bool
+	for _, e := range entries {
+		if e.Kind == TrashKindInstance {
+			if err := svc.RestoreTrash(ctx, e); !errors.Is(err, ErrNotDeleted) {
+				t.Errorf("RestoreTrash(instance) with the master in the trash err = %v, want ErrNotDeleted", err)
+			}
+			checked = true
+		}
+	}
+	if !checked {
+		t.Fatal("no instance entry in the trash")
+	}
+}

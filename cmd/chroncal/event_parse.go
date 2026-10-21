@@ -57,7 +57,7 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 			return e, false, true, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return event.Event{}, false, false, notFoundErr(err, "event", ref)
+			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
 		}
 		master, err := a.Events.SeriesMaster(ctx, calendarID, ref)
 		if err == nil {
@@ -65,7 +65,7 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 			return occ, create, true, err
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return event.Event{}, false, false, notFoundErr(err, "event", ref)
+			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarName)
 		}
 	}
 	e, err = a.Events.GetByUIDAndRecurrenceID(ctx, ref, recurrenceID)

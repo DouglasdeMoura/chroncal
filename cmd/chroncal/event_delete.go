@@ -39,6 +39,9 @@ var eventResource = resource{
 	},
 	delSeries: func(ctx context.Context, a *app.App, target row) error {
 		err := a.Events.DeleteSeries(ctx, target.CalendarID, target.UID)
+		if errors.Is(err, event.ErrNotDeleted) {
+			return errNotFoundf("event series %s has no live row in calendar %q", target.UID, calendarName(ctx, a, target.CalendarID))
+		}
 		if errors.Is(err, event.ErrSeriesInTrash) {
 			return errInvalidInputf("the series %s is in the trash in calendar %q; restore it first (chroncal event restore), or name the calendar of the live series with --calendar",
 				target.UID, calendarName(ctx, a, target.CalendarID))

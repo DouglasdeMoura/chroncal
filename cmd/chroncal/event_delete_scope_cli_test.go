@@ -584,3 +584,32 @@ func TestEventUpdate_CalendarOfMasterEditsLegacyOverride(t *testing.T) {
 		t.Errorf("legacy description after the edit = %q, want Notes", got)
 	}
 }
+
+// TestEventUpdate_LegacyCalendarWithTwoMastersNamesIt: --calendar on a
+// calendar that holds a legacy override of a UID with two live masters
+// names that calendar in the error, not the generic --calendar hint.
+func TestEventUpdate_LegacyCalendarWithTwoMastersNamesIt(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Other"); err != nil {
+		t.Fatalf("calendar create Other: %v", err)
+	}
+	ics := filepath.Join(t.TempDir(), "legacy.ics")
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
+		"\r\nDTSTAMP:20260401T000000Z\r\nRECURRENCE-ID:20260407T090000Z\r\nDTSTART:20260407T100000Z\r\nDTEND:20260407T103000Z\r\n" +
+		"SUMMARY:Legacy\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Other"); err != nil {
+		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "update", uid, "--recurrence-id", "2026-04-07T09:00:00Z", "--calendar", "Other", "--title", "x")
+	if err == nil {
+		t.Fatal("update through a legacy calendar with two live masters succeeded")
+	}
+	if !strings.Contains(stderr, `calendar "Other" holds no series`) || strings.Contains(stderr, "pass --calendar") {
+		t.Fatalf("stderr = %q, want the named calendar and no generic hint", stderr)
+	}
+}

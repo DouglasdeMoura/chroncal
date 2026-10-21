@@ -111,7 +111,7 @@ UPDATE events SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NULL;
 
--- name: SoftDeleteEventsByCalendarUID :exec
+-- name: SoftDeleteEventsByCalendarUID :execrows
 -- Soft-delete every live row of one UID in one calendar. A pull that sees
 -- the server object of the UID gone in that calendar uses it. Another
 -- calendar can hold the same UID (a move, or a copy), so the delete stays
@@ -415,3 +415,14 @@ ORDER BY recurrence_id;
 -- masters cannot choose, and a calendar with rows in the trash only
 -- holds no live series.
 SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
+
+-- name: ListLiveSeriesOverridesAtOrAfter :many
+-- The live override rows that a truncation of the series in one calendar
+-- is about to hide (see ListLiveSeriesOverrideRecurrenceIDsAtOrAfter).
+-- The truncation log records their IDs and their recurrence IDs.
+SELECT * FROM events
+WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence_id) AND events.deleted_at IS NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
+ORDER BY events.recurrence_id;

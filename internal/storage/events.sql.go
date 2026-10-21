@@ -1095,6 +1095,75 @@ func (q *Queries) ListLiveSeriesOverrideRecurrenceIDsAtOrAfter(ctx context.Conte
 	return items, nil
 }
 
+const listLiveSeriesOverridesAtOrAfter = `-- name: ListLiveSeriesOverridesAtOrAfter :many
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
+WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NULL
+  AND events.id IN (
+    SELECT s.id FROM event_series_rows AS s
+    WHERE s.uid = ?2 AND s.owner_calendar_id = ?3)
+ORDER BY events.recurrence_id
+`
+
+type ListLiveSeriesOverridesAtOrAfterParams struct {
+	RecurrenceID string
+	Uid          string
+	CalendarID   int64
+}
+
+// The live override rows that a truncation of the series in one calendar
+// is about to hide (see ListLiveSeriesOverrideRecurrenceIDsAtOrAfter).
+// The truncation log records their IDs and their recurrence IDs.
+func (q *Queries) ListLiveSeriesOverridesAtOrAfter(ctx context.Context, arg ListLiveSeriesOverridesAtOrAfterParams) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveSeriesOverridesAtOrAfter, arg.RecurrenceID, arg.Uid, arg.CalendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.CalendarID,
+			&i.Title,
+			&i.Description,
+			&i.Location,
+			&i.StartTime,
+			&i.EndTime,
+			&i.AllDay,
+			&i.RecurrenceRule,
+			&i.Timezone,
+			&i.Status,
+			&i.Transp,
+			&i.Sequence,
+			&i.Priority,
+			&i.Class,
+			&i.Url,
+			&i.Exdates,
+			&i.Rdates,
+			&i.RecurrenceID,
+			&i.Geo,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Duration,
+			&i.Dtstamp,
+			&i.ConferenceUri,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOverridesByUID = `-- name: ListOverridesByUID :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
 WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL
@@ -1649,7 +1718,7 @@ func (q *Queries) SoftDeleteEvent(ctx context.Context, id int64) error {
 	return err
 }
 
-const softDeleteEventsByCalendarUID = `-- name: SoftDeleteEventsByCalendarUID :exec
+const softDeleteEventsByCalendarUID = `-- name: SoftDeleteEventsByCalendarUID :execrows
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
@@ -1665,9 +1734,12 @@ type SoftDeleteEventsByCalendarUIDParams struct {
 // the server object of the UID gone in that calendar uses it. Another
 // calendar can hold the same UID (a move, or a copy), so the delete stays
 // in the pulled calendar.
-func (q *Queries) SoftDeleteEventsByCalendarUID(ctx context.Context, arg SoftDeleteEventsByCalendarUIDParams) error {
-	_, err := q.db.ExecContext(ctx, softDeleteEventsByCalendarUID, arg.CalendarID, arg.Uid)
-	return err
+func (q *Queries) SoftDeleteEventsByCalendarUID(ctx context.Context, arg SoftDeleteEventsByCalendarUIDParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, softDeleteEventsByCalendarUID, arg.CalendarID, arg.Uid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const softDeleteEventsByUID = `-- name: SoftDeleteEventsByUID :exec

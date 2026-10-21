@@ -32,8 +32,14 @@ CREATE TABLE event_truncate_deletes_new (
     deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     hidden_overrides TEXT,
     removed_rdates TEXT,
+    hidden_ids TEXT,
     UNIQUE (calendar_id, uid, cutoff_time)
 );
+-- hidden_ids lists the override rows that the truncation hid, by row ID
+-- (comma-separated). A restore un-hides exactly those rows, so a change
+-- of the series owner after the truncation does not strand a row. A row
+-- from before this migration has NULL: its restore reads hidden_overrides
+-- (recurrence IDs) through the series rule.
 INSERT INTO event_truncate_deletes_new (id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates)
 SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes;
 DROP INDEX IF EXISTS idx_event_truncate_deletes_calendar;

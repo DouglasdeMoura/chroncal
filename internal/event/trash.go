@@ -298,6 +298,10 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 		CalendarID: log.CalendarID, Uid: log.Uid,
 	})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// The master is in the trash: restore the series first.
+			return fmt.Errorf("get master: %w", ErrNotDeleted)
+		}
 		return fmt.Errorf("get master: %w", err)
 	}
 
@@ -403,6 +407,24 @@ func restoreTruncatedRDates(ctx context.Context, qtx *storage.Queries, master st
 // soft-deleted override at or after the cutoff. The overrides are the
 // rows of the series in the calendar of the log row (issue #842).
 func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log storage.EventTruncateDelete) error {
+	if log.HiddenIds != nil {
+		// A log row of migration 057 and later names the hidden rows by
+		// ID, so the restore does not depend on the series owner of
+		// today. The calendar of each row takes the write.
+		ids, err := parseRowIDs(*log.HiddenIds)
+		if err != nil {
+			return err
+		}
+		if err := ensureRowsWritableTx(ctx, qtx, log.CalendarID, ids); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := qtx.RestoreEvent(ctx, id); err != nil {
+				return fmt.Errorf("restore override row %d: %w", id, err)
+			}
+		}
+		return nil
+	}
 	if log.HiddenOverrides == nil {
 		return qtx.RestoreSeriesOverridesAtOrAfter(ctx, storage.RestoreSeriesOverridesAtOrAfterParams{
 			CalendarID:   log.CalendarID,

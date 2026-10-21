@@ -220,6 +220,7 @@ type EventTruncateDelete struct {
 	DeletedAt       string
 	HiddenOverrides *string
 	RemovedRdates   *string
+	HiddenIds       *string
 }
 
 type EventsFt struct {

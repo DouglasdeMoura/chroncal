@@ -56,7 +56,7 @@ func (q *Queries) DeleteEventTruncateDeletesCollidingWithMove(ctx context.Contex
 }
 
 const getEventTruncateDelete = `-- name: GetEventTruncateDelete :one
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE id = ?
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes WHERE id = ?
 `
 
 func (q *Queries) GetEventTruncateDelete(ctx context.Context, id int64) (EventTruncateDelete, error) {
@@ -71,12 +71,13 @@ func (q *Queries) GetEventTruncateDelete(ctx context.Context, id int64) (EventTr
 		&i.DeletedAt,
 		&i.HiddenOverrides,
 		&i.RemovedRdates,
+		&i.HiddenIds,
 	)
 	return i, err
 }
 
 const getEventTruncateDeleteByCalendarUIDAndCutoff = `-- name: GetEventTruncateDeleteByCalendarUIDAndCutoff :one
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? AND cutoff_time = ?
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? AND cutoff_time = ?
 `
 
 type GetEventTruncateDeleteByCalendarUIDAndCutoffParams struct {
@@ -99,12 +100,13 @@ func (q *Queries) GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx context.Conte
 		&i.DeletedAt,
 		&i.HiddenOverrides,
 		&i.RemovedRdates,
+		&i.HiddenIds,
 	)
 	return i, err
 }
 
 const listEventTruncateDeletesByCalendar = `-- name: ListEventTruncateDeletesByCalendar :many
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes
 WHERE calendar_id = ?
 ORDER BY deleted_at DESC
 `
@@ -127,6 +129,7 @@ func (q *Queries) ListEventTruncateDeletesByCalendar(ctx context.Context, calend
 			&i.DeletedAt,
 			&i.HiddenOverrides,
 			&i.RemovedRdates,
+			&i.HiddenIds,
 		); err != nil {
 			return nil, err
 		}
@@ -142,7 +145,7 @@ func (q *Queries) ListEventTruncateDeletesByCalendar(ctx context.Context, calend
 }
 
 const listEventTruncateDeletesByCalendarUID = `-- name: ListEventTruncateDeletesByCalendarUID :many
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY cutoff_time
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY cutoff_time
 `
 
 type ListEventTruncateDeletesByCalendarUIDParams struct {
@@ -168,6 +171,7 @@ func (q *Queries) ListEventTruncateDeletesByCalendarUID(ctx context.Context, arg
 			&i.DeletedAt,
 			&i.HiddenOverrides,
 			&i.RemovedRdates,
+			&i.HiddenIds,
 		); err != nil {
 			return nil, err
 		}
@@ -213,8 +217,8 @@ func (q *Queries) PurgeOldEventTruncateDeletes(ctx context.Context, deletedAt st
 }
 
 const recordEventTruncateDelete = `-- name: RecordEventTruncateDelete :exec
-INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, hidden_ids)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid, cutoff_time) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 `
@@ -226,6 +230,7 @@ type RecordEventTruncateDeleteParams struct {
 	PreviousRrule   string
 	HiddenOverrides *string
 	RemovedRdates   *string
+	HiddenIds       *string
 }
 
 // Idempotent: a second truncation at the same cutoff in one calendar keeps
@@ -241,6 +246,7 @@ func (q *Queries) RecordEventTruncateDelete(ctx context.Context, arg RecordEvent
 		arg.PreviousRrule,
 		arg.HiddenOverrides,
 		arg.RemovedRdates,
+		arg.HiddenIds,
 	)
 	return err
 }

@@ -74,13 +74,7 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if !includeDeleted {
 		// A live edit sees the live masters only: two masters in the
 		// trash make no ambiguity for a live legacy override.
-		var live []uidmove.Master
-		for _, m := range masters {
-			if !m.Trashed {
-				live = append(live, m)
-			}
-		}
-		masters = live
+		masters = liveMasters(masters)
 	}
 	if _, _, ambiguous := uidmove.LegacyOwner(masters); !ambiguous {
 		return storage.Event{}, sql.ErrNoRows
@@ -124,16 +118,10 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 	if !includeDeleted {
 		// A live lookup wants a live master. With none, the UID is not
 		// found, also when two calendars hold it in the trash.
-		var live []uidmove.Master
-		for _, m := range masters {
-			if !m.Trashed {
-				live = append(live, m)
-			}
-		}
-		if len(live) == 0 {
+		masters = liveMasters(masters)
+		if len(masters) == 0 {
 			return storage.Event{}, sql.ErrNoRows
 		}
-		masters = live
 	}
 	owner, ok, ambiguous := uidmove.LegacyOwner(masters)
 	if ambiguous {
@@ -153,6 +141,17 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 		return m, nil
 	}
 	return storage.Event{}, sql.ErrNoRows
+}
+
+// liveMasters returns the masters that are not in the trash.
+func liveMasters(masters []uidmove.Master) []uidmove.Master {
+	live := make([]uidmove.Master, 0, len(masters))
+	for _, m := range masters {
+		if !m.Trashed {
+			live = append(live, m)
+		}
+	}
+	return live
 }
 
 // wrapLookup keeps ErrAmbiguousUID and ErrAmbiguousOverride bare, so a
