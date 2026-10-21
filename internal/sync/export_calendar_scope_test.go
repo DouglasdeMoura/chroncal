@@ -186,11 +186,12 @@ func TestExportResource_OrphanRowsBesideTrashedMaster(t *testing.T) {
 	}
 }
 
-// TestPush_MissingResourceWithRemoteURLQueuesTombstone: a calendar that
-// owns nothing of a UID, but whose sync row names a server object (a
-// duplicate from an old whole-series upload), gets a tombstone for that
-// object instead of a silent clear of the dirty flag.
-func TestPush_MissingResourceWithRemoteURLQueuesTombstone(t *testing.T) {
+// TestPush_OwnedElsewhereKeepsServerObject: a calendar that owns nothing
+// of a UID, because the series lives in another calendar, keeps its
+// server object. The push clears the dirty flag only. A copy that an old
+// whole-series upload made stays as a known leftover for sync doctor: a
+// delete could also hit a real single-instance object of that calendar.
+func TestPush_OwnedElsewhereKeepsServerObject(t *testing.T) {
 	t.Parallel()
 	engine, _, srv, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
@@ -217,23 +218,23 @@ func TestPush_MissingResourceWithRemoteURLQueuesTombstone(t *testing.T) {
 		calB, master.UID, path); err != nil {
 		t.Fatalf("seed sync row: %v", err)
 	}
-	// The push pass writes the tombstone and then sends its DELETE, so
-	// the server object of B is gone after one pass.
 	if res, err := engine.PushLocalEdits(ctx, calB); err != nil || len(res.Errors) != 0 {
 		t.Fatalf("push B = %+v, %v", res, err)
 	}
 	srv.mu.Lock()
-	_, stillThere := srv.objects[path]
+	_, kept := srv.objects[path]
 	srv.mu.Unlock()
-	if stillThere {
-		t.Fatalf("the duplicate server object %s survived the push of B", path)
+	if !kept {
+		t.Fatalf("the server object %s of B went, want it kept", path)
 	}
 	n, err := engine.q.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calB, Uid: master.UID})
 	if err != nil || n != 0 {
-		t.Fatalf("tombstones of B after the push = %d, %v; want 0 (sent)", n, err)
+		t.Fatalf("tombstones of B after the push = %d, %v; want 0", n, err)
 	}
-	syncPairClean(t, engine, calA, calB)
-	wantOnlyServerObject(t, srv, "/cal/a/"+master.UID+".ics")
+	dirty, err := engine.q.ListDirtySyncResources(ctx, calB)
+	if err != nil || len(dirty) != 0 {
+		t.Fatalf("dirty rows of B after the push = %d, %v; want 0", len(dirty), err)
+	}
 }
 
 // TestExportResource_LiveRowBesideTrashedMaster: a calendar whose master
@@ -400,5 +401,32 @@ func TestPush_OwnedElsewhereInAnotherAccountKeepsServerObject(t *testing.T) {
 	srv.mu.Unlock()
 	if !kept {
 		t.Fatal("the server object of B in the second account went, want it kept")
+	}
+}
+
+// TestExportResource_OneVEVENTPerRecurrenceID: the export of a series
+// with its own override and a legacy override of the same occurrence
+// holds one VEVENT for that RECURRENCE-ID, the own row.
+func TestExportResource_OneVEVENTPerRecurrenceID(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	master, _, inst := createSeriesWithOverride(t, engine, calA)
+	if _, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: calB, Title: "Legacy twin",
+		StartTime: inst, EndTime: inst.Add(time.Hour), RecurrenceID: inst.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("upsert legacy twin: %v", err)
+	}
+	data, err := engine.exportResource(ctx, calA, "event", master.UID)
+	if err != nil {
+		t.Fatalf("exportResource(A): %v", err)
+	}
+	body := string(data)
+	if n := strings.Count(body, "RECURRENCE-ID"); n != 1 {
+		t.Errorf("export of A holds %d RECURRENCE-IDs, want 1:\n%s", n, body)
+	}
+	if strings.Contains(body, "Legacy twin") || !strings.Contains(body, "SUMMARY:Late") {
+		t.Errorf("export of A = want the own override, not the legacy twin:\n%s", body)
 	}
 }

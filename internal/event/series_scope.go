@@ -251,10 +251,13 @@ func (s *Service) ListLiveOverridesInCalendar(ctx context.Context, calendarID in
 	return events, nil
 }
 
-// ListSeriesOverrides returns the live override rows of the series of uid in
-// calendarID. These are the rows of that calendar and the legacy overrides of
-// the UID (see storage.LegacyOverride). The override rows of a master in
-// another calendar stay out.
+// ListSeriesOverrides returns the live override rows of the series of uid
+// in calendarID. These are the rows of that calendar and the legacy
+// overrides that the series owns (see storage.LegacyOverride). The list
+// holds one row per occurrence, with the rule of findInstanceOverrideTx.
+// The row in calendarID wins over a legacy row of the same recurrence ID. Of more
+// legacy rows, the lowest ID stays. The export then never holds two
+// VEVENTs with one RECURRENCE-ID.
 func (s *Service) ListSeriesOverrides(ctx context.Context, calendarID int64, uid string) ([]Event, error) {
 	rows, err := s.q.ListSeriesOverridesInCalendar(ctx, storage.ListSeriesOverridesInCalendarParams{
 		CalendarID: calendarID, Uid: uid,
@@ -262,7 +265,20 @@ func (s *Service) ListSeriesOverrides(ctx context.Context, calendarID int64, uid
 	if err != nil {
 		return nil, err
 	}
-	events := fromStorageSlice(rows)
+	pick := make(map[string]int, len(rows))
+	kept := make([]storage.Event, 0, len(rows))
+	for _, r := range rows {
+		i, seen := pick[r.RecurrenceID]
+		switch {
+		case !seen:
+			pick[r.RecurrenceID] = len(kept)
+			kept = append(kept, r)
+		case r.CalendarID == calendarID && kept[i].CalendarID != calendarID,
+			kept[i].CalendarID != calendarID && r.CalendarID != calendarID && r.ID < kept[i].ID:
+			kept[i] = r
+		}
+	}
+	events := fromStorageSlice(kept)
 	s.populateCategories(ctx, events)
 	return events, nil
 }

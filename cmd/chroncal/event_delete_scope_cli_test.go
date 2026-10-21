@@ -723,3 +723,42 @@ func TestEventDelete_PlainWithCalendarRefusesSeveralRows(t *testing.T) {
 		t.Fatalf("stderr = %q, want the row IDs", stderr)
 	}
 }
+
+// TestEventDelete_SeriesWithCalendarReachesTheService: a series delete of
+// a UID with --calendar goes to the service. A calendar with orphan rows
+// and no live master anywhere has its rows deleted. A calendar whose
+// series is in the trash, beside a live series elsewhere, names the trash.
+func TestEventDelete_SeriesWithCalendarReachesTheService(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+	if stdout, stderr, err := runChroncalCommand(t, "event", "delete", uid, "--series", "--calendar", "Home", "--yes"); err != nil {
+		t.Fatalf("first series delete in Home: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "delete", uid, "--series", "--calendar", "Home", "--yes")
+	if err == nil || !strings.Contains(stderr, "is in the trash in calendar") {
+		t.Fatalf("second series delete in Home: err = %v, stderr = %q; want the trash message", err, stderr)
+	}
+
+	const orphan = "orphan-only-uid"
+	ics := filepath.Join(t.TempDir(), "orphan.ics")
+	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + orphan +
+		"\r\nDTSTAMP:20260401T000000Z\r\nRECURRENCE-ID:20260407T090000Z\r\nDTSTART:20260407T100000Z\r\nDTEND:20260407T103000Z\r\n" +
+		"SUMMARY:Orphan\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	if err := os.WriteFile(ics, []byte(body), 0o644); err != nil {
+		t.Fatalf("write ics: %v", err)
+	}
+	if stdout, stderr, err := runChroncalCommand(t, "ical", "import", ics, "--calendar", "Work"); err != nil {
+		t.Fatalf("ical import: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	stdout, stderr, err := runChroncalCommand(t, "event", "delete", orphan, "--series", "--calendar", "Work", "--yes")
+	if err != nil {
+		t.Fatalf("series delete of orphan rows: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Deleted event series") {
+		t.Fatalf("stdout = %q, want the series delete", stdout)
+	}
+	if _, _, err := runChroncalCommand(t, "event", "get", orphan, "--recurrence-id", "2026-04-07T09:00:00Z"); err == nil {
+		t.Fatal("the orphan row is live after its series delete")
+	}
+}

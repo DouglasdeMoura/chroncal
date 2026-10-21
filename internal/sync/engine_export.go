@@ -125,76 +125,40 @@ var ownerOpsByType = map[string]ownerOps{
 // orphan-instance path: sql.ErrNoRows, and the override rows export on their
 // own.
 func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid string) (event.Event, error) {
-	// The view event_series_rows names the series that owns the rows of
-	// the calendar. A live owner in this calendar is the master of the
-	// export. A live owner in another calendar means the rows here are
-	// legacy overrides of that series, and its calendar exports them.
-	owner, err := e.q.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{CalendarID: calendarID, Uid: uid})
+	// One query of the view event_series_rows names the series that owns
+	// the rows of the calendar, live or in the trash.
+	owner, err := e.q.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{
+		CalendarID: calendarID, Uid: uid, IncludeDeleted: true,
+	})
 	found, err := storage.Found(err)
 	if err != nil {
 		return event.Event{}, fmt.Errorf("get series master: %w", err)
 	}
-	if found && owner.CalendarID == calendarID {
+	switch {
+	case found && owner.DeletedAt == nil && owner.CalendarID == calendarID:
 		// The row with its categories. The hydrate step of the export
 		// loads the relations and owns their failure mode.
 		return e.events.Get(ctx, owner.ID)
-	}
-	if found {
-		// The one live series of another calendar owns the rows here.
-		// In one account, the server object of this calendar is a copy
-		// that an old whole-series upload made, and errOwnedElsewhere
-		// lets the push delete it. In another account, the object is a
-		// real resource of that server. The push keeps it.
-		same, err := e.sameAccount(ctx, calendarID, owner.CalendarID)
-		if err != nil {
-			return event.Event{}, err
-		}
-		if same {
-			return event.Event{}, fmt.Errorf("%w: event uid %s: %w", errResourceMissing, uid, errOwnedElsewhere)
-		}
-		return event.Event{}, fmt.Errorf("%w: event uid %s belongs to a calendar of another account", errResourceMissing, uid)
-	}
-	// No live owner. An owner in the trash leaves the live rows of the calendar
-	// as orphan instances. That owner is this calendar's own master, or a master
-	// elsewhere that owns legacy rows here. A UID with no master anywhere leaves
-	// orphan instances too. sql.ErrNoRows makes the export take them. Live
-	// masters elsewhere with no owner (two live masters) leave nothing for this
-	// calendar to export.
-	_, err = e.q.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{CalendarID: calendarID, Uid: uid, IncludeDeleted: true})
-	found, err = storage.Found(err)
-	if err != nil {
-		return event.Event{}, fmt.Errorf("get series master: %w", err)
-	}
-	if found {
+	case found && owner.DeletedAt == nil:
+		// The live series of another calendar owns the rows here, and its
+		// calendar exports them.
+		return event.Event{}, fmt.Errorf("%w: event uid %s has its series in another calendar", errResourceMissing, uid)
+	case found:
+		// The owner is in the trash. The live rows of the calendar are
+		// orphan instances.
 		return event.Event{}, sql.ErrNoRows
 	}
+	// No owner. Two or more live masters own no legacy row, and a calendar
+	// with no row has nothing to own: nothing to export. A UID with no
+	// master anywhere leaves orphan instances.
 	n, err := e.q.EventUIDMasterCalendars(ctx, uid)
 	if err != nil {
 		return event.Event{}, err
 	}
 	if n.Calendars > 0 {
-		// Live masters elsewhere, and no owner of the rows here. Two or
-		// more live masters own no legacy row, and a calendar with no row
-		// has nothing to own. No series claims the server object of this
-		// calendar. The push clears the dirty flag and keeps the object:
-		// a tombstone would make the next pull trash live rows.
 		return event.Event{}, fmt.Errorf("%w: event uid %s has no owner here", errResourceMissing, uid)
 	}
 	return event.Event{}, sql.ErrNoRows
-}
-
-// sameAccount reports whether two calendars belong to one account. A
-// local calendar belongs to no account.
-func (e *Engine) sameAccount(ctx context.Context, a, b int64) (bool, error) {
-	ca, err := e.q.GetCalendar(ctx, a)
-	if err != nil {
-		return false, fmt.Errorf("get calendar %d: %w", a, err)
-	}
-	cb, err := e.q.GetCalendar(ctx, b)
-	if err != nil {
-		return false, fmt.Errorf("get calendar %d: %w", b, err)
-	}
-	return ca.AccountID != nil && cb.AccountID != nil && *ca.AccountID == *cb.AccountID, nil
 }
 
 // eventOverridesForExport lists the override rows of the export of uid in
@@ -347,14 +311,6 @@ func (e *Engine) lookupOwnerID(ctx context.Context, calendarID int64, ownerType,
 // that is gone (clear the dirty flag, stop the retry) from a real export
 // failure.
 var errResourceMissing = errors.New("local resource missing for uid")
-
-// errOwnedElsewhere is the errResourceMissing of a calendar that owns nothing
-// of a UID. Its rows belong to the one live series of another calendar of the
-// same account, and that series exports them. The push then writes a tombstone for a server
-// object of that calendar: nothing local backs it.
-// Every other errResourceMissing is a local anomaly, and the push clears the
-// dirty flag only.
-var errOwnedElsewhere = errors.New("the series of the uid lives in another calendar")
 
 // exportResource exports the local resource of uid in calendarID to iCal
 // bytes. It dispatches on owner type. See exportResourceFor for the
