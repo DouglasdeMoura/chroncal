@@ -106,7 +106,7 @@ UPDATE events SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NULL;
 
--- name: SoftDeleteEventsByCalendarUID :execrows
+-- name: SoftDeleteEventsByCalendarUID :exec
 -- Soft-delete every live row of one UID in one calendar. A pull that sees
 -- the server object of the UID gone in that calendar uses it. Another
 -- calendar can hold the same UID (a move, or a copy), so the delete stays
@@ -228,25 +228,28 @@ SELECT * FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' LI
 -- that the series owns. The view event_series_rows in migration 057 and
 -- uidmove.LegacyOwner hold the rule. Two calendars can hold the same UID, so
 -- the override rows of the other master stay out (issue #842). Every series
--- query below takes its rows from the same view.
+-- query below takes its rows from the same view. Within one recurrence ID,
+-- the row of a calendar with a master row of the UID comes first, then the
+-- lowest ID: the tie rule of the export, the expansion, and the edit. A
+-- legacy row is in a calendar with no master row.
 SELECT * FROM events
 WHERE events.recurrence_id != '' AND events.deleted_at IS NULL
   AND events.id IN (
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
-ORDER BY events.recurrence_id;
+ORDER BY events.recurrence_id, EXISTS (SELECT 1 FROM events AS m WHERE m.uid = events.uid AND m.calendar_id = events.calendar_id AND m.recurrence_id = '') DESC, events.id;
 
--- name: ListLiveSeriesOverrideRecurrenceIDsAtOrAfter :many
--- The recurrence IDs that a truncation of the series in one calendar is about
--- to hide. These are the live overrides of that series at or after the cutoff
--- (see ListSeriesOverridesInCalendar). The caller reads them before
--- SoftDeleteSeriesOverridesAtOrAfter, so a restore shows only these rows
--- again (issue #287).
-SELECT events.recurrence_id FROM events
-WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence_id) AND events.deleted_at IS NULL
-  AND events.id IN (
-    SELECT s.id FROM event_series_rows AS s
-    WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id));
+-- name: HasLiveSeriesOverrideAtOrAfter :one
+-- Report whether the series of one UID in one calendar holds a live
+-- override at or after the cutoff (see ListSeriesOverridesInCalendar). The
+-- CLI and the TUI read it before a truncation.
+SELECT CAST(EXISTS (
+    SELECT 1 FROM events
+    WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence_id) AND events.deleted_at IS NULL
+      AND events.id IN (
+        SELECT s.id FROM event_series_rows AS s
+        WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
+) AS BOOLEAN) AS has_override;
 
 -- name: SoftDeleteEventsByIDs :exec
 -- Soft-delete a set of live rows by ID in one statement. The truncation of
@@ -310,13 +313,14 @@ SELECT DISTINCT calendar_id FROM events WHERE uid = ? ORDER BY calendar_id;
 -- name: ListSeriesOverridesAtRecurrenceID :many
 -- The live override rows of one occurrence of the series in one calendar (see
 -- ListSeriesOverridesInCalendar). These are the row of the calendar of the
--- master, or the legacy rows the series owns.
+-- master, or the legacy rows the series owns. The order is the tie rule of
+-- ListSeriesOverridesInCalendar, so the first row wins.
 SELECT * FROM events
 WHERE events.recurrence_id = sqlc.arg(recurrence_id) AND events.deleted_at IS NULL
   AND events.id IN (
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
-ORDER BY events.id;
+ORDER BY EXISTS (SELECT 1 FROM events AS m WHERE m.uid = events.uid AND m.calendar_id = events.calendar_id AND m.recurrence_id = '') DESC, events.id;
 
 -- name: ListLiveOverridesInCalendarByUID :many
 -- The live override rows of one UID in one calendar, with no series
@@ -328,7 +332,7 @@ ORDER BY recurrence_id;
 
 -- name: ListLiveSeriesOverridesAtOrAfter :many
 -- The live override rows that a truncation of the series in one calendar
--- is about to hide (see ListLiveSeriesOverrideRecurrenceIDsAtOrAfter).
+-- is about to hide (see ListSeriesOverridesInCalendar).
 -- The truncation log records their IDs and their recurrence IDs.
 SELECT * FROM events
 WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence_id) AND events.deleted_at IS NULL

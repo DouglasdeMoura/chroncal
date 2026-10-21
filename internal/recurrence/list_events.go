@@ -34,28 +34,34 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 		return nil, err
 	}
 	byUID := make(map[string][]storage.Event, len(rows))
-	// One row per occurrence and series, with the rule of the export
-	// (event.Service.ListSeriesOverrides) and of the edit: the row of the
-	// owner calendar wins, then the lowest ID.
-	at := make(map[string]int, len(rows))
 	for _, r := range rows {
 		owner, ok := ownerOf[r.ID]
 		if !ok {
 			owner = r.CalendarID
 		}
 		key := seriesKey(owner, r.Uid)
-		occ := key + "\x00" + r.RecurrenceID
-		i, seen := at[occ]
-		if !seen {
-			at[occ] = len(byUID[key])
-			byUID[key] = append(byUID[key], r)
+		byUID[key] = append(byUID[key], r)
+	}
+	// One row per occurrence and series, with the tie rule of the series
+	// queries: the row beside the master of the series comes first, then
+	// the lowest ID. The rows of a key beside its master hold the calendar
+	// of the key. The common case reads no view, so the order is set here.
+	for key, group := range byUID {
+		if len(group) < 2 {
 			continue
 		}
-		cur := byUID[key][i]
-		rOwn, curOwn := r.CalendarID == owner, cur.CalendarID == owner
-		if (rOwn && !curOwn) || (rOwn == curOwn && r.ID < cur.ID) {
-			byUID[key][i] = r
-		}
+		own := func(r storage.Event) bool { return seriesKey(r.CalendarID, r.Uid) == key }
+		sort.SliceStable(group, func(i, j int) bool {
+			a, b := group[i], group[j]
+			if a.RecurrenceID != b.RecurrenceID {
+				return a.RecurrenceID < b.RecurrenceID
+			}
+			if own(a) != own(b) {
+				return own(a)
+			}
+			return a.ID < b.ID
+		})
+		byUID[key] = storage.FirstPerRecurrenceID(group)
 	}
 	return byUID, nil
 }

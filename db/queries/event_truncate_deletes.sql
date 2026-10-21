@@ -1,12 +1,16 @@
 -- name: RecordEventTruncateDelete :exec
 -- Idempotent: a second truncation at the same cutoff in one calendar keeps
 -- one log row. Each calendar keeps its own row (issue #842). The row keeps
--- the FIRST previous_rrule, hidden_overrides, and removed_rdates, so a
--- second truncation does not overwrite the pre-truncation state with an
--- already-truncated rule or an empty override/rdate set.
+-- the FIRST previous_rrule and removed_rdates, so a second truncation does
+-- not overwrite the state before the first truncation. The caller merges
+-- hidden_overrides and hidden_ids with the earlier row, and the update
+-- writes the merged lists. A restore then brings back the rows of both
+-- truncations.
 INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, hidden_ids)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid, cutoff_time) DO UPDATE SET
+    hidden_overrides = excluded.hidden_overrides,
+    hidden_ids = excluded.hidden_ids,
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
 
 -- name: ListEventTruncateDeletesByCalendar :many

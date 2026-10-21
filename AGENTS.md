@@ -232,7 +232,7 @@ Events, todos, and journals share the same reversible-delete contract. `Delete` 
 err := svc.Delete(ctx, id)        // sets deleted_at, keeps row
 err := svc.DeleteSeries(ctx, calendarID, uid) // soft-deletes master + overrides (event service: in one calendar)
 
-// Recurring delete scopes (event service only). calendarID names the
+// Delete scopes of a series (event service only). calendarID names the
 // calendar of the series, because two calendars can hold the same UID
 // (issue #842). 0 picks the one live master, or returns ErrAmbiguousUID.
 err := svc.DeleteInstance(ctx, calendarID, uid, at)     // one occurrence: EXDATE on the master + override soft-delete

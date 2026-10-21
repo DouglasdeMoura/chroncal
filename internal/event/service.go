@@ -556,24 +556,13 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 	if err != nil {
 		return storage.Event{}, err
 	}
-	for _, r := range rows {
-		if r.CalendarID == master.CalendarID {
-			return r, nil
-		}
-	}
+	// The query gives the rows in the order of the tie rule, so the first
+	// row wins.
 	switch {
 	case len(rows) == 0:
 		return storage.Event{}, sql.ErrNoRows
-	case len(rows) == 1 || !strict:
-		// The lowest ID wins, as in ListSeriesOverrides and in the
-		// expansion.
-		winner := rows[0]
-		for _, r := range rows[1:] {
-			if r.ID < winner.ID {
-				winner = r
-			}
-		}
-		return winner, nil
+	case len(rows) == 1 || !strict || rows[0].CalendarID == master.CalendarID:
+		return rows[0], nil
 	}
 	ids := make([]int64, len(rows))
 	for i, r := range rows {

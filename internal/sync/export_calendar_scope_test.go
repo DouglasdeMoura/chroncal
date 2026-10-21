@@ -496,3 +496,48 @@ func TestExportResource_OneVEVENTPerRecurrenceID(t *testing.T) {
 		t.Errorf("export of A = want the own override, not the legacy twin:\n%s", body)
 	}
 }
+
+// TestExportResource_RowsBesideTwoTrashedMastersRefused: legacy rows of a
+// UID whose two masters are both in the trash belong to no series. The
+// export of their calendar refuses the UID, because a master row exists.
+// Only a UID with no master row anywhere exports orphan instances.
+func TestExportResource_RowsBesideTwoTrashedMastersRefused(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	res, err := engine.db.ExecContext(ctx, `INSERT INTO calendars (name) VALUES ('Local')`)
+	if err != nil {
+		t.Fatalf("insert calendar: %v", err)
+	}
+	calL, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("calendar id: %v", err)
+	}
+	const uid = "two-trashed"
+	start := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	for _, cal := range []int64{calA, calL} {
+		if _, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+			UID: uid, CalendarID: cal, Title: "Standup",
+			StartTime: start, EndTime: start.Add(30 * time.Minute), RecurrenceRule: "FREQ=DAILY;COUNT=5",
+		}); err != nil {
+			t.Fatalf("upsert master in %d: %v", cal, err)
+		}
+	}
+	for _, cal := range []int64{calA, calL} {
+		if err := engine.events.DeleteSeries(ctx, cal, uid); err != nil {
+			t.Fatalf("DeleteSeries(%d): %v", cal, err)
+		}
+	}
+	// A pull brings a live legacy row into B after the two deletes. No
+	// series owns it.
+	if _, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: uid, CalendarID: calB, Title: "Legacy late",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	if _, err := engine.exportResource(ctx, calB, "event", uid); !errors.Is(err, errResourceMissing) {
+		t.Errorf("exportResource(B) err = %v, want errResourceMissing (two masters in the trash)", err)
+	}
+}

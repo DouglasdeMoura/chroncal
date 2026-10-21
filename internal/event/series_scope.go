@@ -36,8 +36,8 @@ func findSeriesMasterTx(ctx context.Context, qtx *storage.Queries, calendarID in
 // master of its calendar. With calendarID 0, or for a legacy override, the
 // owner rule (uidmove.LegacyOwner) applies in full. One live master is the
 // choice. With no live master, one master in the trash is the choice. A copy
-// of the UID in the trash of another calendar, for example a purge-pending
-// copy, then never blocks a restore.
+// of the UID in the trash of another calendar, for example an old copy that
+// the purge did not drop yet, then never blocks a restore.
 func findSeriesMasterIncludingDeletedTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (storage.Event, error) {
 	return findSeriesMaster(ctx, qtx, calendarID, uid, true)
 }
@@ -270,10 +270,9 @@ func (s *Service) ListLiveOverridesInCalendar(ctx context.Context, calendarID in
 // ListSeriesOverrides returns the live override rows of the series of uid
 // in calendarID. These are the rows of that calendar and the legacy
 // overrides that the series owns (see storage.LegacyOverride). The list
-// holds one row per occurrence, with the rule of findInstanceOverrideTx.
-// The row in calendarID wins over a legacy row of the same recurrence ID. Of more
-// legacy rows, the lowest ID stays. The export then never holds two
-// VEVENTs with one RECURRENCE-ID.
+// holds one row per occurrence: the query gives the rows in the order of
+// the tie rule, and the first row of each recurrence ID stays. The export
+// then never holds two VEVENTs with one RECURRENCE-ID.
 func (s *Service) ListSeriesOverrides(ctx context.Context, calendarID int64, uid string) ([]Event, error) {
 	rows, err := s.q.ListSeriesOverridesInCalendar(ctx, storage.ListSeriesOverridesInCalendarParams{
 		CalendarID: calendarID, Uid: uid,
@@ -281,20 +280,7 @@ func (s *Service) ListSeriesOverrides(ctx context.Context, calendarID int64, uid
 	if err != nil {
 		return nil, err
 	}
-	pick := make(map[string]int, len(rows))
-	kept := make([]storage.Event, 0, len(rows))
-	for _, r := range rows {
-		i, seen := pick[r.RecurrenceID]
-		switch {
-		case !seen:
-			pick[r.RecurrenceID] = len(kept)
-			kept = append(kept, r)
-		case r.CalendarID == calendarID && kept[i].CalendarID != calendarID,
-			kept[i].CalendarID != calendarID && r.CalendarID != calendarID && r.ID < kept[i].ID:
-			kept[i] = r
-		}
-	}
-	events := fromStorageSlice(kept)
+	events := fromStorageSlice(storage.FirstPerRecurrenceID(rows))
 	s.populateCategories(ctx, events)
 	return events, nil
 }
