@@ -298,3 +298,57 @@ func TestPush_MissingResourceLocalAnomalyClearsOnly(t *testing.T) {
 		t.Fatalf("dirty rows after the push = %d, %v; want 0", len(dirty), err)
 	}
 }
+
+// TestPush_LegacyRowsBesideTwoLiveMastersKeepServerObject: B holds live
+// legacy rows of a UID with live masters in A and C. No series owns the
+// rows of B, so the push of B clears the dirty flag and keeps the server
+// object of B. A tombstone would make the next pull trash the live rows.
+func TestPush_LegacyRowsBesideTwoLiveMastersKeepServerObject(t *testing.T) {
+	t.Parallel()
+	engine, _, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	res, err := engine.db.ExecContext(ctx, `INSERT INTO calendars (name) VALUES ('Third')`)
+	if err != nil {
+		t.Fatalf("insert calendar: %v", err)
+	}
+	calC, _ := res.LastInsertId()
+	start := time.Date(2026, 5, 18, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	for _, cal := range []int64{calA, calC} {
+		if _, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+			UID: "split-uid", CalendarID: cal, Title: "Standup",
+			StartTime: start, EndTime: start.Add(30 * time.Minute), RecurrenceRule: "FREQ=DAILY;COUNT=5",
+		}); err != nil {
+			t.Fatalf("upsert master %d: %v", cal, err)
+		}
+	}
+	legacy, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "split-uid", CalendarID: calB, Title: "Legacy late",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	path := "/cal/b/split-uid.ics"
+	srv.mu.Lock()
+	srv.objects[path] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:split-uid\r\nRECURRENCE-ID:20260519T090000Z\r\nDTSTART:20260519T100000Z\r\nSUMMARY:Legacy late\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	srv.mu.Unlock()
+	if _, err := engine.db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, remote_url) VALUES (?, 'split-uid', 'event', 1, 'sync-token', ?)
+		 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, remote_url = excluded.remote_url`,
+		calB, path); err != nil {
+		t.Fatalf("seed sync row: %v", err)
+	}
+	if res, err := engine.PushLocalEdits(ctx, calB); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("push B = %+v, %v", res, err)
+	}
+	srv.mu.Lock()
+	_, kept := srv.objects[path]
+	srv.mu.Unlock()
+	if !kept {
+		t.Fatal("the server object of B went, want it kept")
+	}
+	if r, err := engine.events.Get(ctx, legacy.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("legacy row after the push = %+v, %v; want it live", r, err)
+	}
+}

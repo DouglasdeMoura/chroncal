@@ -161,7 +161,12 @@ func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid
 		return event.Event{}, err
 	}
 	if n.Calendars > 0 {
-		return event.Event{}, fmt.Errorf("%w: event uid %s: %w", errResourceMissing, uid, errOwnedElsewhere)
+		// Live masters elsewhere, and no owner of the rows here. Two or
+		// more live masters own no legacy row, and a calendar with no row
+		// has nothing to own. No series claims the server object of this
+		// calendar. The push clears the dirty flag and keeps the object:
+		// a tombstone would make the next pull trash live rows.
+		return event.Event{}, fmt.Errorf("%w: event uid %s has no owner here", errResourceMissing, uid)
 	}
 	return event.Event{}, sql.ErrNoRows
 }
@@ -318,9 +323,9 @@ func (e *Engine) lookupOwnerID(ctx context.Context, calendarID int64, ownerType,
 var errResourceMissing = errors.New("local resource missing for uid")
 
 // errOwnedElsewhere is the errResourceMissing of a calendar that owns nothing
-// of a UID. Its rows belong to the live series of another calendar, or it
-// holds no row of a UID with live masters elsewhere. The push then writes a
-// tombstone for a server object of that calendar: nothing local backs it.
+// of a UID. Its rows belong to the one live series of another calendar, and
+// that series exports them. The push then writes a tombstone for a server
+// object of that calendar: nothing local backs it.
 // Every other errResourceMissing is a local anomaly, and the push clears the
 // dirty flag only.
 var errOwnedElsewhere = errors.New("the series of the uid lives in another calendar")

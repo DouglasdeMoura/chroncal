@@ -43,7 +43,9 @@ type resource struct {
 	// resolveIn maps a CLI reference to the target row in the named
 	// calendar. A domain whose UID can live in more than one calendar sets
 	// it (issue #842). runDelete uses it when deleteOpts names a calendar.
-	resolveIn func(ctx context.Context, a *app.App, ref, calendarName string) (row, error)
+	// series reports a delete of the whole series; a plain delete names
+	// one row of the calendar.
+	resolveIn func(ctx context.Context, a *app.App, ref, calendarName string, series bool) (row, error)
 
 	// del soft-deletes one row by ID. delSeries soft-deletes the master row
 	// of the resolved row and every override of its series. The row carries
@@ -145,7 +147,7 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 
 	var target row
 	if opts.CalendarName != "" && r.resolveIn != nil {
-		target, err = r.resolveIn(ctx, a, args[0], opts.CalendarName)
+		target, err = r.resolveIn(ctx, a, args[0], opts.CalendarName, opts.Series)
 	} else {
 		target, err = r.resolve(ctx, a, args[0], opts.RecurrenceID)
 	}
