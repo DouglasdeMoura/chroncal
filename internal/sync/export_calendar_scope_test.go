@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 // TestExportResource_ScopedToCalendar stores one series with the same UID
@@ -182,4 +183,54 @@ func TestExportResource_OrphanRowsBesideTrashedMaster(t *testing.T) {
 	if !strings.Contains(string(data), "SUMMARY:Legacy late") {
 		t.Errorf("export of B lacks the restored orphan row:\n%s", data)
 	}
+}
+
+// TestPush_MissingResourceWithRemoteURLQueuesTombstone: a calendar that
+// owns nothing of a UID, but whose sync row names a server object (a
+// duplicate from an old whole-series upload), gets a tombstone for that
+// object instead of a silent clear of the dirty flag.
+func TestPush_MissingResourceWithRemoteURLQueuesTombstone(t *testing.T) {
+	t.Parallel()
+	engine, _, srv, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	master := createSeries(t, engine, calA)
+	second := master.StartTime.Add(24 * time.Hour)
+	if _, err := engine.events.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: calB, Title: "Legacy late",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour),
+		RecurrenceID: second.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("push A = %+v, %v", res, err)
+	}
+	// The duplicate server object of calendar B and its sync row.
+	path := "/cal/b/" + master.UID + ".ics"
+	srv.mu.Lock()
+	srv.objects[path] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:" + master.UID + "\r\nDTSTART:20260518T090000Z\r\nSUMMARY:Duplicate\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	srv.mu.Unlock()
+	if _, err := engine.db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, remote_url) VALUES (?, ?, 'event', 1, 'sync-token', ?)`,
+		calB, master.UID, path); err != nil {
+		t.Fatalf("seed sync row: %v", err)
+	}
+	// The push pass writes the tombstone and then sends its DELETE, so
+	// the server object of B is gone after one pass.
+	if res, err := engine.PushLocalEdits(ctx, calB); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("push B = %+v, %v", res, err)
+	}
+	srv.mu.Lock()
+	_, stillThere := srv.objects[path]
+	srv.mu.Unlock()
+	if stillThere {
+		t.Fatalf("the duplicate server object %s survived the push of B", path)
+	}
+	n, err := engine.q.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calB, Uid: master.UID})
+	if err != nil || n != 0 {
+		t.Fatalf("tombstones of B after the push = %d, %v; want 0 (sent)", n, err)
+	}
+	syncPairClean(t, engine, calA, calB)
+	wantOnlyServerObject(t, srv, "/cal/a/"+master.UID+".ics")
 }

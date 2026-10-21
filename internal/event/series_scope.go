@@ -20,9 +20,9 @@ import (
 // A calendar with a live master of the UID gives that master. A calendar
 // with a master of the UID in the trash gives sql.ErrNoRows: the series is
 // not live there. A calendar with no master row of the UID holds a legacy
-// override at most (see storage.LegacyOverride). The owner of such a row
-// is the one live master of the UID (uidmove.LegacyOwner), so one live
-// master is the choice, and more give ErrAmbiguousUID. A calendar with no
+// override at most (see storage.LegacyOverride). The one live master of
+// the UID owns such a row (uidmove.LegacyOwner). One live master is then
+// the choice, and more give ErrAmbiguousUID. A calendar with no
 // live row of the UID gives sql.ErrNoRows. calendarID 0 names no
 // calendar: one live master is then the only choice, none gives
 // sql.ErrNoRows, and more give ErrAmbiguousUID. The view
@@ -141,6 +141,17 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 		return m, nil
 	}
 	return storage.Event{}, sql.ErrNoRows
+}
+
+// trashedMasters returns the masters that are in the trash.
+func trashedMasters(masters []uidmove.Master) []uidmove.Master {
+	trashed := make([]uidmove.Master, 0, len(masters))
+	for _, m := range masters {
+		if m.Trashed {
+			trashed = append(trashed, m)
+		}
+	}
+	return trashed
 }
 
 // liveMasters returns the masters that are not in the trash.

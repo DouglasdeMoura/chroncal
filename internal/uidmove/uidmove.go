@@ -43,7 +43,15 @@ type Rows struct {
 	CountCollisions func(ctx context.Context, fromCalendarID, toCalendarID int64) (live, trashed int64, err error)
 	// MoveRows moves every row of the UID and its delete-log rows from one
 	// calendar to another.
-	MoveRows func(ctx context.Context, fromCalendarID, toCalendarID int64) error
+	// MoveRows moves the other rows of the UID with the moved row.
+	// targetHeldRows reports whether the target calendar held rows of
+	// the UID before the write of the moved row: a legacy override that
+	// goes back to its master, as opposed to a series move.
+	MoveRows func(ctx context.Context, fromCalendarID, toCalendarID int64, targetHeldRows bool) error
+	// CountRowsIn counts the rows of the UID in one calendar, live or in
+	// the trash. Update reads it before the write of the moved row, so
+	// MoveRows learns whether the target held rows. nil counts nothing.
+	CountRowsIn func(ctx context.Context, calendarID int64) (int64, error)
 }
 
 // Master names one master row of the UID.
@@ -234,7 +242,7 @@ func SingleMasterRows(q *storage.Queries, uid string, errInstanceMove error, mas
 			}
 			return []Master{m}, nil
 		},
-		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64) error {
+		MoveRows: func(ctx context.Context, fromCalendarID, toCalendarID int64, _ bool) error {
 			for _, step := range steps {
 				if err := step.Move(ctx, fromCalendarID, toCalendarID); err != nil {
 					return fmt.Errorf("move %s: %w", step.Name, err)
@@ -278,12 +286,23 @@ func (r Rows) Update(ctx context.Context, component, ownerType, recurrenceID str
 	if err := r.Check(ctx, recurrenceID, fromCalendarID, toCalendarID); err != nil {
 		return err
 	}
+	// The target state before the write: MoveRows merges the delete logs
+	// of a target that holds rows of the UID, and drops the stale logs of
+	// a target that holds none.
+	targetHeldRows := false
+	if toCalendarID != fromCalendarID && r.CountRowsIn != nil {
+		n, err := r.CountRowsIn(ctx, toCalendarID)
+		if err != nil {
+			return fmt.Errorf("count target rows: %w", err)
+		}
+		targetHeldRows = n > 0
+	}
 	if err := write(ctx, toCalendarID); err != nil {
 		return err
 	}
 	// A move to another calendar takes the other rows of the UID along and
 	// queues the delete of the source server object (issue #828).
-	if err := r.Record(ctx, fromCalendarID, toCalendarID); err != nil {
+	if err := r.Record(ctx, fromCalendarID, toCalendarID, targetHeldRows); err != nil {
 		return fmt.Errorf("record calendar move: %w", err)
 	}
 	if err := r.Q.MarkResourceDirty(ctx, toCalendarID, r.UID, ownerType); err != nil {
@@ -295,9 +314,9 @@ func (r Rows) Update(ctx context.Context, component, ownerType, recurrenceID str
 // Record records the move of the rows of the UID from one calendar to
 // another. It does nothing when the two calendars are the same. See
 // storage.RecordResourceMove.
-func (r Rows) Record(ctx context.Context, fromCalendarID, toCalendarID int64) error {
+func (r Rows) Record(ctx context.Context, fromCalendarID, toCalendarID int64, targetHeldRows bool) error {
 	return storage.RecordResourceMove(ctx, r.Q, fromCalendarID, toCalendarID, r.UID, func(ctx context.Context) error {
-		return r.MoveRows(ctx, fromCalendarID, toCalendarID)
+		return r.MoveRows(ctx, fromCalendarID, toCalendarID, targetHeldRows)
 	})
 }
 

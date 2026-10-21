@@ -426,3 +426,12 @@ WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence
     SELECT s.id FROM event_series_rows AS s
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
 ORDER BY events.recurrence_id;
+
+-- name: RestoreEventByID :execrows
+-- Un-hide one soft-deleted row by ID. The restores that read a delete
+-- log use it, and the count tells a purged row from a restored one.
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ? AND deleted_at IS NOT NULL;

@@ -1584,6 +1584,24 @@ func (q *Queries) RestoreEventByCalendarUIDAndRecurrenceID(ctx context.Context, 
 	return result.RowsAffected()
 }
 
+const restoreEventByID = `-- name: RestoreEventByID :execrows
+UPDATE events SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = ? AND deleted_at IS NOT NULL
+`
+
+// Un-hide one soft-deleted row by ID. The restores that read a delete
+// log use it, and the count tells a purged row from a restored one.
+func (q *Queries) RestoreEventByID(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreEventByID, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const restoreEventsByUID = `-- name: RestoreEventsByUID :execrows
 UPDATE events SET
     deleted_at = NULL,
