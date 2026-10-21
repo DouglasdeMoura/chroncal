@@ -143,7 +143,18 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 	}
 	lookupMaster := func(calendarID int64, uid string) *Event { return masters[masterKey{calendarID, uid}] }
 
+	// The log of a delete by ID of an orphan row names a row that the
+	// trash lists already. The row is the entry, so the log is not one.
+	trashedRow := make(map[string]bool, len(deletedEvents))
+	for _, ev := range deletedEvents {
+		if ev.RecurrenceID != "" {
+			trashedRow[ev.UID+"\x00"+ev.RecurrenceID] = true
+		}
+	}
 	for _, l := range instLogs {
+		if lookupMaster(l.CalendarID, l.Uid) == nil && trashedRow[l.Uid+"\x00"+l.RecurrenceID] {
+			continue
+		}
 		inst, _ := time.Parse(time.RFC3339, l.RecurrenceID)
 		entry := TrashEntry{
 			Kind:         TrashKindInstance,

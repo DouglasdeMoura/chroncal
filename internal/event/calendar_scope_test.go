@@ -4056,3 +4056,125 @@ func TestCommaList_EmptyFields(t *testing.T) {
 		t.Errorf("unionCommaList(recurrence IDs) = %v, %v; want b,a", recIDs, err)
 	}
 }
+
+// TestUndoOrphanDeleteBesideTrashedMaster_KeepsTombstone: the undo of a
+// series delete of the live rows beside a master in the trash finds no
+// calendar for a dirty mark. The tombstone of the series then stays, so the
+// sync state of the series is not lost.
+func TestUndoOrphanDeleteBesideTrashedMaster_KeepsTombstone(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	account, err := svc.q.CreateAccount(ctx, storage.CreateAccountParams{Name: "acct", ServerUrl: "https://example.com", AuthType: "basic", Username: "u"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET account_id = ? WHERE id = 1`, account.ID); err != nil {
+		t.Fatalf("link calendar: %v", err)
+	}
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	override, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	seedTombstone(t, svc, 1, master.UID)
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID(override): %v", err)
+	}
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo(orphan rows): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if n := countTombstones(t, svc, 1, master.UID); n != 1 {
+		t.Errorf("tombstones after the undo = %d, want 1 (no dirty mark, so the tombstone stays)", n)
+	}
+}
+
+// orphanRows adds n live orphan rows of uid to calendar 1, one per day.
+func orphanRows(t *testing.T, svc *Service, uid string, n int) []Event {
+	t.Helper()
+	base := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
+	rows := make([]Event, 0, n)
+	for i := 0; i < n; i++ {
+		at := base.Add(time.Duration(i) * 24 * time.Hour)
+		r, err := svc.UpsertByUID(context.Background(), UpsertParams{
+			UID: uid, CalendarID: 1, Title: "Orphan",
+			StartTime: at, EndTime: at.Add(time.Hour), RecurrenceID: at.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("upsert orphan %d: %v", i, err)
+		}
+		rows = append(rows, r)
+	}
+	return rows
+}
+
+// TestRestoreByUID_SkipsOrphanRowDeletedByID: a delete by ID of an orphan
+// row writes its own record. A restore by UID then brings back the rows of
+// the other delete only, and the trash lists the row once.
+func TestRestoreByUID_SkipsOrphanRowDeletedByID(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-single"
+	rows := orphanRows(t, svc, uid, 2)
+	// A pull hid the second row earlier.
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T10:00:00Z' WHERE id = ?`, rows[1].ID); err != nil {
+		t.Fatalf("trash row 1: %v", err)
+	}
+	if err := svc.Delete(ctx, rows[0].ID); err != nil {
+		t.Fatalf("Delete(row 0): %v", err)
+	}
+	entries, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("trash entries = %d, want 2 (one per row, no log entry)", len(entries))
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	for i, wantLive := range []bool{false, true} {
+		r, err := svc.GetIncludingDeleted(ctx, rows[i].ID)
+		if err != nil {
+			t.Fatalf("get row %d: %v", i, err)
+		}
+		if live := r.DeletedAt == nil; live != wantLive {
+			t.Errorf("row %d live = %v, want %v", i, live, wantLive)
+		}
+	}
+}
+
+// TestRestoreOrphanRowByID_DropsItsRecord: a restore by ID of an orphan row
+// that a delete by ID hid drops the record of that delete. A later delete of
+// the row by a pull then comes back with a restore by UID.
+func TestRestoreOrphanRowByID_DropsItsRecord(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-record"
+	rows := orphanRows(t, svc, uid, 1)
+	if err := svc.Delete(ctx, rows[0].ID); err != nil {
+		t.Fatalf("Delete(row): %v", err)
+	}
+	if err := svc.RestoreByID(ctx, rows[0].ID); err != nil {
+		t.Fatalf("RestoreByID(row): %v", err)
+	}
+	logs, err := svc.q.ListEventExdateDeletesByCalendarUID(ctx, storage.ListEventExdateDeletesByCalendarUIDParams{CalendarID: 1, Uid: uid})
+	if err != nil || len(logs) != 0 {
+		t.Fatalf("occurrence logs after the restore = %d, %v; want 0", len(logs), err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T10:00:00Z' WHERE id = ?`, rows[0].ID); err != nil {
+		t.Fatalf("trash the row: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, rows[0].ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("row after the restore by UID = trashed %v, %v; want it live", r.DeletedAt != nil, err)
+	}
+}

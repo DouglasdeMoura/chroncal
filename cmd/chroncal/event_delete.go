@@ -37,10 +37,14 @@ var eventResource = resource{
 		}
 		if series {
 			if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr != nil {
-				// A series delete of a UID in a calendar goes straight to
-				// the service. Its errors decide: the orphan rows of a
-				// calendar with no live master, or a series in the trash.
-				return row{UID: ref, CalendarID: calendarID, Summary: seriesSummary(ctx, a, calendarID, ref)}, nil
+				// A series delete of a UID in a calendar needs a live series
+				// or live orphan rows there. The check runs before the
+				// prompt, so a delete with nothing to delete asks nothing.
+				target := row{UID: ref, CalendarID: calendarID, Summary: seriesSummary(ctx, a, calendarID, ref)}
+				if err := checkSeriesInCalendar(ctx, a, target); err != nil {
+					return row{}, err
+				}
+				return target, nil
 			}
 		}
 		resolve := resolveRowIn
@@ -51,7 +55,14 @@ var eventResource = resource{
 		if err != nil {
 			return row{}, err
 		}
-		return row{ID: e.ID, UID: e.UID, CalendarID: e.CalendarID, Summary: e.Title}, nil
+		target := row{ID: e.ID, UID: e.UID, CalendarID: e.CalendarID, Summary: e.Title}
+		if series {
+			// The check accepted the row for --calendar, so the series is
+			// the one of that calendar. A legacy override lives in another
+			// calendar than its series.
+			target.CalendarID = calendarID
+		}
+		return target, nil
 	},
 	delSeries: func(ctx context.Context, a *app.App, target row) (int64, error) {
 		meta, err := a.Events.DeleteSeriesWithUndo(ctx, target.CalendarID, target.UID)
@@ -379,4 +390,29 @@ func seriesDeleteErr(ctx context.Context, a *app.App, target row, err error) err
 			target.UID, calendarName(ctx, a, target.CalendarID))
 	}
 	return err
+}
+
+// checkSeriesInCalendar refuses a series delete of target.UID in
+// target.CalendarID that has nothing to delete. The calendar must hold a
+// live series of the UID, or live orphan rows of it. A series in the trash
+// gives the trash message, and else the delete is not found.
+func checkSeriesInCalendar(ctx context.Context, a *app.App, target row) error {
+	_, err := a.Events.SeriesMaster(ctx, target.CalendarID, target.UID)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return seriesDeleteErr(ctx, a, target, err)
+	}
+	live, err := a.Events.ListLiveOverridesInCalendar(ctx, target.CalendarID, target.UID)
+	if err != nil {
+		return err
+	}
+	if len(live) > 0 {
+		return nil
+	}
+	if m, err := a.Events.SeriesMasterIncludingDeleted(ctx, target.CalendarID, target.UID); err == nil && m.DeletedAt != nil {
+		return seriesDeleteErr(ctx, a, target, event.ErrSeriesInTrash)
+	}
+	return seriesDeleteErr(ctx, a, target, event.ErrNotDeleted)
 }

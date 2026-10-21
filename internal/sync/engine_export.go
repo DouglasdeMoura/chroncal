@@ -63,9 +63,9 @@ func overridesByUID[T any](list func(context.Context, string) ([]T, error)) func
 var ownerOpsByType = map[string]ownerOps{
 	ownerTypeEvent: {
 		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
-			// The server object held the series of the calendar, with the
-			// legacy overrides that the series owns in other calendars.
-			return e.q.SoftDeleteEventSeriesAndCalendarRows(ctx, storage.SoftDeleteEventSeriesAndCalendarRowsParams{CalendarID: calendarID, Uid: uid})
+			// A pull writes the rows of the pulled calendar only. A legacy
+			// override in another calendar keeps its row (see AGENTS.md).
+			return e.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
 		lookupID: func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error) {
 			row, err := e.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})

@@ -24,9 +24,36 @@ func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 	if err != nil || calendarID == 0 {
 		return err
 	}
+	return markCalendarDirty(ctx, db, calendarID, uid, ownerType)
+}
+
+// ReconcileAfterRestore resets the sync state of uid in calendarID after a
+// restore. It drops the unsent tombstone of the calendar and marks the
+// resource dirty (see MarkResourceDirty). The two steps go together: when
+// dirtyCalendar names no calendar for the mark, the tombstone stays too.
+// The rows then stay local until their master comes back, and the server
+// object still gets its delete. A restore never leaves a dropped tombstone
+// with no dirty mark.
+func ReconcileAfterRestore(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
+	if calendarID == 0 || uid == "" {
+		return nil
+	}
+	target, err := dirtyCalendar(ctx, db, calendarID, uid, ownerType)
+	if err != nil || target == 0 {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?`, calendarID, uid); err != nil {
+		return fmt.Errorf("clear tombstone after restore: %w", err)
+	}
+	return markCalendarDirty(ctx, db, target, uid, ownerType)
+}
+
+// markCalendarDirty marks uid dirty in calendarID when the calendar is linked
+// to an account. A local calendar gets no sync row.
+func markCalendarDirty(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
 	// Only act if the calendar is linked to an account.
 	var accountID *int64
-	err = db.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT account_id FROM calendars WHERE id = ?`, calendarID,
 	).Scan(&accountID)
 	if errors.Is(err, sql.ErrNoRows) {

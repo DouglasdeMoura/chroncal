@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
@@ -98,5 +99,31 @@ func TestEventDeleteHooks_PushTheMasterCalendar(t *testing.T) {
 	got, err = eventResource.delSeries(ctx, a, row{UID: uid, CalendarID: home})
 	if err != nil || got != work {
 		t.Errorf("delSeries(through Home) = calendar %d, %v; want Work %d", got, err, work)
+	}
+}
+
+// TestEventDeleteSeries_NumericLegacyIDTakesTheCalendar: a series delete
+// with --calendar and the ID of a legacy override targets the series of the
+// --calendar calendar, not the calendar of the row.
+func TestEventDeleteSeries_NumericLegacyIDTakesTheCalendar(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	_, legacyID := seedLegacyOverrideInHome(t)
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	work, err := resolveCalendarID(ctx, a, "Work")
+	if err != nil {
+		t.Fatalf("resolve Work: %v", err)
+	}
+	got, err := eventResource.resolveIn(ctx, a, strconv.FormatInt(legacyID, 10), "Work", true)
+	if err != nil {
+		t.Fatalf("resolveIn(legacy ID, Work): %v", err)
+	}
+	if got.CalendarID != work {
+		t.Errorf("target calendar = %d, want Work %d", got.CalendarID, work)
 	}
 }

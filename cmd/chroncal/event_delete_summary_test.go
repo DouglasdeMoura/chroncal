@@ -4,15 +4,16 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 )
 
 // TestEventDelete_SeriesPromptNamesTheSeries: the series resolver with
-// --calendar gives the prompt the title of the series. The title comes from
-// the master, live or in the trash, or else from the first orphan row. With
-// neither, the prompt shows the UID.
+// --calendar gives the prompt the title of the series: the title of the live
+// master, or else of the first orphan row. A series in the trash and a UID
+// with no live row in the calendar get their refusal before the prompt.
 func TestEventDelete_SeriesPromptNamesTheSeries(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -39,14 +40,20 @@ func TestEventDelete_SeriesPromptNamesTheSeries(t *testing.T) {
 	t.Cleanup(func() { a.Close() })
 	ctx := context.Background()
 	for _, tc := range []struct {
-		ref, calendar, want string
+		ref, calendar, want, wantErr string
 	}{
-		{uid, "Work", "Standup"},
-		{uid, "Home", "Standup Home"},
-		{orphan, "Work", "Orphan"},
-		{"no-such-uid", "Work", "no-such-uid"},
+		{uid, "Work", "Standup", ""},
+		{orphan, "Work", "Orphan", ""},
+		{uid, "Home", "", "is in the trash in calendar"},
+		{"no-such-uid", "Work", "", "has no live row in calendar"},
 	} {
 		got, err := eventResource.resolveIn(ctx, a, tc.ref, tc.calendar, true)
+		if tc.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("resolveIn(%s, %s) err = %v, want %q before the prompt", tc.ref, tc.calendar, err, tc.wantErr)
+			}
+			continue
+		}
 		if err != nil {
 			t.Errorf("resolveIn(%s, %s): %v", tc.ref, tc.calendar, err)
 			continue
