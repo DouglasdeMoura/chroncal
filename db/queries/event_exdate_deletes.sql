@@ -90,3 +90,8 @@ UPDATE event_exdate_deletes SET hidden_ids = ?, owns_exdate = ? WHERE id = ?;
 -- one calendar. The logs of that master then own no EXDATE: the copy in the
 -- list now comes from the server or the import (issue #86).
 UPDATE event_exdate_deletes SET owns_exdate = 0 WHERE calendar_id = ? AND uid = ?;
+
+-- name: ListEventExdateDeletesByUID :many
+-- The occurrence logs of one UID in every calendar, with no pruned marker.
+-- The identity check of an undo reads them once.
+SELECT * FROM event_exdate_deletes WHERE uid = ? AND pruned = 0 ORDER BY id;

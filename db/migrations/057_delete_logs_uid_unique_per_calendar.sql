@@ -146,10 +146,12 @@ WHERE NOT EXISTS (
 -- names the overrides that it hid, or no row. The code then has one log
 -- format. The old schema has no pruned marker. The rows are the trashed rows
 -- of the series of the log at its occurrence. The view adds the legacy
--- overrides in other calendars by the owner rule. A row counts only when it
--- went to the trash at or before the time of the log. A later series delete
--- or truncation hid the other rows. The rule allows one second: the old
--- delete by ID wrote the log just before it hid the row.
+-- overrides in other calendars by the owner rule. A row counts only when:
+--   - it went to the trash within one second of the time of the log. The
+--     old delete wrote the row and the log in one transaction. A row of an
+--     earlier or a later delete falls outside.
+--   - the master did not go to the trash at the same time. A series delete
+--     hides the master and its rows in one statement.
 UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
     hidden_ids = COALESCE((
         SELECT GROUP_CONCAT('1:' || s.id, ',') FROM event_series_rows AS s
@@ -157,7 +159,12 @@ UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
           AND s.owner_calendar_id = event_exdate_deletes.calendar_id
           AND s.recurrence_id = event_exdate_deletes.recurrence_id
           AND s.deleted_at IS NOT NULL
-          AND s.deleted_at <= strftime('%Y-%m-%dT%H:%M:%SZ', event_exdate_deletes.deleted_at, '+1 second')), '1:');
+          AND s.deleted_at BETWEEN strftime('%Y-%m-%dT%H:%M:%SZ', event_exdate_deletes.deleted_at, '-1 second')
+                               AND strftime('%Y-%m-%dT%H:%M:%SZ', event_exdate_deletes.deleted_at, '+1 second')
+          AND NOT EXISTS (
+            SELECT 1 FROM events AS m
+            WHERE m.uid = s.uid AND m.calendar_id = s.owner_calendar_id
+              AND m.recurrence_id = '' AND m.deleted_at = s.deleted_at)), '1:');
 
 -- A master that comes back from the trash by any path consumes the
 -- series-delete log of its calendar. The restore of the series reads and
