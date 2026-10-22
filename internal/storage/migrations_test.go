@@ -671,11 +671,12 @@ func TestMigration057UpDown(t *testing.T) {
 	}
 	// The series-delete log keeps one row per series and calendar, and
 	// the view lists the rows of a series.
+	// One log row per series delete: two deletes in one calendar keep two
+	// rows.
 	mustExec(`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids) VALUES (1, 'mig057', '')`)
-	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids) VALUES (1, 'mig057', 'x')`,
-	); err == nil {
-		t.Errorf("the series-delete log accepted a second row of one series in one calendar")
+	mustExec(`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids) VALUES (1, 'mig057', 'x')`)
+	if n := count(`SELECT COUNT(*) FROM event_series_deletes WHERE calendar_id = 1 AND uid = 'mig057'`); n != 2 {
+		t.Errorf("series-delete log rows of one series = %d, want 2", n)
 	}
 	// The view check takes its own UID: the insert of a master drops the
 	// delete logs of its UID in its calendar (events_master_insert_drops_stale_logs).
@@ -797,7 +798,7 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 		// README step 4: the DROP TABLE of the rebuild drops the triggers.
 		triggers := []string{
 			"events_master_revive_drops_series_log", "events_master_insert_drops_stale_logs",
-			"events_override_revive_drops_prune_marker", "events_override_insert_drops_prune_marker",
+			"events_override_revive_drops_stale_logs", "events_override_insert_drops_prune_marker",
 		}
 		for _, name := range triggers {
 			q := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = '` + name + `'`
@@ -868,7 +869,7 @@ func TestMigrationsReadmeMatches057(t *testing.T) {
 		seriesViewStatement(t),
 		triggerStatement(t, "events_master_revive_drops_series_log"),
 		triggerStatement(t, "events_master_insert_drops_stale_logs"),
-		triggerStatement(t, "events_override_revive_drops_prune_marker"),
+		triggerStatement(t, "events_override_revive_drops_stale_logs"),
 		triggerStatement(t, "events_override_insert_drops_prune_marker"),
 	}
 	if len(blocks) != len(want) {

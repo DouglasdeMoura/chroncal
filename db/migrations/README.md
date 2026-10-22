@@ -19,7 +19,7 @@ must follow these steps:
 4. Create the four triggers of migration 057 again:
    `events_master_revive_drops_series_log`,
    `events_master_insert_drops_stale_logs`,
-   `events_override_revive_drops_prune_marker`, and
+   `events_override_revive_drops_stale_logs`, and
    `events_override_insert_drops_prune_marker`. The drop of `events` drops
    them. Copy their statements from migration 057.
 
@@ -28,7 +28,8 @@ of a master drops the series-delete log when a master of that calendar
 comes back from the trash. The insert trigger of a master drops the
 series-delete log and the occurrence logs of the UID when a new live
 master arrives. The two triggers of an override drop the pruned marker of
-an occurrence when its row comes back. Without them, a log that a pull or
+an occurrence when its row comes back, and the revive trigger removes the
+row from the delete logs. Without them, a log that a pull or
 an import left behind brings back the wrong rows, or strips an imported
 EXDATE, on the next restore.
 
@@ -91,12 +92,24 @@ END;
 ```
 
 ```sql
-CREATE TRIGGER events_override_revive_drops_prune_marker
+CREATE TRIGGER events_override_revive_drops_stale_logs
 AFTER UPDATE OF deleted_at ON events
 WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id != ''
 BEGIN
     DELETE FROM event_exdate_deletes
     WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
+    UPDATE event_series_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
+    WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
+    DELETE FROM event_series_deletes
+    WHERE uid = NEW.uid AND hidden_ids = ''
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS m
+        WHERE m.calendar_id = event_series_deletes.calendar_id AND m.uid = NEW.uid
+          AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL);
+    UPDATE event_truncate_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
+    WHERE uid = NEW.uid AND hidden_ids IS NOT NULL AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
 END;
 ```
 

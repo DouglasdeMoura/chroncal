@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
@@ -235,9 +236,10 @@ func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Ti
 	if err != nil {
 		return 0, err
 	}
+	kept := keptSeries(keep)
 	ids := make([]int64, 0, len(rows))
 	for _, r := range rows {
-		if !keptSeries(keep, r.CalendarID, r.Uid) {
+		if !kept[seriesKeyOf(r.CalendarID, r.Uid)] {
 			ids = append(ids, r.ID)
 		}
 	}
@@ -261,9 +263,10 @@ func (s *Service) PurgeOldTruncationDeletes(ctx context.Context, olderThan time.
 	if err != nil {
 		return 0, err
 	}
+	kept := keptSeries(keep)
 	ids := make([]int64, 0, len(rows))
 	for _, r := range rows {
-		if !keptSeries(keep, r.CalendarID, r.Uid) {
+		if !kept[seriesKeyOf(r.CalendarID, r.Uid)] {
 			ids = append(ids, r.ID)
 		}
 	}
@@ -287,9 +290,10 @@ func (s *Service) PurgeOldSeriesDeletes(ctx context.Context, olderThan time.Time
 	if err != nil {
 		return 0, err
 	}
+	kept := keptSeries(keep)
 	ids := make([]int64, 0, len(rows))
 	for _, r := range rows {
-		if !keptSeries(keep, r.CalendarID, r.Uid) {
+		if !kept[seriesKeyOf(r.CalendarID, r.Uid)] {
 			ids = append(ids, r.ID)
 		}
 	}
@@ -486,7 +490,7 @@ func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log st
 		if err != nil {
 			return err
 		}
-		_, err = restoreLoggedIDsTx(ctx, qtx, log.CalendarID, log.Uid, ids)
+		_, err = restoreLoggedIDsTx(ctx, qtx, log.CalendarID, ids)
 		return err
 	}
 	if log.HiddenOverrides == nil {
@@ -515,13 +519,16 @@ func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log st
 	return nil
 }
 
-// keptSeries reports whether the series of uid in calendarID belongs to a
-// master of keep.
-func keptSeries(keep []SkippedMaster, calendarID int64, uid string) bool {
+// keptSeries returns the set of the series of keep, by seriesKeyOf.
+func keptSeries(keep []SkippedMaster) map[string]bool {
+	set := make(map[string]bool, len(keep))
 	for _, m := range keep {
-		if m.CalendarID == calendarID && m.UID == uid {
-			return true
-		}
+		set[seriesKeyOf(m.CalendarID, m.UID)] = true
 	}
-	return false
+	return set
+}
+
+// seriesKeyOf names the series of uid in calendarID.
+func seriesKeyOf(calendarID int64, uid string) string {
+	return strconv.FormatInt(calendarID, 10) + "\x00" + uid
 }

@@ -1,21 +1,23 @@
 -- name: RecordEventSeriesDelete :exec
--- One log row per series in one calendar. The service writes the merged
--- list of an earlier unconsumed row and the new rows (see
--- recordSeriesDeleteTx), so the upsert replaces the column with it.
+-- Write the log row of one series delete. Each delete gets its own row (the
+-- id), so an earlier delete in the same calendar keeps its record. The merge
+-- of orphan rows into the log of a master in the trash updates that row
+-- (UpdateEventSeriesDeleteHiddenIds).
 INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(calendar_id, uid) DO UPDATE SET
-    hidden_ids = excluded.hidden_ids,
-    had_master = excluded.had_master,
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+VALUES (?, ?, ?, ?);
 
 -- name: GetEventSeriesDeleteByCalendarUID :one
-SELECT * FROM event_series_deletes WHERE calendar_id = ? AND uid = ?;
+-- The newest series-delete log row of one series in one calendar. A restore
+-- reverses the newest delete first.
+SELECT * FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id DESC LIMIT 1;
+
+-- name: DeleteEventSeriesDeleteByID :exec
+-- Drop one series-delete log row. A restore of its delete consumes it.
+DELETE FROM event_series_deletes WHERE id = ?;
 
 -- name: DeleteEventSeriesDeletesByCalendarUID :exec
--- Drop the log row of one series. A restore of the series consumes it. A
--- purge of the master drops it with the master. A calendar move clears a
--- stale row in the target calendar before the move.
+-- Drop the log rows of one series. A calendar move clears the stale rows in
+-- the target calendar before the move.
 DELETE FROM event_series_deletes WHERE calendar_id = ? AND uid = ?;
 
 -- name: ListOldEventSeriesDeletes :many
