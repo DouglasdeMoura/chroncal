@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -987,7 +988,7 @@ func TestRestoreMaster_UnloggedSeriesKeepsTheRowOfALoggedOccurrence(t *testing.T
 // TestUndo_DeleteBesideTrashedMasterRefusesALoggedRow: a row went alone
 // beside a trashed master. The series came back, the row came back, and an
 // occurrence delete hid it again before the next series delete. The old undo
-// then refuses with ErrMasterInTrash: the occurrence log owns the row.
+// then refuses with ErrDeletedAgain: the occurrence log owns the row.
 func TestUndo_DeleteBesideTrashedMasterRefusesALoggedRow(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1020,8 +1021,8 @@ func TestUndo_DeleteBesideTrashedMasterRefusesALoggedRow(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("second DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterInTrash) {
-		t.Fatalf("RestoreUndo = %v, want ErrMasterInTrash", err)
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrDeletedAgain) {
+		t.Fatalf("RestoreUndo = %v, want ErrDeletedAgain", err)
 	}
 	wantTrashed(t, svc, true, row.ID)
 }
@@ -1133,4 +1134,213 @@ func TestPurgeByID_RefusesALiveRow(t *testing.T) {
 		t.Fatalf("PurgeByID(live row) = %v, want ErrNotDeleted", err)
 	}
 	wantTrashed(t, svc, false, row.ID)
+}
+
+// TestUndoOrphanSeriesDelete_RefusesARowDeletedAgain: a series delete of
+// orphan rows hides O. A restore by ID brings O back, and a second series
+// delete hides it again. The undo of the first delete refuses with
+// ErrDeletedAgain: its series log no longer names O.
+func TestUndoOrphanSeriesDelete_RefusesARowDeletedAgain(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-again"
+	o := orphanRows(t, svc, uid, 1)[0]
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, uid)
+	if err != nil || meta.SeriesLogID == 0 {
+		t.Fatalf("DeleteSeriesWithUndo = %+v, %v; want a series log ID", meta, err)
+	}
+	if err := svc.RestoreByID(ctx, o.ID); err != nil {
+		t.Fatalf("RestoreByID: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, uid); err != nil {
+		t.Fatalf("second DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrDeletedAgain) {
+		t.Fatalf("RestoreUndo = %v, want ErrDeletedAgain", err)
+	}
+	wantTrashed(t, svc, true, o.ID)
+}
+
+// TestUndo_NoLogDeleteRefusesARowDeletedAgain: a delete by ID beside a
+// trashed master writes no log. The series comes back, the row comes back,
+// and an occurrence delete hides the row again. The undo of the first delete
+// refuses with ErrDeletedAgain: the occurrence log of the newer delete owns
+// the row.
+func TestUndo_NoLogDeleteRefusesARowDeletedAgain(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	row, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := reviveRow(svc, row.ID); err != nil {
+		t.Fatalf("revive the row: %v", err)
+	}
+	meta, err := svc.DeleteWithUndo(ctx, row.ID)
+	if err != nil || meta.ExdateLogID != 0 {
+		t.Fatalf("DeleteWithUndo = %+v, %v; want no log", meta, err)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	if err := svc.RestoreByID(ctx, row.ID); err != nil {
+		t.Fatalf("RestoreByID(row): %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrDeletedAgain) {
+		t.Fatalf("RestoreUndo = %v, want ErrDeletedAgain", err)
+	}
+	wantTrashed(t, svc, true, row.ID)
+}
+
+// TestUndoOrphanDeleteByID_RefusesARowDeletedAgain: a delete by ID of an
+// orphan row writes an entry in its orphan log. A restore by ID drops that
+// log, and a second delete writes a new one. The undo of the first delete
+// refuses with ErrDeletedAgain and keeps the log of the second. The undo of
+// the second brings the row back.
+func TestUndoOrphanDeleteByID_RefusesARowDeletedAgain(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-by-id-again"
+	o := orphanRows(t, svc, uid, 1)[0]
+	meta1, err := svc.DeleteWithUndo(ctx, o.ID)
+	if err != nil || meta1.ExdateLogID == 0 {
+		t.Fatalf("first DeleteWithUndo = %+v, %v; want an orphan log ID", meta1, err)
+	}
+	if err := svc.RestoreByID(ctx, o.ID); err != nil {
+		t.Fatalf("RestoreByID: %v", err)
+	}
+	meta2, err := svc.DeleteWithUndo(ctx, o.ID)
+	if err != nil {
+		t.Fatalf("second DeleteWithUndo: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta1); !errors.Is(err, ErrDeletedAgain) {
+		t.Fatalf("RestoreUndo(first) = %v, want ErrDeletedAgain", err)
+	}
+	wantTrashed(t, svc, true, o.ID)
+	if err := svc.RestoreUndo(ctx, meta2); err != nil {
+		t.Fatalf("RestoreUndo(second): %v", err)
+	}
+	wantTrashed(t, svc, false, o.ID)
+}
+
+// TestPurgeTrashEntry_InstanceTakesItsRows: a purge of an occurrence entry
+// from the trash takes the rows of the log with it. The EXDATE stays: the
+// delete stands for good. A restore by ID of the row is then impossible.
+func TestPurgeTrashEntry_InstanceTakesItsRows(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	row, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	entries, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	purged := false
+	for _, e := range entries {
+		if e.Kind == TrashKindInstance {
+			if err := svc.PurgeTrashEntry(ctx, e); err != nil {
+				t.Fatalf("PurgeTrashEntry: %v", err)
+			}
+			purged = true
+		}
+	}
+	if !purged {
+		t.Fatal("trash holds no occurrence entry")
+	}
+	if err := svc.RestoreByID(ctx, row.ID); !errors.Is(err, ErrNotDeleted) {
+		t.Errorf("RestoreByID of the purged row = %v, want ErrNotDeleted", err)
+	}
+	if n := exdateCount(t, svc, master.ID, second); n != 1 {
+		t.Errorf("EXDATEs after the purge = %d, want 1", n)
+	}
+	if _, found := exdateLogRows(t, svc, master.UID, second); found {
+		t.Error("log after the purge exists, want it gone")
+	}
+}
+
+// TestTrashInstance_PrunedMarkerIsNoEntry: a pruned marker is no delete of
+// the user. A restore or a purge of it as an occurrence entry gives
+// ErrNotDeleted, and the marker stays.
+func TestTrashInstance_PrunedMarkerIsNoEntry(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	if err := svc.q.RecordEventExdatePrune(ctx, storage.RecordEventExdatePruneParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)}); err != nil {
+		t.Fatalf("pruned marker: %v", err)
+	}
+	var markerID int64
+	if err := svc.db.QueryRowContext(ctx, `SELECT id FROM event_exdate_deletes WHERE pruned = 1`).Scan(&markerID); err != nil {
+		t.Fatalf("read the marker: %v", err)
+	}
+	entry := TrashEntry{Kind: TrashKindInstance, ID: markerID, CalendarID: 1, UID: master.UID}
+	if err := svc.RestoreTrash(ctx, entry); !errors.Is(err, ErrNotDeleted) {
+		t.Errorf("RestoreTrash(marker) = %v, want ErrNotDeleted", err)
+	}
+	if err := svc.PurgeTrashEntry(ctx, entry); !errors.Is(err, ErrNotDeleted) {
+		t.Errorf("PurgeTrashEntry(marker) = %v, want ErrNotDeleted", err)
+	}
+	var n int
+	if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_exdate_deletes WHERE id = ?`, markerID).Scan(&n); err != nil || n != 1 {
+		t.Errorf("markers after the refusals = %d, %v; want 1", n, err)
+	}
+}
+
+// TestPurge_TwoOccurrencesOfOneMasterSettleInTurn: one purge takes rows of
+// two occurrences of one master. Each occurrence has a live override beside
+// a log that owns its EXDATE. The settle of the second occurrence reads the
+// master again, so the strip of the first stays.
+func TestPurge_TwoOccurrencesOfOneMasterSettleInTurn(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	x, y := start.Add(24*time.Hour), start.Add(48*time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "two-settles", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	purge := make([]int64, 0, 2)
+	for i, at := range []time.Time{x, y} {
+		l1 := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "L1-"+strconv.Itoa(i)), at)
+		l2 := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "L2-"+strconv.Itoa(i)), at)
+		if err := svc.DeleteInstance(ctx, 1, master.UID, at); err != nil {
+			t.Fatalf("DeleteInstance: %v", err)
+		}
+		// A raw revive keeps the EXDATE beside the live row L2: the state
+		// that the settle of the purge repairs.
+		if err := reviveRow(svc, l2.ID); err != nil {
+			t.Fatalf("revive L2: %v", err)
+		}
+		purge = append(purge, l1.ID)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE id IN (?, ?)`, purge[0], purge[1]); err != nil {
+		t.Fatalf("age the rows: %v", err)
+	}
+	if _, err := svc.PurgeDeletedReport(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("PurgeDeletedReport: %v", err)
+	}
+	for _, at := range []time.Time{x, y} {
+		if n := exdateCount(t, svc, master.ID, at); n != 0 {
+			t.Errorf("EXDATEs of %s after the purge = %d, want 0: a live override sits there", at, n)
+		}
+	}
 }

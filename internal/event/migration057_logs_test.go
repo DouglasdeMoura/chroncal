@@ -137,3 +137,88 @@ func TestMigration057_LaterDeleteUndoKeepsTheLegacyEntry(t *testing.T) {
 	}
 	wantTrashed(t, f.svc, true, f.rowID)
 }
+
+// migratedAt056 opens a database, migrates down to 056, runs seed, and
+// migrates up. It returns the service.
+func migratedAt056(t *testing.T, seed func(exec func(string, ...any))) *Service {
+	t.Helper()
+	ctx := context.Background()
+	conn, q, err := storage.Open(t.TempDir() + "/backfill057.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	provider, err := storage.NewMigrationProvider(conn)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	if _, err := provider.DownTo(ctx, 56); err != nil {
+		t.Fatalf("down to 56: %v", err)
+	}
+	seed(func(query string, args ...any) {
+		t.Helper()
+		if _, err := conn.ExecContext(ctx, query, args...); err != nil {
+			t.Fatalf("seed at 056: %v", err)
+		}
+	})
+	if _, err := provider.UpTo(ctx, 57); err != nil {
+		t.Fatalf("up to 57: %v", err)
+	}
+	return NewService(conn, q)
+}
+
+// TestMigration057_BackfillTakesLegacyRowsAndSkipsLaterDeletes: the backfill
+// of an old log names the legacy override of its occurrence. The view gives
+// that row to the series of the log. It skips a row that a later series
+// delete hid. That row then comes back with the series.
+func TestMigration057_BackfillTakesLegacyRowsAndSkipsLaterDeletes(t *testing.T) {
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	x := start.Add(24 * time.Hour)
+	xs := x.Format(time.RFC3339)
+	const logTime, seriesTime = "2026-05-02T10:00:00Z", "2026-05-03T10:00:00Z"
+	svc := migratedAt056(t, func(exec func(string, ...any)) {
+		exec(`INSERT INTO calendars (id, name) VALUES (2, 'Legacy')`)
+		// Series A: a live master, and a legacy override in calendar 2 that
+		// the old occurrence delete hid.
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_rule, exdates)
+		  VALUES (1, 'series-a', 1, 'A', ?, ?, 'FREQ=DAILY;COUNT=3', ?)`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339), xs)
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
+		  VALUES (2, 'series-a', 2, 'Legacy', ?, ?, ?, ?)`, x.Format(time.RFC3339), x.Add(time.Hour).Format(time.RFC3339), xs, logTime)
+		exec(`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, deleted_at) VALUES (1, 'series-a', ?, ?)`, xs, logTime)
+		// Series B: the old occurrence delete hid no row. A later series
+		// delete hid the master and its override in one statement.
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_rule, exdates, deleted_at)
+		  VALUES (3, 'series-b', 1, 'B', ?, ?, 'FREQ=DAILY;COUNT=3', ?, ?)`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339), xs, seriesTime)
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
+		  VALUES (4, 'series-b', 1, 'Late', ?, ?, ?, ?)`, x.Add(time.Hour).Format(time.RFC3339), x.Add(2*time.Hour).Format(time.RFC3339), xs, seriesTime)
+		exec(`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, deleted_at) VALUES (1, 'series-b', ?, ?)`, xs, logTime)
+	})
+	ctx := context.Background()
+	if ids, found := exdateLogRows(t, svc, "series-a", x); !found || len(ids) != 1 || ids[0] != 2 {
+		t.Errorf("log rows of series A = %v, %v; want the legacy row 2", ids, found)
+	}
+	if ids, found := exdateLogRows(t, svc, "series-b", x); !found || len(ids) != 0 {
+		t.Errorf("log rows of series B = %v, %v; want no row: the series delete hid row 4 later", ids, found)
+	}
+	entries, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	restored := false
+	for _, e := range entries {
+		if e.Kind == TrashKindInstance && e.UID == "series-a" {
+			if err := svc.RestoreTrash(ctx, e); err != nil {
+				t.Fatalf("RestoreTrash(series A): %v", err)
+			}
+			restored = true
+		}
+	}
+	if !restored {
+		t.Fatal("trash holds no occurrence entry of series A")
+	}
+	wantTrashed(t, svc, false, 2)
+	if err := svc.RestoreByID(ctx, 3); err != nil {
+		t.Fatalf("RestoreByID(master B): %v", err)
+	}
+	wantTrashed(t, svc, false, 4)
+}

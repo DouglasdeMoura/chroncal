@@ -31,17 +31,6 @@ CREATE TABLE event_exdate_deletes_new (
 );
 INSERT INTO event_exdate_deletes_new (id, calendar_id, uid, recurrence_id, deleted_at)
 SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes;
--- A log from before this migration records one delete, and that delete
--- recorded the EXDATE. The backfill writes it in the entry form: delete 1
--- names each override in the trash at its occurrence, or no row. The code
--- then has one log format. The old schema has no pruned marker.
-UPDATE event_exdate_deletes_new SET delete_seq = 1, owns_exdate = 1,
-    hidden_ids = COALESCE((
-        SELECT GROUP_CONCAT('1:' || e.id, ',') FROM events AS e
-        WHERE e.calendar_id = event_exdate_deletes_new.calendar_id
-          AND e.uid = event_exdate_deletes_new.uid
-          AND e.recurrence_id = event_exdate_deletes_new.recurrence_id
-          AND e.deleted_at IS NOT NULL), '1:');
 DROP INDEX IF EXISTS idx_event_exdate_deletes_calendar;
 DROP INDEX IF EXISTS idx_event_exdate_deletes_deleted_at;
 DROP TABLE event_exdate_deletes;
@@ -151,6 +140,24 @@ SELECT
 FROM events AS e
 WHERE NOT EXISTS (
     SELECT 1 FROM events AS m WHERE m.uid = e.uid AND m.recurrence_id = '');
+
+-- A log from before this migration records one delete, and that delete
+-- recorded the EXDATE. The backfill writes it in the entry form: delete 1
+-- names the overrides that it hid, or no row. The code then has one log
+-- format. The old schema has no pruned marker. The rows are the trashed rows
+-- of the series of the log at its occurrence. The view adds the legacy
+-- overrides in other calendars by the owner rule. A row counts only when it
+-- went to the trash at or before the time of the log. A later series delete
+-- or truncation hid the other rows. The rule allows one second: the old
+-- delete by ID wrote the log just before it hid the row.
+UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
+    hidden_ids = COALESCE((
+        SELECT GROUP_CONCAT('1:' || s.id, ',') FROM event_series_rows AS s
+        WHERE s.uid = event_exdate_deletes.uid
+          AND s.owner_calendar_id = event_exdate_deletes.calendar_id
+          AND s.recurrence_id = event_exdate_deletes.recurrence_id
+          AND s.deleted_at IS NOT NULL
+          AND s.deleted_at <= strftime('%Y-%m-%dT%H:%M:%SZ', event_exdate_deletes.deleted_at, '+1 second')), '1:');
 
 -- A master that comes back from the trash by any path consumes the
 -- series-delete log of its calendar. The restore of the series reads and
