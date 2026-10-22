@@ -225,7 +225,9 @@ func TestMarkEventRowDirtyFlagsOnlyTheEditedRow(t *testing.T) {
 // marks the calendar of the owner dirty and clears the mark of the row:
 //   - a delete of the master of B: A owns the row;
 //   - a purge of the master of B: A owns the row;
-//   - a move of the master of B to C: C owns the row beside its master.
+//   - a move of the master of B to C: C owns the row beside its master;
+//   - an insert of a master in C: C owns the row beside its master (issue
+//     #862).
 func TestMasterChangeSettlesAnUnownedEdit(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -236,6 +238,8 @@ func TestMasterChangeSettlesAnUnownedEdit(t *testing.T) {
 		{"delete", `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE id = :b`, "a"},
 		{"purge", `DELETE FROM events WHERE id = :b`, "a"},
 		{"move", `UPDATE events SET calendar_id = :c WHERE id = :b`, "c"},
+		{"insert", `INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+			VALUES ('u1', :c, 't', '2026-05-18T09:00:00Z', '2026-05-18T10:00:00Z', '')`, "c"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

@@ -652,6 +652,7 @@ Failed pushes:
 
 - `chroncal sync status` lists each resource whose last push failed on a `push failed uid=...` line below its calendar. The line gives the count of failed attempts and the last error. The `-o json` output lists it under `push_failures`.
 - An edit of an occurrence that no series owns stays local. This occurs when two calendars hold a live master of its UID. `chroncal sync status` lists each such UID on an `edit not pushed uid=...` line, and the `-o json` output lists it under `unowned_edits`. The reason is "the item belongs to no series because two calendars hold its master; use the row ID of one series". Delete or move one of the two masters. The next edit of the occurrence then goes to the other series.
+- `chroncal sync doctor` lists the same two kinds of resources. A failed push shows on a `failed push attempt(s); last error: ...` line, and an unowned edit shows on a `the edit stays local: ...` line. Its `-o json` items have `"state": "push_failure"` (with `push_fail_count`) or `"state": "unowned"`, and a `reason`. A wedged resource shows only as wedged.
 Resources that wait:
 
 - A push can wait for another step. For example, an open move conflict on a third calendar names the source of a move. Sync then keeps the source delete until you resolve that conflict.

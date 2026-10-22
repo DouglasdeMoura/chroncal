@@ -2302,6 +2302,28 @@ func TestUndoTruncation_StaleGuardInTheTransaction(t *testing.T) {
 	truncationLogID(t, svc, master.UID, meta.DeleteToken)
 }
 
+// TestUndoTruncation_StaleGuardAllowsNoDrift: an edit of the master one
+// second after the truncation refuses the undo. The baseline of the guard
+// is the updated_at that the truncation read back, so the guard allows no
+// drift (issue #862).
+func TestUndoTruncation_StaleGuardAllowsNoDrift(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
+	}
+	later := meta.MasterUpdatedBefore.Add(time.Second).UTC().Format(time.RFC3339)
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET updated_at = ? WHERE id = ?`, later, master.ID); err != nil {
+		t.Fatalf("advance the master: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterAdvanced) {
+		t.Fatalf("RestoreUndo = %v, want ErrMasterAdvanced", err)
+	}
+	truncationLogID(t, svc, master.UID, meta.DeleteToken)
+}
+
 // trashedOverrideIDs returns the IDs of the trashed override rows of uid.
 func trashedOverrideIDs(t *testing.T, svc *Service, uid string) []int64 {
 	t.Helper()
@@ -2975,6 +2997,38 @@ func TestRestoreByID_UnownedRestoreMarksNoOtherRow(t *testing.T) {
 	}
 	if my != 0 {
 		t.Errorf("row y flagged by the restore of x")
+	}
+}
+
+// TestDelete_UnownedDeleteMarksNoOtherRow: calendars 1 and B hold a live
+// master of one UID, and C holds two legacy overrides x and y. No series
+// owns them. The delete of x is no edit of y, so it does not mark y
+// (edit_unowned, issue #862).
+func TestDelete_UnownedDeleteMarksNoOtherRow(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	calB, calC := insertCalendar(t, svc, "B"), insertCalendar(t, svc, "C")
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	for _, c := range []int64{1, calB} {
+		if _, err := svc.UpsertByUID(ctx, UpsertParams{UID: "zz6", CalendarID: c, Title: "M", StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	x := legacyAt(t, svc, "zz6", calC, start.Add(24*time.Hour))
+	y := legacyAt(t, svc, "zz6", calC, start.Add(48*time.Hour))
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET edit_unowned = 0`); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(ctx, x.ID); err != nil {
+		t.Fatalf("Delete(x): %v", err)
+	}
+	wantTrashed(t, svc, true, x.ID)
+	var my int64
+	if err := svc.db.QueryRowContext(ctx, `SELECT edit_unowned FROM events WHERE id = ?`, y.ID).Scan(&my); err != nil {
+		t.Fatalf("read the mark of y: %v", err)
+	}
+	if my != 0 {
+		t.Errorf("row y flagged by the delete of x")
 	}
 }
 

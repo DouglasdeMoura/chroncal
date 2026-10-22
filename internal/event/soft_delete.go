@@ -2472,8 +2472,10 @@ func (s *Service) deleteRow(ctx context.Context, id int64, out *deletedRow) erro
 		}
 		// Mark the master dirty — its EXDATE was modified — inside the same
 		// transaction so a failed mark rolls the EXDATE change back rather than
-		// committing a change that is never pushed (issue #107).
-		if err := storage.MarkResourceDirty(ctx, tx, evt.CalendarID, evt.UID, "event"); err != nil {
+		// committing a change that is never pushed (issue #107). The mark
+		// names the deleted row. When no series owns the row, the mark then
+		// flags no other live override of the UID (issue #862).
+		if err := storage.MarkEventRowDirty(ctx, tx, evt.CalendarID, evt.UID, evt.ID); err != nil {
 			return fmt.Errorf("mark resource dirty: %w", err)
 		}
 		if out != nil && anyErr == nil {
