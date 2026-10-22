@@ -18,8 +18,13 @@ SELECT * FROM event_series_deletes WHERE calendar_id = ? AND uid = ?;
 -- stale row in the target calendar before the move.
 DELETE FROM event_series_deletes WHERE calendar_id = ? AND uid = ?;
 
--- name: PurgeOldEventSeriesDeletes :execrows
-DELETE FROM event_series_deletes WHERE deleted_at < ?;
+-- name: ListOldEventSeriesDeletes :many
+-- The log rows before the cutoff. The age purge drops them by ID, except the
+-- logs of the masters that the purge of the same run keeps.
+SELECT id, calendar_id, uid FROM event_series_deletes WHERE deleted_at < ?;
+
+-- name: DeleteEventSeriesDeletesByIDs :execrows
+DELETE FROM event_series_deletes WHERE id IN (sqlc.slice(ids));
 
 -- name: MoveEventSeriesDeletesUIDToCalendar :exec
 -- Move the log row of one UID from one calendar to another. A local

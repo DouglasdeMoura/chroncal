@@ -192,9 +192,12 @@ type eventUpdatedMsg struct {
 
 type eventDeletedMsg struct {
 	calendarID int64
-	meta       event.UndoMeta
-	title      string
-	err        error
+	// extraCalendarIDs lists the other calendars that the delete wrote:
+	// a series delete that hid legacy overrides elsewhere.
+	extraCalendarIDs []int64
+	meta             event.UndoMeta
+	title            string
+	err              error
 }
 
 // eventRestoredMsg is emitted after an Undo attempt. On success err is nil.
@@ -214,7 +217,9 @@ type eventRestoredMsg struct {
 // means a restore has since cancelled the push.
 type deferredPushMsg struct {
 	calendarID int64
-	token      int
+	// extra lists the other calendars of the same delete.
+	extra []int64
+	token int
 }
 
 // SyncAllRequestedMsg asks the app to sync every connected calendar.

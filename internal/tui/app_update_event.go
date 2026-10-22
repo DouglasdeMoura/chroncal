@@ -487,7 +487,11 @@ func (m Model) handleEventDeleted(msg eventDeletedMsg) (tea.Model, tea.Cmd) {
 	// Every soft-delete is reversible; push the undo entry unconditionally.
 	// UID being empty means no row was actually deleted (defensive).
 	if msg.meta.UID == "" {
-		return m, tea.Batch(m.loadEvents(), m.runOpportunisticPush(msg.calendarID))
+		cmds := []tea.Cmd{m.loadEvents(), m.runOpportunisticPush(msg.calendarID)}
+		for _, id := range msg.extraCalendarIDs {
+			cmds = append(cmds, m.runOpportunisticPush(id))
+		}
+		return m, tea.Batch(cmds...)
 	}
 	m.undoStack.Push(UndoEntry{
 		Meta:      msg.meta,
@@ -497,9 +501,9 @@ func (m Model) handleEventDeleted(msg eventDeletedMsg) (tea.Model, tea.Cmd) {
 	toastCmd := m.toast.Deleted(msg.title, synced)
 	m.pushDeferralToken++
 	token := m.pushDeferralToken
-	calID := msg.calendarID
+	calID, extra := msg.calendarID, msg.extraCalendarIDs
 	deferCmd := tea.Tick(ToastAutoDismissDelay, func(time.Time) tea.Msg {
-		return deferredPushMsg{calendarID: calID, token: token}
+		return deferredPushMsg{calendarID: calID, extra: extra, token: token}
 	})
 	return m, tea.Batch(m.loadEvents(), toastCmd, deferCmd)
 }
@@ -510,10 +514,11 @@ func (m Model) handleDeferredPush(msg deferredPushMsg) (tea.Model, tea.Cmd) {
 	if msg.token != m.pushDeferralToken {
 		return m, nil
 	}
-	if push := m.runOpportunisticPush(msg.calendarID); push != nil {
-		return m, push
+	cmds := []tea.Cmd{m.runOpportunisticPush(msg.calendarID)}
+	for _, id := range msg.extra {
+		cmds = append(cmds, m.runOpportunisticPush(id))
 	}
-	return m, nil
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {

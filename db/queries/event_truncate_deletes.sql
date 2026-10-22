@@ -25,8 +25,13 @@ SELECT * FROM event_truncate_deletes WHERE id = ?;
 -- name: DeleteEventTruncateDelete :exec
 DELETE FROM event_truncate_deletes WHERE id = ?;
 
--- name: PurgeOldEventTruncateDeletes :execrows
-DELETE FROM event_truncate_deletes WHERE deleted_at < ?;
+-- name: ListOldEventTruncateDeletes :many
+-- The log rows before the cutoff. The age purge drops them by ID, except the
+-- logs of the masters that the purge of the same run keeps.
+SELECT id, calendar_id, uid FROM event_truncate_deletes WHERE deleted_at < ?;
+
+-- name: DeleteEventTruncateDeletesByIDs :execrows
+DELETE FROM event_truncate_deletes WHERE id IN (sqlc.slice(ids));
 
 -- name: MoveEventTruncateDeletesUIDToCalendar :exec
 -- Move every row of one UID (live or soft-deleted) from one calendar to

@@ -129,17 +129,6 @@ UPDATE events SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
 
--- name: PurgeSoftDeletedEvents :execrows
--- Hard-delete the rows in the trash before the cutoff. A master whose series
--- still owns a live override stays: its purge would hand the live rows to
--- another series (see ListPurgeBlockedMastersBefore).
-DELETE FROM events
-WHERE events.deleted_at IS NOT NULL AND events.deleted_at < sqlc.arg(cutoff)
-  AND NOT (events.recurrence_id = '' AND EXISTS (
-    SELECT 1 FROM event_series_rows AS l
-    WHERE l.uid = events.uid AND l.owner_calendar_id = events.calendar_id
-      AND l.recurrence_id != '' AND l.deleted_at IS NULL));
-
 -- name: PurgeEventByID :execrows
 DELETE FROM events WHERE id = ? AND deleted_at IS NOT NULL;
 
@@ -409,73 +398,68 @@ SELECT CAST(EXISTS (
     SELECT 1 FROM event_series_rows AS s WHERE s.id = sqlc.arg(id) AND s.owner_calendar_id = sqlc.arg(calendar_id)
 ) AS BOOLEAN) AS owned;
 
--- name: CountLiveSeriesOverridesOfCalendar :one
--- Count the live override rows that the series of one UID in one calendar
--- owns (see the view event_series_rows). The purge of a master refuses
--- while it is not 0.
-SELECT COUNT(*) FROM event_series_rows AS s
-WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
-  AND s.recurrence_id != '' AND s.deleted_at IS NULL;
-
--- name: ListTrashedSeriesRowIDs :many
--- The IDs of the override rows in the trash that the series of one UID in
--- one calendar owns, in that calendar and in other calendars. The purge of
--- the master reads them before the delete of the master.
-SELECT s.id FROM event_series_rows AS s
-WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
-  AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL;
-
 -- name: PurgeEventsByIDs :execrows
 -- Hard-delete a set of rows in the trash by ID. A live row stays.
 DELETE FROM events WHERE id IN (sqlc.slice(ids)) AND deleted_at IS NOT NULL;
 
--- name: ListPurgeBlockedMastersBefore :many
--- The master rows in the trash before the cutoff whose series still owns a
--- live override. The purge by age skips them and reports them.
-SELECT m.id, m.calendar_id, m.uid FROM events AS m
-WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
-  AND EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL);
+-- name: ListTrashedMastersForPurge :many
+-- The master rows in the trash before the cutoff, each with blocked: its
+-- series still owns a live override (see the view event_series_rows). The
+-- purge by age reads them once and works by ID after it.
+SELECT m.id, m.calendar_id, m.uid, CAST(EXISTS (
+    SELECT 1 FROM event_series_rows AS l
+    WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id
+      AND l.recurrence_id != '' AND l.deleted_at IS NULL
+) AS BOOLEAN) AS blocked
+FROM events AS m
+WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff);
 
--- name: ListTrashedSeriesRowIDsOfMastersBefore :many
--- The IDs of the override rows in the trash that the series of each
--- purgeable master owns (a master in the trash before the cutoff with no
--- live override). The purge by age reads them before the delete of the
--- masters.
+-- name: ListLiveSeriesOverrideIDs :many
+-- The IDs of the live override rows that the series of one UID in one
+-- calendar owns. The purge of a master refuses while one exists.
 SELECT s.id FROM event_series_rows AS s
-JOIN events AS m ON m.uid = s.uid AND m.calendar_id = s.owner_calendar_id
-WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
-      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL)
-  AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL;
+WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
+  AND s.recurrence_id != '' AND s.deleted_at IS NULL
+ORDER BY s.id;
 
--- name: ListSeriesLogsOfMastersBefore :many
--- The series-delete logs of the purgeable masters. Their row IDs name the
--- legacy overrides that the series delete hid, also when another series
--- owns them in the view now.
-SELECT d.hidden_ids FROM event_series_deletes AS d
-JOIN events AS m ON m.calendar_id = d.calendar_id AND m.uid = d.uid
-WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
-      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL);
+-- name: ListTrashedRowsOwnedByMasters :many
+-- The override rows in the trash that the series of each master owns, in
+-- its calendar and in other calendars, with the ID of the master.
+SELECT s.id, m.id AS master_id FROM event_series_rows AS s
+JOIN events AS m ON m.uid = s.uid AND m.calendar_id = s.owner_calendar_id AND m.recurrence_id = ''
+WHERE m.id IN (sqlc.slice(master_ids)) AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL;
 
--- name: PurgeExdateLogsOfMastersBefore :exec
--- Drop the occurrence logs of the purgeable masters.
+-- name: ListSeriesLogsOfMasters :many
+-- The series-delete logs of the calendars of the masters.
+SELECT d.hidden_ids, d.deleted_at FROM event_series_deletes AS d
+JOIN events AS m ON m.calendar_id = d.calendar_id AND m.uid = d.uid AND m.recurrence_id = ''
+WHERE m.id IN (sqlc.slice(master_ids));
+
+-- name: ListTrashedEventsByIDs :many
+-- The ID and the deleted_at of the rows of ids that are in the trash.
+SELECT id, deleted_at FROM events WHERE id IN (sqlc.slice(ids)) AND deleted_at IS NOT NULL;
+
+-- name: ListTrashedEventIDsBefore :many
+-- The IDs of the rows in the trash before the cutoff.
+SELECT id FROM events WHERE deleted_at IS NOT NULL AND deleted_at < sqlc.arg(cutoff);
+
+-- name: DeleteExdateLogsOfMasters :exec
+-- Drop the occurrence logs of the series of the masters.
 DELETE FROM event_exdate_deletes WHERE EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.calendar_id = event_exdate_deletes.calendar_id AND m.uid = event_exdate_deletes.uid
-      AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
-      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL));
+    WHERE m.id IN (sqlc.slice(master_ids))
+      AND m.calendar_id = event_exdate_deletes.calendar_id AND m.uid = event_exdate_deletes.uid);
 
--- name: PurgeTruncateLogsOfMastersBefore :exec
--- Drop the truncation logs of the purgeable masters.
+-- name: DeleteTruncateLogsOfMasters :exec
+-- Drop the truncation logs of the series of the masters.
 DELETE FROM event_truncate_deletes WHERE EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.calendar_id = event_truncate_deletes.calendar_id AND m.uid = event_truncate_deletes.uid
-      AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
-      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL));
+    WHERE m.id IN (sqlc.slice(master_ids))
+      AND m.calendar_id = event_truncate_deletes.calendar_id AND m.uid = event_truncate_deletes.uid);
 
--- name: PurgeSeriesLogsOfMastersBefore :exec
--- Drop the series-delete logs of the purgeable masters.
+-- name: DeleteSeriesLogsOfMasters :exec
+-- Drop the series-delete logs of the series of the masters.
 DELETE FROM event_series_deletes WHERE EXISTS (
     SELECT 1 FROM events AS m
-    WHERE m.calendar_id = event_series_deletes.calendar_id AND m.uid = event_series_deletes.uid
-      AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
-      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL));
+    WHERE m.id IN (sqlc.slice(master_ids))
+      AND m.calendar_id = event_series_deletes.calendar_id AND m.uid = event_series_deletes.uid);

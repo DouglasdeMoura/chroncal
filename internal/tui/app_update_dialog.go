@@ -172,14 +172,21 @@ func runEventDeleteScope(ctx context.Context, a *app.App, ev event.Event, choice
 	default:
 		return eventDeletedMsg{calendarID: ev.CalendarID}
 	}
-	return eventDeletedMsg{calendarID: meta.PushCalendar(ev.CalendarID), meta: meta, title: ev.Title, err: err}
+	return deletedMsgOf(ev, meta, err)
+}
+
+// deletedMsgOf builds the message of a delete of ev: the first calendar that
+// the delete wrote, and the others (event.UndoMeta.PushCalendarIDs).
+func deletedMsgOf(ev event.Event, meta event.UndoMeta, err error) eventDeletedMsg {
+	calendars := meta.PushCalendarIDs(ev.CalendarID)
+	return eventDeletedMsg{calendarID: calendars[0], extraCalendarIDs: calendars[1:], meta: meta, title: ev.Title, err: err}
 }
 
 // runEventDelete deletes the row of ev. The message names the calendar that
 // the delete wrote (event.UndoMeta.PushCalendar), as the CLI does.
 func runEventDelete(ctx context.Context, a *app.App, ev event.Event) eventDeletedMsg {
 	meta, err := a.Events.DeleteWithUndo(ctx, ev.ID)
-	return eventDeletedMsg{calendarID: meta.PushCalendar(ev.CalendarID), meta: meta, title: ev.Title, err: err}
+	return deletedMsgOf(ev, meta, err)
 }
 
 // validateEventDeleteScope checks an instance-scoped recurring delete against

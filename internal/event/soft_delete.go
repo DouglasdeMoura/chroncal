@@ -70,6 +70,10 @@ type UndoMeta struct {
 	Label     string
 	DeletedAt time.Time
 
+	// PushCalendars lists every calendar that the delete wrote, when the
+	// delete wrote more than one: a series delete that hid legacy overrides
+	// in other calendars. Empty means CalendarID only.
+	PushCalendars []int64
 	// CalendarID is the calendar of the series, or of the deleted row.
 	// Two calendars can hold the same UID (issue #842), so Restore finds
 	// the master in this calendar. 0 names no calendar: one master row of
@@ -207,13 +211,14 @@ func (s *Service) DeleteSeriesWithUndo(ctx context.Context, calendarID int64, ui
 		return UndoMeta{}, err
 	}
 	return UndoMeta{
-		Kind:       UndoKindSeries,
-		UID:        uid,
-		Label:      d.Label,
-		DeletedAt:  time.Now().UTC(),
-		CalendarID: d.CalendarID,
-		MasterID:   d.Master.ID,
-		RowIDs:     d.Hidden,
+		Kind:          UndoKindSeries,
+		UID:           uid,
+		Label:         d.Label,
+		DeletedAt:     time.Now().UTC(),
+		CalendarID:    d.CalendarID,
+		MasterID:      d.Master.ID,
+		RowIDs:        d.Hidden,
+		PushCalendars: d.Tombstoned,
 	}, nil
 }
 
@@ -227,6 +232,15 @@ func (m UndoMeta) PushCalendar(fallback int64) int64 {
 		return m.CalendarID
 	}
 	return fallback
+}
+
+// PushCalendarIDs returns every calendar whose push sends the delete that
+// meta records: PushCalendars, or else PushCalendar(fallback).
+func (m UndoMeta) PushCalendarIDs(fallback int64) []int64 {
+	if len(m.PushCalendars) > 0 {
+		return m.PushCalendars
+	}
+	return []int64{m.PushCalendar(fallback)}
 }
 
 // RestoreUndo reverses a soft-delete operation recorded in UndoMeta. It
@@ -715,17 +729,13 @@ type PurgeReport struct {
 }
 
 // PurgeDeletedReport is PurgeDeleted with the masters that it skipped. It
-// applies the rule of PurgeByID to the masters before the cutoff, in a fixed
-// set of statements:
+// reads the masters in the trash before the cutoff once, and then works by
+// ID:
 //  1. A master whose series still owns a live override stays, and the
-//     report names it.
-//  2. Each other master takes along every row in the trash that its series
-//     owns, in its calendar and in other calendars, whatever its deleted_at.
-//     The rows come from the view and from the series-delete log of the
-//     master, before the delete.
-//  3. The occurrence, truncation, and series-delete logs of those masters
-//     go.
-//  4. The rows in the trash before the cutoff go.
+//     report names it. The rows and the logs of its series stay too.
+//  2. Each other master takes along the rows of its series (see
+//     seriesPurgeSetTx) and its logs, whatever their deleted_at.
+//  3. The other rows in the trash before the cutoff go.
 func (s *Service) PurgeDeletedReport(ctx context.Context, olderThan time.Time) (PurgeReport, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -734,58 +744,161 @@ func (s *Service) PurgeDeletedReport(ctx context.Context, olderThan time.Time) (
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
-	blocked, err := qtx.ListPurgeBlockedMastersBefore(ctx, &cutoff)
+	masters, err := qtx.ListTrashedMastersForPurge(ctx, &cutoff)
 	if err != nil {
-		return PurgeReport{}, fmt.Errorf("list blocked masters: %w", err)
+		return PurgeReport{}, fmt.Errorf("list trashed masters: %w", err)
 	}
 	var report PurgeReport
-	for _, m := range blocked {
-		report.Skipped = append(report.Skipped, SkippedMaster{ID: m.ID, CalendarID: m.CalendarID, UID: m.Uid})
-	}
-	ids, err := qtx.ListTrashedSeriesRowIDsOfMastersBefore(ctx, &cutoff)
-	if err != nil {
-		return PurgeReport{}, fmt.Errorf("list owned rows: %w", err)
-	}
-	logs, err := qtx.ListSeriesLogsOfMastersBefore(ctx, &cutoff)
-	if err != nil {
-		return PurgeReport{}, fmt.Errorf("list series logs: %w", err)
-	}
-	for _, l := range logs {
-		if ids, err = unionCommaList(ids, l, parseRowID); err != nil {
-			return PurgeReport{}, err
+	var purge, blocked []int64
+	for _, m := range masters {
+		if m.Blocked {
+			blocked = append(blocked, m.ID)
+			report.Skipped = append(report.Skipped, SkippedMaster{ID: m.ID, CalendarID: m.CalendarID, UID: m.Uid})
+			continue
 		}
+		purge = append(purge, m.ID)
 	}
-	var total int64
-	for _, chunk := range chunkIDs(ids, 500) {
-		n, err := qtx.PurgeEventsByIDs(ctx, chunk)
+	ids, err := seriesPurgeSetTx(ctx, qtx, purge)
+	if err != nil {
+		return PurgeReport{}, err
+	}
+	// The rows of a kept series stay, whatever their age.
+	keep := make(map[int64]bool, len(blocked))
+	for _, id := range blocked {
+		keep[id] = true
+	}
+	if len(blocked) > 0 {
+		kept, err := qtx.ListTrashedRowsOwnedByMasters(ctx, blocked)
 		if err != nil {
-			return PurgeReport{}, fmt.Errorf("purge owned rows: %w", err)
+			return PurgeReport{}, fmt.Errorf("list kept rows: %w", err)
 		}
-		total += n
-	}
-	for _, purge := range []func(context.Context, *string) error{
-		qtx.PurgeExdateLogsOfMastersBefore,
-		qtx.PurgeTruncateLogsOfMastersBefore,
-		qtx.PurgeSeriesLogsOfMastersBefore,
-	} {
-		if err := purge(ctx, &cutoff); err != nil {
-			return PurgeReport{}, fmt.Errorf("purge logs: %w", err)
+		for _, r := range kept {
+			keep[r.ID] = true
 		}
 	}
-	n, err := qtx.PurgeSoftDeletedEvents(ctx, &cutoff)
+	aged, err := qtx.ListTrashedEventIDsBefore(ctx, &cutoff)
+	if err != nil {
+		return PurgeReport{}, fmt.Errorf("list aged rows: %w", err)
+	}
+	for _, id := range aged {
+		if !keep[id] {
+			ids = append(ids, id)
+		}
+	}
+	if err := dropMasterLogsTx(ctx, qtx, purge); err != nil {
+		return PurgeReport{}, err
+	}
+	n, err := purgeIDsTx(ctx, qtx, append(ids, purge...))
 	if err != nil {
 		return PurgeReport{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return PurgeReport{}, err
 	}
-	report.Purged = int(total + n)
+	report.Purged = int(n)
 	return report, nil
 }
 
-// chunkIDs splits ids into slices of at most size IDs, so one IN list stays
-// under the parameter limit of SQLite.
-func chunkIDs(ids []int64, size int) [][]int64 {
+// seriesPurgeSetTx lists the override rows in the trash that the purge of
+// the masters of masterIDs takes along:
+//   - the rows that each series owns in the view, in its calendar and in
+//     other calendars;
+//   - the rows that the series-delete log of each master names, when the
+//     row is in the trash from that delete. Another series can own such a
+//     row in the view now. The delete writes the log and hides its rows in
+//     one transaction, so the deleted_at of the row and of the log differ
+//     by one second at most. A row with another deleted_at had a later
+//     delete of its own, and it stays.
+//
+// PurgeByID and PurgeDeletedReport share it. It reads the view once.
+func seriesPurgeSetTx(ctx context.Context, qtx *storage.Queries, masterIDs []int64) ([]int64, error) {
+	if len(masterIDs) == 0 {
+		return nil, nil
+	}
+	owned, err := qtx.ListTrashedRowsOwnedByMasters(ctx, masterIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list owned rows: %w", err)
+	}
+	ids := make([]int64, 0, len(owned))
+	seen := make(map[int64]bool, len(owned))
+	for _, r := range owned {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			ids = append(ids, r.ID)
+		}
+	}
+	logs, err := qtx.ListSeriesLogsOfMasters(ctx, masterIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list series logs: %w", err)
+	}
+	logTime := make(map[int64]time.Time)
+	var named []int64
+	for _, l := range logs {
+		rows, err := parseRowIDs(l.HiddenIds)
+		if err != nil {
+			return nil, err
+		}
+		at := parseStorageTime(l.DeletedAt)
+		for _, id := range rows {
+			if !seen[id] {
+				logTime[id] = at
+				named = append(named, id)
+			}
+		}
+	}
+	for _, chunk := range chunkIDs(named) {
+		trashed, err := qtx.ListTrashedEventsByIDs(ctx, chunk)
+		if err != nil {
+			return nil, fmt.Errorf("list logged rows: %w", err)
+		}
+		for _, r := range trashed {
+			d := parseStorageTime(storage.NullableToString(r.DeletedAt)).Sub(logTime[r.ID])
+			if d <= time.Second && d >= -time.Second && !seen[r.ID] {
+				seen[r.ID] = true
+				ids = append(ids, r.ID)
+			}
+		}
+	}
+	return ids, nil
+}
+
+// dropMasterLogsTx drops the occurrence, truncation, and series-delete logs
+// of the series of the masters of masterIDs.
+func dropMasterLogsTx(ctx context.Context, qtx *storage.Queries, masterIDs []int64) error {
+	if len(masterIDs) == 0 {
+		return nil
+	}
+	for _, drop := range []func(context.Context, []int64) error{
+		qtx.DeleteExdateLogsOfMasters, qtx.DeleteTruncateLogsOfMasters, qtx.DeleteSeriesLogsOfMasters,
+	} {
+		if err := drop(ctx, masterIDs); err != nil {
+			return fmt.Errorf("drop master logs: %w", err)
+		}
+	}
+	return nil
+}
+
+// purgeIDsTx hard-deletes the rows in the trash of ids, in chunks under the
+// parameter limit of SQLite. It returns the count of purged rows.
+func purgeIDsTx(ctx context.Context, qtx *storage.Queries, ids []int64) (int64, error) {
+	var total int64
+	for _, chunk := range chunkIDs(ids) {
+		n, err := qtx.PurgeEventsByIDs(ctx, chunk)
+		if err != nil {
+			return 0, fmt.Errorf("purge rows: %w", err)
+		}
+		total += n
+	}
+	return total, nil
+}
+
+// idChunk is the size of one IN list of row IDs, under the parameter limit
+// of SQLite.
+const idChunk = 500
+
+// chunkIDs splits ids into slices of at most idChunk IDs.
+func chunkIDs(ids []int64) [][]int64 {
+	size := idChunk
 	var out [][]int64
 	for len(ids) > size {
 		out = append(out, ids[:size])
@@ -799,54 +912,43 @@ func chunkIDs(ids []int64, size int) [][]int64 {
 
 // ErrSeriesHasLiveOverrides reports the purge of a master whose series
 // still owns a live override. After the purge, the view would hand the live
-// rows to another series with the same UID.
+// rows to another series with the same UID. A *SeriesHasLiveOverridesError
+// names the rows.
 var ErrSeriesHasLiveOverrides = errors.New("event: the series still has live overrides; delete them first")
 
-// purgeMasterRowsTx removes what the purge of the master of uid in
-// calendarID takes along, before the delete of the master. A series that
-// still owns a live override refuses with ErrSeriesHasLiveOverrides. Else
-// every row in the trash that the series owns goes: the rows of the view,
-// and the rows that its series-delete log names, which another series can
-// own in the view now. Its occurrence, truncation, and series-delete logs go
-// too. With the master gone, no restore can use them. It returns the count
-// of purged rows.
-func purgeMasterRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (int64, error) {
-	live, err := qtx.CountLiveSeriesOverridesOfCalendar(ctx, storage.CountLiveSeriesOverridesOfCalendarParams{Uid: uid, CalendarID: calendarID})
+// SeriesHasLiveOverridesError is ErrSeriesHasLiveOverrides with the IDs of
+// the live override rows.
+type SeriesHasLiveOverridesError struct {
+	IDs []int64
+}
+
+func (e *SeriesHasLiveOverridesError) Error() string {
+	return fmt.Sprintf("event: the series still has live overrides (rows %s); delete them first", strings.ReplaceAll(formatRowIDs(e.IDs), ",", ", "))
+}
+
+func (e *SeriesHasLiveOverridesError) Unwrap() error { return ErrSeriesHasLiveOverrides }
+
+// purgeMasterRowsTx removes what the purge of master takes along, before
+// the delete of the master row. A series that still owns a live override
+// refuses with a *SeriesHasLiveOverridesError. Else the rows of
+// seriesPurgeSetTx and the logs of the series go, on the shared path of
+// PurgeDeletedReport. It returns the count of purged rows.
+func purgeMasterRowsTx(ctx context.Context, qtx *storage.Queries, master storage.Event) (int64, error) {
+	live, err := qtx.ListLiveSeriesOverrideIDs(ctx, storage.ListLiveSeriesOverrideIDsParams{Uid: master.Uid, CalendarID: master.CalendarID})
 	if err != nil {
-		return 0, fmt.Errorf("count live overrides: %w", err)
+		return 0, fmt.Errorf("list live overrides: %w", err)
 	}
-	if live > 0 {
-		return 0, ErrSeriesHasLiveOverrides
+	if len(live) > 0 {
+		return 0, &SeriesHasLiveOverridesError{IDs: live}
 	}
-	ids, err := qtx.ListTrashedSeriesRowIDs(ctx, storage.ListTrashedSeriesRowIDsParams{Uid: uid, CalendarID: calendarID})
+	ids, err := seriesPurgeSetTx(ctx, qtx, []int64{master.ID})
 	if err != nil {
-		return 0, fmt.Errorf("list owned rows: %w", err)
-	}
-	log, err := qtx.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
-	logged, err := storage.Found(err)
-	if err != nil {
-		return 0, fmt.Errorf("get series delete log: %w", err)
-	}
-	if logged {
-		if ids, err = unionCommaList(ids, log.HiddenIds, parseRowID); err != nil {
-			return 0, err
-		}
-	}
-	if err := deleteOccurrenceLogRowsTx(ctx, qtx, calendarID, uid); err != nil {
 		return 0, err
 	}
-	if err := qtx.DeleteEventSeriesDeletesByCalendarUID(ctx, storage.DeleteEventSeriesDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
-		return 0, fmt.Errorf("delete series delete log: %w", err)
+	if err := dropMasterLogsTx(ctx, qtx, []int64{master.ID}); err != nil {
+		return 0, err
 	}
-	var total int64
-	for _, chunk := range chunkIDs(ids, 500) {
-		n, err := qtx.PurgeEventsByIDs(ctx, chunk)
-		if err != nil {
-			return 0, fmt.Errorf("purge owned rows: %w", err)
-		}
-		total += n
-	}
-	return total, nil
+	return purgeIDsTx(ctx, qtx, ids)
 }
 
 // PurgeByID hard-deletes a single soft-deleted row. Returns ErrNotDeleted if
@@ -872,7 +974,7 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 	// The rows of a master go before the master: the view names them only
 	// while the master row exists.
 	if r.RecurrenceID == "" {
-		if _, err := purgeMasterRowsTx(ctx, qtx, r.CalendarID, r.Uid); err != nil {
+		if _, err := purgeMasterRowsTx(ctx, qtx, r); err != nil {
 			return err
 		}
 	}
@@ -2179,6 +2281,9 @@ type seriesDeletion struct {
 	// Hidden lists the orphan rows the delete hid, by ID. Empty for a
 	// delete with a master: the series-delete log holds its rows.
 	Hidden []int64
+	// Tombstoned lists every calendar that got a tombstone, the calendar
+	// of the delete first.
+	Tombstoned []int64
 }
 
 // deleteSeries is DeleteSeries. It returns the record of the delete.
@@ -2239,12 +2344,14 @@ func (s *Service) deleteSeries(ctx context.Context, calendarID int64, uid string
 	}
 	hidden := make([]int64, 0, len(live))
 	tombstoned := map[int64]bool{t.master.CalendarID: true}
+	calendars := []int64{t.master.CalendarID}
 	for _, o := range live {
 		hidden = append(hidden, o.ID)
 		// A legacy override lives in another calendar. Its server object
 		// there needs a delete too, or the next pull brings it back.
 		if !tombstoned[o.CalendarID] {
 			tombstoned[o.CalendarID] = true
+			calendars = append(calendars, o.CalendarID)
 			if _, err := storage.CreateTombstoneIfSynced(ctx, tx, o.CalendarID, uid); err != nil {
 				return seriesDeletion{}, fmt.Errorf("create tombstone: %w", err)
 			}
@@ -2261,7 +2368,7 @@ func (s *Service) deleteSeries(ctx context.Context, calendarID int64, uid string
 	if err := tx.Commit(); err != nil {
 		return seriesDeletion{}, err
 	}
-	return seriesDeletion{Master: t.master, Label: t.label(), CalendarID: t.master.CalendarID}, nil
+	return seriesDeletion{Master: t.master, Label: t.label(), CalendarID: t.master.CalendarID, Tombstoned: calendars}, nil
 }
 
 // seriesDeleteTarget is what a series delete of a UID in a calendar takes.
@@ -2339,6 +2446,16 @@ func resolveSeriesDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID
 		default:
 			return seriesDeleteTarget{}, ErrAmbiguousUID
 		}
+		// The live rows can belong to a series with its master in the
+		// trash. They are no orphans of their calendar then: the series
+		// comes back first.
+		owner, err := findSeriesMasterIncludingDeletedTx(ctx, qtx, calendarID, uid)
+		if err == nil && owner.DeletedAt != nil {
+			return seriesDeleteTarget{}, ErrSeriesInTrash
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrAmbiguousUID) {
+			return seriesDeleteTarget{}, wrapMasterLookup(err)
+		}
 	}
 	// The access guard covers the calendars of the series only, after the
 	// resolve of the target calendar. A read-only copy of the UID in
@@ -2372,13 +2489,15 @@ func resolveSeriesDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID
 }
 
 // SeriesDeleteTarget reports what DeleteSeries of uid in calendarID would
-// delete, with no write. It returns the label of the delete, or the exact
-// error that DeleteSeries would return. The CLI reads it before the
-// confirm prompt.
-func (s *Service) SeriesDeleteTarget(ctx context.Context, calendarID int64, uid string) (string, error) {
+// delete, with no write. It returns the label of the delete and the
+// calendar of the series, or the exact error that DeleteSeries would
+// return. The CLI reads it before the confirm prompt, and passes the
+// calendar to the delete: with the calendar named, the delete never picks
+// another series.
+func (s *Service) SeriesDeleteTarget(ctx context.Context, calendarID int64, uid string) (label string, seriesCalendarID int64, err error) {
 	t, err := resolveSeriesDeleteTx(ctx, s.q, calendarID, uid)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return t.label(), nil
+	return t.label(), t.calendarID, nil
 }

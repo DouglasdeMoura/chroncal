@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
@@ -57,7 +58,7 @@ type resource struct {
 	// push sends it. A legacy event override writes the calendar of its
 	// master.
 	del       func(ctx context.Context, a *app.App, target row) (int64, error)
-	delSeries func(ctx context.Context, a *app.App, target row) (int64, error)
+	delSeries func(ctx context.Context, a *app.App, target row) ([]int64, error)
 
 	// restoreByID clears the deletion marker on one row. restoreByUID
 	// reverses the delete of the UID by the rule of the resource service.
@@ -89,16 +90,18 @@ type verbHelp struct {
 // reportDeleted writes one delete result. Machine output prints the JSON
 // payload. Text output prints the line. Both paths then push the changed
 // calendar.
-func reportDeleted(cmd *cobra.Command, a *app.App, w io.Writer, calendarID int64, payload map[string]any, line string) error {
+func reportDeleted(cmd *cobra.Command, a *app.App, w io.Writer, calendarIDs []int64, payload map[string]any, line string) error {
 	if outputFmt != "text" {
 		if err := printOutput(w, payload); err != nil {
 			return err
 		}
-		opportunisticPush(a, calendarID, cmd)
-		return nil
+	} else {
+		fmt.Fprint(w, line)
 	}
-	fmt.Fprint(w, line)
-	opportunisticPush(a, calendarID, cmd)
+	// A series delete can write more than one calendar: each one pushes.
+	for _, id := range calendarIDs {
+		opportunisticPush(a, id, cmd)
+	}
 	return nil
 }
 
@@ -178,11 +181,11 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 
 	w := cmd.OutOrStdout()
 	if opts.Series {
-		pushCalendarID, err := r.delSeries(ctx, a, target)
+		pushCalendarIDs, err := r.delSeries(ctx, a, target)
 		if err != nil {
 			return fmt.Errorf("delete series: %w", notFoundErrFor(err, r.name, target.UID, r.resolveIn != nil))
 		}
-		return reportDeleted(cmd, a, w, pushCalendarID,
+		return reportDeleted(cmd, a, w, pushCalendarIDs,
 			map[string]any{"deleted": true, "uid": target.UID, "series": true},
 			fmt.Sprintf("Deleted %s series %q.\n", r.name, safeText(target.UID)))
 	}
@@ -191,7 +194,7 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 	if err != nil {
 		return fmt.Errorf("delete %s: %w", r.name, err)
 	}
-	return reportDeleted(cmd, a, w, pushCalendarID,
+	return reportDeleted(cmd, a, w, []int64{pushCalendarID},
 		map[string]any{"deleted": true, "id": target.ID},
 		fmt.Sprintf("Deleted %s %d.\n", r.name, target.ID))
 }
@@ -287,6 +290,10 @@ func newPurgeCmd(r resource, h verbHelp) *cobra.Command {
 			if err := r.purgeByID(ctx, a, id); err != nil {
 				if errors.Is(err, r.errNotDeleted) {
 					return errNotFoundf("%s %d not found or not soft-deleted", r.name, id)
+				}
+				var live *event.SeriesHasLiveOverridesError
+				if errors.As(err, &live) {
+					return errInvalidInputf("%s %d: %v", r.name, id, live)
 				}
 				return fmt.Errorf("purge: %w", err)
 			}

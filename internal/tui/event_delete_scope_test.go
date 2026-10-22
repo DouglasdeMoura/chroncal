@@ -230,3 +230,11 @@ func TestUndo_PurgedMasterRefusalLeavesTheStack(t *testing.T) {
 	m = updated.(Model)
 	require.Equal(t, 0, m.undoStack.Len())
 }
+
+// TestDeletedMsgOf_PushesEveryCalendar: the message of a series delete that
+// wrote two calendars names the first, and the other one as an extra push.
+func TestDeletedMsgOf_PushesEveryCalendar(t *testing.T) {
+	msg := deletedMsgOf(event.Event{CalendarID: 9}, event.UndoMeta{CalendarID: 1, PushCalendars: []int64{1, 4}}, nil)
+	require.Equal(t, int64(1), msg.calendarID)
+	require.Equal(t, []int64{4}, msg.extraCalendarIDs)
+}
