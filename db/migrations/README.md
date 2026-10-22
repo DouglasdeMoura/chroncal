@@ -25,16 +25,16 @@ must follow these steps:
    Copy their statements from migration 057.
 
 The triggers drop the stale delete logs of a calendar. The revive
-trigger of a master drops the series-delete log when a master of that
-calendar comes back from the trash. The insert trigger of a master drops
-the series-delete log and the occurrence logs of the UID when a new live
-master arrives. The two triggers of an override drop the pruned marker
-of an occurrence when its row comes back. The revive trigger also
-removes the row from the delete logs. Without them, a log that a pull or
-an import left behind can bring back the wrong rows on the next restore.
-It can also strip an imported EXDATE. The purge trigger removes a purged
-override row from the delete logs, so a log never names a row that is
-gone.
+trigger of a master drops the series-delete log of its delete when the
+master comes back from the trash. That log has the delete token of the
+master. The insert trigger of a master drops the series-delete log and
+the occurrence logs of the UID when a new live master arrives. The two
+triggers of an override drop the pruned marker of an occurrence when its
+row comes back. The revive trigger also removes the row from the delete
+logs. Without them, a log that a pull or an import left behind can bring
+back the wrong rows on the next restore. It can also strip an imported
+EXDATE. The purge trigger removes a purged override row from the delete
+logs, so a log never names a row that is gone.
 
 Each statement below must stay equal to the one in migration 057. The
 storage test `TestMigrationsReadmeMatches057` compares them, and the
@@ -80,7 +80,8 @@ CREATE TRIGGER events_master_revive_drops_series_log
 AFTER UPDATE OF deleted_at ON events
 WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id = ''
 BEGIN
-    DELETE FROM event_series_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
+    DELETE FROM event_series_deletes
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND delete_token = OLD.delete_token;
 END;
 ```
 

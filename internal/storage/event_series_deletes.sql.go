@@ -59,7 +59,7 @@ func (q *Queries) DeleteEventSeriesDeletesByIDs(ctx context.Context, ids []int64
 }
 
 const getEventSeriesDeleteByCalendarUID = `-- name: GetEventSeriesDeleteByCalendarUID :one
-SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id DESC LIMIT 1
+SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master, delete_token FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id DESC LIMIT 1
 `
 
 type GetEventSeriesDeleteByCalendarUIDParams struct {
@@ -79,12 +79,13 @@ func (q *Queries) GetEventSeriesDeleteByCalendarUID(ctx context.Context, arg Get
 		&i.HiddenIds,
 		&i.DeletedAt,
 		&i.HadMaster,
+		&i.DeleteToken,
 	)
 	return i, err
 }
 
 const getEventSeriesDeleteByID = `-- name: GetEventSeriesDeleteByID :one
-SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE id = ?
+SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master, delete_token FROM event_series_deletes WHERE id = ?
 `
 
 // The log row of one series delete, by its ID. The undo of an orphan
@@ -99,12 +100,13 @@ func (q *Queries) GetEventSeriesDeleteByID(ctx context.Context, id int64) (Event
 		&i.HiddenIds,
 		&i.DeletedAt,
 		&i.HadMaster,
+		&i.DeleteToken,
 	)
 	return i, err
 }
 
 const listEventSeriesDeletesByCalendarUID = `-- name: ListEventSeriesDeletesByCalendarUID :many
-SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id
+SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master, delete_token FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id
 `
 
 type ListEventSeriesDeletesByCalendarUIDParams struct {
@@ -129,6 +131,7 @@ func (q *Queries) ListEventSeriesDeletesByCalendarUID(ctx context.Context, arg L
 			&i.HiddenIds,
 			&i.DeletedAt,
 			&i.HadMaster,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -144,7 +147,7 @@ func (q *Queries) ListEventSeriesDeletesByCalendarUID(ctx context.Context, arg L
 }
 
 const listEventSeriesDeletesByUID = `-- name: ListEventSeriesDeletesByUID :many
-SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE uid = ? ORDER BY calendar_id
+SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master, delete_token FROM event_series_deletes WHERE uid = ? ORDER BY calendar_id
 `
 
 func (q *Queries) ListEventSeriesDeletesByUID(ctx context.Context, uid string) ([]EventSeriesDelete, error) {
@@ -163,6 +166,7 @@ func (q *Queries) ListEventSeriesDeletesByUID(ctx context.Context, uid string) (
 			&i.HiddenIds,
 			&i.DeletedAt,
 			&i.HadMaster,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -231,29 +235,32 @@ func (q *Queries) MoveEventSeriesDeletesUIDToCalendar(ctx context.Context, arg M
 }
 
 const recordEventSeriesDelete = `-- name: RecordEventSeriesDelete :one
-INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master)
-VALUES (?, ?, ?, ?)
+INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master, delete_token)
+VALUES (?, ?, ?, ?, ?)
 RETURNING id
 `
 
 type RecordEventSeriesDeleteParams struct {
-	CalendarID int64
-	Uid        string
-	HiddenIds  string
-	HadMaster  int64
+	CalendarID  int64
+	Uid         string
+	HiddenIds   string
+	HadMaster   int64
+	DeleteToken int64
 }
 
 // Write the log row of one series delete. Each delete gets its own row (the
 // id), so an earlier delete in the same calendar keeps its record. The merge
 // of orphan rows into the log of a master in the trash updates that row
 // (UpdateEventSeriesDeleteHiddenIds). It returns the ID, which the undo
-// keeps (UndoMeta.SeriesLogID).
+// keeps (UndoMeta.SeriesLogID). delete_token is the token of the master
+// that the delete hid, so the revive of that master consumes this log.
 func (q *Queries) RecordEventSeriesDelete(ctx context.Context, arg RecordEventSeriesDeleteParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, recordEventSeriesDelete,
 		arg.CalendarID,
 		arg.Uid,
 		arg.HiddenIds,
 		arg.HadMaster,
+		arg.DeleteToken,
 	)
 	var id int64
 	err := row.Scan(&id)

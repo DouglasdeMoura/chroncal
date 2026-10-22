@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -1756,4 +1757,157 @@ func TestUndoMeta_CarriesTheTokenOfEachDelete(t *testing.T) {
 	check("delete by ID of an override", meta, err, o[0].ID)
 	meta, err = svc.DeleteSeriesWithUndo(ctx, 1, "token-orphan")
 	check("series delete of orphan rows", meta, err, o[1].ID)
+}
+
+// TestUndo_MasterAndSeriesRefuseANewerToken: the undo of a delete of a
+// master restores the master only while it carries the token of that
+// delete. A restore and a second delete give a newer token, so the undo of
+// the first delete refuses with ErrChangedSince. The case holds for a delete
+// by ID of a single master and for a series delete.
+func TestUndo_MasterAndSeriesRefuseANewerToken(t *testing.T) {
+	t.Run("delete by ID of a master", func(t *testing.T) {
+		svc := newTestService(t)
+		ctx := context.Background()
+		single, err := svc.UpsertByUID(ctx, UpsertParams{
+			UID: "master-token", CalendarID: 1, Title: "Single",
+			StartTime: time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC), EndTime: time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC),
+		})
+		if err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		meta, err := svc.DeleteWithUndo(ctx, single.ID)
+		if err != nil {
+			t.Fatalf("DeleteWithUndo: %v", err)
+		}
+		if err := svc.RestoreByID(ctx, single.ID); err != nil {
+			t.Fatalf("RestoreByID: %v", err)
+		}
+		if err := svc.Delete(ctx, single.ID); err != nil {
+			t.Fatalf("second Delete: %v", err)
+		}
+		if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrChangedSince) {
+			t.Fatalf("RestoreUndo = %v, want ErrChangedSince", err)
+		}
+		wantTrashed(t, svc, true, single.ID)
+	})
+	t.Run("series delete of a master", func(t *testing.T) {
+		svc := newTestService(t)
+		ctx := context.Background()
+		master, _, _ := singleSeriesWithOverrides(t, svc)
+		meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+		if err != nil {
+			t.Fatalf("DeleteSeriesWithUndo: %v", err)
+		}
+		if err := svc.RestoreByID(ctx, master.ID); err != nil {
+			t.Fatalf("RestoreByID: %v", err)
+		}
+		if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+			t.Fatalf("second DeleteSeries: %v", err)
+		}
+		if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrChangedSince) {
+			t.Fatalf("RestoreUndo = %v, want ErrChangedSince", err)
+		}
+		wantTrashed(t, svc, true, master.ID)
+	})
+}
+
+// TestUndoTruncation_RefusesARowOfANewerDelete: a row that the truncation log
+// names carries another token than the truncation. A later delete wrote that
+// token, so the undo of the truncation refuses with ErrChangedSince, and the
+// rule of the master stays truncated.
+func TestUndoTruncation_RefusesARowOfANewerDelete(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, _, third := singleSeriesWithOverrides(t, svc)
+	row, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, third)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET delete_token = ? WHERE id = ?`, nextToken(t, svc), row.ID); err != nil {
+		t.Fatalf("seed the token of a later delete: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrChangedSince) {
+		t.Fatalf("RestoreUndo = %v, want ErrChangedSince", err)
+	}
+	wantTrashed(t, svc, true, row.ID)
+	m, err := svc.Get(ctx, master.ID)
+	if err != nil || !strings.Contains(m.RecurrenceRule, "UNTIL") {
+		t.Errorf("rule after the refused undo = %q, %v; want it still truncated", m.RecurrenceRule, err)
+	}
+}
+
+// TestRestoreMaster_PairsTheRowsOfAPullByToken: a delete with no log hid row R,
+// and a pull hid the master and its rows in the same second. R has the time
+// of the master but another token. The restore of the master brings back the
+// rows of the pull and leaves R in the trash. A row from before migration 057
+// has token 0, and the time pairs it.
+func TestRestoreMaster_PairsTheRowsOfAPullByToken(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy %v", legacy), func(t *testing.T) {
+			svc := newTestService(t)
+			ctx := context.Background()
+			master, second, third := singleSeriesWithOverrides(t, svc)
+			r, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+				CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339),
+			})
+			if err != nil {
+				t.Fatalf("get R: %v", err)
+			}
+			other, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+				CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339),
+			})
+			if err != nil {
+				t.Fatalf("get the other row: %v", err)
+			}
+			if err := svc.q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: r.ID, DeleteToken: nextToken(t, svc)}); err != nil {
+				t.Fatalf("hide R: %v", err)
+			}
+			if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID, DeleteToken: nextToken(t, svc)}); err != nil {
+				t.Fatalf("pull hides the series: %v", err)
+			}
+			// One second for every row: the time cannot tell them apart.
+			if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE uid = ?`, master.UID); err != nil {
+				t.Fatalf("align the times: %v", err)
+			}
+			if legacy {
+				if _, err := svc.db.ExecContext(ctx, `UPDATE events SET delete_token = 0 WHERE uid = ?`, master.UID); err != nil {
+					t.Fatalf("clear the tokens: %v", err)
+				}
+			}
+			if err := svc.RestoreByID(ctx, master.ID); err != nil {
+				t.Fatalf("RestoreByID(master): %v", err)
+			}
+			wantTrashed(t, svc, false, other.ID)
+			wantTrashed(t, svc, !legacy, r.ID)
+		})
+	}
+}
+
+// TestMasterRevive_ConsumesOnlyItsSeriesLog: a calendar holds two series-delete
+// logs of one UID. The revive of the master drops the log with the token of
+// the master only. The other log stays.
+func TestMasterRevive_ConsumesOnlyItsSeriesLog(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, _, _ := singleSeriesWithOverrides(t, svc)
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx,
+		`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master, delete_token) VALUES (1, ?, '', 0, ?)`,
+		master.UID, nextToken(t, svc)); err != nil {
+		t.Fatalf("seed the other log: %v", err)
+	}
+	if err := reviveRow(svc, master.ID); err != nil {
+		t.Fatalf("revive the master: %v", err)
+	}
+	if n := countLogsIn(t, svc, 1, master.UID); n != 1 {
+		t.Errorf("series logs after the revive = %d, want 1: the other log stays", n)
+	}
 }

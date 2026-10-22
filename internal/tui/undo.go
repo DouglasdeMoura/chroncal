@@ -93,15 +93,15 @@ func (s *UndoStack) Remove(meta event.UndoMeta) bool {
 // otherwise look identical (issue #514). CutoffTime is the zero time for
 // every other Kind. A compare is then always safe.
 func sameUndoTarget(a, b event.UndoMeta) bool {
-	// Two calendars can hold the same UID (issue #842), so the calendar
-	// is part of the target too.
-	// RowID, RowIDs, MasterID, ExdateLogID, and ExdateDeleteSeq name the rows
-	// and the log entry of the delete: two deletes of one occurrence can hide
-	// different rows.
+	// Two calendars can hold the same UID (issue #842), so the calendar is part
+	// of the target too. RowID, RowIDs, MasterID, ExdateLogID, ExdateDeleteSeq,
+	// SeriesLogID, and DeleteToken name the rows, the log, and the statement of
+	// the delete. Two deletes of one occurrence can hide different rows.
 	return a.Kind == b.Kind && a.UID == b.UID && a.CalendarID == b.CalendarID &&
 		a.RecurrenceID == b.RecurrenceID && a.CutoffTime.Equal(b.CutoffTime) &&
 		a.RowID == b.RowID && a.MasterID == b.MasterID && slices.Equal(a.RowIDs, b.RowIDs) &&
-		a.ExdateLogID == b.ExdateLogID && a.ExdateDeleteSeq == b.ExdateDeleteSeq
+		a.ExdateLogID == b.ExdateLogID && a.ExdateDeleteSeq == b.ExdateDeleteSeq &&
+		a.SeriesLogID == b.SeriesLogID && a.DeleteToken == b.DeleteToken
 }
 
 // Len returns the current depth.

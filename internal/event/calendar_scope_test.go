@@ -1415,7 +1415,8 @@ func TestRestoreSeries_KeepsPrunedOverride(t *testing.T) {
 		if _, err := svc.q.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("%s: series delete log after the restore err = %v, want sql.ErrNoRows", name, err)
 		}
-		if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		// The next delete has its own token, so the undo takes its data.
+		if meta, err = svc.DeleteSeriesWithUndo(ctx, 1, master.UID); err != nil {
 			t.Fatalf("%s: DeleteSeries again: %v", name, err)
 		}
 	}
@@ -3788,7 +3789,7 @@ func TestReviveOverride_LeavesTheTruncationLog(t *testing.T) {
 	if err != nil || len(logs) != 1 {
 		t.Fatalf("truncation logs = %d, %v; want 1", len(logs), err)
 	}
-	if err := svc.restoreTruncationByLogID(ctx, logs[0].ID); err != nil {
+	if err := svc.restoreTruncationByLogID(ctx, logs[0].ID, 0); err != nil {
 		t.Fatalf("restore the tail: %v", err)
 	}
 	if r, err := svc.GetIncludingDeleted(ctx, revived.ID); err != nil || r.DeletedAt == nil {
@@ -3901,7 +3902,7 @@ func TestRestoreTruncationByLogID_GuardsReadOnlyCalendar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("log id: %v", err)
 	}
-	if err := svc.restoreTruncationByLogID(ctx, logID); !errors.Is(err, calendaraccess.ErrReadOnly) {
+	if err := svc.restoreTruncationByLogID(ctx, logID, 0); !errors.Is(err, calendaraccess.ErrReadOnly) {
 		t.Errorf("restoreTruncationByLogID err = %v, want ErrReadOnly", err)
 	}
 }
@@ -4288,7 +4289,7 @@ func TestRestoreTruncation_MasterInTrash(t *testing.T) {
 	if err != nil || len(logs) != 1 {
 		t.Fatalf("truncation logs = %d, %v; want 1", len(logs), err)
 	}
-	if err := svc.restoreTruncationByLogID(ctx, logs[0].ID); !errors.Is(err, ErrMasterInTrash) || errors.Is(err, ErrNotDeleted) {
+	if err := svc.restoreTruncationByLogID(ctx, logs[0].ID, 0); !errors.Is(err, ErrMasterInTrash) || errors.Is(err, ErrNotDeleted) {
 		t.Errorf("restoreTruncationByLogID err = %v, want ErrMasterInTrash", err)
 	}
 }
