@@ -103,6 +103,7 @@ type Event struct {
 	ConferenceUri  string
 	DeletedAt      *string
 	DeleteToken    int64
+	EditUnowned    int64
 }
 
 type EventAlarm struct {
@@ -377,7 +378,6 @@ type SyncResource struct {
 	Rev           int64
 	PushFailCount int64
 	LastPushError string
-	EditUnowned   int64
 }
 
 type Timezone struct {

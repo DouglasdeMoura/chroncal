@@ -440,7 +440,8 @@ const (
 )
 
 // identityRefusalTx decides the undo of the delete of id, whose rows are
-// ids. It reads the delete logs of uid once. A newer record wins over the
+// ids. It reads once the delete logs of uid that name a row of ids. A log
+// that names no such row gives no owner to them, so the filter is exact. A newer record wins over the
 // identity: a pruned marker is no log. For each row:
 //   - No row, or a live row: the row is done. A purge took it, or a restore
 //     came first.
@@ -476,7 +477,7 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 		}
 		return ownedByOther
 	}
-	occurrences, err := qtx.ListEventExdateDeletesByUID(ctx, uid)
+	occurrences, err := qtx.ListEventExdateDeletesNamingRows(ctx, uid, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list exdate logs: %w", err)
 	}
@@ -489,7 +490,7 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 			set(e.Rows, ownerOf(id.exdateLogID != 0 && l.ID == id.exdateLogID && e.Seq == id.seq))
 		}
 	}
-	series, err := qtx.ListEventSeriesDeletesByUID(ctx, uid)
+	series, err := qtx.ListEventSeriesDeletesNamingRows(ctx, uid, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list series delete logs: %w", err)
 	}
@@ -500,7 +501,7 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 		}
 		set(rows, ownerOf(id.seriesLogID != 0 && l.ID == id.seriesLogID))
 	}
-	truncs, err := qtx.ListEventTruncateDeletesByUID(ctx, uid)
+	truncs, err := qtx.ListEventTruncateDeletesNamingRows(ctx, uid, ids)
 	if err != nil {
 		return nil, fmt.Errorf("list truncation logs: %w", err)
 	}

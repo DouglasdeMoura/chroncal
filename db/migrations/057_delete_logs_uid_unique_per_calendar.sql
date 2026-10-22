@@ -224,13 +224,32 @@ UPDATE event_exdate_deletes SET delete_seq = 1,
 -- un-hides the master. A pull, an import, or a re-import un-hides the master
 -- with no log read. That log is stale, and a later restore must not replay it
 -- (issue #287). The other logs of the calendar stay.
+-- A delete of orphan rows can merge its rows into that log. Each such row
+-- stays in the trash with the token of its own delete. The log then keeps
+-- those rows as an orphan log (no master, token 0), and loses the rows of
+-- the master. The log goes only when no merged row remains. A master from
+-- before the token (token 0) consumes only a log with a master, never an
+-- orphan log.
 -- +goose StatementBegin
 CREATE TRIGGER events_master_revive_drops_series_log
 AFTER UPDATE OF deleted_at ON events
 WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id = ''
 BEGIN
+    UPDATE event_series_deletes
+    SET hidden_ids = (
+            SELECT group_concat(e.id) FROM events AS e
+            WHERE e.uid = NEW.uid AND e.deleted_at IS NOT NULL AND e.delete_token != OLD.delete_token
+              AND ',' || event_series_deletes.hidden_ids || ',' LIKE '%,' || e.id || ',%'),
+        had_master = 0, delete_token = 0
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND delete_token = OLD.delete_token
+      AND (OLD.delete_token != 0 OR had_master = 1)
+      AND EXISTS (
+            SELECT 1 FROM events AS e
+            WHERE e.uid = NEW.uid AND e.deleted_at IS NOT NULL AND e.delete_token != OLD.delete_token
+              AND ',' || event_series_deletes.hidden_ids || ',' LIKE '%,' || e.id || ',%');
     DELETE FROM event_series_deletes
-    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND delete_token = OLD.delete_token;
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND delete_token = OLD.delete_token
+      AND (OLD.delete_token != 0 OR had_master = 1);
 END;
 -- +goose StatementEnd
 
@@ -300,12 +319,16 @@ END;
 -- A purge of an override row removes its ID from the delete logs of its
 -- UID. Every purge path runs it: the purge by ID, the age purge, and the
 -- purge of a series. A log then never names a row that is gone. The
--- occurrence log keeps the entry of the delete with no row.
+-- occurrence log keeps the entry of the delete with no row. An orphan
+-- series-delete log (had_master 0) that names only the purged row goes. An
+-- empty orphan log records nothing, and it must not shadow an older log.
 -- +goose StatementBegin
 CREATE TRIGGER events_purge_drops_row_from_logs
 AFTER DELETE ON events
 WHEN OLD.recurrence_id != ''
 BEGIN
+    DELETE FROM event_series_deletes
+    WHERE uid = OLD.uid AND had_master = 0 AND hidden_ids = CAST(OLD.id AS TEXT);
     UPDATE event_series_deletes
     SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || OLD.id || ',', ','), ',')
     WHERE uid = OLD.uid AND ',' || hidden_ids || ',' LIKE '%,' || OLD.id || ',%';
@@ -318,14 +341,15 @@ BEGIN
 END;
 -- +goose StatementEnd
 
--- edit_unowned marks a sync row whose UID has a legacy override that no
--- series owns: two calendars hold a live master of the UID. An edit of that
--- row reaches no export, so it stays local. The sync status lists the row.
--- The mark has its own column, so it never mixes with the push failures.
-ALTER TABLE sync_resources ADD COLUMN edit_unowned INTEGER NOT NULL DEFAULT 0;
+-- edit_unowned marks an override row that no series owns: a legacy override
+-- of a UID with a live master in two calendars. An edit of the row reaches
+-- no export, so it stays local. The sync status lists the row. The mark
+-- lives on the event row, so it needs no sync row and never mixes with the
+-- push failures of a sync row.
+ALTER TABLE events ADD COLUMN edit_unowned INTEGER NOT NULL DEFAULT 0;
 
 -- +goose Down
-ALTER TABLE sync_resources DROP COLUMN edit_unowned;
+ALTER TABLE events DROP COLUMN edit_unowned;
 DROP TABLE IF EXISTS event_delete_token;
 DROP INDEX IF EXISTS idx_event_exdate_deletes_uid;
 DROP INDEX IF EXISTS idx_event_truncate_deletes_uid;

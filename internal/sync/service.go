@@ -174,10 +174,8 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 		}
 		// Like the other counts, a read failure shows no unowned edits.
 		var unowned []string
-		if rows, err := s.q.ListUnownedEditSyncResources(ctx, cal.ID); err == nil {
-			for _, r := range rows {
-				unowned = append(unowned, r.Uid)
-			}
+		if rows, err := s.q.ListUnownedEditUIDs(ctx, cal.ID); err == nil {
+			unowned = rows
 		}
 		// Like the other counts, a read failure shows no push failures.
 		var failures []PushFailure

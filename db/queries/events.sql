@@ -423,8 +423,9 @@ SELECT s.id, s.uid, s.owner_calendar_id, s.deleted_at FROM event_series_rows AS 
 WHERE s.uid IN (sqlc.slice(uids)) AND s.recurrence_id != '';
 
 -- name: ListSeriesLogsOfMasters :many
--- The series-delete logs of the calendars of the masters.
-SELECT d.hidden_ids, d.deleted_at FROM event_series_deletes AS d
+-- The series-delete logs of the calendars of the masters, each with the ID of
+-- its master.
+SELECT d.hidden_ids, d.deleted_at, m.id AS master_id FROM event_series_deletes AS d
 JOIN events AS m ON m.calendar_id = d.calendar_id AND m.uid = d.uid AND m.recurrence_id = ''
 WHERE m.id IN (sqlc.slice(master_ids));
 
@@ -456,3 +457,11 @@ DELETE FROM event_series_deletes WHERE EXISTS (
     SELECT 1 FROM events AS m
     WHERE m.id IN (sqlc.slice(master_ids))
       AND m.calendar_id = event_series_deletes.calendar_id AND m.uid = event_series_deletes.uid);
+
+-- name: ListUnownedEditUIDs :many
+-- The UIDs of one calendar with a live override row that no series owns
+-- (edit_unowned). An edit of such a row stays local, and the sync status
+-- lists the UID.
+SELECT DISTINCT uid FROM events
+WHERE calendar_id = ? AND edit_unowned = 1 AND deleted_at IS NULL
+ORDER BY uid;

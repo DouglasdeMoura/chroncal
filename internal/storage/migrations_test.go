@@ -813,7 +813,9 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 		}
 		const logs = `SELECT COUNT(*) FROM event_series_deletes WHERE calendar_id = 1 AND uid = 'rebuild'`
 		mustExec(`UPDATE events SET deleted_at = '2026-01-02T00:00:00Z' WHERE id = 1`)
-		mustExec(`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids) VALUES (1, 'rebuild', '')`)
+		// The log of the master: a master from before the token consumes a
+		// log with a master only.
+		mustExec(`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master) VALUES (1, 'rebuild', '', 1)`)
 		mustExec(`UPDATE events SET deleted_at = NULL WHERE id = 1`)
 		if n := count(logs); n != 0 {
 			t.Errorf("series log after the revive = %d, want 0 (the revive trigger drops it)", n)

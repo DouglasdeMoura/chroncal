@@ -34,7 +34,10 @@ row comes back. The revive trigger also removes the row from the delete
 logs. Without them, a log that a pull or an import left behind can bring
 back the wrong rows on the next restore. It can also strip an imported
 EXDATE. The purge trigger removes a purged override row from the delete
-logs, so a log never names a row that is gone.
+logs, so a log never names a row that is gone. An orphan series-delete
+log that names only the purged row goes too. The revive trigger of a
+master keeps the rows that a delete of orphan rows merged into its log.
+The log then becomes an orphan log with only those rows.
 
 Each statement below must stay equal to the one in migration 057. The
 storage test `TestMigrationsReadmeMatches057` compares them, and the
@@ -80,8 +83,21 @@ CREATE TRIGGER events_master_revive_drops_series_log
 AFTER UPDATE OF deleted_at ON events
 WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id = ''
 BEGIN
+    UPDATE event_series_deletes
+    SET hidden_ids = (
+            SELECT group_concat(e.id) FROM events AS e
+            WHERE e.uid = NEW.uid AND e.deleted_at IS NOT NULL AND e.delete_token != OLD.delete_token
+              AND ',' || event_series_deletes.hidden_ids || ',' LIKE '%,' || e.id || ',%'),
+        had_master = 0, delete_token = 0
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND delete_token = OLD.delete_token
+      AND (OLD.delete_token != 0 OR had_master = 1)
+      AND EXISTS (
+            SELECT 1 FROM events AS e
+            WHERE e.uid = NEW.uid AND e.deleted_at IS NOT NULL AND e.delete_token != OLD.delete_token
+              AND ',' || event_series_deletes.hidden_ids || ',' LIKE '%,' || e.id || ',%');
     DELETE FROM event_series_deletes
-    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND delete_token = OLD.delete_token;
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND delete_token = OLD.delete_token
+      AND (OLD.delete_token != 0 OR had_master = 1);
 END;
 ```
 
@@ -135,6 +151,8 @@ CREATE TRIGGER events_purge_drops_row_from_logs
 AFTER DELETE ON events
 WHEN OLD.recurrence_id != ''
 BEGIN
+    DELETE FROM event_series_deletes
+    WHERE uid = OLD.uid AND had_master = 0 AND hidden_ids = CAST(OLD.id AS TEXT);
     UPDATE event_series_deletes
     SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || OLD.id || ',', ','), ',')
     WHERE uid = OLD.uid AND ',' || hidden_ids || ',' LIKE '%,' || OLD.id || ',%';

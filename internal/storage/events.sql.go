@@ -110,7 +110,7 @@ INSERT INTO events (
     class, url, exdates, rdates, recurrence_id, geo, duration, dtstamp,
     conference_uri
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token
+RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned
 `
 
 type CreateEventParams struct {
@@ -195,6 +195,7 @@ func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
@@ -291,7 +292,7 @@ func (q *Queries) EventUIDMasterCalendars(ctx context.Context, uid string) (Even
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE id = ? AND deleted_at IS NULL
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE id = ? AND deleted_at IS NULL
 `
 
 func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
@@ -326,12 +327,13 @@ func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
 
 const getEventByCalendarUID = `-- name: GetEventByCalendarUID :one
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' AND deleted_at IS NULL
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' AND deleted_at IS NULL
 `
 
 type GetEventByCalendarUIDParams struct {
@@ -371,12 +373,13 @@ func (q *Queries) GetEventByCalendarUID(ctx context.Context, arg GetEventByCalen
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
 
 const getEventByCalendarUIDAndRecurrenceID = `-- name: GetEventByCalendarUIDAndRecurrenceID :one
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NULL
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND deleted_at IS NULL
 `
 
 type GetEventByCalendarUIDAndRecurrenceIDParams struct {
@@ -417,12 +420,13 @@ func (q *Queries) GetEventByCalendarUIDAndRecurrenceID(ctx context.Context, arg 
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
 
 const getEventByCalendarUIDAndRecurrenceIDIncludingDeleted = `-- name: GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted :one
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = ?
 `
 
 type GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams struct {
@@ -466,12 +470,13 @@ func (q *Queries) GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx conte
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
 
 const getEventByCalendarUIDIncludingDeleted = `-- name: GetEventByCalendarUIDIncludingDeleted :one
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' LIMIT 1
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE calendar_id = ? AND uid = ? AND recurrence_id = '' LIMIT 1
 `
 
 type GetEventByCalendarUIDIncludingDeletedParams struct {
@@ -513,12 +518,13 @@ func (q *Queries) GetEventByCalendarUIDIncludingDeleted(ctx context.Context, arg
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
 
 const getEventIncludingDeleted = `-- name: GetEventIncludingDeleted :one
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE id = ?
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE id = ?
 `
 
 func (q *Queries) GetEventIncludingDeleted(ctx context.Context, id int64) (Event, error) {
@@ -553,12 +559,13 @@ func (q *Queries) GetEventIncludingDeleted(ctx context.Context, id int64) (Event
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
 
 const getSeriesMasterOfCalendar = `-- name: GetSeriesMasterOfCalendar :one
-SELECT m.id, m.uid, m.calendar_id, m.title, m.description, m.location, m.start_time, m.end_time, m.all_day, m.recurrence_rule, m.timezone, m.status, m.transp, m.sequence, m.priority, m.class, m.url, m.exdates, m.rdates, m.recurrence_id, m.geo, m.created_at, m.updated_at, m.duration, m.dtstamp, m.conference_uri, m.deleted_at, m.delete_token FROM events AS m
+SELECT m.id, m.uid, m.calendar_id, m.title, m.description, m.location, m.start_time, m.end_time, m.all_day, m.recurrence_rule, m.timezone, m.status, m.transp, m.sequence, m.priority, m.class, m.url, m.exdates, m.rdates, m.recurrence_id, m.geo, m.created_at, m.updated_at, m.duration, m.dtstamp, m.conference_uri, m.deleted_at, m.delete_token, m.edit_unowned FROM events AS m
 WHERE m.uid = ?1 AND m.recurrence_id = ''
   AND (m.deleted_at IS NULL OR CAST(?2 AS BOOLEAN))
   AND m.calendar_id IN (
@@ -611,6 +618,7 @@ func (q *Queries) GetSeriesMasterOfCalendar(ctx context.Context, arg GetSeriesMa
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
@@ -663,7 +671,7 @@ func (q *Queries) IsSeriesRowOfCalendar(ctx context.Context, arg IsSeriesRowOfCa
 }
 
 const listDeletedEventsByCalendar = `-- name: ListDeletedEventsByCalendar :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events
 WHERE calendar_id = ? AND deleted_at IS NOT NULL
 ORDER BY deleted_at DESC
 `
@@ -706,6 +714,7 @@ func (q *Queries) ListDeletedEventsByCalendar(ctx context.Context, calendarID in
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -750,7 +759,7 @@ func (q *Queries) ListEventCalendarIDsByUID(ctx context.Context, uid string) ([]
 }
 
 const listEventMastersByUIDIncludingDeleted = `-- name: ListEventMastersByUIDIncludingDeleted :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE uid = ? AND recurrence_id = '' ORDER BY id
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE uid = ? AND recurrence_id = '' ORDER BY id
 `
 
 // Every master row of one UID, live or soft-deleted, in all calendars. The
@@ -793,6 +802,7 @@ func (q *Queries) ListEventMastersByUIDIncludingDeleted(ctx context.Context, uid
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -865,7 +875,7 @@ func (q *Queries) ListEventRowStatesByIDs(ctx context.Context, ids []int64) ([]L
 }
 
 const listEventsByCalendarAndDateRange = `-- name: ListEventsByCalendarAndDateRange :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events
 WHERE calendar_id = ? AND start_time < ? AND end_time > ? AND deleted_at IS NULL
 ORDER BY start_time
 `
@@ -914,6 +924,7 @@ func (q *Queries) ListEventsByCalendarAndDateRange(ctx context.Context, arg List
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -929,7 +940,7 @@ func (q *Queries) ListEventsByCalendarAndDateRange(ctx context.Context, arg List
 }
 
 const listEventsByDateRange = `-- name: ListEventsByDateRange :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events
 WHERE start_time < ? AND end_time > ? AND deleted_at IS NULL
 ORDER BY start_time
 `
@@ -977,6 +988,7 @@ func (q *Queries) ListEventsByDateRange(ctx context.Context, arg ListEventsByDat
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -992,7 +1004,7 @@ func (q *Queries) ListEventsByDateRange(ctx context.Context, arg ListEventsByDat
 }
 
 const listEventsByUIDAndRecurrenceID = `-- name: ListEventsByUIDAndRecurrenceID :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL ORDER BY id
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL ORDER BY id
 `
 
 type ListEventsByUIDAndRecurrenceIDParams struct {
@@ -1038,6 +1050,7 @@ func (q *Queries) ListEventsByUIDAndRecurrenceID(ctx context.Context, arg ListEv
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -1082,7 +1095,7 @@ func (q *Queries) ListLiveEventCalendarIDsByUID(ctx context.Context, uid string)
 }
 
 const listLiveOverridesInCalendarByUID = `-- name: ListLiveOverridesInCalendarByUID :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events
 WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NULL
 ORDER BY recurrence_id
 `
@@ -1133,6 +1146,7 @@ func (q *Queries) ListLiveOverridesInCalendarByUID(ctx context.Context, arg List
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -1148,7 +1162,7 @@ func (q *Queries) ListLiveOverridesInCalendarByUID(ctx context.Context, arg List
 }
 
 const listLiveSeriesOverridesAtOrAfter = `-- name: ListLiveSeriesOverridesAtOrAfter :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events
 WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NULL
   AND events.id IN (
     SELECT s.id FROM event_series_rows AS s
@@ -1203,6 +1217,7 @@ func (q *Queries) ListLiveSeriesOverridesAtOrAfter(ctx context.Context, arg List
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -1218,7 +1233,7 @@ func (q *Queries) ListLiveSeriesOverridesAtOrAfter(ctx context.Context, arg List
 }
 
 const listRecurringEvents = `-- name: ListRecurringEvents :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = '' AND deleted_at IS NULL
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = '' AND deleted_at IS NULL
 `
 
 func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
@@ -1259,6 +1274,7 @@ func (q *Queries) ListRecurringEvents(ctx context.Context) ([]Event, error) {
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -1312,7 +1328,7 @@ func (q *Queries) ListSeriesCalendarIDs(ctx context.Context, arg ListSeriesCalen
 }
 
 const listSeriesLogsOfMasters = `-- name: ListSeriesLogsOfMasters :many
-SELECT d.hidden_ids, d.deleted_at FROM event_series_deletes AS d
+SELECT d.hidden_ids, d.deleted_at, m.id AS master_id FROM event_series_deletes AS d
 JOIN events AS m ON m.calendar_id = d.calendar_id AND m.uid = d.uid AND m.recurrence_id = ''
 WHERE m.id IN (/*SLICE:master_ids*/?)
 `
@@ -1320,9 +1336,11 @@ WHERE m.id IN (/*SLICE:master_ids*/?)
 type ListSeriesLogsOfMastersRow struct {
 	HiddenIds string
 	DeletedAt string
+	MasterID  int64
 }
 
-// The series-delete logs of the calendars of the masters.
+// The series-delete logs of the calendars of the masters, each with the ID of
+// its master.
 func (q *Queries) ListSeriesLogsOfMasters(ctx context.Context, masterIds []int64) ([]ListSeriesLogsOfMastersRow, error) {
 	query := listSeriesLogsOfMasters
 	var queryParams []interface{}
@@ -1342,7 +1360,7 @@ func (q *Queries) ListSeriesLogsOfMasters(ctx context.Context, masterIds []int64
 	var items []ListSeriesLogsOfMastersRow
 	for rows.Next() {
 		var i ListSeriesLogsOfMastersRow
-		if err := rows.Scan(&i.HiddenIds, &i.DeletedAt); err != nil {
+		if err := rows.Scan(&i.HiddenIds, &i.DeletedAt, &i.MasterID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1357,7 +1375,7 @@ func (q *Queries) ListSeriesLogsOfMasters(ctx context.Context, masterIds []int64
 }
 
 const listSeriesOverridesAtRecurrenceID = `-- name: ListSeriesOverridesAtRecurrenceID :many
-SELECT events.id, events.uid, events.calendar_id, events.title, events.description, events.location, events.start_time, events.end_time, events.all_day, events.recurrence_rule, events.timezone, events.status, events.transp, events.sequence, events.priority, events.class, events.url, events.exdates, events.rdates, events.recurrence_id, events.geo, events.created_at, events.updated_at, events.duration, events.dtstamp, events.conference_uri, events.deleted_at, events.delete_token FROM events
+SELECT events.id, events.uid, events.calendar_id, events.title, events.description, events.location, events.start_time, events.end_time, events.all_day, events.recurrence_rule, events.timezone, events.status, events.transp, events.sequence, events.priority, events.class, events.url, events.exdates, events.rdates, events.recurrence_id, events.geo, events.created_at, events.updated_at, events.duration, events.dtstamp, events.conference_uri, events.deleted_at, events.delete_token, events.edit_unowned FROM events
 JOIN event_series_rows AS s ON s.id = events.id
 WHERE events.recurrence_id = ?1 AND events.deleted_at IS NULL
   AND s.uid = ?2 AND s.owner_calendar_id = ?3
@@ -1412,6 +1430,7 @@ func (q *Queries) ListSeriesOverridesAtRecurrenceID(ctx context.Context, arg Lis
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -1427,7 +1446,7 @@ func (q *Queries) ListSeriesOverridesAtRecurrenceID(ctx context.Context, arg Lis
 }
 
 const listSeriesOverridesInCalendar = `-- name: ListSeriesOverridesInCalendar :many
-SELECT events.id, events.uid, events.calendar_id, events.title, events.description, events.location, events.start_time, events.end_time, events.all_day, events.recurrence_rule, events.timezone, events.status, events.transp, events.sequence, events.priority, events.class, events.url, events.exdates, events.rdates, events.recurrence_id, events.geo, events.created_at, events.updated_at, events.duration, events.dtstamp, events.conference_uri, events.deleted_at, events.delete_token FROM events
+SELECT events.id, events.uid, events.calendar_id, events.title, events.description, events.location, events.start_time, events.end_time, events.all_day, events.recurrence_rule, events.timezone, events.status, events.transp, events.sequence, events.priority, events.class, events.url, events.exdates, events.rdates, events.recurrence_id, events.geo, events.created_at, events.updated_at, events.duration, events.dtstamp, events.conference_uri, events.deleted_at, events.delete_token, events.edit_unowned FROM events
 JOIN event_series_rows AS s ON s.id = events.id
 WHERE events.recurrence_id != '' AND events.deleted_at IS NULL
   AND s.uid = ?1 AND s.owner_calendar_id = ?2
@@ -1485,6 +1504,7 @@ func (q *Queries) ListSeriesOverridesInCalendar(ctx context.Context, arg ListSer
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -1625,7 +1645,7 @@ func (q *Queries) ListTrashedEventsByIDs(ctx context.Context, ids []int64) ([]Li
 }
 
 const listTrashedEventsByUID = `-- name: ListTrashedEventsByUID :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events WHERE uid = ? AND deleted_at IS NOT NULL ORDER BY id
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE uid = ? AND deleted_at IS NOT NULL ORDER BY id
 `
 
 // The rows of one UID in the trash, in every calendar. The restore by UID
@@ -1669,6 +1689,7 @@ func (q *Queries) ListTrashedEventsByUID(ctx context.Context, uid string) ([]Eve
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -1720,7 +1741,7 @@ func (q *Queries) ListTrashedMastersBefore(ctx context.Context, cutoff *string) 
 }
 
 const listTrashedSeriesRowsInCalendar = `-- name: ListTrashedSeriesRowsInCalendar :many
-SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events
+SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events
 WHERE events.deleted_at IS NOT NULL
   AND events.id IN (
     SELECT s.id FROM event_series_rows AS s
@@ -1775,10 +1796,43 @@ func (q *Queries) ListTrashedSeriesRowsInCalendar(ctx context.Context, arg ListT
 			&i.ConferenceUri,
 			&i.DeletedAt,
 			&i.DeleteToken,
+			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnownedEditUIDs = `-- name: ListUnownedEditUIDs :many
+SELECT DISTINCT uid FROM events
+WHERE calendar_id = ? AND edit_unowned = 1 AND deleted_at IS NULL
+ORDER BY uid
+`
+
+// The UIDs of one calendar with a live override row that no series owns
+// (edit_unowned). An edit of such a row stays local, and the sync status
+// lists the UID.
+func (q *Queries) ListUnownedEditUIDs(ctx context.Context, calendarID int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listUnownedEditUIDs, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		items = append(items, uid)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -2108,7 +2162,7 @@ UPDATE events SET
     duration = ?, dtstamp = ?,
     conference_uri = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token
+WHERE id = ? RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned
 `
 
 type UpdateEventParams struct {
@@ -2189,6 +2243,7 @@ func (q *Queries) UpdateEvent(ctx context.Context, arg UpdateEventParams) (Event
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
@@ -2260,7 +2315,7 @@ ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     conference_uri = excluded.conference_uri,
     deleted_at = NULL,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token
+RETURNING id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned
 `
 
 type UpsertEventByUIDParams struct {
@@ -2351,6 +2406,7 @@ func (q *Queries) UpsertEventByUID(ctx context.Context, arg UpsertEventByUIDPara
 		&i.ConferenceUri,
 		&i.DeletedAt,
 		&i.DeleteToken,
+		&i.EditUnowned,
 	)
 	return i, err
 }
