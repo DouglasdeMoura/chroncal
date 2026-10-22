@@ -254,33 +254,70 @@ func ownerOpsFor(ownerType string) (ownerOps, error) {
 	return ops, nil
 }
 
-// deleteLocalResourceByUID soft-deletes the local rows of uid in
-// calendarID after the server deleted the object of that calendar. The
-// delete stays in that calendar: another calendar can hold the same UID (a
-// local move, or a copy in another account).
-func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64, ownerType, uid string) error {
-	// Soft-delete across every owner type so a remote DELETE that races with
-	// a user action doesn't nuke the local row — it stays in trash until the
-	// retention window expires. One transaction holds the delete and the
-	// drop of the sync_resource, so a later restore re-CREATEs a fresh one
-	// via MarkResourceDirty.
+// remoteDeleteOutcome is the result of deleteLocalResourceByUID.
+type remoteDeleteOutcome int
+
+const (
+	// remoteDeleteKept: a tombstone holds the UID, and the absence of the
+	// object proves nothing. The rows, the sync row, and the tombstone stay.
+	remoteDeleteKept remoteDeleteOutcome = iota
+	// remoteDeleteSettled: a tombstone holds the UID, and the server
+	// reported the delete. The sync row and the tombstone go.
+	remoteDeleteSettled
+	// remoteDeleteDone: the local rows went to the trash.
+	remoteDeleteDone
+)
+
+// deleteLocalResourceByUID applies a remote delete of uid in calendarID in
+// one transaction. The delete stays in that calendar: another calendar can
+// hold the same UID (a local move, or a copy in another account). explicit
+// is true when the server reported the delete. A tombstone of the UID in this
+// calendar marks a local delete or a local move out of the calendar that is
+// not sent yet. The local rows then stay:
+//   - With explicit, the server did what the tombstone wanted, so the sync
+//     row and the tombstone go.
+//   - Else the pull skipped the tombstoned href, so its absence proves
+//     nothing, and the tombstone pass sends the DELETE.
+//
+// With no tombstone, the rows go to the trash, across every owner type, and
+// the sync row goes. A remote DELETE that races with a user action then keeps
+// the local row in the trash until the retention window ends. A later
+// restore re-CREATEs a fresh sync row via MarkResourceDirty. The read of the
+// tombstones and each write share the transaction.
+func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64, ownerType, uid string, explicit bool) (remoteDeleteOutcome, error) {
 	ops, err := ownerOpsFor(ownerType)
 	if err != nil {
-		return err
+		return remoteDeleteKept, err
 	}
 	tx, err := e.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return remoteDeleteKept, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := e.q.WithTx(tx)
+	tombstones, err := qtx.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+	if err != nil {
+		return remoteDeleteKept, fmt.Errorf("count tombstones: %w", err)
+	}
+	if tombstones > 0 {
+		if !explicit {
+			return remoteDeleteKept, nil
+		}
+		if err := qtx.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{CalendarID: calendarID, Uid: uid}); err != nil {
+			return remoteDeleteKept, fmt.Errorf("delete sync resource: %w", err)
+		}
+		if err := qtx.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
+			return remoteDeleteKept, fmt.Errorf("delete tombstone: %w", err)
+		}
+		return remoteDeleteSettled, tx.Commit()
+	}
 	if err := ops.softDeleteByUID(ctx, qtx, calendarID, uid); err != nil {
-		return err
+		return remoteDeleteKept, err
 	}
 	if err := qtx.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{CalendarID: calendarID, Uid: uid}); err != nil {
-		return fmt.Errorf("delete sync resource: %w", err)
+		return remoteDeleteKept, fmt.Errorf("delete sync resource: %w", err)
 	}
-	return tx.Commit()
+	return remoteDeleteDone, tx.Commit()
 }
 
 // lookupOwnerID resolves the local row ID that backs a UID in calendarID

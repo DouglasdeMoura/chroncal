@@ -396,37 +396,16 @@ func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int6
 		if skipped[uid] && !p.explicit[uid] {
 			continue
 		}
-		// A tombstone of the UID in this calendar marks a local delete or
-		// a local move out of the calendar that is not sent yet. The local
-		// rows stay: after a move they live in another calendar, and after
-		// a delete they are in the trash already. When the server reported
-		// the delete, it did what the tombstone wanted, so the sync row and
-		// the tombstone go. An absence-inferred UID keeps both: the pull
-		// skips a tombstoned href, so its absence proves nothing, and the
-		// tombstone pass sends the DELETE (a 404 then clears both rows).
-		tombstones, err := e.q.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+		// One transaction reads the tombstones and writes the rows, the sync
+		// row, and the tombstones (deleteLocalResourceByUID). A failure of
+		// any write counts as a failed UID, so the sync token stays.
+		outcome, err := e.deleteLocalResourceByUID(ctx, calendarID, ownerType, uid, p.explicit[uid])
 		if err != nil {
-			e.logger.Error("count tombstones", "uid", uid, "error", err)
+			e.logger.Error("apply remote delete", "uid", uid, "owner_type", ownerType, "error", err)
 			failed++
 			continue
 		}
-		if tombstones > 0 {
-			if !p.explicit[uid] {
-				continue
-			}
-			if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{CalendarID: calendarID, Uid: uid}); err != nil {
-				e.logger.Error("delete sync resource", "uid", uid, "error", err)
-			}
-			if err := e.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
-				e.logger.Error("delete tombstone", "uid", uid, "error", err)
-			}
-			continue
-		}
-		// One transaction holds the delete of the rows and the drop of the
-		// sync_resource (deleteLocalResourceByUID).
-		if err := e.deleteLocalResourceByUID(ctx, calendarID, ownerType, uid); err != nil {
-			e.logger.Error("delete local resource", "uid", uid, "owner_type", ownerType, "error", err)
-			failed++
+		if outcome != remoteDeleteDone {
 			continue
 		}
 		deleted++

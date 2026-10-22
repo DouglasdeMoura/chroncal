@@ -282,8 +282,8 @@ func restoreStatesTx(ctx context.Context, qtx *storage.Queries, calendarID int64
 	}
 	// The revive trigger of migration 057 removes each row from the delete
 	// logs of its UID.
-	if _, err := qtx.RestoreEventsByIDs(ctx, ids); err != nil {
-		return nil, fmt.Errorf("restore rows: %w", err)
+	if _, err := restoreEventsByIDsTx(ctx, qtx, ids); err != nil {
+		return nil, err
 	}
 	return ids, nil
 }
@@ -553,28 +553,56 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 	return restore, nil
 }
 
-// tokenCheckTx applies the token rule of an undo to the rows of ids. It reads
-// the rows in the transaction of the restore. A live or a purged row is done.
-// A row in the trash with another delete token than token went in a later
-// delete, a pull included: the undo refuses with ErrChangedSince. token 0
-// means that the caller has no token, and no row refuses. It returns the
-// states of the rows in the trash.
-func tokenCheckTx(ctx context.Context, qtx *storage.Queries, ids []int64, token int64) ([]storage.ListEventRowStatesByIDsRow, error) {
+// tokenSplit holds the rows of a set in the trash, sorted by the token rule
+// of an undo.
+type tokenSplit struct {
+	// match holds the rows with the delete token of the undo.
+	match []storage.ListEventRowStatesByIDsRow
+	// other holds the rows with another token: a later delete hid them, a
+	// pull included.
+	other []storage.ListEventRowStatesByIDsRow
+}
+
+// tokenSplitTx reads the rows of ids in the transaction of the restore, and
+// sorts the rows in the trash by the token rule. A live or a purged row is
+// done, and it is in neither list. token 0 means that the caller has no
+// token, and every row in the trash is a match.
+func tokenSplitTx(ctx context.Context, qtx *storage.Queries, ids []int64, token int64) (tokenSplit, error) {
 	states, err := rowStatesTx(ctx, qtx, ids)
 	if err != nil {
-		return nil, err
+		return tokenSplit{}, err
 	}
-	trashed := make([]storage.ListEventRowStatesByIDsRow, 0, len(states))
+	var split tokenSplit
 	for _, st := range states {
-		if st.DeletedAt == nil {
-			continue
+		switch {
+		case st.DeletedAt == nil:
+		case tokenMatches(st, token):
+			split.match = append(split.match, st)
+		default:
+			split.other = append(split.other, st)
 		}
-		if !tokenMatches(st, token) {
-			return nil, ErrChangedSince
-		}
-		trashed = append(trashed, st)
 	}
-	return trashed, nil
+	return split, nil
+}
+
+// refuseOther is the filter of an undo that brings back every row of its
+// set: a row of a later delete refuses with ErrChangedSince. It returns the
+// rows to bring back.
+func (s tokenSplit) refuseOther() ([]storage.ListEventRowStatesByIDsRow, error) {
+	if len(s.other) > 0 {
+		return nil, ErrChangedSince
+	}
+	return s.match, nil
+}
+
+// matchIDs is the filter of an undo that takes its own rows of a set. It
+// returns the IDs of the matches and leaves the rows of other deletes.
+func (s tokenSplit) matchIDs() []int64 {
+	ids := make([]int64, 0, len(s.match))
+	for _, st := range s.match {
+		ids = append(ids, st.ID)
+	}
+	return ids
 }
 
 // tokenMatches reports whether the row st in the trash carries the delete
@@ -583,19 +611,28 @@ func tokenMatches(st storage.ListEventRowStatesByIDsRow, token int64) bool {
 	return token == 0 || st.DeleteToken == token
 }
 
-// rowsWithTokenTx keeps the rows of ids that carry the delete token token. It
-// reads the rows in the transaction of the restore. The undo of a delete
-// brings back those rows only.
-func rowsWithTokenTx(ctx context.Context, qtx *storage.Queries, ids []int64, token int64) ([]int64, error) {
-	states, err := rowStatesTx(ctx, qtx, ids)
-	if err != nil {
-		return nil, err
+// restoreEventsByIDsTx un-hides the rows of ids in chunks under the parameter
+// limit of SQLite. It returns the count of rows that came back.
+func restoreEventsByIDsTx(ctx context.Context, qtx *storage.Queries, ids []int64) (int64, error) {
+	var total int64
+	for _, chunk := range chunkIDs(ids) {
+		n, err := qtx.RestoreEventsByIDs(ctx, chunk)
+		if err != nil {
+			return 0, fmt.Errorf("restore rows: %w", err)
+		}
+		total += n
 	}
-	kept := make([]int64, 0, len(states))
-	for _, st := range states {
-		if st.DeleteToken == token {
-			kept = append(kept, st.ID)
+	return total, nil
+}
+
+// softDeleteEventsByIDsTx hides the rows of ids in chunks under the parameter
+// limit of SQLite. Every chunk writes the one delete token of the statement
+// of the caller.
+func softDeleteEventsByIDsTx(ctx context.Context, qtx *storage.Queries, ids []int64, token int64) error {
+	for _, chunk := range chunkIDs(ids) {
+		if err := qtx.SoftDeleteEventsByIDs(ctx, storage.SoftDeleteEventsByIDsParams{Ids: chunk, DeleteToken: token}); err != nil {
+			return err
 		}
 	}
-	return kept, nil
+	return nil
 }

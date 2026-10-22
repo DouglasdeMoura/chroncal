@@ -1957,8 +1957,9 @@ func TestRestoreByUID_OrphanRowsGroupByToken(t *testing.T) {
 //  2. A purge of the master takes the log with it.
 //  3. A pull imports an orphan row of the UID.
 //  4. A series delete of the orphan row writes a new log.
-//  5. The undo of the first delete names its own log, which is gone. It
-//     gives ErrAlreadyRestored and leaves the log of step 4 alone.
+//  5. The undo of the first delete names its own log, which is gone with
+//     the master. It gives ErrMasterPurged and leaves the log of step 4
+//     alone.
 func TestUndoSeries_PurgedMasterRefusesAnotherLog(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1974,8 +1975,8 @@ func TestUndoSeries_PurgedMasterRefusesAnotherLog(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries(orphan): %v", err)
 	}
-	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrAlreadyRestored) {
-		t.Fatalf("RestoreUndo = %v, want ErrAlreadyRestored", err)
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterPurged) {
+		t.Fatalf("RestoreUndo = %v, want ErrMasterPurged", err)
 	}
 	wantTrashed(t, svc, true, o.ID)
 	if n := countLogsIn(t, svc, 1, master.UID); n != 1 {
@@ -1986,8 +1987,8 @@ func TestUndoSeries_PurgedMasterRefusesAnotherLog(t *testing.T) {
 // TestUndoSeries_MasterLeavesTheMergedOrphanRows: a delete of orphan rows
 // beside a trashed master merges its rows into the log of that master, with
 // its own token. The undo of the series delete of the master brings back the
-// master and the rows with its token. The merged row stays in the trash for
-// its own undo.
+// master and the rows with its token. The merged row stays in the trash, and
+// the log keeps it: a restore by UID then brings it back.
 func TestUndoSeries_MasterLeavesTheMergedOrphanRows(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2020,4 +2021,51 @@ func TestUndoSeries_MasterLeavesTheMergedOrphanRows(t *testing.T) {
 	}
 	wantTrashed(t, svc, false, master.ID, own.ID)
 	wantTrashed(t, svc, true, merged.ID)
+	// The log keeps the merged row as an orphan log, so a restore by UID
+	// brings it back.
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	wantTrashed(t, svc, false, merged.ID)
+}
+
+// TestRestoreSeries_LogAboveTheParameterLimit: a series-delete log names more
+// rows than one SQLite statement takes as parameters (32766). The restore of
+// the master reads and un-hides the rows in chunks, so every row comes back.
+func TestRestoreSeries_LogAboveTheParameterLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("a large log")
+	}
+	svc := newTestService(t)
+	ctx := context.Background()
+	const n = 33000
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "big-log", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=MINUTELY;COUNT=40000",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	token := nextToken(t, svc)
+	for _, stmt := range []string{
+		`WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM k WHERE i < ` + strconv.Itoa(n) + `)
+		 INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at, delete_token)
+		 SELECT 'big-log', 1, 'Row', '2026-05-04T09:00:00Z', '2026-05-04T10:00:00Z',
+		        strftime('%Y-%m-%dT%H:%M:%SZ', '2026-05-04T09:00:00Z', '+' || i || ' minutes'), '2026-05-01T00:00:00Z', ` + strconv.FormatInt(token, 10) + ` FROM k`,
+		`UPDATE events SET deleted_at = '2026-05-01T00:00:00Z', delete_token = ` + strconv.FormatInt(token, 10) + ` WHERE id = ` + strconv.FormatInt(master.ID, 10),
+		`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master, delete_token)
+		 SELECT 1, 'big-log', group_concat(id, ','), 1, ` + strconv.FormatInt(token, 10) + ` FROM events WHERE uid = 'big-log' AND recurrence_id != ''`,
+	} {
+		if _, err := svc.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed the large log: %v", err)
+		}
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	var trashed int
+	if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE uid = 'big-log' AND deleted_at IS NOT NULL`).Scan(&trashed); err != nil || trashed != 0 {
+		t.Errorf("rows in the trash after the restore = %d, %v; want 0", trashed, err)
+	}
 }

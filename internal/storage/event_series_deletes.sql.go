@@ -267,6 +267,23 @@ func (q *Queries) RecordEventSeriesDelete(ctx context.Context, arg RecordEventSe
 	return id, err
 }
 
+const updateEventSeriesDeleteAsOrphanLog = `-- name: UpdateEventSeriesDeleteAsOrphanLog :exec
+UPDATE event_series_deletes SET hidden_ids = ?, had_master = 0, delete_token = 0 WHERE id = ?
+`
+
+type UpdateEventSeriesDeleteAsOrphanLogParams struct {
+	HiddenIds string
+	ID        int64
+}
+
+// The undo of a series delete of a master takes its own rows from the log.
+// The rows that a delete of orphan rows merged into the log stay. The log
+// keeps them as an orphan log, with no master and no token of a master.
+func (q *Queries) UpdateEventSeriesDeleteAsOrphanLog(ctx context.Context, arg UpdateEventSeriesDeleteAsOrphanLogParams) error {
+	_, err := q.db.ExecContext(ctx, updateEventSeriesDeleteAsOrphanLog, arg.HiddenIds, arg.ID)
+	return err
+}
+
 const updateEventSeriesDeleteHiddenIds = `-- name: UpdateEventSeriesDeleteHiddenIds :exec
 UPDATE event_series_deletes SET hidden_ids = ? WHERE id = ?
 `

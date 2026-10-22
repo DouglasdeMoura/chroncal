@@ -184,3 +184,21 @@ func TestTimeListHas(t *testing.T) {
 		t.Error("TimeListHas = true for an absent time, want false")
 	}
 }
+
+// TestTimeListCompare_FractionOfASecond: the two list helpers compare
+// instants to the second. A fraction of a second and another time zone
+// still match, and the next second does not.
+func TestTimeListCompare_FractionOfASecond(t *testing.T) {
+	at := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
+	fraction := at.Add(400 * time.Millisecond).In(time.FixedZone("X", 7200))
+	list := []time.Time{fraction}
+	if !TimeListHas(list, at) {
+		t.Error("TimeListHas = false for a fraction of the same second, want true")
+	}
+	if TimeListHas(list, at.Add(time.Second)) {
+		t.Error("TimeListHas = true for the next second, want false")
+	}
+	if got := RemoveTimeFromList(list, at); len(got) != 0 {
+		t.Errorf("RemoveTimeFromList = %v, want the entry removed", got)
+	}
+}
