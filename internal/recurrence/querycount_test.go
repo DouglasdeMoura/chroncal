@@ -151,3 +151,44 @@ func TestListExpandedByDateRange_BatchesOverrideFetch(t *testing.T) {
 		t.Errorf("got %d events, want %d (2 per master)", len(events), masters*2)
 	}
 }
+
+// TestOverrideOwners_IndependentSeriesReadsNoView: an override beside its
+// own master, with that master not loaded (a filter left it out), is no
+// legacy override. The lookup reads the master rows once and does not read
+// the view.
+func TestOverrideOwners_IndependentSeriesReadsNoView(t *testing.T) {
+	db, q, counter := newCountingDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+	start := time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC)
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Weekly", StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	override, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Moved",
+		StartTime: start.AddDate(0, 0, 7).Add(time.Hour), EndTime: start.AddDate(0, 0, 7).Add(2 * time.Hour),
+		RecurrenceID: start.AddDate(0, 0, 7).Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert override: %v", err)
+	}
+	row, err := q.GetEventIncludingDeleted(ctx, override.ID)
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	atomic.StoreInt64(counter, 0)
+	ownerOf, holdsMaster, err := recurSvc.overrideOwners(ctx, nil, []storage.Event{row})
+	if err != nil {
+		t.Fatalf("overrideOwners: %v", err)
+	}
+	if got := atomic.LoadInt64(counter); got != 0 {
+		t.Errorf("view queries = %d, want 0", got)
+	}
+	if len(ownerOf) != 0 || !holdsMaster(row) {
+		t.Errorf("ownerOf = %v, beside master = %v; want no legacy owner and the row beside its master", ownerOf, holdsMaster(row))
+	}
+}

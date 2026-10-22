@@ -27,7 +27,7 @@ func (q *Queries) DeleteEventSeriesDeletesByCalendarUID(ctx context.Context, arg
 }
 
 const getEventSeriesDeleteByCalendarUID = `-- name: GetEventSeriesDeleteByCalendarUID :one
-SELECT id, calendar_id, uid, hidden_ids, deleted_at FROM event_series_deletes WHERE calendar_id = ? AND uid = ?
+SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE calendar_id = ? AND uid = ?
 `
 
 type GetEventSeriesDeleteByCalendarUIDParams struct {
@@ -44,12 +44,13 @@ func (q *Queries) GetEventSeriesDeleteByCalendarUID(ctx context.Context, arg Get
 		&i.Uid,
 		&i.HiddenIds,
 		&i.DeletedAt,
+		&i.HadMaster,
 	)
 	return i, err
 }
 
 const listEventSeriesDeletesByUID = `-- name: ListEventSeriesDeletesByUID :many
-SELECT id, calendar_id, uid, hidden_ids, deleted_at FROM event_series_deletes WHERE uid = ? ORDER BY calendar_id
+SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE uid = ? ORDER BY calendar_id
 `
 
 func (q *Queries) ListEventSeriesDeletesByUID(ctx context.Context, uid string) ([]EventSeriesDelete, error) {
@@ -67,6 +68,7 @@ func (q *Queries) ListEventSeriesDeletesByUID(ctx context.Context, uid string) (
 			&i.Uid,
 			&i.HiddenIds,
 			&i.DeletedAt,
+			&i.HadMaster,
 		); err != nil {
 			return nil, err
 		}
@@ -112,10 +114,11 @@ func (q *Queries) PurgeOldEventSeriesDeletes(ctx context.Context, deletedAt stri
 }
 
 const recordEventSeriesDelete = `-- name: RecordEventSeriesDelete :exec
-INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids)
-VALUES (?, ?, ?)
+INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master)
+VALUES (?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET
     hidden_ids = excluded.hidden_ids,
+    had_master = excluded.had_master,
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 `
 
@@ -123,13 +126,19 @@ type RecordEventSeriesDeleteParams struct {
 	CalendarID int64
 	Uid        string
 	HiddenIds  string
+	HadMaster  int64
 }
 
 // One log row per series in one calendar. The service writes the merged
 // list of an earlier unconsumed row and the new rows (see
 // recordSeriesDeleteTx), so the upsert replaces the column with it.
 func (q *Queries) RecordEventSeriesDelete(ctx context.Context, arg RecordEventSeriesDeleteParams) error {
-	_, err := q.db.ExecContext(ctx, recordEventSeriesDelete, arg.CalendarID, arg.Uid, arg.HiddenIds)
+	_, err := q.db.ExecContext(ctx, recordEventSeriesDelete,
+		arg.CalendarID,
+		arg.Uid,
+		arg.HiddenIds,
+		arg.HadMaster,
+	)
 	return err
 }
 

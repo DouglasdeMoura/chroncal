@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
@@ -218,5 +219,58 @@ func TestListExpandedEvents_TwoLegacyRowsLowestIDWins(t *testing.T) {
 	}
 	if len(at) != 1 || at[0].ID != lowest {
 		t.Errorf("rows at the second occurrence = %+v, want the row %d once", at, lowest)
+	}
+}
+
+// TestTieRule_GoMatchesViewOnOrphanAndOwnRows: the Go form of the tie rule
+// (beside the master) agrees with the view column beside_master. An orphan
+// row has no master row in its calendar, so both give false. A row beside
+// its master gives true in both.
+func TestTieRule_GoMatchesViewOnOrphanAndOwnRows(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	eventsSvc := event.NewService(db, q)
+	recurSvc := NewService(db, q)
+	ctx := context.Background()
+	at := time.Date(2026, 4, 7, 9, 0, 0, 0, time.UTC)
+	orphan, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: "tie-orphan", CalendarID: 1, Title: "Orphan",
+		StartTime: at, EndTime: at.Add(time.Hour), RecurrenceID: at.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert orphan: %v", err)
+	}
+	master, err := eventsSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Series", StartTime: at.Add(-24 * time.Hour), EndTime: at.Add(-23 * time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("create master: %v", err)
+	}
+	own, err := eventsSvc.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Own",
+		StartTime: at.Add(time.Hour), EndTime: at.Add(2 * time.Hour), RecurrenceID: at.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert own override: %v", err)
+	}
+	rows := make([]storage.Event, 0, 2)
+	for _, id := range []int64{orphan.ID, own.ID} {
+		r, err := q.GetEventIncludingDeleted(ctx, id)
+		if err != nil {
+			t.Fatalf("get row %d: %v", id, err)
+		}
+		rows = append(rows, r)
+	}
+	_, holdsMaster, err := recurSvc.overrideOwners(ctx, nil, rows)
+	if err != nil {
+		t.Fatalf("overrideOwners: %v", err)
+	}
+	for _, r := range rows {
+		var view int64
+		if err := db.QueryRowContext(ctx, `SELECT beside_master FROM event_series_rows WHERE id = ?`, r.ID).Scan(&view); err != nil {
+			t.Fatalf("read the view for row %d: %v", r.ID, err)
+		}
+		if got := holdsMaster(r); got != (view == 1) {
+			t.Errorf("row %d: Go beside master = %v, view beside_master = %d", r.ID, got, view)
+		}
 	}
 }

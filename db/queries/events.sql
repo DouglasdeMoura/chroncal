@@ -401,8 +401,14 @@ SELECT CAST(EXISTS (
     SELECT 1 FROM event_series_rows AS s WHERE s.id = sqlc.arg(id) AND s.owner_calendar_id = sqlc.arg(calendar_id)
 ) AS BOOLEAN) AS owned;
 
--- name: PurgeTrashedOverridesInCalendar :exec
+-- name: PurgeTrashedOverridesInCalendar :execrows
 -- Hard-delete the override rows of one UID in one calendar that are in the
 -- trash. The purge of a master takes them along, and the live rows stay.
 DELETE FROM events
 WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL;
+
+-- name: ListTrashedMastersBefore :many
+-- The master rows in the trash with deleted_at before the cutoff. The purge
+-- by age applies the rule of the purge of one master to each of them.
+SELECT calendar_id, uid FROM events
+WHERE recurrence_id = '' AND deleted_at IS NOT NULL AND deleted_at < ?;

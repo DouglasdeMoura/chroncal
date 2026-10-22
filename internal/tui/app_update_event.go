@@ -537,13 +537,13 @@ func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 		// it never blocks the older entries. The delete stays in the
 		// trash, and the trash restores it after the series.
 		m.undoStack.Remove(msg.meta)
-		return m, m.toast.Failed("restore the series first, then restore this from the trash")
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed("restore the series first, then restore this from the trash"))
 	}
 	if errors.Is(msg.err, event.ErrMasterPurged) {
 		// A purge took the master. The rows can never come back, so the
 		// entry leaves the stack.
 		m.undoStack.Remove(msg.meta)
-		return m, m.toast.Failed("the master is purged; nothing to restore")
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed("the master is purged; nothing to restore"))
 	}
 	if msg.err != nil {
 		// Route the dismiss tick — previously dropped, so failed toasts

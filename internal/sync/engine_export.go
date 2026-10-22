@@ -117,61 +117,17 @@ var ownerOpsByType = map[string]ownerOps{
 }
 
 // eventMasterForExport finds the live master of uid in calendarID for the
-// export. With no master there, the override rows of the calendar are legacy
-// overrides (see storage.LegacyOverride) when the UID has a live master in
-// another calendar. They belong to the series of that master, and the export
-// of its calendar carries them. The export of this calendar then has no
-// resource (errResourceMissing). A PUT of the overrides alone would store an
-// object with no master. A UID with no live master anywhere keeps the
-// orphan-instance path: sql.ErrNoRows, and the override rows export on their
-// own.
+// export. The event service holds the owner rule (event.Service.ExportMaster).
+// A UID whose rows here belong to a series that this calendar does not
+// export has no resource (errResourceMissing). A UID with no master row
+// anywhere keeps the orphan-instance path: sql.ErrNoRows, and the override
+// rows export on their own.
 func (e *Engine) eventMasterForExport(ctx context.Context, calendarID int64, uid string) (event.Event, error) {
-	// The common case: the live master of the calendar. One lookup on the
-	// UNIQUE(calendar_id, uid, recurrence_id) key, with no view.
-	own, err := e.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
-	if err == nil {
-		// The row with its categories. The hydrate step of the export
-		// loads the relations and owns their failure mode.
-		return e.events.FromStorageWithCategories(ctx, own), nil
+	m, err := e.events.ExportMaster(ctx, calendarID, uid)
+	if errors.Is(err, event.ErrNotExportedHere) {
+		return event.Event{}, fmt.Errorf("%w: event uid %s: %w", errResourceMissing, uid, err)
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return event.Event{}, fmt.Errorf("get master: %w", err)
-	}
-	// The view event_series_rows names the series that owns the rows of
-	// the calendar, live or in the trash.
-	owner, err := e.q.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{
-		CalendarID: calendarID, Uid: uid, IncludeDeleted: true,
-	})
-	found, err := storage.Found(err)
-	if err != nil {
-		return event.Event{}, fmt.Errorf("get series master: %w", err)
-	}
-	switch {
-	case found && owner.DeletedAt == nil:
-		// The live series of another calendar owns the rows here, and its
-		// calendar exports them.
-		return event.Event{}, fmt.Errorf("%w: event uid %s has its series in another calendar", errResourceMissing, uid)
-	case found:
-		// The master that owns the rows is in the trash, here or in
-		// another calendar. Its series holds the rows, and its restore
-		// sends them again. A PUT of the live rows alone would replace a
-		// series object with a body with no master, or put the occurrence
-		// on the server twice. The rows stay local until the master comes
-		// back.
-		return event.Event{}, fmt.Errorf("%w: event uid %s has its series master in the trash", errResourceMissing, uid)
-	}
-	// No owner. The rows here belong to no series: two or more masters
-	// exist, live or in the trash, or the calendar holds no row. A PUT of
-	// the rows would store a body with no master. Only a UID with no master
-	// row anywhere leaves orphan instances to export.
-	masters, err := e.q.ListEventMastersByUIDIncludingDeleted(ctx, uid)
-	if err != nil {
-		return event.Event{}, fmt.Errorf("list masters: %w", err)
-	}
-	if len(masters) > 0 {
-		return event.Event{}, fmt.Errorf("%w: event uid %s has no owner here", errResourceMissing, uid)
-	}
-	return event.Event{}, sql.ErrNoRows
+	return m, err
 }
 
 // eventOverridesForExport lists the override rows of the export of uid in

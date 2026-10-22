@@ -201,6 +201,7 @@ type EventSeriesDelete struct {
 	Uid        string
 	HiddenIds  string
 	DeletedAt  string
+	HadMaster  int64
 }
 
 type EventSeriesRow struct {
