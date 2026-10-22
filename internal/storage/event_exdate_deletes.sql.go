@@ -82,7 +82,7 @@ func (q *Queries) DeleteEventExdateDeletesCollidingWithMove(ctx context.Context,
 }
 
 const getEventExdateDelete = `-- name: GetEventExdateDelete :one
-SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_id FROM event_exdate_deletes WHERE id = ?
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids FROM event_exdate_deletes WHERE id = ?
 `
 
 func (q *Queries) GetEventExdateDelete(ctx context.Context, id int64) (EventExdateDelete, error) {
@@ -95,13 +95,13 @@ func (q *Queries) GetEventExdateDelete(ctx context.Context, id int64) (EventExda
 		&i.RecurrenceID,
 		&i.DeletedAt,
 		&i.Pruned,
-		&i.HiddenID,
+		&i.HiddenIds,
 	)
 	return i, err
 }
 
 const getEventExdateDeleteByCalendarUIDRecurrence = `-- name: GetEventExdateDeleteByCalendarUIDRecurrence :one
-SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_id FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND pruned = 0
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND pruned = 0
 `
 
 type GetEventExdateDeleteByCalendarUIDRecurrenceParams struct {
@@ -123,13 +123,13 @@ func (q *Queries) GetEventExdateDeleteByCalendarUIDRecurrence(ctx context.Contex
 		&i.RecurrenceID,
 		&i.DeletedAt,
 		&i.Pruned,
-		&i.HiddenID,
+		&i.HiddenIds,
 	)
 	return i, err
 }
 
 const listEventExdateDeletesByCalendar = `-- name: ListEventExdateDeletesByCalendar :many
-SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_id FROM event_exdate_deletes
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids FROM event_exdate_deletes
 WHERE calendar_id = ? AND pruned = 0
 ORDER BY deleted_at DESC
 `
@@ -152,7 +152,7 @@ func (q *Queries) ListEventExdateDeletesByCalendar(ctx context.Context, calendar
 			&i.RecurrenceID,
 			&i.DeletedAt,
 			&i.Pruned,
-			&i.HiddenID,
+			&i.HiddenIds,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +168,7 @@ func (q *Queries) ListEventExdateDeletesByCalendar(ctx context.Context, calendar
 }
 
 const listEventExdateDeletesByCalendarUID = `-- name: ListEventExdateDeletesByCalendarUID :many
-SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_id FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id
 `
 
 type ListEventExdateDeletesByCalendarUIDParams struct {
@@ -195,7 +195,7 @@ func (q *Queries) ListEventExdateDeletesByCalendarUID(ctx context.Context, arg L
 			&i.RecurrenceID,
 			&i.DeletedAt,
 			&i.Pruned,
-			&i.HiddenID,
+			&i.HiddenIds,
 		); err != nil {
 			return nil, err
 		}
@@ -264,31 +264,33 @@ func (q *Queries) MoveEventExdateDeletesUIDToCalendar(ctx context.Context, arg M
 }
 
 const recordEventExdateDelete = `-- name: RecordEventExdateDelete :exec
-INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_id)
-VALUES (?1, ?2, ?3, ?4)
+INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_ids)
+VALUES (?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     pruned = 0,
-    hidden_id = excluded.hidden_id
+    hidden_ids = excluded.hidden_ids
 `
 
 type RecordEventExdateDeleteParams struct {
 	CalendarID   int64
 	Uid          string
 	RecurrenceID string
-	HiddenID     *int64
+	HiddenIds    string
 }
 
 // Idempotent: a second delete of the same occurrence in one calendar keeps
 // one log row. Each calendar keeps its own row (issue #842). A delete of
 // the user turns a pruned marker of the occurrence into a delete log.
-// hidden_id names the override row that the delete hid, or NULL.
+// hidden_ids lists the override rows that the deletes hid. The caller
+// passes the union with the list of an earlier delete of the occurrence
+// (see recordExdateDeleteTx).
 func (q *Queries) RecordEventExdateDelete(ctx context.Context, arg RecordEventExdateDeleteParams) error {
 	_, err := q.db.ExecContext(ctx, recordEventExdateDelete,
 		arg.CalendarID,
 		arg.Uid,
 		arg.RecurrenceID,
-		arg.HiddenID,
+		arg.HiddenIds,
 	)
 	return err
 }

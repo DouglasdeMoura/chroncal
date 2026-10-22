@@ -510,9 +510,8 @@ func resolveEvent(ctx context.Context, a *app.App, ref, recurrenceID string) (ev
 // resolveEventFor is resolveEvent for a command that may accept --calendar
 // (see notFoundErrFor).
 func resolveEventFor(ctx context.Context, a *app.App, ref, recurrenceID string, acceptsCalendar bool) (event.Event, error) {
-	e, err := resolveRef(ctx, ref, recurrenceID, "event",
+	return resolveRef(ctx, ref, recurrenceID, "event",
 		a.Events.Get, a.Events.GetByUID, a.Events.GetByUIDAndRecurrenceID, acceptsCalendar)
-	return e, err
 }
 
 // resolveTodo looks up a todo by numeric ID, string UID, or UID + recurrence-id.

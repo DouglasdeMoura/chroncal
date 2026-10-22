@@ -177,6 +177,19 @@ func RemoveTimeFromList(list []time.Time, target time.Time) []time.Time {
 	return out
 }
 
+// TimeListHas reports whether list holds target. It uses the key of
+// RemoveTimeFromList, so a check before an append keeps one copy of an
+// EXDATE. RemoveTimeFromList removes one copy only.
+func TimeListHas(list []time.Time, target time.Time) bool {
+	targetKey := target.UTC().Format(time.RFC3339)
+	for _, t := range list {
+		if strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
+			return true
+		}
+	}
+	return false
+}
+
 // JoinCategoryList joins category values into a single comma-separated string.
 // It backslash-escapes any backslash or comma inside an individual value. The
 // result is then an exact inverse of ParseCategoryList. This keeps a category

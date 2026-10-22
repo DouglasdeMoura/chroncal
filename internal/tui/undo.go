@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
@@ -94,11 +95,11 @@ func (s *UndoStack) Remove(meta event.UndoMeta) bool {
 func sameUndoTarget(a, b event.UndoMeta) bool {
 	// Two calendars can hold the same UID (issue #842), so the calendar
 	// is part of the target too.
-	// RowID and MasterID name the rows of the delete: two deletes of one
-	// occurrence can hide different rows.
+	// RowID, RowIDs, and MasterID name the rows of the delete: two deletes
+	// of one occurrence can hide different rows.
 	return a.Kind == b.Kind && a.UID == b.UID && a.CalendarID == b.CalendarID &&
 		a.RecurrenceID == b.RecurrenceID && a.CutoffTime.Equal(b.CutoffTime) &&
-		a.RowID == b.RowID && a.MasterID == b.MasterID
+		a.RowID == b.RowID && a.MasterID == b.MasterID && slices.Equal(a.RowIDs, b.RowIDs)
 }
 
 // Len returns the current depth.

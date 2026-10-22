@@ -148,7 +148,8 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 		// An occurrence log with no master in its calendar is no entry. The log of
 		// a delete by ID of an orphan row names a row that the trash lists already.
 		// A stale log names nothing to restore.
-		if lookupMaster(l.CalendarID, l.Uid) == nil {
+		m := lookupMaster(l.CalendarID, l.Uid)
+		if m == nil {
 			continue
 		}
 		inst, _ := time.Parse(time.RFC3339, l.RecurrenceID)
@@ -160,20 +161,18 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 			InstanceTime: inst,
 			DeletedAt:    parseStorageTime(l.DeletedAt),
 		}
-		if m := lookupMaster(l.CalendarID, l.Uid); m != nil {
-			entry.Title = m.Title
-			entry.AllDay = m.AllDay
-			entry.Location = m.Location
-			entry.Description = m.Description
-			entry.Status = m.Status
-			entry.Categories = m.Categories
-			// Project the master's duration onto this occurrence so
-			// "When" reads as "Fri, Apr 3 09:00 – 09:30" rather than
-			// the master's original time.
-			entry.StartTime = inst
-			if !m.EndTime.IsZero() && !m.StartTime.IsZero() {
-				entry.EndTime = inst.Add(m.EndTime.Sub(m.StartTime))
-			}
+		entry.Title = m.Title
+		entry.AllDay = m.AllDay
+		entry.Location = m.Location
+		entry.Description = m.Description
+		entry.Status = m.Status
+		entry.Categories = m.Categories
+		// Project the master's duration onto this occurrence so
+		// "When" reads as "Fri, Apr 3 09:00 – 09:30" rather than
+		// the master's original time.
+		entry.StartTime = inst
+		if !m.EndTime.IsZero() && !m.StartTime.IsZero() {
+			entry.EndTime = inst.Add(m.EndTime.Sub(m.StartTime))
 		}
 		entries = append(entries, entry)
 	}
@@ -319,13 +318,12 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	if err := ensureSeriesWritableIn(ctx, qtx, log.CalendarID, log.Uid); err != nil {
 		return err
 	}
-	if log.HiddenID != nil {
-		// A purge or a restore of the row that came first leaves no row to
-		// un-hide. The EXDATE still goes.
-		err := restoreRowByIDTx(ctx, qtx, *log.HiddenID)
-		if err != nil && !errors.Is(err, ErrNotDeleted) {
-			return err
-		}
+	hidden, err := parseRowIDs(log.HiddenIds)
+	if err != nil {
+		return err
+	}
+	if err := restoreHiddenRowsTx(ctx, qtx, log.CalendarID, hidden); err != nil {
+		return err
 	}
 
 	existing := ParseTimeList(storage.NullableToString(master.Exdates))
