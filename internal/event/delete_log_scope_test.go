@@ -180,7 +180,7 @@ func TestOrphanDeletes_BesideUnloggedMasterSeedItsLog(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	master, second, third := singleSeriesWithOverrides(t, svc)
-	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); err != nil {
+	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID, DeleteToken: nextToken(t, svc)}); err != nil {
 		t.Fatalf("hide the series: %v", err)
 	}
 	if n := countLogsIn(t, svc, 1, master.UID); n != 0 {
@@ -976,7 +976,7 @@ func TestRestoreMaster_UnloggedSeriesKeepsTheRowOfALoggedOccurrence(t *testing.T
 		t.Fatalf("DeleteInstance: %v", err)
 	}
 	o := legacyAt(t, svc, master.UID, 1, second)
-	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); err != nil {
+	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID, DeleteToken: nextToken(t, svc)}); err != nil {
 		t.Fatalf("pull hides the series: %v", err)
 	}
 	if err := svc.RestoreByID(ctx, master.ID); err != nil {
@@ -1106,7 +1106,7 @@ func TestRestoreByUID_OrphanTwinsSkipByRowNotByMarker(t *testing.T) {
 	if err := svc.Delete(ctx, r1.ID); err != nil {
 		t.Fatalf("Delete(R1): %v", err)
 	}
-	if err := svc.q.SoftDeleteEvent(ctx, r2.ID); err != nil {
+	if err := svc.q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: r2.ID, DeleteToken: nextToken(t, svc)}); err != nil {
 		t.Fatalf("pull prune of R2: %v", err)
 	}
 	if err := svc.q.RecordEventExdatePrune(ctx, storage.RecordEventExdatePruneParams{CalendarID: calB, Uid: uid, RecurrenceID: at.Format(time.RFC3339)}); err != nil {
@@ -1478,9 +1478,9 @@ func TestUndoOrphanDeleteByID_GuardsTheCalendar(t *testing.T) {
 // TestPurgeTrashEntry_InstanceGuardsTheRowCalendars: a purge of an
 // occurrence entry hard-deletes the legacy rows of the log in other
 
-// TestUndo_PullDeletedRowRefuses: a later pull hides the row of a delete
-// again with no log of that delete. The row has a newer deleted_at, so the
-// undo refuses with ErrChangedSince.
+// TestUndo_PullDeletedRowRefuses: a pull hides the row of a delete again
+// with no log of that delete, in the same second. The pull wrote a new
+// delete token, so the undo refuses with ErrChangedSince.
 // The cases are a series delete of a calendar by a pull, and a pull prune
 // with its marker.
 func TestUndo_PullDeletedRowRefuses(t *testing.T) {
@@ -1496,10 +1496,9 @@ func TestUndo_PullDeletedRowRefuses(t *testing.T) {
 		if err := svc.RestoreByID(ctx, o.ID); err != nil {
 			t.Fatalf("RestoreByID: %v", err)
 		}
-		if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: uid}); err != nil {
+		if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: uid, DeleteToken: nextToken(t, svc)}); err != nil {
 			t.Fatalf("pull hides the rows: %v", err)
 		}
-		laterPull(t, svc, o.ID)
 		if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrChangedSince) {
 			t.Fatalf("RestoreUndo = %v, want ErrChangedSince", err)
 		}
@@ -1517,10 +1516,9 @@ func TestUndo_PullDeletedRowRefuses(t *testing.T) {
 		if err := svc.RestoreByID(ctx, row); err != nil {
 			t.Fatalf("RestoreByID: %v", err)
 		}
-		if err := svc.q.SoftDeleteEvent(ctx, row); err != nil {
+		if err := svc.q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: row, DeleteToken: nextToken(t, svc)}); err != nil {
 			t.Fatalf("pull prune: %v", err)
 		}
-		laterPull(t, svc, row)
 		if err := svc.q.RecordEventExdatePrune(ctx, storage.RecordEventExdatePruneParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)}); err != nil {
 			t.Fatalf("pruned marker: %v", err)
 		}
@@ -1691,11 +1689,71 @@ func TestPurge_ReadOnlyCalendarsStillEmptyTheTrash(t *testing.T) {
 	})
 }
 
-// laterPull gives the row the deleted_at of a pull after the delete. A test
-// runs in one second, so it writes the later time itself.
-func laterPull(t *testing.T, svc *Service, id int64) {
+// nextToken takes a fresh delete token, as each soft-delete statement does.
+func nextToken(t *testing.T, svc *Service) int64 {
 	t.Helper()
-	if _, err := svc.db.ExecContext(context.Background(), `UPDATE events SET deleted_at = '2100-01-01T00:00:00Z' WHERE id = ?`, id); err != nil {
-		t.Fatalf("set the time of the pull: %v", err)
+	token, err := svc.q.NextEventDeleteToken(context.Background())
+	if err != nil {
+		t.Fatalf("delete token: %v", err)
 	}
+	return token
+}
+
+// rowToken reads the delete token of the row id.
+func rowToken(t *testing.T, svc *Service, id int64) int64 {
+	t.Helper()
+	var token int64
+	if err := svc.db.QueryRowContext(context.Background(), `SELECT delete_token FROM events WHERE id = ?`, id).Scan(&token); err != nil {
+		t.Fatalf("read the delete token of row %d: %v", id, err)
+	}
+	return token
+}
+
+// TestUndoMeta_CarriesTheTokenOfEachDelete: each delete kind keeps the token
+// that it wrote on its rows. The kinds are the delete by ID, the series
+// delete, the occurrence delete, and the truncation. Each delete writes a new
+// token.
+func TestUndoMeta_CarriesTheTokenOfEachDelete(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	seen := make(map[int64]bool)
+	check := func(kind string, meta UndoMeta, err error, row int64) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		if meta.DeleteToken == 0 || meta.DeleteToken != rowToken(t, svc, row) || seen[meta.DeleteToken] {
+			t.Errorf("%s: meta token %d, row token %d; want the new token of the row", kind, meta.DeleteToken, rowToken(t, svc, row))
+		}
+		seen[meta.DeleteToken] = true
+	}
+	single, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "token-single", CalendarID: 1, Title: "Single",
+		StartTime: time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC), EndTime: time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("upsert single: %v", err)
+	}
+	meta, err := svc.DeleteWithUndo(ctx, single.ID)
+	check("delete by ID of a master", meta, err, single.ID)
+
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	meta, err = svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+	check("occurrence delete", meta, err, meta.RowID)
+	thirdRow, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	meta, err = svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, third)
+	check("truncation", meta, err, thirdRow.ID)
+	meta, err = svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	check("series delete of a master", meta, err, master.ID)
+
+	o := orphanRows(t, svc, "token-orphan", 2)
+	meta, err = svc.DeleteWithUndo(ctx, o[0].ID)
+	check("delete by ID of an override", meta, err, o[0].ID)
+	meta, err = svc.DeleteSeriesWithUndo(ctx, 1, "token-orphan")
+	check("series delete of orphan rows", meta, err, o[1].ID)
 }

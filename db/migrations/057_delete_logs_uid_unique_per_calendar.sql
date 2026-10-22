@@ -1,4 +1,18 @@
 -- +goose Up
+-- delete_token names the soft-delete statement that put a row in the trash.
+-- Each statement takes a fresh token from the one-row counter
+-- event_delete_token, and writes it on every row that it hides. The undo of
+-- a delete keeps its token (UndoMeta.DeleteToken): a row in the trash with
+-- that token is still as the delete left it. A later delete, a pull
+-- included, writes a newer token. The token matters only while deleted_at
+-- holds a time, so a restore leaves it.
+ALTER TABLE events ADD COLUMN delete_token INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE event_delete_token (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last INTEGER NOT NULL
+);
+INSERT INTO event_delete_token (id, last) VALUES (1, 0);
+
 -- Two calendars can hold a series with the same UID (migration 050, issue
 -- #842). The delete logs kept one row per (uid, recurrence_id) and per (uid,
 -- cutoff_time). A delete of the same occurrence in two calendars then kept
@@ -152,8 +166,11 @@ WHERE NOT EXISTS (
 -- takes the same rows, with three exceptions:
 --   - a row that went to the trash more than one second after the log: a
 --     later delete hid it.
---   - a row that went to the trash with the master: a series delete hides
---     the master and its rows in one statement.
+--   - a row that went to the trash with the master before the log. A series
+--     delete hides the master and its rows in one statement. The old data
+--     has no delete token. So a row in the same second as the log counts.
+--     An occurrence delete can hide it just before a series delete in that
+--     second. The old restore brought it back by recurrence ID.
 --   - a row that a truncation hid at the same time: its truncation log
 --     owns it.
 -- The times compare as whole seconds (unixepoch, SQLite 3.38 or later).
@@ -171,7 +188,8 @@ UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
             SELECT 1 FROM events AS m
             WHERE m.uid = s.uid AND m.calendar_id = s.owner_calendar_id
               AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL
-              AND unixepoch(m.deleted_at) = unixepoch(s.deleted_at))
+              AND unixepoch(m.deleted_at) = unixepoch(s.deleted_at)
+              AND unixepoch(s.deleted_at) < unixepoch(event_exdate_deletes.deleted_at))
           AND NOT EXISTS (
             SELECT 1 FROM event_truncate_deletes AS t
             WHERE t.uid = s.uid AND t.calendar_id = s.owner_calendar_id
@@ -277,6 +295,7 @@ END;
 -- +goose StatementEnd
 
 -- +goose Down
+DROP TABLE IF EXISTS event_delete_token;
 DROP TRIGGER IF EXISTS events_purge_drops_row_from_logs;
 DROP TRIGGER IF EXISTS events_override_insert_drops_prune_marker;
 DROP TRIGGER IF EXISTS events_override_revive_drops_stale_logs;
@@ -325,3 +344,4 @@ DROP TABLE event_truncate_deletes;
 ALTER TABLE event_truncate_deletes_old RENAME TO event_truncate_deletes;
 CREATE INDEX idx_event_truncate_deletes_calendar ON event_truncate_deletes(calendar_id);
 CREATE INDEX idx_event_truncate_deletes_deleted_at ON event_truncate_deletes(deleted_at);
+ALTER TABLE events DROP COLUMN delete_token;

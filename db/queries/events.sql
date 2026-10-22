@@ -100,11 +100,17 @@ UPDATE events SET rdates = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 -- name: UpdateEventRecurrenceRule :exec
 UPDATE events SET recurrence_rule = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?;
 
+-- name: NextEventDeleteToken :one
+-- A fresh token for one soft-delete statement (see the column
+-- events.delete_token of migration 057).
+UPDATE event_delete_token SET last = last + 1 WHERE id = 1 RETURNING last;
+
 -- name: SoftDeleteEvent :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? AND deleted_at IS NULL;
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = sqlc.arg(delete_token)
+WHERE id = sqlc.arg(id) AND deleted_at IS NULL;
 
 -- name: SoftDeleteEventsByCalendarUID :exec
 -- Soft-delete every live row of one UID in one calendar. A pull that sees
@@ -113,14 +119,16 @@ WHERE id = ? AND deleted_at IS NULL;
 -- in the pulled calendar.
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = sqlc.arg(delete_token)
+WHERE calendar_id = sqlc.arg(calendar_id) AND uid = sqlc.arg(uid) AND deleted_at IS NULL;
 
 -- name: SoftDeleteEventsByUID :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NULL;
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = sqlc.arg(delete_token)
+WHERE uid = sqlc.arg(uid) AND deleted_at IS NULL;
 
 -- name: RestoreEvent :exec
 UPDATE events SET
@@ -237,13 +245,13 @@ SELECT CAST(EXISTS (
 ) AS BOOLEAN) AS has_override;
 
 -- name: SoftDeleteEventsByIDs :exec
--- Soft-delete a set of live rows by ID in one statement, so every row gets
--- the same deleted_at. The truncation of a series reads its rows once and
--- hides them with it. The occurrence delete uses it too: its undo compares
--- that time (UndoMeta.DeletedAt).
+-- Soft-delete a set of live rows by ID in one statement, with one delete
+-- token. The truncation of a series reads its rows once and hides them with
+-- it. The occurrence delete uses it too.
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = sqlc.arg(delete_token)
 WHERE id IN (sqlc.slice(ids)) AND deleted_at IS NULL;
 
 -- name: RestoreSeriesOverridesAtOrAfter :exec
@@ -277,7 +285,8 @@ WHERE events.recurrence_id = sqlc.arg(recurrence_id) AND events.deleted_at IS NO
 -- series uses it.
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = sqlc.arg(delete_token)
 WHERE events.deleted_at IS NULL
   AND events.id IN (
     SELECT s.id FROM event_series_rows AS s
@@ -332,7 +341,7 @@ ORDER BY events.recurrence_id;
 -- purge reads the occurrences to settle their logs. A restore by IDs
 -- reads it once. The access guard reads the calendars, and the restore tells
 -- a row in the trash from a live row.
-SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM events WHERE id IN (sqlc.slice(ids)) ORDER BY id;
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, delete_token FROM events WHERE id IN (sqlc.slice(ids)) ORDER BY id;
 
 -- name: RestoreEventsByIDs :execrows
 -- Un-hide a set of soft-deleted rows by ID in one statement. The count

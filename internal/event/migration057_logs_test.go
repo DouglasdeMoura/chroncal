@@ -226,10 +226,11 @@ func TestMigration057_BackfillTakesLegacyRowsAndSkipsLaterDeletes(t *testing.T) 
 
 // TestMigration057_BackfillTakesTheRowsOfTheOldRestore: the backfill takes
 // the rows that the old restore brought back by recurrence ID. That includes
-// the row of an earlier delete whose log time a later delete moved. It skips
-// a row of a series delete and a row of a truncation. It also skips a row
-// that went more than one second after the log. The times compare as whole
-// seconds: a row exactly one second after the log counts.
+// the row of an earlier delete whose log time a later delete moved. It also
+// takes a row of the same second as a series delete at the log time. It skips
+// a row of a series delete before the log and a row of a truncation. It also
+// skips a row that went more than one second after the log. The times compare
+// as whole seconds: a row exactly one second after the log counts.
 func TestMigration057_BackfillTakesTheRowsOfTheOldRestore(t *testing.T) {
 	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
 	x := start.Add(24 * time.Hour)
@@ -252,8 +253,13 @@ func TestMigration057_BackfillTakesTheRowsOfTheOldRestore(t *testing.T) {
 	svc := migratedAt056(t, func(exec func(string, ...any)) {
 		series(exec, 1, "refreshed", "")
 		row(exec, 2, "refreshed", before)
+		// An occurrence delete hid row 4 just before a series delete in the
+		// same second. The row counts: the old restore brought it back.
 		series(exec, 3, "same-time", logTime)
 		row(exec, 4, "same-time", logTime)
+		// A series delete before the log hid row 12 with its master.
+		series(exec, 11, "series-before", before)
+		row(exec, 12, "series-before", before)
 		series(exec, 5, "truncated", "")
 		row(exec, 6, "truncated", before)
 		exec(`INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, deleted_at)
@@ -268,7 +274,8 @@ func TestMigration057_BackfillTakesTheRowsOfTheOldRestore(t *testing.T) {
 		want []int64
 	}{
 		{"refreshed", []int64{2}},
-		{"same-time", nil},
+		{"same-time", []int64{4}},
+		{"series-before", nil},
 		{"truncated", nil},
 		{"one-second", []int64{8}},
 		{"two-seconds", nil},

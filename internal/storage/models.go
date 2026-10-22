@@ -102,6 +102,7 @@ type Event struct {
 	Dtstamp        *string
 	ConferenceUri  string
 	DeletedAt      *string
+	DeleteToken    int64
 }
 
 type EventAlarm struct {
@@ -171,6 +172,11 @@ type EventContact struct {
 	ID      int64
 	EventID int64
 	Text    string
+}
+
+type EventDeleteToken struct {
+	ID   int64
+	Last int64
 }
 
 type EventExdateDelete struct {

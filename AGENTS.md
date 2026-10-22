@@ -272,7 +272,9 @@ One helper, `identityRefusalTx` in `internal/event/occurrence_log.go`, holds the
 - No row, or a live row: the row is done. A purge took it, or a restore came first. With no row to bring back, the undo gives `ErrAlreadyRestored` when a row is live, else `ErrNotDeleted`.
 - A row in the trash that a newer entry or log names: the undo refuses with `ErrDeletedAgain`. A newer record wins over the identity of the delete.
 - A row in the trash that the identity names: the row comes back.
-- A row in the trash that no log names: a trigger dropped the log, or a pull hid the row with no log. `UndoMeta.DeletedAt` holds the `deleted_at` that the delete wrote. A row with that same `deleted_at` is still as the delete left it, so it comes back. A later pull or prune wrote a newer `deleted_at`, so the undo refuses with `ErrChangedSince`, and the trash still restores the row.
+- A row in the trash that no log names: a trigger dropped the log, or a pull hid the row with no log. The delete token tells the two apart. A row with the token of the undo (`UndoMeta.DeleteToken`) is still as the delete left it, so it comes back. A later delete, a pull or a prune included, wrote a newer token. The undo then refuses with `ErrChangedSince`, and the trash still restores the row.
+
+Each soft-delete statement of an event writes a fresh delete token on its rows (`events.delete_token`, migration 057). `NextEventDeleteToken` takes the token from the one-row counter `event_delete_token`, and every soft-delete query takes it as a parameter. Give a new soft-delete path its own token, and keep it in the undo data of the delete.
 
 A purge of the local trash makes no server write, so no purge path has a write guard. The age purge, `PurgeByID`, and the purge of an occurrence entry empty the trash of a read-only calendar too. Restores and undos keep their guards.
 
