@@ -118,9 +118,10 @@ func ReconcileAfterRestore(ctx context.Context, db DBTX, calendarID int64, uid, 
 		return err
 	}
 	if target == unownedCalendar {
-		// No series owns the restored row. The tombstone stays, and the
-		// sync status lists the row.
-		return recordUnownedEdit(ctx, db, calendarID, uid, 0)
+		// No series owns the restored row. The tombstone stays. A restore
+		// names no edited row, so it marks no row: the mark of a row
+		// names an edit of that row.
+		return nil
 	}
 	if err := clearUnownedEdit(ctx, db, calendarID, uid, ownerType); err != nil {
 		return err

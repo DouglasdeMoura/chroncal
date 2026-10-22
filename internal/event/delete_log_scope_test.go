@@ -2888,3 +2888,126 @@ func TestOverrideRevive_DropsTheEmptyOrphanLogBesideATrashedMaster(t *testing.T)
 		t.Errorf("logs after the revive = %d orphan, %d with a master; want 0 and 1", orphans, masters)
 	}
 }
+
+// TestRestoreMasterByID_LegacyMasterLeavesTheMergedRows: a master from before
+// the token (token 0) has a log with two rows. Its own row has token 0. A
+// later delete of orphan rows merged the other row in, with token 9. The restore of the master
+// brings back the rows with token 0. The merged row stays in the trash.
+func TestRestoreMasterByID_LegacyMasterLeavesTheMergedRows(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	own, _ := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)})
+	merged, _ := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339)})
+	ids := strconv.FormatInt(own.ID, 10) + "," + strconv.FormatInt(merged.ID, 10)
+	for _, stmt := range []string{
+		`UPDATE events SET deleted_at = '2026-05-01T00:00:00Z', delete_token = 0 WHERE id IN (` + strconv.FormatInt(master.ID, 10) + `,` + strconv.FormatInt(own.ID, 10) + `)`,
+		`UPDATE events SET deleted_at = '2026-05-02T00:00:00Z', delete_token = 9 WHERE id = ` + strconv.FormatInt(merged.ID, 10),
+		`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master, delete_token) VALUES (1, '` + master.UID + `', '` + ids + `', 1, 0)`,
+	} {
+		if _, err := svc.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatal(err)
+	}
+	wantTrashed(t, svc, false, master.ID, own.ID)
+	wantTrashed(t, svc, true, merged.ID)
+}
+
+// TestRestoreByUID_OrphanNewestDeleteIsATotalOrder: three orphan deletes, in
+// the order of the row IDs. Y has 10:00:05 with token 3. Calendar 1 has
+// 10:00:01 with token 5, and 10:00:03 with token 0. A comparator that mixes the
+// token and the time has a cycle here, so the result depends on the order of
+// the rows. By time, then by token, the newest delete is the one of Y.
+func TestRestoreByUID_OrphanNewestDeleteIsATotalOrder(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	calY := insertCalendar(t, svc, "Y")
+	base := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	mk := func(cal int64, i int, at string, tok int64) int64 {
+		r, err := svc.UpsertByUID(ctx, UpsertParams{UID: "zz4", CalendarID: cal, Title: "O", StartTime: base.Add(time.Duration(i) * time.Hour), EndTime: base.Add(time.Duration(i)*time.Hour + time.Minute), RecurrenceID: base.Add(time.Duration(i) * time.Hour).Format(time.RFC3339)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = ?, delete_token = ? WHERE id = ?`, at, tok, r.ID); err != nil {
+			t.Fatal(err)
+		}
+		return r.ID
+	}
+	c := mk(calY, 0, "2026-06-01T10:00:05Z", 3)
+	mk(1, 1, "2026-06-01T10:00:01Z", 5)
+	mk(1, 2, "2026-06-01T10:00:03Z", 0)
+	if err := svc.RestoreByUID(ctx, "zz4"); err != nil {
+		t.Fatal(err)
+	}
+	wantTrashed(t, svc, false, c)
+}
+
+// TestRestoreByID_UnownedRestoreMarksNoOtherRow: calendars 1 and B hold a live master of
+// one UID, and C holds two legacy overrides x and y. No series owns them. The
+// restore of x is no edit of y, so it does not mark y (edit_unowned).
+func TestRestoreByID_UnownedRestoreMarksNoOtherRow(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	calB, calC := insertCalendar(t, svc, "B"), insertCalendar(t, svc, "C")
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	for _, c := range []int64{1, calB} {
+		if _, err := svc.UpsertByUID(ctx, UpsertParams{UID: "zz5", CalendarID: c, Title: "M", StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	x := legacyAt(t, svc, "zz5", calC, start.Add(24*time.Hour))
+	y := legacyAt(t, svc, "zz5", calC, start.Add(48*time.Hour))
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE id = ?`, x.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET edit_unowned = 0`); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RestoreByID(ctx, x.ID); err != nil {
+		t.Fatalf("RestoreByID(x): %v", err)
+	}
+	var my int64
+	if err := svc.db.QueryRowContext(ctx, `SELECT edit_unowned FROM events WHERE id = ?`, y.ID).Scan(&my); err != nil {
+		t.Fatalf("read the mark of y: %v", err)
+	}
+	if my != 0 {
+		t.Errorf("row y flagged by the restore of x")
+	}
+}
+
+// TestPurgeOld_YoungLegacyRowOfAnotherCalendarRestores: a delete of orphan
+// rows merges a legacy override of calendar L into the log of an old master
+// of calendar 1. The age purge keeps the young row, and the log stays in
+// calendar 1 as an orphan log. A restore by UID still brings back the row of
+// L: the restore guards and un-hides each row in its own calendar.
+func TestPurgeOld_YoungLegacyRowOfAnotherCalendarRestores(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, _, _ := singleSeriesWithOverrides(t, svc)
+	calL := insertCalendar(t, svc, "L")
+	at := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	legacy := legacyAt(t, svc, master.UID, calL, at)
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatal(err)
+	}
+	if err := reviveRow(svc, legacy.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = ? AND deleted_at IS NOT NULL`, master.UID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteSeries(ctx, calL, master.UID); err != nil {
+		t.Fatalf("DeleteSeries(L): %v", err)
+	}
+	wantTrashed(t, svc, true, legacy.ID)
+	if _, err := svc.PurgeOld(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	wantTrashed(t, svc, false, legacy.ID)
+}

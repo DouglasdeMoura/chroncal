@@ -505,8 +505,8 @@ func clearOtherTombstonesTx(ctx context.Context, qtx *storage.Queries, seriesCal
 // trash. A pruned marker names no row.
 // An example is a delete by ID of an orphan row. Of the other rows, one
 // orphan delete hides the rows of one calendar with one delete token. The
-// restore takes the calendar of the newest delete, and brings back the rows
-// of that delete (sameStatement). Only a tie of two calendars gives
+// restore takes the calendar of the newest delete (by time, then by token),
+// and brings back the rows of that delete (sameStatement). Only a tie of two calendars gives
 // ErrAmbiguousUID. No row gives ErrNotDeleted.
 func restoreOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, uid string, trashed []storage.Event) (int64, error) {
 	// The occurrence logs name the rows of their deletes by ID. A pruned
@@ -530,14 +530,15 @@ func restoreOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, uid string
 	if len(candidates) == 0 {
 		return 0, ErrNotDeleted
 	}
-	// The newest delete names one calendar. The token counter grows with
-	// each delete, so two tokens compare directly. A row from before the
-	// token (token 0) compares by time, then by token.
+	// The newest delete names one calendar. The order is the time of the
+	// trash, then the token. The token counter grows with each delete, so it
+	// orders the deletes of one second. The order is total, so the result
+	// does not depend on the order of the rows.
 	newer := func(a, b storage.Event) bool {
-		if a.DeleteToken != 0 && b.DeleteToken != 0 {
-			return a.DeleteToken > b.DeleteToken
+		if *a.DeletedAt != *b.DeletedAt {
+			return *a.DeletedAt > *b.DeletedAt
 		}
-		return *a.DeletedAt > *b.DeletedAt || (*a.DeletedAt == *b.DeletedAt && a.DeleteToken > b.DeleteToken)
+		return a.DeleteToken > b.DeleteToken
 	}
 	newest := candidates[0]
 	for _, r := range candidates {
@@ -903,14 +904,23 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 		if rowToken == 0 && requireMaster && master.DeletedAt != nil {
 			rowToken = master.DeleteToken
 		}
+		// A master from before the token (token 0) has rows with token 0.
+		// A merged row came from a later delete, with a token: it stays.
+		legacyMaster := rowToken == 0 && requireMaster && master.DeletedAt != nil
 		var rest []int64
-		if rowToken != 0 {
+		if rowToken != 0 || legacyMaster {
 			all := ids
-			split, err := tokenSplitTx(ctx, qtx, all, rowToken)
-			if err != nil {
-				return 0, nil, err
+			if legacyMaster {
+				if ids, err = legacyRowsTx(ctx, qtx, all); err != nil {
+					return 0, nil, err
+				}
+			} else {
+				split, err := tokenSplitTx(ctx, qtx, all, rowToken)
+				if err != nil {
+					return 0, nil, err
+				}
+				ids = split.matchIDs()
 			}
-			ids = split.matchIDs()
 			own := make(map[int64]struct{}, len(ids))
 			for _, id := range ids {
 				own[id] = struct{}{}
@@ -966,6 +976,22 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 		return 0, nil, err
 	}
 	return n + k, ids, nil
+}
+
+// legacyRowsTx returns the rows of ids in the trash with no delete token: the
+// rows of a delete from before the token (migration 057).
+func legacyRowsTx(ctx context.Context, qtx *storage.Queries, ids []int64) ([]int64, error) {
+	states, err := rowStatesTx(ctx, qtx, ids)
+	if err != nil {
+		return nil, err
+	}
+	var out []int64
+	for _, st := range states {
+		if st.DeletedAt != nil && st.DeleteToken == 0 {
+			out = append(out, st.ID)
+		}
+	}
+	return out, nil
 }
 
 // masterSeriesLogTx returns the series-delete log of the delete that hid
