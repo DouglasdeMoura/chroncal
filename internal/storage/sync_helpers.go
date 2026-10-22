@@ -160,7 +160,15 @@ func LegacyOverride(ownMasterRows int64) bool {
 // LegacyOverride and the view event_series_rows (issue #842). A calendar with
 // a legacy override and no master exports nothing of it, so the mark moves.
 // A calendar with its own event master in the trash gets no mark. Its rows
-// stay local until the master comes back.
+// stay local until the master comes back. A pull can bring back a live row
+// there, and an edit of that row marks nothing too, by design:
+//   - The series delete queued a tombstone, so the next push deletes the
+//     series object. The server must not hold the row then.
+//   - The export refuses a body with no master. A mark would only make the
+//     push clear it (errResourceMissing in the sync engine), and the edit
+//     would go nowhere.
+//   - The restore of the series marks the UID (ReconcileAfterRestore). The
+//     next push then sends the series with each edit of its rows.
 //
 // For a legacy override of an event, the owner rule of the view decides:
 //   - A live owner master gets the mark in its calendar.

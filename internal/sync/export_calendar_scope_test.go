@@ -541,3 +541,47 @@ func TestExportResource_RowsBesideTwoTrashedMastersRefused(t *testing.T) {
 		t.Errorf("exportResource(B) err = %v, want errResourceMissing (two masters in the trash)", err)
 	}
 }
+
+// TestPush_EditBesideTrashedMasterGoesOutWithTheSeriesRestore: a pull
+// brings back an override beside its trashed master, and the user edits it.
+// The edit marks nothing: the series delete queued a tombstone, and the
+// export refuses a body with no master. The restore of the series marks the
+// UID, so the next push sends the series with the edited override.
+func TestPush_EditBesideTrashedMasterGoesOutWithTheSeriesRestore(t *testing.T) {
+	t.Parallel()
+	engine, _, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	master, override, _ := createSeriesWithOverride(t, engine, calA)
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("first push = %+v, %v", res, err)
+	}
+	if err := engine.events.DeleteSeries(ctx, calA, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE id = ?`, override.ID); err != nil {
+		t.Fatalf("revive the override as a pull does: %v", err)
+	}
+	if _, err := engine.events.Update(ctx, override.ID, event.UpdateParams{
+		CalendarID: calA, Title: "Edited beside the trash", StartTime: override.StartTime, EndTime: override.EndTime,
+	}); err != nil {
+		t.Fatalf("edit the override: %v", err)
+	}
+	var dirty int
+	if err := engine.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_resources WHERE uid = ? AND dirty = 1`, master.UID).Scan(&dirty); err != nil || dirty != 0 {
+		t.Fatalf("dirty rows after the edit = %d, %v; want 0: the row stays local", dirty, err)
+	}
+	if err := engine.events.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("push after the restore = %+v, %v", res, err)
+	}
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	for _, body := range srv.objects {
+		if strings.Contains(body, "UID:"+master.UID) && strings.Contains(body, "Edited beside the trash") {
+			return
+		}
+	}
+	t.Errorf("no server object of %s carries the edit after the series restore", master.UID)
+}
