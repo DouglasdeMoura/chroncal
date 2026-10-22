@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -25,9 +26,27 @@ type Purger struct {
 	q      *storage.Queries
 	days   int
 	logger *slog.Logger
-	// warned holds the masters that the last run kept and logged. The next
-	// run that keeps them again logs them at Debug.
-	warned map[int64]bool
+}
+
+// keptLogged holds the masters that a purge run of this process kept and
+// logged at Info. A later run in the same process, also by another Purger,
+// logs them again at Debug only. The trash view names the rows that keep a
+// master (trash.Entry.KeptNote), so the user can act without the log.
+var keptLogged = struct {
+	sync.Mutex
+	ids map[int64]bool
+}{ids: make(map[int64]bool)}
+
+// firstKeptLog reports whether this process logs the kept master id for the
+// first time, and records it.
+func firstKeptLog(id int64) bool {
+	keptLogged.Lock()
+	defer keptLogged.Unlock()
+	if keptLogged.ids[id] {
+		return false
+	}
+	keptLogged.ids[id] = true
+	return true
 }
 
 // NewPurger returns a Purger bound to the trash aggregator. A days value
@@ -55,19 +74,16 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("trash purge: %w", err)
 	}
-	// The set of this run replaces the set of the last run, so a master that
-	// the purge no longer keeps leaves it.
-	warned := make(map[int64]bool, len(counts.EventMastersSkipped))
+	// A kept master logs once per process at Info. A launch of the TUI runs
+	// the purge, so a Warn would repeat on every launch.
 	for _, m := range counts.EventMastersSkipped {
-		level := slog.LevelWarn
-		if p.warned[m.ID] {
+		level := slog.LevelInfo
+		if !firstKeptLog(m.ID) {
 			level = slog.LevelDebug
 		}
-		warned[m.ID] = true
 		p.logger.Log(ctx, level, "soft-delete purge kept a master: the series still has live overrides",
 			"event_id", m.ID, "calendar_id", m.CalendarID, "uid", m.UID)
 	}
-	p.warned = warned
 	total := counts.Events + counts.EventInstanceLogs + counts.EventTruncateLogs + counts.EventSeriesLogs +
 		counts.Todos + counts.TodoInstanceLogs + counts.Journals + counts.JournalInstanceLogs
 	if total > 0 {

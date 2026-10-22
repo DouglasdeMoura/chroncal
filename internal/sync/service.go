@@ -112,6 +112,18 @@ type SyncStatus struct {
 	// StuckHrefs lists the known hrefs whose retries the pull stopped.
 	// Each one keeps its local row. See issue #816.
 	StuckHrefs []StuckHref
+	// PushFailures lists the sync rows whose last push attempt failed. An
+	// edit of an item that no series owns stays local with such a failure.
+	PushFailures []PushFailure
+}
+
+// PushFailure is a sync row whose last push attempt failed. Count is the
+// count of consecutive failed attempts, and Error the last error.
+type PushFailure struct {
+	UID       string
+	OwnerType string
+	Count     int64
+	Error     string
 }
 
 // StuckHref is a known href whose server body the pull cannot import
@@ -158,6 +170,13 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 		if err != nil {
 			conflicts = nil
 		}
+		// Like the other counts, a read failure shows no push failures.
+		var failures []PushFailure
+		if rows, err := s.q.ListSyncResourcePushFailures(ctx, cal.ID); err == nil {
+			for _, r := range rows {
+				failures = append(failures, PushFailure{UID: r.Uid, OwnerType: r.OwnerType, Count: r.PushFailCount, Error: r.LastPushError})
+			}
+		}
 		statuses = append(statuses, SyncStatus{
 			CalendarID:          cal.ID,
 			CalendarName:        cal.Name,
@@ -168,6 +187,7 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 			PendingPush:         len(dirty),
 			Conflicts:           len(conflicts),
 			StuckHrefs:          stuckByCalendar[cal.ID],
+			PushFailures:        failures,
 		})
 	}
 	return statuses, nil

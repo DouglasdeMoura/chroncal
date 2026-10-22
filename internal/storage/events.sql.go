@@ -1536,6 +1536,60 @@ func (q *Queries) ListSeriesOverridesInCalendar(ctx context.Context, arg ListSer
 	return items, nil
 }
 
+const listSeriesOverridesOfUIDs = `-- name: ListSeriesOverridesOfUIDs :many
+SELECT s.id, s.uid, s.owner_calendar_id, s.deleted_at FROM event_series_rows AS s
+WHERE s.uid IN (/*SLICE:uids*/?) AND s.recurrence_id != ''
+`
+
+type ListSeriesOverridesOfUIDsRow struct {
+	ID              int64
+	Uid             string
+	OwnerCalendarID int64
+	DeletedAt       *string
+}
+
+// The override rows of the UIDs, each with the calendar of the series that
+// owns it (see the view event_series_rows). The UIDs are bound values, so
+// SQLite pushes the filter into each arm of the view and reads the index
+// idx_events_uid. A correlated filter (uid = m.uid) gives a scan of events.
+func (q *Queries) ListSeriesOverridesOfUIDs(ctx context.Context, uids []string) ([]ListSeriesOverridesOfUIDsRow, error) {
+	query := listSeriesOverridesOfUIDs
+	var queryParams []interface{}
+	if len(uids) > 0 {
+		for _, v := range uids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:uids*/?", strings.Repeat(",?", len(uids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:uids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSeriesOverridesOfUIDsRow
+	for rows.Next() {
+		var i ListSeriesOverridesOfUIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.OwnerCalendarID,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTrashedEventIDsBefore = `-- name: ListTrashedEventIDsBefore :many
 SELECT id FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?1
 `
@@ -1666,87 +1720,29 @@ func (q *Queries) ListTrashedEventsByUID(ctx context.Context, uid string) ([]Eve
 	return items, nil
 }
 
-const listTrashedMastersForPurge = `-- name: ListTrashedMastersForPurge :many
-SELECT m.id, m.calendar_id, m.uid, CAST(EXISTS (
-    SELECT 1 FROM event_series_rows AS l
-    WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id
-      AND l.recurrence_id != '' AND l.deleted_at IS NULL
-) AS BOOLEAN) AS blocked
-FROM events AS m
-WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < ?1
+const listTrashedMastersBefore = `-- name: ListTrashedMastersBefore :many
+SELECT id, calendar_id, uid FROM events
+WHERE recurrence_id = '' AND deleted_at IS NOT NULL AND deleted_at < ?1
 `
 
-type ListTrashedMastersForPurgeRow struct {
+type ListTrashedMastersBeforeRow struct {
 	ID         int64
 	CalendarID int64
 	Uid        string
-	Blocked    bool
 }
 
-// The master rows in the trash before the cutoff, each with blocked: its
-// series still owns a live override (see the view event_series_rows). The
-// purge by age reads them once and works by ID after it.
-func (q *Queries) ListTrashedMastersForPurge(ctx context.Context, cutoff *string) ([]ListTrashedMastersForPurgeRow, error) {
-	rows, err := q.db.QueryContext(ctx, listTrashedMastersForPurge, cutoff)
+// The master rows in the trash before the cutoff. The purge by age reads them
+// once and works by ID after it.
+func (q *Queries) ListTrashedMastersBefore(ctx context.Context, cutoff *string) ([]ListTrashedMastersBeforeRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTrashedMastersBefore, cutoff)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListTrashedMastersForPurgeRow
+	var items []ListTrashedMastersBeforeRow
 	for rows.Next() {
-		var i ListTrashedMastersForPurgeRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.CalendarID,
-			&i.Uid,
-			&i.Blocked,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listTrashedRowsOwnedByMasters = `-- name: ListTrashedRowsOwnedByMasters :many
-SELECT s.id, m.id AS master_id FROM event_series_rows AS s
-JOIN events AS m ON m.uid = s.uid AND m.calendar_id = s.owner_calendar_id AND m.recurrence_id = ''
-WHERE m.id IN (/*SLICE:master_ids*/?) AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL
-`
-
-type ListTrashedRowsOwnedByMastersRow struct {
-	ID       int64
-	MasterID int64
-}
-
-// The override rows in the trash that the series of each master owns, in its
-// calendar and in other calendars. Each row comes with the ID of its master.
-func (q *Queries) ListTrashedRowsOwnedByMasters(ctx context.Context, masterIds []int64) ([]ListTrashedRowsOwnedByMastersRow, error) {
-	query := listTrashedRowsOwnedByMasters
-	var queryParams []interface{}
-	if len(masterIds) > 0 {
-		for _, v := range masterIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:master_ids*/?", strings.Repeat(",?", len(masterIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:master_ids*/?", "NULL", 1)
-	}
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListTrashedRowsOwnedByMastersRow
-	for rows.Next() {
-		var i ListTrashedRowsOwnedByMastersRow
-		if err := rows.Scan(&i.ID, &i.MasterID); err != nil {
+		var i ListTrashedMastersBeforeRow
+		if err := rows.Scan(&i.ID, &i.CalendarID, &i.Uid); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

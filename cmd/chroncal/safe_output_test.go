@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
@@ -153,6 +154,35 @@ func TestWriteSyncStatusLine_NamesStuckHrefs(t *testing.T) {
 		t.Fatalf("stuck href line contains escape sequence: %q", out)
 	}
 	for _, want := range []string{"stuck href=/calendar/stuck", "uid=stuck-uid", "reason=unparseable", "since=2026-04-04T09:30:00Z"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("sync status output %q does not contain %q", out, want)
+		}
+	}
+}
+
+// TestWriteSyncStatusLine_NamesPushFailures: sync status names each sync row
+// whose last push failed. An edit of an item that no series owns stays local
+// with such a failure, and this line is its signal. The UID comes from the
+// server, so the line also removes control sequences.
+func TestWriteSyncStatusLine_NamesPushFailures(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writeSyncStatusLine(&buf, syncPkg.SyncStatus{
+		CalendarName: "Work",
+		PushFailures: []syncPkg.PushFailure{{
+			UID:       "legacy\x1b[31m-uid",
+			OwnerType: "event",
+			Count:     2,
+			Error:     storage.NoSeriesOwnerMsg,
+		}},
+	})
+
+	out := buf.String()
+	if strings.Contains(out, "\x1b") {
+		t.Fatalf("push failure line contains escape sequence: %q", out)
+	}
+	for _, want := range []string{"push failed uid=legacy", "type=event", "attempts=2", "error=" + storage.NoSeriesOwnerMsg} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("sync status output %q does not contain %q", out, want)
 		}

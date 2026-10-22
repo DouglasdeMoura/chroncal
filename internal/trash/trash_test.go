@@ -258,6 +258,8 @@ func fillNonZero(t *testing.T, v reflect.Value, skip string) {
 			f.SetBool(true)
 		case int64:
 			f.SetInt(int64(i + 1))
+		case []int64:
+			f.Set(reflect.ValueOf([]int64{int64(i + 1), int64(i + 2)}))
 		default:
 			t.Fatalf("fillNonZero: unhandled type %s for field %s; extend the round-trip guard", f.Type(), field.Name)
 		}

@@ -289,6 +289,15 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 					"gave_up_at": h.GaveUpAt,
 				})
 			}
+			failures := make([]map[string]any, 0, len(s.PushFailures))
+			for _, f := range s.PushFailures {
+				failures = append(failures, map[string]any{
+					"uid":        f.UID,
+					"owner_type": f.OwnerType,
+					"count":      f.Count,
+					"error":      f.Error,
+				})
+			}
 			items = append(items, map[string]any{
 				"calendar_id":            s.CalendarID,
 				"calendar_name":          s.CalendarName,
@@ -298,6 +307,7 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 				"pending_push":           s.PendingPush,
 				"conflicts":              s.Conflicts,
 				"stuck_hrefs":            stuck,
+				"push_failures":          failures,
 			})
 		}
 		return printOutput(w, items)

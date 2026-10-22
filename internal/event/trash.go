@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
@@ -64,6 +66,19 @@ type TrashEntry struct {
 	Description string
 	Status      string
 	Categories  string
+	// KeptOverrideIDs lists the live override rows that the series of a
+	// master in the trash still owns (TrashKindEvent). The purge keeps such
+	// a master until the rows go. See KeptNote.
+	KeptOverrideIDs []int64
+}
+
+// KeptNote tells the user why the purge keeps a master in the trash, and
+// names the live override rows that keep it. With no row, it is empty.
+func KeptNote(ids []int64) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return "kept: the series still has live overrides, rows " + strings.ReplaceAll(formatRowIDs(ids), ",", ", ")
 }
 
 // ListTrash merges soft-deleted events, EXDATE-based instance deletes,
@@ -88,6 +103,10 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 		deletedEvents[i] = FromStorage(r)
 	}
 	s.populateCategories(ctx, deletedEvents)
+	kept, err := s.keptOverrideIDs(ctx, deletedEvents)
+	if err != nil {
+		return nil, err
+	}
 
 	entries := make([]TrashEntry, 0, len(evts)+len(instLogs)+len(truncLogs))
 	for _, ev := range deletedEvents {
@@ -109,6 +128,8 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 			Description: ev.Description,
 			Status:      ev.Status,
 			Categories:  ev.Categories,
+
+			KeptOverrideIDs: kept[ev.ID],
 		})
 	}
 
@@ -283,6 +304,37 @@ func (s *Service) PurgeTrashEntry(ctx context.Context, entry TrashEntry) error {
 	}
 }
 
+// keptOverrideIDs returns, for each master in evts, the live override rows
+// that its series still owns, by the ID of the master. The purge keeps such a
+// master (see purgeDeletedTx). One read of the view covers every master.
+func (s *Service) keptOverrideIDs(ctx context.Context, evts []Event) (map[int64][]int64, error) {
+	var masters []seriesRef
+	for _, ev := range evts {
+		if !ev.IsRecurrenceOverride() {
+			masters = append(masters, seriesRef{ID: ev.ID, CalendarID: ev.CalendarID, UID: ev.UID})
+		}
+	}
+	if len(masters) == 0 {
+		return nil, nil
+	}
+	overrides, err := seriesOverridesTx(ctx, s.q, masters)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64][]int64)
+	for _, m := range masters {
+		for _, r := range overrides[seriesKeyOf(m.CalendarID, m.UID)] {
+			if r.DeletedAt == nil {
+				out[m.ID] = append(out[m.ID], r.ID)
+			}
+		}
+	}
+	for id := range out {
+		slices.Sort(out[id])
+	}
+	return out, nil
+}
+
 // restoreInstanceByLogID removes the EXDATE for (uid, recurrence_id) from the
 // master and deletes the log row. It un-hides the override rows that the
 // occurrence deletes hid (the hidden_ids of the log). The write guard covers
@@ -363,23 +415,61 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID, token int
 // truncationKey names one truncation log row. The trash view names the row by
 // ID (logID). The undo names it by its series, its cutoff, and its delete
 // token: each truncation has its own row. token is the delete token of an
-// undo, and 0 for a restore from the trash.
+// undo, and 0 for a restore from the trash. masterUpdatedBefore is the
+// updated_at of the master after the truncation, for the stale-master guard
+// of the undo. The zero time skips the guard.
 type truncationKey struct {
-	logID      int64
-	calendarID int64
-	uid        string
-	cutoff     string
-	token      int64
+	logID               int64
+	calendarID          int64
+	uid                 string
+	cutoff              string
+	token               int64
+	masterUpdatedBefore time.Time
 }
 
-// readTx reads the log row of k in the transaction of the restore.
+// readTx reads the log row of k in the transaction of the restore. The undo
+// finds the master of its series first (findSeriesMasterIncludingDeletedTx),
+// because the log row lives in the calendar of the master.
 func (k truncationKey) readTx(ctx context.Context, qtx *storage.Queries) (storage.EventTruncateDelete, error) {
 	if k.logID != 0 {
 		return qtx.GetEventTruncateDelete(ctx, k.logID)
 	}
+	master, err := findSeriesMasterIncludingDeletedTx(ctx, qtx, k.calendarID, k.uid)
+	if err != nil {
+		return storage.EventTruncateDelete{}, wrapMasterLookup(err)
+	}
 	return qtx.GetEventTruncateDeleteByCalendarUIDCutoffToken(ctx, storage.GetEventTruncateDeleteByCalendarUIDCutoffTokenParams{
-		CalendarID: k.calendarID, Uid: k.uid, CutoffTime: k.cutoff, DeleteToken: k.token,
+		CalendarID: master.CalendarID, Uid: k.uid, CutoffTime: k.cutoff, DeleteToken: k.token,
 	})
+}
+
+// newerTruncationTx returns the newest truncation log row of the series of log
+// that is newer than log, at any cutoff. A higher delete token is newer. Two
+// rows from before the token (token 0) compare by deleted_at, then by ID.
+func newerTruncationTx(ctx context.Context, qtx *storage.Queries, log storage.EventTruncateDelete) (storage.EventTruncateDelete, bool, error) {
+	logs, err := qtx.ListEventTruncateDeletesByCalendarUID(ctx, storage.ListEventTruncateDeletesByCalendarUIDParams{
+		CalendarID: log.CalendarID, Uid: log.Uid,
+	})
+	if err != nil {
+		return storage.EventTruncateDelete{}, false, fmt.Errorf("list truncate logs: %w", err)
+	}
+	newer := func(a, b storage.EventTruncateDelete) bool {
+		if a.DeleteToken != b.DeleteToken {
+			return a.DeleteToken > b.DeleteToken
+		}
+		if a.DeletedAt != b.DeletedAt {
+			return a.DeletedAt > b.DeletedAt
+		}
+		return a.ID > b.ID
+	}
+	var best storage.EventTruncateDelete
+	found := false
+	for _, l := range logs {
+		if l.ID != log.ID && newer(l, log) && (!found || newer(l, best)) {
+			best, found = l, true
+		}
+	}
+	return best, found, nil
 }
 
 // restoreTruncation rewrites the master's RRULE back to the rule before the
@@ -389,10 +479,10 @@ func (k truncationKey) readTx(ctx context.Context, qtx *storage.Queries) (storag
 // is read in the transaction, so a concurrent restore cannot consume it
 // between the read and the writes.
 //
-// Each truncation has its own log row. A newer truncation at the same cutoff
-// recorded the rule that this truncation wrote. The restore of this row hands
-// its own rule to those newer rows, so their later restore does not truncate
-// the series again.
+// Each truncation has its own log row. A newer truncation of the series, at
+// any cutoff, recorded the rule that this truncation wrote. The restore then
+// refuses with a *NewerTruncationError, so the user restores the newer one
+// first.
 func (s *Service) restoreTruncation(ctx context.Context, key truncationKey) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -408,6 +498,15 @@ func (s *Service) restoreTruncation(ctx context.Context, key truncationKey) erro
 		return fmt.Errorf("get truncate log: %w", err)
 	}
 	logID, token := log.ID, key.token
+	// Only the newest truncation of the series restores cleanly. A newer one
+	// recorded the rule that this one wrote, so its restore would truncate
+	// the series again.
+	if newer, found, err := newerTruncationTx(ctx, qtx, log); err != nil {
+		return err
+	} else if found {
+		cutoff, _ := time.Parse(time.RFC3339, newer.CutoffTime)
+		return &NewerTruncationError{Cutoff: cutoff}
+	}
 	// The restore writes the master in the calendar of the log. A log
 	// with row IDs guards the calendars of its rows in restoreLoggedIDsTx.
 	// An older log restores by recurrence ID through the series, so the
@@ -440,6 +539,15 @@ func (s *Service) restoreTruncation(ctx context.Context, key truncationKey) erro
 		// stays, and the restore of the series comes first.
 		return ErrMasterInTrash
 	}
+	// The stale-master guard of the undo: an edit of the master after the
+	// truncation refuses the undo, so the undo does not overwrite the edit.
+	// The check reads the master in this transaction.
+	if !key.masterUpdatedBefore.IsZero() {
+		if updated := parseStorageTime(master.UpdatedAt); updated.After(key.masterUpdatedBefore.Add(time.Second)) {
+			return fmt.Errorf("%w (expected updated_at <= %s, got %s)", ErrMasterAdvanced,
+				key.masterUpdatedBefore.Format(time.RFC3339), updated.Format(time.RFC3339))
+		}
+	}
 	// The undo of a truncation (token non-zero) refuses when a row of the
 	// log went to the trash again in a later delete (tokenSplitTx). The
 	// check comes before any write.
@@ -466,9 +574,6 @@ func (s *Service) restoreTruncation(ctx context.Context, key truncationKey) erro
 	if err := restoreTruncatedRDates(ctx, qtx, master, log); err != nil {
 		return fmt.Errorf("restore rdates: %w", err)
 	}
-	if err := handOnPreviousRuleTx(ctx, qtx, log); err != nil {
-		return err
-	}
 	// The restore consumes the log row first. The drop of the restored rows
 	// from the other logs then does not rewrite this row.
 	if err := qtx.DeleteEventTruncateDelete(ctx, logID); err != nil {
@@ -481,30 +586,6 @@ func (s *Service) restoreTruncation(ctx context.Context, key truncationKey) erro
 		return fmt.Errorf("mark resource dirty: %w", err)
 	}
 	return tx.Commit()
-}
-
-// handOnPreviousRuleTx gives the rule before the truncation of log to each
-// newer log row at the same cutoff of the series. A newer row recorded the
-// rule that the truncation of log wrote. After the restore of log, the rule
-// of log is the state before both truncations.
-func handOnPreviousRuleTx(ctx context.Context, qtx *storage.Queries, log storage.EventTruncateDelete) error {
-	logs, err := qtx.ListEventTruncateDeletesByCalendarUID(ctx, storage.ListEventTruncateDeletesByCalendarUIDParams{
-		CalendarID: log.CalendarID, Uid: log.Uid,
-	})
-	if err != nil {
-		return fmt.Errorf("list truncate logs: %w", err)
-	}
-	for _, l := range logs {
-		if l.ID <= log.ID || l.CutoffTime != log.CutoffTime {
-			continue
-		}
-		if err := qtx.UpdateEventTruncateDeletePreviousRrule(ctx, storage.UpdateEventTruncateDeletePreviousRruleParams{
-			PreviousRrule: log.PreviousRrule, ID: l.ID,
-		}); err != nil {
-			return fmt.Errorf("update truncate log rule: %w", err)
-		}
-	}
-	return nil
 }
 
 // restoreTruncatedRDates re-adds to the master the RDATEs a truncation trimmed.

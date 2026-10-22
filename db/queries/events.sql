@@ -408,17 +408,19 @@ SELECT CAST(EXISTS (
 -- Hard-delete a set of rows in the trash by ID. A live row stays.
 DELETE FROM events WHERE id IN (sqlc.slice(ids)) AND deleted_at IS NOT NULL;
 
--- name: ListTrashedMastersForPurge :many
--- The master rows in the trash before the cutoff, each with blocked: its
--- series still owns a live override (see the view event_series_rows). The
--- purge by age reads them once and works by ID after it.
-SELECT m.id, m.calendar_id, m.uid, CAST(EXISTS (
-    SELECT 1 FROM event_series_rows AS l
-    WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id
-      AND l.recurrence_id != '' AND l.deleted_at IS NULL
-) AS BOOLEAN) AS blocked
-FROM events AS m
-WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff);
+-- name: ListTrashedMastersBefore :many
+-- The master rows in the trash before the cutoff. The purge by age reads them
+-- once and works by ID after it.
+SELECT id, calendar_id, uid FROM events
+WHERE recurrence_id = '' AND deleted_at IS NOT NULL AND deleted_at < sqlc.arg(cutoff);
+
+-- name: ListSeriesOverridesOfUIDs :many
+-- The override rows of the UIDs, each with the calendar of the series that
+-- owns it (see the view event_series_rows). The UIDs are bound values, so
+-- SQLite pushes the filter into each arm of the view and reads the index
+-- idx_events_uid. A correlated filter (uid = m.uid) gives a scan of events.
+SELECT s.id, s.uid, s.owner_calendar_id, s.deleted_at FROM event_series_rows AS s
+WHERE s.uid IN (sqlc.slice(uids)) AND s.recurrence_id != '';
 
 -- name: ListLiveSeriesOverrideIDs :many
 -- The IDs of the live override rows that the series of one UID in one
@@ -427,13 +429,6 @@ SELECT s.id FROM event_series_rows AS s
 WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
   AND s.recurrence_id != '' AND s.deleted_at IS NULL
 ORDER BY s.id;
-
--- name: ListTrashedRowsOwnedByMasters :many
--- The override rows in the trash that the series of each master owns, in its
--- calendar and in other calendars. Each row comes with the ID of its master.
-SELECT s.id, m.id AS master_id FROM event_series_rows AS s
-JOIN events AS m ON m.uid = s.uid AND m.calendar_id = s.owner_calendar_id AND m.recurrence_id = ''
-WHERE m.id IN (sqlc.slice(master_ids)) AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL;
 
 -- name: ListSeriesLogsOfMasters :many
 -- The series-delete logs of the calendars of the masters.
