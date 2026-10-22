@@ -33,7 +33,7 @@ loop does not apply it.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			e, _, _, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID, 0, "")
+			e, _, _, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID, 0, "", false)
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}

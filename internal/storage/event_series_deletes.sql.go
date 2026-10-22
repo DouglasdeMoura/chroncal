@@ -19,8 +19,8 @@ type DeleteEventSeriesDeletesByCalendarUIDParams struct {
 }
 
 // Drop the log row of one series. A restore of the series consumes it. A
-// purge of the master keeps it for the undo. A calendar move clears a stale
-// row in the target calendar before the move.
+// purge of the master drops it with the master. A calendar move clears a
+// stale row in the target calendar before the move.
 func (q *Queries) DeleteEventSeriesDeletesByCalendarUID(ctx context.Context, arg DeleteEventSeriesDeletesByCalendarUIDParams) error {
 	_, err := q.db.ExecContext(ctx, deleteEventSeriesDeletesByCalendarUID, arg.CalendarID, arg.Uid)
 	return err

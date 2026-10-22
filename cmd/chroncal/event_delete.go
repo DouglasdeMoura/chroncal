@@ -19,7 +19,8 @@ import (
 var eventResource = resource{
 	name: "event",
 	resolve: func(ctx context.Context, a *app.App, ref, recurrenceID string) (row, error) {
-		e, err := resolveEvent(ctx, a, ref, recurrenceID)
+		// event delete accepts --calendar, so its hint can name it.
+		e, err := resolveEventFor(ctx, a, ref, recurrenceID, true)
 		if err != nil {
 			return row{}, err
 		}
@@ -65,6 +66,18 @@ var eventResource = resource{
 		}
 		return target, nil
 	},
+	resolveSeriesUID: func(ctx context.Context, a *app.App, uid string) (row, error) {
+		// The service rule of a series delete with no calendar: the one
+		// live master of the UID, or the orphan rows of one calendar.
+		label, err := a.Events.SeriesDeleteTarget(ctx, 0, uid)
+		switch {
+		case errors.Is(err, event.ErrNotDeleted):
+			return row{}, errNotFoundf("event series %s not found", uid)
+		case err != nil:
+			return row{}, notFoundErrFor(err, "event", uid, true)
+		}
+		return row{UID: uid, Summary: label}, nil
+	},
 	delSeries: func(ctx context.Context, a *app.App, target row) (int64, error) {
 		meta, err := a.Events.DeleteSeriesWithUndo(ctx, target.CalendarID, target.UID)
 		return meta.PushCalendar(target.CalendarID), seriesDeleteErr(ctx, a, target, err)
@@ -103,7 +116,7 @@ func requireOccurrenceAt(ctx context.Context, a *app.App, master event.Event, at
 	if _, err := a.Events.SeriesOverride(ctx, master.CalendarID, master.UID, at.UTC().Format(time.RFC3339)); err == nil {
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("look up override: %w", notFoundErr(err, "event", master.UID))
+		return fmt.Errorf("look up override: %w", notFoundErrFor(err, "event", master.UID, true))
 	}
 	return noSuchOccurrenceErr(master, at)
 }
@@ -149,7 +162,7 @@ func masterForScope(ctx context.Context, a *app.App, resolved event.Event) (even
 // with a calendar must be a row of that calendar.
 func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID int64, wantCalendar string) (event.Event, error) {
 	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil || calendarID == 0 {
-		e, err := resolveEvent(ctx, a, ref, "")
+		e, err := resolveEventFor(ctx, a, ref, "", true)
 		if err != nil {
 			return event.Event{}, err
 		}
@@ -195,7 +208,7 @@ func checkRowInCalendar(ctx context.Context, a *app.App, e event.Event, calendar
 // calendar through a legacy override.
 func resolveRowIn(ctx context.Context, a *app.App, ref string, calendarID int64, wantCalendar string) (event.Event, error) {
 	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
-		e, err := resolveEvent(ctx, a, ref, "")
+		e, err := resolveEventFor(ctx, a, ref, "", true)
 		if err != nil {
 			return event.Event{}, err
 		}
@@ -213,7 +226,7 @@ func resolveRowIn(ctx context.Context, a *app.App, ref string, calendarID int64,
 		return event.Event{}, errNotFoundf("event %s not found in calendar %q", ref, wantCalendar)
 	}
 	if err != nil {
-		return event.Event{}, notFoundErr(err, "event", ref)
+		return event.Event{}, notFoundErrFor(err, "event", ref, true)
 	}
 	return e, nil
 }
@@ -318,7 +331,7 @@ any override at that time). --following truncates the series at that date.`,
 		}
 		e, err = masterForScope(ctx, a, e)
 		if err != nil {
-			return fmt.Errorf("get series master: %w", notFoundErr(err, "event", args[0]))
+			return fmt.Errorf("get series master: %w", notFoundErrFor(err, "event", args[0], true))
 		}
 
 		if following != "" {
@@ -348,7 +361,7 @@ any override at that time). --following truncates the series at that date.`,
 		}
 
 		if err := a.Events.DeleteInstance(ctx, e.CalendarID, e.UID, occurrenceAt); err != nil {
-			return fmt.Errorf("delete occurrence: %w", notFoundErr(err, "event", e.UID))
+			return fmt.Errorf("delete occurrence: %w", notFoundErrFor(err, "event", e.UID, true))
 		}
 		return reportDeleted(cmd, a, w, e.CalendarID,
 			map[string]any{"deleted": true, "uid": e.UID, "recurrence_id": occurrenceAt.UTC().Format(time.RFC3339)},

@@ -102,6 +102,27 @@ func (q *Queries) CountEventsByCalendar(ctx context.Context, calendarID int64) (
 	return count, err
 }
 
+const countLiveSeriesOverridesOfCalendar = `-- name: CountLiveSeriesOverridesOfCalendar :one
+SELECT COUNT(*) FROM event_series_rows AS s
+WHERE s.uid = ?1 AND s.owner_calendar_id = ?2
+  AND s.recurrence_id != '' AND s.deleted_at IS NULL
+`
+
+type CountLiveSeriesOverridesOfCalendarParams struct {
+	Uid        string
+	CalendarID int64
+}
+
+// Count the live override rows that the series of one UID in one calendar
+// owns (see the view event_series_rows). The purge of a master refuses
+// while it is not 0.
+func (q *Queries) CountLiveSeriesOverridesOfCalendar(ctx context.Context, arg CountLiveSeriesOverridesOfCalendarParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveSeriesOverridesOfCalendar, arg.Uid, arg.CalendarID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createEvent = `-- name: CreateEvent :one
 INSERT INTO events (
     uid, calendar_id, title, description, location,
@@ -1115,6 +1136,43 @@ func (q *Queries) ListLiveSeriesOverridesAtOrAfter(ctx context.Context, arg List
 	return items, nil
 }
 
+const listPurgeBlockedMastersBefore = `-- name: ListPurgeBlockedMastersBefore :many
+SELECT m.id, m.calendar_id, m.uid FROM events AS m
+WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < ?1
+  AND EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL)
+`
+
+type ListPurgeBlockedMastersBeforeRow struct {
+	ID         int64
+	CalendarID int64
+	Uid        string
+}
+
+// The master rows in the trash before the cutoff whose series still owns a
+// live override. The purge by age skips them and reports them.
+func (q *Queries) ListPurgeBlockedMastersBefore(ctx context.Context, cutoff *string) ([]ListPurgeBlockedMastersBeforeRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPurgeBlockedMastersBefore, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPurgeBlockedMastersBeforeRow
+	for rows.Next() {
+		var i ListPurgeBlockedMastersBeforeRow
+		if err := rows.Scan(&i.ID, &i.CalendarID, &i.Uid); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecurringEvents = `-- name: ListRecurringEvents :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = '' AND deleted_at IS NULL
 `
@@ -1198,6 +1256,39 @@ func (q *Queries) ListSeriesCalendarIDs(ctx context.Context, arg ListSeriesCalen
 			return nil, err
 		}
 		items = append(items, calendar_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSeriesLogsOfMastersBefore = `-- name: ListSeriesLogsOfMastersBefore :many
+SELECT d.hidden_ids FROM event_series_deletes AS d
+JOIN events AS m ON m.calendar_id = d.calendar_id AND m.uid = d.uid
+WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < ?1
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL)
+`
+
+// The series-delete logs of the purgeable masters. Their row IDs name the
+// legacy overrides that the series delete hid, also when another series
+// owns them in the view now.
+func (q *Queries) ListSeriesLogsOfMastersBefore(ctx context.Context, cutoff *string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listSeriesLogsOfMastersBefore, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var hidden_ids string
+		if err := rows.Scan(&hidden_ids); err != nil {
+			return nil, err
+		}
+		items = append(items, hidden_ids)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -1407,31 +1498,68 @@ func (q *Queries) ListTrashedEventsByUID(ctx context.Context, uid string) ([]Eve
 	return items, nil
 }
 
-const listTrashedMastersBefore = `-- name: ListTrashedMastersBefore :many
-SELECT calendar_id, uid FROM events
-WHERE recurrence_id = '' AND deleted_at IS NOT NULL AND deleted_at < ?
+const listTrashedSeriesRowIDs = `-- name: ListTrashedSeriesRowIDs :many
+SELECT s.id FROM event_series_rows AS s
+WHERE s.uid = ?1 AND s.owner_calendar_id = ?2
+  AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL
 `
 
-type ListTrashedMastersBeforeRow struct {
-	CalendarID int64
+type ListTrashedSeriesRowIDsParams struct {
 	Uid        string
+	CalendarID int64
 }
 
-// The master rows in the trash with deleted_at before the cutoff. The purge
-// by age applies the rule of the purge of one master to each of them.
-func (q *Queries) ListTrashedMastersBefore(ctx context.Context, deletedAt *string) ([]ListTrashedMastersBeforeRow, error) {
-	rows, err := q.db.QueryContext(ctx, listTrashedMastersBefore, deletedAt)
+// The IDs of the override rows in the trash that the series of one UID in
+// one calendar owns, in that calendar and in other calendars. The purge of
+// the master reads them before the delete of the master.
+func (q *Queries) ListTrashedSeriesRowIDs(ctx context.Context, arg ListTrashedSeriesRowIDsParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listTrashedSeriesRowIDs, arg.Uid, arg.CalendarID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListTrashedMastersBeforeRow
+	var items []int64
 	for rows.Next() {
-		var i ListTrashedMastersBeforeRow
-		if err := rows.Scan(&i.CalendarID, &i.Uid); err != nil {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		items = append(items, i)
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTrashedSeriesRowIDsOfMastersBefore = `-- name: ListTrashedSeriesRowIDsOfMastersBefore :many
+SELECT s.id FROM event_series_rows AS s
+JOIN events AS m ON m.uid = s.uid AND m.calendar_id = s.owner_calendar_id
+WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < ?1
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL)
+  AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL
+`
+
+// The IDs of the override rows in the trash that the series of each
+// purgeable master owns (a master in the trash before the cutoff with no
+// live override). The purge by age reads them before the delete of the
+// masters.
+func (q *Queries) ListTrashedSeriesRowIDsOfMastersBefore(ctx context.Context, cutoff *string) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listTrashedSeriesRowIDsOfMastersBefore, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -1566,36 +1694,89 @@ func (q *Queries) PurgeEventByID(ctx context.Context, id int64) (int64, error) {
 	return result.RowsAffected()
 }
 
+const purgeEventsByIDs = `-- name: PurgeEventsByIDs :execrows
+DELETE FROM events WHERE id IN (/*SLICE:ids*/?) AND deleted_at IS NOT NULL
+`
+
+// Hard-delete a set of rows in the trash by ID. A live row stays.
+func (q *Queries) PurgeEventsByIDs(ctx context.Context, ids []int64) (int64, error) {
+	query := purgeEventsByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	result, err := q.db.ExecContext(ctx, query, queryParams...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const purgeExdateLogsOfMastersBefore = `-- name: PurgeExdateLogsOfMastersBefore :exec
+DELETE FROM event_exdate_deletes WHERE EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.calendar_id = event_exdate_deletes.calendar_id AND m.uid = event_exdate_deletes.uid
+      AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < ?1
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL))
+`
+
+// Drop the occurrence logs of the purgeable masters.
+func (q *Queries) PurgeExdateLogsOfMastersBefore(ctx context.Context, cutoff *string) error {
+	_, err := q.db.ExecContext(ctx, purgeExdateLogsOfMastersBefore, cutoff)
+	return err
+}
+
+const purgeSeriesLogsOfMastersBefore = `-- name: PurgeSeriesLogsOfMastersBefore :exec
+DELETE FROM event_series_deletes WHERE EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.calendar_id = event_series_deletes.calendar_id AND m.uid = event_series_deletes.uid
+      AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < ?1
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL))
+`
+
+// Drop the series-delete logs of the purgeable masters.
+func (q *Queries) PurgeSeriesLogsOfMastersBefore(ctx context.Context, cutoff *string) error {
+	_, err := q.db.ExecContext(ctx, purgeSeriesLogsOfMastersBefore, cutoff)
+	return err
+}
+
 const purgeSoftDeletedEvents = `-- name: PurgeSoftDeletedEvents :execrows
-DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?
-`
-
-func (q *Queries) PurgeSoftDeletedEvents(ctx context.Context, deletedAt *string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, purgeSoftDeletedEvents, deletedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const purgeTrashedOverridesInCalendar = `-- name: PurgeTrashedOverridesInCalendar :execrows
 DELETE FROM events
-WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL
+WHERE events.deleted_at IS NOT NULL AND events.deleted_at < ?1
+  AND NOT (events.recurrence_id = '' AND EXISTS (
+    SELECT 1 FROM event_series_rows AS l
+    WHERE l.uid = events.uid AND l.owner_calendar_id = events.calendar_id
+      AND l.recurrence_id != '' AND l.deleted_at IS NULL))
 `
 
-type PurgeTrashedOverridesInCalendarParams struct {
-	CalendarID int64
-	Uid        string
-}
-
-// Hard-delete the override rows of one UID in one calendar that are in the
-// trash. The purge of a master takes them along, and the live rows stay.
-func (q *Queries) PurgeTrashedOverridesInCalendar(ctx context.Context, arg PurgeTrashedOverridesInCalendarParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, purgeTrashedOverridesInCalendar, arg.CalendarID, arg.Uid)
+// Hard-delete the rows in the trash before the cutoff. A master whose series
+// still owns a live override stays: its purge would hand the live rows to
+// another series (see ListPurgeBlockedMastersBefore).
+func (q *Queries) PurgeSoftDeletedEvents(ctx context.Context, cutoff *string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, purgeSoftDeletedEvents, cutoff)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const purgeTruncateLogsOfMastersBefore = `-- name: PurgeTruncateLogsOfMastersBefore :exec
+DELETE FROM event_truncate_deletes WHERE EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.calendar_id = event_truncate_deletes.calendar_id AND m.uid = event_truncate_deletes.uid
+      AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < ?1
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL))
+`
+
+// Drop the truncation logs of the purgeable masters.
+func (q *Queries) PurgeTruncateLogsOfMastersBefore(ctx context.Context, cutoff *string) error {
+	_, err := q.db.ExecContext(ctx, purgeTruncateLogsOfMastersBefore, cutoff)
+	return err
 }
 
 const reassignEventsCalendar = `-- name: ReassignEventsCalendar :execrows

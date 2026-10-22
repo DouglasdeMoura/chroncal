@@ -28,7 +28,7 @@ func TestResolveRefNumericWithRecurrenceIDRejected(t *testing.T) {
 	}
 
 	_, err := resolveRef(context.Background(), "42", "2026-04-07T12:00:00Z", "event",
-		getByID, getByUID, getByUIDAndRecurrenceID)
+		getByID, getByUID, getByUIDAndRecurrenceID, false)
 	if err == nil {
 		t.Fatalf("expected error for numeric ref + recurrence-id, got nil")
 	}
@@ -53,7 +53,7 @@ func TestResolveRefNumericWithoutRecurrenceID(t *testing.T) {
 		return 0, nil
 	}
 
-	got, err := resolveRef(context.Background(), "42", "", "event", getByID, fail2, fail3)
+	got, err := resolveRef(context.Background(), "42", "", "event", getByID, fail2, fail3, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

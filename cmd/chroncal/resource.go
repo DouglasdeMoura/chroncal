@@ -46,6 +46,9 @@ type resource struct {
 	// series reports a delete of the whole series; a plain delete names
 	// one row of the calendar.
 	resolveIn func(ctx context.Context, a *app.App, ref, calendarName string, series bool) (row, error)
+	// resolveSeriesUID maps the UID of a series delete with no --calendar to
+	// its target. nil uses resolve.
+	resolveSeriesUID func(ctx context.Context, a *app.App, uid string) (row, error)
 
 	// del soft-deletes one row by ID. delSeries soft-deletes the master row
 	// of the resolved row and every override of its series. The row carries
@@ -149,9 +152,13 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 	}
 
 	var target row
-	if opts.CalendarName != "" && r.resolveIn != nil {
+	_, numericErr := strconv.ParseInt(args[0], 10, 64)
+	switch {
+	case opts.CalendarName != "" && r.resolveIn != nil:
 		target, err = r.resolveIn(ctx, a, args[0], opts.CalendarName, opts.Series)
-	} else {
+	case opts.Series && numericErr != nil && r.resolveSeriesUID != nil:
+		target, err = r.resolveSeriesUID(ctx, a, args[0])
+	default:
 		target, err = r.resolve(ctx, a, args[0], opts.RecurrenceID)
 	}
 	if err != nil {
@@ -173,7 +180,7 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 	if opts.Series {
 		pushCalendarID, err := r.delSeries(ctx, a, target)
 		if err != nil {
-			return fmt.Errorf("delete series: %w", notFoundErr(err, r.name, target.UID))
+			return fmt.Errorf("delete series: %w", notFoundErrFor(err, r.name, target.UID, r.resolveIn != nil))
 		}
 		return reportDeleted(cmd, a, w, pushCalendarID,
 			map[string]any{"deleted": true, "uid": target.UID, "series": true},

@@ -52,6 +52,15 @@ func isInvalidInputSentinel(err error) bool {
 // notFoundErr wraps sql.ErrNoRows into a user-friendly message tagged with
 // code "not_found" so machine consumers can dispatch on it.
 func notFoundErr(err error, resource string, id any) error {
+	return notFoundErrFor(err, resource, id, false)
+}
+
+// notFoundErrFor is notFoundErr for a command that may accept --calendar.
+// acceptsCalendar is true only where --calendar names the series of a UID:
+// event delete, and event update with --recurrence-id. Else the hint for a
+// UID in two calendars names the row ID only, because the command ignores
+// --calendar for the choice.
+func notFoundErrFor(err error, resource string, id any, acceptsCalendar bool) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return &cliError{Code: "not_found", Msg: fmt.Sprintf("%s %v not found", resource, id)}
 	}
@@ -62,7 +71,10 @@ func notFoundErr(err error, resource string, id any) error {
 		// Two calendars can hold the same UID (issue #842). A bare UID
 		// cannot name one series, so the command needs the row ID or the
 		// calendar of the series.
-		return errInvalidInputf("%s %v is in more than one calendar; use the ID of the row (for a series, the ID of its master), or pass --calendar NAME where the command accepts it", resource, id)
+		if acceptsCalendar {
+			return errInvalidInputf("%s %v is in more than one calendar; use the ID of the row (for a series, the ID of its master), or pass --calendar NAME", resource, id)
+		}
+		return errInvalidInputf("%s %v is in more than one calendar; use the ID of the row (for a series, the ID of its master)", resource, id)
 	}
 	return err
 }
@@ -464,6 +476,7 @@ func resolveRef[T any](
 	getByID func(context.Context, int64) (T, error),
 	getByUID func(context.Context, string) (T, error),
 	getByUIDAndRecurrenceID func(context.Context, string, string) (T, error),
+	acceptsCalendar bool,
 ) (T, error) {
 	var v T
 	var err error
@@ -484,21 +497,28 @@ func resolveRef[T any](
 		v, err = getByUID(ctx, ref)
 	}
 	if err != nil {
-		return v, notFoundErr(err, kind, ref)
+		return v, notFoundErrFor(err, kind, ref, acceptsCalendar)
 	}
 	return v, nil
 }
 
 // resolveEvent looks up an event by numeric ID, string UID, or UID + recurrence-id.
 func resolveEvent(ctx context.Context, a *app.App, ref, recurrenceID string) (event.Event, error) {
-	return resolveRef(ctx, ref, recurrenceID, "event",
-		a.Events.Get, a.Events.GetByUID, a.Events.GetByUIDAndRecurrenceID)
+	return resolveEventFor(ctx, a, ref, recurrenceID, false)
+}
+
+// resolveEventFor is resolveEvent for a command that may accept --calendar
+// (see notFoundErrFor).
+func resolveEventFor(ctx context.Context, a *app.App, ref, recurrenceID string, acceptsCalendar bool) (event.Event, error) {
+	e, err := resolveRef(ctx, ref, recurrenceID, "event",
+		a.Events.Get, a.Events.GetByUID, a.Events.GetByUIDAndRecurrenceID, acceptsCalendar)
+	return e, err
 }
 
 // resolveTodo looks up a todo by numeric ID, string UID, or UID + recurrence-id.
 func resolveTodo(ctx context.Context, a *app.App, ref, recurrenceID string) (todo.Todo, error) {
 	return resolveRef(ctx, ref, recurrenceID, "todo",
-		a.Todos.Get, a.Todos.GetByUID, a.Todos.GetByUIDAndRecurrenceID)
+		a.Todos.Get, a.Todos.GetByUID, a.Todos.GetByUIDAndRecurrenceID, false)
 }
 
 func resolveCalendarID(ctx context.Context, a *app.App, name string) (int64, error) {
@@ -541,7 +561,7 @@ func resolveCalendar(ctx context.Context, a *app.App, name string) (calendarpkg.
 // resolveJournal looks up a journal by numeric ID, string UID, or UID + recurrence-id.
 func resolveJournal(ctx context.Context, a *app.App, ref, recurrenceID string) (journal.Journal, error) {
 	return resolveRef(ctx, ref, recurrenceID, "journal",
-		a.Journals.Get, a.Journals.GetByUID, a.Journals.GetByUIDAndRecurrenceID)
+		a.Journals.Get, a.Journals.GetByUID, a.Journals.GetByUIDAndRecurrenceID, false)
 }
 
 func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {

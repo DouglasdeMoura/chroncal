@@ -39,13 +39,13 @@ import (
 // service refuses the move of one occurrence with its hint. When that lookup
 // cannot choose the series, the error names calendarLabel as a calendar with
 // no series of the UID.
-func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64, calendarLabel string) (e event.Event, createOverride, viaCalendar bool, err error) {
+func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string, calendarID int64, calendarLabel string, acceptsCalendar bool) (e event.Event, createOverride, viaCalendar bool, err error) {
 	if recurrenceID == "" {
-		e, err := resolveEvent(ctx, a, ref, "")
+		e, err := resolveEventFor(ctx, a, ref, "", false)
 		return e, false, false, err
 	}
 	if _, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
-		e, err := resolveEvent(ctx, a, ref, recurrenceID)
+		e, err := resolveEventFor(ctx, a, ref, recurrenceID, acceptsCalendar)
 		return e, false, false, err
 	}
 	// One lookup gives the master of the series and the stored override of the
@@ -67,7 +67,7 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 			occ, create, err := generatedOccurrence(master, ref, recurrenceID)
 			return occ, create, scope != 0, err
 		case !errors.Is(err, sql.ErrNoRows):
-			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarLabel, scope != 0)
+			return event.Event{}, false, false, ambiguousSeriesErrFor(err, ref, calendarID, calendarLabel, scope != 0, acceptsCalendar)
 		}
 		if scope != 0 {
 			// The named calendar can hold its own master in the trash. Its
@@ -90,12 +90,12 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 			return e, false, true, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return event.Event{}, false, false, notFoundErr(err, "event", ref)
+			return event.Event{}, false, false, notFoundErrFor(err, "event", ref, acceptsCalendar)
 		}
 	}
 	e, err = a.Events.OrphanOccurrence(ctx, 0, ref, recurrenceID)
 	if err != nil {
-		return event.Event{}, false, false, notFoundErr(err, "event", ref)
+		return event.Event{}, false, false, notFoundErrFor(err, "event", ref, acceptsCalendar)
 	}
 	if calendarID != 0 {
 		// The orphan row lives in another calendar. --calendar must not turn
@@ -121,6 +121,15 @@ func ambiguousSeriesErr(err error, ref string, calendarID int64, calendarName st
 		return errInvalidInputf("calendar %q holds no series of event %s, and the UID is in more than one calendar; use the ID of the row, or name the calendar of the series with --calendar", calendarName, ref)
 	}
 	return notFoundErr(err, "event", ref)
+}
+
+// ambiguousSeriesErrFor is ambiguousSeriesErr for a command that may accept
+// --calendar (see notFoundErrFor).
+func ambiguousSeriesErrFor(err error, ref string, calendarID int64, calendarName string, inCalendar, acceptsCalendar bool) error {
+	if calendarID != 0 {
+		return ambiguousSeriesErr(err, ref, calendarID, calendarName, inCalendar)
+	}
+	return notFoundErrFor(err, "event", ref, acceptsCalendar)
 }
 
 // generatedOccurrence builds the occurrence of master at recurrenceID

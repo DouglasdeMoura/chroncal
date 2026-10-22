@@ -219,11 +219,11 @@ func TestResolveEventOccurrence_OrphanByCalendar(t *testing.T) {
 		t.Fatalf("resolve Other: %v", err)
 	}
 	const rid = "2026-04-07T09:00:00Z"
-	e, _, viaCalendar, err := resolveEventOccurrence(ctx, a, twin, rid, home, "Home")
+	e, _, viaCalendar, err := resolveEventOccurrence(ctx, a, twin, rid, home, "Home", true)
 	if err != nil || e.CalendarID != home || !viaCalendar || e.Title != "Twin Home" {
 		t.Fatalf("resolve twin in Home = %q calendar %d via %v, %v; want the Home row via the calendar", e.Title, e.CalendarID, viaCalendar, err)
 	}
-	_, _, _, err = resolveEventOccurrence(ctx, a, single, rid, other, "Other")
+	_, _, _, err = resolveEventOccurrence(ctx, a, single, rid, other, "Other", true)
 	if err == nil || !strings.Contains(err.Error(), `the row is in calendar "Work"`) {
 		t.Errorf("resolve single in Other err = %v, want a hint that names Work", err)
 	}
@@ -260,8 +260,64 @@ func TestResolveEventOccurrence_CalendarWithTrashedMasterStops(t *testing.T) {
 	if err := a.Events.RestoreByID(ctx, override.ID); err != nil {
 		t.Fatalf("RestoreByID(override): %v", err)
 	}
-	_, _, _, err = resolveEventOccurrence(ctx, a, uid, at.Format(time.RFC3339), home, "Home")
+	_, _, _, err = resolveEventOccurrence(ctx, a, uid, at.Format(time.RFC3339), home, "Home", true)
 	if err == nil || !strings.Contains(err.Error(), "restore the series first") {
 		t.Errorf("resolveEventOccurrence(Home) err = %v, want the series-in-trash stop", err)
+	}
+}
+
+// TestEventDeleteSeries_OrphanUIDWithoutCalendar: `event delete <uid>
+// --series` with no --calendar takes the service rule. A UID with orphan
+// rows in one calendar and no master gets the delete.
+func TestEventDeleteSeries_OrphanUIDWithoutCalendar(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	if _, _, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create Work: %v", err)
+	}
+	const uid = "orphan-series-no-calendar"
+	importOrphan(t, uid, "Work", "Orphan")
+	if stdout, stderr, err := runChroncalCommand(t, "event", "delete", uid, "--series", "--yes"); err != nil {
+		t.Fatalf("event delete --series: %v (stdout=%q stderr=%q)", err, stdout, stderr)
+	}
+	if _, stderr, err := runChroncalCommand(t, "event", "get", uid, "--recurrence-id", "2026-04-07T09:00:00Z"); err == nil {
+		t.Errorf("the orphan row is live after the series delete (stderr=%q)", stderr)
+	}
+}
+
+// TestAmbiguousUIDHint_PerCommand: the hint for a UID in two calendars names
+// --calendar only where the command uses it to choose the series: event
+// delete, and event update with --recurrence-id.
+func TestAmbiguousUIDHint_PerCommand(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+	for _, tc := range []struct {
+		args         []string
+		wantCalendar bool
+	}{
+		{[]string{"event", "get", uid}, false},
+		{[]string{"event", "rsvp", uid, "--status", "accepted"}, false},
+		{[]string{"event", "update", uid, "--title", "X"}, false},
+		{[]string{"event", "update", uid, "--recurrence-id", "2026-04-07T09:00:00Z", "--title", "X"}, true},
+		{[]string{"event", "delete", uid, "--yes"}, true},
+	} {
+		_, stderr, err := runChroncalCommand(t, tc.args...)
+		if err == nil || !strings.Contains(stderr, "more than one calendar") {
+			t.Errorf("%v: err = %v, stderr = %q; want the ambiguity refusal", tc.args, err, stderr)
+			continue
+		}
+		if got := strings.Contains(stderr, "--calendar"); got != tc.wantCalendar {
+			t.Errorf("%v: hint names --calendar = %v, want %v (stderr=%q)", tc.args, got, tc.wantCalendar, stderr)
+		}
+	}
+	for _, cal := range []string{"Work", "Home"} {
+		if _, stderr, err := runChroncalCommand(t, "event", "delete", uid, "--series", "--calendar", cal, "--yes"); err != nil {
+			t.Fatalf("series delete in %s: %v (stderr=%q)", cal, err, stderr)
+		}
+	}
+	_, stderr, err := runChroncalCommand(t, "event", "restore", uid)
+	if err == nil || strings.Contains(stderr, "--calendar") {
+		t.Errorf("event restore: err = %v, stderr = %q; want a refusal with no --calendar hint", err, stderr)
 	}
 }
