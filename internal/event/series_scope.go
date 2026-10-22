@@ -248,6 +248,13 @@ func (s *Service) IsSeriesRowOf(ctx context.Context, calendarID, id int64) (bool
 	return s.q.IsSeriesRowOfCalendar(ctx, storage.IsSeriesRowOfCalendarParams{ID: id, CalendarID: calendarID})
 }
 
+// MasterInTrash reports whether calendarID holds its own master of uid in
+// the trash.
+func (s *Service) MasterInTrash(ctx context.Context, calendarID int64, uid string) (bool, error) {
+	m, found, err := calendarMasterTx(ctx, s.q, calendarID, uid)
+	return found && m.DeletedAt != nil, err
+}
+
 // LiveRowInCalendar returns the one live override row of uid in calendarID,
 // with no series rule. No row gives sql.ErrNoRows. More rows give an
 // *AmbiguousOverrideError with their IDs, so the user chooses one.

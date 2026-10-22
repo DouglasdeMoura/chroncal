@@ -170,3 +170,41 @@ func TestPruneMarker_KeepsPrunedRowOutOfSameSecondRestore(t *testing.T) {
 		}
 	}
 }
+
+// TestPruneMarker_ReimportDropsIt: a pull that imports a pruned override
+// again drops its pruned marker.
+func TestPruneMarker_ReimportDropsIt(t *testing.T) {
+	t.Parallel()
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+	cals, err := q.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	calendarID := cals[0].ID
+	const uid = "prune-reimport"
+	const rid = "2026-07-02T17:00:00Z"
+	withRow := []event.Event{
+		pruneTestEvent(uid, calendarID, "", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TH"),
+		pruneTestEvent(uid, calendarID, rid, ""),
+	}
+	markers := func() int64 {
+		t.Helper()
+		var n int64
+		if err := engine.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_exdate_deletes WHERE uid = ? AND pruned = 1`, uid).Scan(&n); err != nil {
+			t.Fatalf("count markers: %v", err)
+		}
+		return n
+	}
+	for i, events := range [][]event.Event{withRow, withRow[:1], withRow} {
+		if _, _, err := engine.persistImported(ctx, calendarID, icalPkg.ImportResult{Events: events}); err != nil {
+			t.Fatalf("persistImported %d: %v", i, err)
+		}
+		if i == 1 && markers() != 1 {
+			t.Fatalf("pruned markers after the prune = %d, want 1", markers())
+		}
+	}
+	if n := markers(); n != 0 {
+		t.Errorf("pruned markers after the import of the row again = %d, want 0", n)
+	}
+}

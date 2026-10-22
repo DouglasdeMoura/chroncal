@@ -1543,6 +1543,23 @@ func (q *Queries) PurgeSoftDeletedEvents(ctx context.Context, deletedAt *string)
 	return result.RowsAffected()
 }
 
+const purgeTrashedOverridesInCalendar = `-- name: PurgeTrashedOverridesInCalendar :exec
+DELETE FROM events
+WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL
+`
+
+type PurgeTrashedOverridesInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Hard-delete the override rows of one UID in one calendar that are in the
+// trash. The purge of a master takes them along, and the live rows stay.
+func (q *Queries) PurgeTrashedOverridesInCalendar(ctx context.Context, arg PurgeTrashedOverridesInCalendarParams) error {
+	_, err := q.db.ExecContext(ctx, purgeTrashedOverridesInCalendar, arg.CalendarID, arg.Uid)
+	return err
+}
+
 const reassignEventsCalendar = `-- name: ReassignEventsCalendar :execrows
 UPDATE events SET
     calendar_id = ?,

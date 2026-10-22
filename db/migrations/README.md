@@ -16,16 +16,21 @@ must follow these steps:
 1. Drop the view: `DROP VIEW IF EXISTS event_series_rows;`
 2. Rebuild the table as migration 050 does.
 3. Create the view again with the statement below.
-4. Create the triggers `events_master_revive_drops_series_log` and
-   `events_master_insert_drops_stale_logs` again. The drop of `events`
-   drops them. Copy their statements from migration 057.
+4. Create the four triggers of migration 057 again:
+   `events_master_revive_drops_series_log`,
+   `events_master_insert_drops_stale_logs`,
+   `events_override_revive_drops_prune_marker`, and
+   `events_override_insert_drops_prune_marker`. The drop of `events` drops
+   them. Copy their statements from migration 057.
 
 The triggers drop the stale delete logs of a calendar. The revive trigger
-drops the series-delete log when a master of that calendar comes back
-from the trash. The insert trigger drops the series-delete log and the
-occurrence logs of the UID when a new live master arrives. Without them,
-a log that a pull or an import left behind brings back the wrong rows, or
-strips an imported EXDATE, on the next restore.
+of a master drops the series-delete log when a master of that calendar
+comes back from the trash. The insert trigger of a master drops the
+series-delete log and the occurrence logs of the UID when a new live
+master arrives. The two triggers of an override drop the pruned marker of
+an occurrence when its row comes back. Without them, a log that a pull or
+an import left behind brings back the wrong rows, or strips an imported
+EXDATE, on the next restore.
 
 Each statement below must stay equal to the one in migration 057. The
 storage test `TestMigrationsReadmeMatches057` compares them, and the
@@ -82,5 +87,25 @@ WHEN NEW.recurrence_id = '' AND NEW.deleted_at IS NULL
 BEGIN
     DELETE FROM event_series_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
     DELETE FROM event_exdate_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
+END;
+```
+
+```sql
+CREATE TRIGGER events_override_revive_drops_prune_marker
+AFTER UPDATE OF deleted_at ON events
+WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id != ''
+BEGIN
+    DELETE FROM event_exdate_deletes
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
+END;
+```
+
+```sql
+CREATE TRIGGER events_override_insert_drops_prune_marker
+AFTER INSERT ON events
+WHEN NEW.recurrence_id != '' AND NEW.deleted_at IS NULL
+BEGIN
+    DELETE FROM event_exdate_deletes
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
 END;
 ```

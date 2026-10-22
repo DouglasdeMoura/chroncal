@@ -69,6 +69,18 @@ func resolveEventOccurrence(ctx context.Context, a *app.App, ref, recurrenceID s
 		case !errors.Is(err, sql.ErrNoRows):
 			return event.Event{}, false, false, ambiguousSeriesErr(err, ref, calendarID, calendarLabel, scope != 0)
 		}
+		if scope != 0 {
+			// The named calendar can hold its own master in the trash. Its
+			// rows then belong to that series, so the lookup must not fall
+			// back to the series of another calendar.
+			inTrash, err := a.Events.MasterInTrash(ctx, scope, ref)
+			if err != nil {
+				return event.Event{}, false, false, err
+			}
+			if inTrash {
+				return event.Event{}, false, false, errInvalidInputf("the series %s is in the trash in calendar %q; restore the series first (chroncal event restore)", ref, calendarLabel)
+			}
+		}
 	}
 	// An orphan row of the --calendar calendar comes first, and that
 	// calendar names the row.

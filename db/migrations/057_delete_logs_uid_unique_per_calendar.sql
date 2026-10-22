@@ -156,7 +156,35 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- An override row that comes back, by any path, drops the pruned marker of
+-- its occurrence. A restore by ID, an undo, an edit that revives the row,
+-- and a pull that imports it again all clear deleted_at. A later restore
+-- of the master then sees the row as one of its own again.
+-- +goose StatementBegin
+CREATE TRIGGER events_override_revive_drops_prune_marker
+AFTER UPDATE OF deleted_at ON events
+WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id != ''
+BEGIN
+    DELETE FROM event_exdate_deletes
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
+END;
+-- +goose StatementEnd
+
+-- A new live override row drops the pruned marker of its occurrence too:
+-- the import of a row after a purge of the pruned row.
+-- +goose StatementBegin
+CREATE TRIGGER events_override_insert_drops_prune_marker
+AFTER INSERT ON events
+WHEN NEW.recurrence_id != '' AND NEW.deleted_at IS NULL
+BEGIN
+    DELETE FROM event_exdate_deletes
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS events_override_insert_drops_prune_marker;
+DROP TRIGGER IF EXISTS events_override_revive_drops_prune_marker;
 DROP TRIGGER IF EXISTS events_master_insert_drops_stale_logs;
 DROP TRIGGER IF EXISTS events_master_revive_drops_series_log;
 DROP VIEW IF EXISTS event_series_rows;

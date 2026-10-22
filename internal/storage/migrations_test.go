@@ -795,7 +795,10 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 			t.Errorf("event_series_rows after the rebuild = %d, want 1", n)
 		}
 		// README step 4: the DROP TABLE of the rebuild drops the triggers.
-		triggers := []string{"events_master_revive_drops_series_log", "events_master_insert_drops_stale_logs"}
+		triggers := []string{
+			"events_master_revive_drops_series_log", "events_master_insert_drops_stale_logs",
+			"events_override_revive_drops_prune_marker", "events_override_insert_drops_prune_marker",
+		}
 		for _, name := range triggers {
 			q := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = '` + name + `'`
 			if n := count(q); n != 0 {
@@ -846,7 +849,7 @@ func triggerStatement(t *testing.T, name string) string {
 
 // TestMigrationsReadmeMatches057 compares each SQL block of the migrations
 // README with the statement of migration 057 that it copies: the view and
-// the two triggers. A change of migration 057 then cannot leave the README
+// the four triggers. A change of migration 057 then cannot leave the README
 // copy behind.
 func TestMigrationsReadmeMatches057(t *testing.T) {
 	readme, err := os.ReadFile("../../db/migrations/README.md")
@@ -865,6 +868,8 @@ func TestMigrationsReadmeMatches057(t *testing.T) {
 		seriesViewStatement(t),
 		triggerStatement(t, "events_master_revive_drops_series_log"),
 		triggerStatement(t, "events_master_insert_drops_stale_logs"),
+		triggerStatement(t, "events_override_revive_drops_prune_marker"),
+		triggerStatement(t, "events_override_insert_drops_prune_marker"),
 	}
 	if len(blocks) != len(want) {
 		t.Fatalf("README SQL blocks = %d, want %d", len(blocks), len(want))

@@ -124,10 +124,11 @@ func TestUndo_AlreadyRestoredEntryLeavesTheStack(t *testing.T) {
 	require.Nil(t, got.DeletedAt, "the second press restores the first delete")
 }
 
-// TestUndo_TruncationWithMasterInTrashKeepsEntry: the undo of a truncation
-// whose master is in the trash keeps the entry and asks for the restore of
-// the series first.
-func TestUndo_TruncationWithMasterInTrashKeepsEntry(t *testing.T) {
+// TestUndo_TruncationWithMasterInTrashLeavesTheStack: the undo of a
+// truncation whose master is in the trash drops the entry, so it never
+// blocks the older entries. The message asks for the restore of the series
+// first and names the trash.
+func TestUndo_TruncationWithMasterInTrashLeavesTheStack(t *testing.T) {
 	m, a := newDBBackedModel(t)
 	ctx := context.Background()
 	cals, err := a.Calendars.List(ctx)
@@ -151,8 +152,8 @@ func TestUndo_TruncationWithMasterInTrashKeepsEntry(t *testing.T) {
 	require.ErrorIs(t, msg.err, event.ErrMasterInTrash)
 	updated, _ := next.Update(msg)
 	m = updated.(Model)
-	require.Equal(t, 1, m.undoStack.Len(), "the entry stays for a later undo")
-	require.Equal(t, "restore the series first", m.toast.reason)
+	require.Equal(t, 0, m.undoStack.Len(), "the entry leaves the stack")
+	require.Equal(t, "restore the series first, then restore this from the trash", m.toast.reason)
 }
 
 // TestUndo_PurgedRowsLeaveTheStack: the undo of a delete whose row a purge
@@ -182,4 +183,50 @@ func TestUndo_PurgedRowsLeaveTheStack(t *testing.T) {
 	m = updated.(Model)
 	require.Equal(t, 0, m.undoStack.Len())
 	require.Equal(t, "nothing to restore", m.toast.reason)
+}
+
+// TestUndo_PurgedMasterRefusalLeavesTheStack: the service refuses the undo
+// of a series delete whose master a purge took, beside a live master of the
+// UID in another calendar. The entry leaves the stack.
+func TestUndo_PurgedMasterRefusalLeavesTheStack(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+	cals, err := a.Calendars.List(ctx)
+	require.NoError(t, err)
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	master, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "tui-purged", CalendarID: cals[0].ID, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	require.NoError(t, err)
+	second := start.Add(24 * time.Hour)
+	_, err = a.Events.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: cals[0].ID, Title: "Late",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	})
+	require.NoError(t, err)
+	meta, err := a.Events.DeleteSeriesWithUndo(ctx, cals[0].ID, master.UID)
+	require.NoError(t, err)
+	m.undoStack.Push(UndoEntry{Meta: meta, DeletedAt: time.Now()})
+	_, err = a.DB.ExecContext(ctx, `DELETE FROM events WHERE id = ?`, master.ID)
+	require.NoError(t, err)
+	res, err := a.DB.ExecContext(ctx, `INSERT INTO calendars (name) VALUES ('Other')`)
+	require.NoError(t, err)
+	other, err := res.LastInsertId()
+	require.NoError(t, err)
+	_, err = a.Events.UpsertByUID(ctx, event.UpsertParams{
+		UID: master.UID, CalendarID: other, Title: "Other series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	require.NoError(t, err)
+
+	m.focus = focusCalendar
+	next, cmd, handled := m.interceptGlobalKeys(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	require.True(t, handled)
+	msg, ok := cmd().(eventRestoredMsg)
+	require.True(t, ok)
+	require.ErrorIs(t, msg.err, event.ErrMasterPurged)
+	updated, _ := next.Update(msg)
+	m = updated.(Model)
+	require.Equal(t, 0, m.undoStack.Len())
 }

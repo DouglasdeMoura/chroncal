@@ -531,10 +531,7 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 			}, targetHoldsMaster)
 		},
 		HoldsMaster: func(ctx context.Context, calendarID int64) (bool, error) {
-			n, err := qtx.CountEventUIDRowsInCalendar(ctx, storage.CountEventUIDRowsInCalendarParams{
-				CalendarID: calendarID, Uid: uid, IncludeDeleted: true,
-			})
-			return n.Masters > 0, err
+			return calendarHoldsMasterTx(ctx, qtx, calendarID, uid)
 		},
 	}
 }
