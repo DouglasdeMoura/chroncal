@@ -10,6 +10,16 @@ import (
 	"strings"
 )
 
+const deleteEventSeriesDeleteByID = `-- name: DeleteEventSeriesDeleteByID :exec
+DELETE FROM event_series_deletes WHERE id = ?
+`
+
+// Drop one series-delete log row. A restore of its delete consumes it.
+func (q *Queries) DeleteEventSeriesDeleteByID(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteEventSeriesDeleteByID, id)
+	return err
+}
+
 const deleteEventSeriesDeletesByCalendarUID = `-- name: DeleteEventSeriesDeletesByCalendarUID :exec
 DELETE FROM event_series_deletes WHERE calendar_id = ? AND uid = ?
 `
@@ -19,9 +29,8 @@ type DeleteEventSeriesDeletesByCalendarUIDParams struct {
 	Uid        string
 }
 
-// Drop the log row of one series. A restore of the series consumes it. A
-// purge of the master drops it with the master. A calendar move clears a
-// stale row in the target calendar before the move.
+// Drop the log rows of one series. A calendar move clears the stale rows in
+// the target calendar before the move.
 func (q *Queries) DeleteEventSeriesDeletesByCalendarUID(ctx context.Context, arg DeleteEventSeriesDeletesByCalendarUIDParams) error {
 	_, err := q.db.ExecContext(ctx, deleteEventSeriesDeletesByCalendarUID, arg.CalendarID, arg.Uid)
 	return err
@@ -50,7 +59,7 @@ func (q *Queries) DeleteEventSeriesDeletesByIDs(ctx context.Context, ids []int64
 }
 
 const getEventSeriesDeleteByCalendarUID = `-- name: GetEventSeriesDeleteByCalendarUID :one
-SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE calendar_id = ? AND uid = ?
+SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id DESC LIMIT 1
 `
 
 type GetEventSeriesDeleteByCalendarUIDParams struct {
@@ -58,6 +67,8 @@ type GetEventSeriesDeleteByCalendarUIDParams struct {
 	Uid        string
 }
 
+// The newest series-delete log row of one series in one calendar. A restore
+// reverses the newest delete first.
 func (q *Queries) GetEventSeriesDeleteByCalendarUID(ctx context.Context, arg GetEventSeriesDeleteByCalendarUIDParams) (EventSeriesDelete, error) {
 	row := q.db.QueryRowContext(ctx, getEventSeriesDeleteByCalendarUID, arg.CalendarID, arg.Uid)
 	var i EventSeriesDelete
@@ -162,10 +173,6 @@ func (q *Queries) MoveEventSeriesDeletesUIDToCalendar(ctx context.Context, arg M
 const recordEventSeriesDelete = `-- name: RecordEventSeriesDelete :exec
 INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master)
 VALUES (?, ?, ?, ?)
-ON CONFLICT(calendar_id, uid) DO UPDATE SET
-    hidden_ids = excluded.hidden_ids,
-    had_master = excluded.had_master,
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 `
 
 type RecordEventSeriesDeleteParams struct {
@@ -175,9 +182,10 @@ type RecordEventSeriesDeleteParams struct {
 	HadMaster  int64
 }
 
-// One log row per series in one calendar. The service writes the merged
-// list of an earlier unconsumed row and the new rows (see
-// recordSeriesDeleteTx), so the upsert replaces the column with it.
+// Write the log row of one series delete. Each delete gets its own row (the
+// id), so an earlier delete in the same calendar keeps its record. The merge
+// of orphan rows into the log of a master in the trash updates that row
+// (UpdateEventSeriesDeleteHiddenIds).
 func (q *Queries) RecordEventSeriesDelete(ctx context.Context, arg RecordEventSeriesDeleteParams) error {
 	_, err := q.db.ExecContext(ctx, recordEventSeriesDelete,
 		arg.CalendarID,

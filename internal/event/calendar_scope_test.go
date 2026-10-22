@@ -4822,9 +4822,20 @@ func TestPurgeMaster_KeepsLoggedRowOfALaterDelete(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	// A later delete of its own: the row came back and went again.
-	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2030-01-01T00:00:00Z' WHERE id = ?`, legacy.ID); err != nil {
-		t.Fatalf("delete the row again: %v", err)
+	// A later delete of its own: the row came back by a path outside the
+	// service, as a pull does, and went again. The revive trigger takes the
+	// row out of the series log.
+	for _, stmt := range []string{
+		`UPDATE events SET deleted_at = NULL WHERE id = ?`,
+		`UPDATE events SET deleted_at = '2030-01-01T00:00:00Z' WHERE id = ?`,
+	} {
+		if _, err := svc.db.ExecContext(ctx, stmt, legacy.ID); err != nil {
+			t.Fatalf("revive and delete the row again: %v", err)
+		}
+	}
+	log, err := svc.q.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: 1, Uid: master.UID})
+	if err != nil || strings.Contains(","+log.HiddenIds+",", ","+strconv.FormatInt(legacy.ID, 10)+",") {
+		t.Fatalf("series log after the revive = %q, %v; want it without row %d", log.HiddenIds, err, legacy.ID)
 	}
 	calB := insertCalendar(t, svc, "B")
 	if _, err := svc.UpsertByUID(ctx, UpsertParams{
@@ -4889,5 +4900,174 @@ func TestDeleteSeriesWithUndo_PushCalendars(t *testing.T) {
 	got := meta.PushCalendarIDs(1)
 	if len(got) != 2 || got[0] != 1 || got[1] != calB {
 		t.Errorf("push calendars = %v, want [1 %d]", got, calB)
+	}
+}
+
+// syncedResource gives calendarID a synced sync row of uid.
+func syncedResource(t *testing.T, svc *Service, calendarID int64, uid string) {
+	t.Helper()
+	if err := svc.q.UpsertSyncResource(context.Background(), storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: uid, OwnerType: "event",
+		RemoteUrl: "https://example.com/" + strconv.FormatInt(calendarID, 10) + "/" + uid + ".ics", Etag: "e", SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("upsert sync resource: %v", err)
+	}
+}
+
+// TestRestoreSeries_ClearsTombstonesOfEveryCalendar: a series delete that
+// hid a legacy override in synced calendar C tombstones A and C. The
+// restore of the series, by UID or by undo, drops both tombstones.
+func TestRestoreSeries_ClearsTombstonesOfEveryCalendar(t *testing.T) {
+	for name, undo := range map[string]bool{"RestoreByUID": false, "RestoreUndo": true} {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			ctx := context.Background()
+			master, second, _ := singleSeriesWithOverrides(t, svc)
+			calC := insertCalendar(t, svc, "C")
+			fourth := second.Add(48 * time.Hour)
+			if _, err := svc.UpsertByUID(ctx, UpsertParams{
+				UID: master.UID, CalendarID: calC, Title: "Legacy",
+				StartTime: fourth, EndTime: fourth.Add(time.Hour), RecurrenceID: fourth.Format(time.RFC3339),
+			}); err != nil {
+				t.Fatalf("upsert legacy row: %v", err)
+			}
+			syncedResource(t, svc, 1, master.UID)
+			syncedResource(t, svc, calC, master.UID)
+			meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+			if err != nil {
+				t.Fatalf("DeleteSeriesWithUndo: %v", err)
+			}
+			for _, cal := range []int64{1, calC} {
+				if n := countTombstones(t, svc, cal, master.UID); n != 1 {
+					t.Fatalf("tombstones of calendar %d after the delete = %d, want 1", cal, n)
+				}
+			}
+			if undo {
+				err = svc.RestoreUndo(ctx, meta)
+			} else {
+				err = svc.RestoreByUID(ctx, master.UID)
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			for _, cal := range []int64{1, calC} {
+				if n := countTombstones(t, svc, cal, master.UID); n != 0 {
+					t.Errorf("tombstones of calendar %d after the restore = %d, want 0", cal, n)
+				}
+			}
+		})
+	}
+}
+
+// TestOrphanDeletes_EachKeepsItsLog: two deletes of orphan rows in one
+// calendar keep two log rows. A restore by UID reverses the newest delete,
+// and a second restore reverses the earlier one. Neither brings back the
+// rows of the other.
+func TestOrphanDeletes_EachKeepsItsLog(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-two-deletes"
+	rows := orphanRows(t, svc, uid, 2)
+	if err := svc.DeleteSeries(ctx, 1, uid); err != nil {
+		t.Fatalf("first DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, rows[0].ID); err != nil {
+		t.Fatalf("RestoreByID(row 0): %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, uid); err != nil {
+		t.Fatalf("second DeleteSeries: %v", err)
+	}
+	var logs int
+	if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_series_deletes WHERE calendar_id = 1 AND uid = ?`, uid).Scan(&logs); err != nil || logs != 2 {
+		t.Fatalf("series-delete log rows after two deletes = %d, %v; want 2", logs, err)
+	}
+	live := func() (bool, bool) {
+		t.Helper()
+		var out [2]bool
+		for i, r := range rows {
+			e, err := svc.GetIncludingDeleted(ctx, r.ID)
+			if err != nil {
+				t.Fatalf("get row %d: %v", i, err)
+			}
+			out[i] = e.DeletedAt == nil
+		}
+		return out[0], out[1]
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("first RestoreByUID: %v", err)
+	}
+	if a, b := live(); !a || b {
+		t.Fatalf("after the first restore: row 0 live %v, row 1 live %v; want only row 0", a, b)
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("second RestoreByUID: %v", err)
+	}
+	if a, b := live(); !a || !b {
+		t.Errorf("after the second restore: row 0 live %v, row 1 live %v; want both", a, b)
+	}
+}
+
+// TestPurgeDeleted_KeptMasterKeepsItsLoggedRows: a kept master keeps the
+// rows that its series-delete log names, also a legacy override that a
+// live master in another calendar owns in the view now.
+func TestPurgeDeleted_KeptMasterKeepsItsLoggedRows(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, _, third := singleSeriesWithOverrides(t, svc)
+	live, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	calL := insertCalendar(t, svc, "Legacy")
+	fifth := third.Add(48 * time.Hour)
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calL, Title: "Legacy",
+		StartTime: fifth, EndTime: fifth.Add(time.Hour), RecurrenceID: fifth.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, live.ID); err != nil {
+		t.Fatalf("RestoreByID(live override): %v", err)
+	}
+	calB := insertCalendar(t, svc, "B")
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calB, Title: "Other series",
+		StartTime: master.StartTime, EndTime: master.EndTime, RecurrenceRule: master.RecurrenceRule,
+	}); err != nil {
+		t.Fatalf("upsert master B: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = ? AND deleted_at IS NOT NULL`, master.UID); err != nil {
+		t.Fatalf("age the trash: %v", err)
+	}
+	report, err := svc.PurgeDeletedReport(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("PurgeDeletedReport: %v", err)
+	}
+	if len(report.Skipped) != 1 {
+		t.Fatalf("skipped = %+v, want the master", report.Skipped)
+	}
+	if _, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil {
+		t.Errorf("logged legacy row of the kept master after the purge: %v, want it kept", err)
+	}
+}
+
+// TestDeleteSeries_OrphanTombstoneInPushCalendars: a delete of orphan rows
+// in a synced calendar names that calendar to push.
+func TestDeleteSeries_OrphanTombstoneInPushCalendars(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-push"
+	orphanRows(t, svc, uid, 1)
+	syncedResource(t, svc, 1, uid)
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, uid)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo: %v", err)
+	}
+	if len(meta.PushCalendars) != 1 || meta.PushCalendars[0] != 1 {
+		t.Errorf("push calendars = %v, want [1]", meta.PushCalendars)
 	}
 }

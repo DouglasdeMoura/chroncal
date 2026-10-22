@@ -25,8 +25,8 @@ type Purger struct {
 	q      *storage.Queries
 	days   int
 	logger *slog.Logger
-	// warned holds the masters that a run kept and logged. A later run
-	// that keeps them again logs them at Debug.
+	// warned holds the masters that the last run kept and logged. The next
+	// run that keeps them again logs them at Debug.
 	warned map[int64]bool
 }
 
@@ -55,18 +55,19 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("trash purge: %w", err)
 	}
+	// The set of this run replaces the set of the last run, so a master that
+	// the purge no longer keeps leaves it.
+	warned := make(map[int64]bool, len(counts.EventMastersSkipped))
 	for _, m := range counts.EventMastersSkipped {
 		level := slog.LevelWarn
 		if p.warned[m.ID] {
 			level = slog.LevelDebug
 		}
-		if p.warned == nil {
-			p.warned = make(map[int64]bool)
-		}
-		p.warned[m.ID] = true
+		warned[m.ID] = true
 		p.logger.Log(ctx, level, "soft-delete purge kept a master: the series still has live overrides",
 			"event_id", m.ID, "calendar_id", m.CalendarID, "uid", m.UID)
 	}
+	p.warned = warned
 	total := counts.Events + counts.EventInstanceLogs + counts.EventTruncateLogs + counts.EventSeriesLogs +
 		counts.Todos + counts.TodoInstanceLogs + counts.Journals + counts.JournalInstanceLogs
 	if total > 0 {

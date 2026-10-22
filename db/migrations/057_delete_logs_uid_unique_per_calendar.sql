@@ -68,10 +68,12 @@ CREATE TABLE event_series_deletes (
     uid TEXT NOT NULL,
     hidden_ids TEXT NOT NULL DEFAULT '',
     deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    had_master INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (calendar_id, uid)
+    had_master INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX idx_event_series_deletes_calendar ON event_series_deletes(calendar_id);
+-- One row per series delete: the id names the delete. Two deletes of orphan
+-- rows in one calendar keep two rows, so a restore by UID reverses the
+-- newest one and leaves the other one restorable.
+CREATE INDEX idx_event_series_deletes_calendar ON event_series_deletes(calendar_id, uid);
 CREATE INDEX idx_event_series_deletes_deleted_at ON event_series_deletes(deleted_at);
 
 -- The rows of each event series. One row of the view pairs an event row
@@ -160,17 +162,33 @@ BEGIN
 END;
 -- +goose StatementEnd
 
--- An override row that comes back, by any path, drops the pruned marker of
--- its occurrence. A restore by ID, an undo, an edit that revives the row,
--- and a pull that imports it again all clear deleted_at. A later restore
--- of the master then sees the row as one of its own again.
+-- An override row that comes back, by any path, leaves the delete logs of
+-- its UID: a restore by ID, an undo, an edit that revives the row, and a
+-- pull that imports it again all clear deleted_at. The trigger drops the
+-- pruned marker of its occurrence, and removes its ID from each
+-- series-delete log and each truncation log. A log then names a row only
+-- while the row stays in the trash from that delete. A series-delete log
+-- with no row left goes, unless the master of its calendar is in the trash:
+-- that log still records the series delete.
 -- +goose StatementBegin
-CREATE TRIGGER events_override_revive_drops_prune_marker
+CREATE TRIGGER events_override_revive_drops_stale_logs
 AFTER UPDATE OF deleted_at ON events
 WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id != ''
 BEGIN
     DELETE FROM event_exdate_deletes
     WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
+    UPDATE event_series_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
+    WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
+    DELETE FROM event_series_deletes
+    WHERE uid = NEW.uid AND hidden_ids = ''
+      AND NOT EXISTS (
+        SELECT 1 FROM events AS m
+        WHERE m.calendar_id = event_series_deletes.calendar_id AND m.uid = NEW.uid
+          AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL);
+    UPDATE event_truncate_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
+    WHERE uid = NEW.uid AND hidden_ids IS NOT NULL AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
 END;
 -- +goose StatementEnd
 
@@ -188,7 +206,7 @@ END;
 
 -- +goose Down
 DROP TRIGGER IF EXISTS events_override_insert_drops_prune_marker;
-DROP TRIGGER IF EXISTS events_override_revive_drops_prune_marker;
+DROP TRIGGER IF EXISTS events_override_revive_drops_stale_logs;
 DROP TRIGGER IF EXISTS events_master_insert_drops_stale_logs;
 DROP TRIGGER IF EXISTS events_master_revive_drops_series_log;
 DROP VIEW IF EXISTS event_series_rows;

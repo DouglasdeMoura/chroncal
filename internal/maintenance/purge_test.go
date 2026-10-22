@@ -201,3 +201,31 @@ func TestPurger_WarnsOncePerKeptMaster(t *testing.T) {
 		t.Errorf("the second run logs no Debug record:\n%s", out)
 	}
 }
+
+// TestPurger_WarnedSetFollowsTheLastRun: the set of warned masters holds the
+// masters of the last run only. A master that the purge no longer keeps
+// leaves it.
+func TestPurger_WarnedSetFollowsTheLastRun(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	trashSvc := trash.NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	keptSeriesFixture(t, db, events)
+	p := NewPurger(trashSvc, nil, 30, nil)
+	ctx := context.Background()
+	if _, err := p.RunOnce(ctx); err != nil {
+		t.Fatalf("first RunOnce: %v", err)
+	}
+	if len(p.warned) != 1 {
+		t.Fatalf("warned after the first run = %v, want one master", p.warned)
+	}
+	// The live override goes, so the next run purges the master.
+	if _, err := db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = 'kept-series'`); err != nil {
+		t.Fatalf("trash the live override: %v", err)
+	}
+	if _, err := p.RunOnce(ctx); err != nil {
+		t.Fatalf("second RunOnce: %v", err)
+	}
+	if len(p.warned) != 0 {
+		t.Errorf("warned after the master went = %v, want empty", p.warned)
+	}
+}
