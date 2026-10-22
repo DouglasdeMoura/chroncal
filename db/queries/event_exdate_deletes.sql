@@ -1,16 +1,18 @@
--- name: RecordEventExdateDelete :exec
+-- name: RecordEventExdateDelete :one
 -- Idempotent: a second delete of the same occurrence in one calendar keeps
 -- one log row. Each calendar keeps its own row (issue #842). A delete of
 -- the user turns a pruned marker of the occurrence into a delete log.
 -- hidden_ids lists the override rows that the deletes hid. The caller
 -- passes the union with the list of an earlier delete of the occurrence
--- (see recordExdateDeleteTx).
+-- (see recordExdateDeleteTx). It returns the ID of the log, which the undo
+-- keeps (UndoMeta.ExdateLogID).
 INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_ids)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     pruned = 0,
-    hidden_ids = excluded.hidden_ids;
+    hidden_ids = excluded.hidden_ids
+RETURNING id;
 
 -- name: RecordEventExdatePrune :exec
 -- Write the pruned marker of an override row that a pull prune hid. A

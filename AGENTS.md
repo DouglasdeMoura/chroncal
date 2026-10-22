@@ -93,7 +93,7 @@ Two calendars can hold an event series with the same UID (issue #842). A series 
 
 A pull of one calendar writes the rows of that calendar only. The server object of a series also carries the legacy overrides that the series owns in other calendars. A prune or a remote delete in the pull does not write those rows. The pull has no view of the sync state and the access policy of their calendars. Such a row stays until the user acts on it. The legacy-split heal follow-up covers these rows.
 
-A series with its master in the trash keeps its live rows local. This rule applies to the rows beside the master and to the legacy overrides that it owns. A restore or an edit of such a row writes no sync state. The export refuses the UID, so a push never sends a body with no master over the object of the series.
+A series with its master in the trash keeps its live rows local. This rule applies to the rows beside the master and to the legacy overrides that it owns. A pull can bring back such a row. A restore of the row refuses (`ErrMasterInTrash`), and an edit of the row writes no sync state. The export refuses the UID, so a push never sends a body with no master over the object of the series.
 
 Two legacy overrides of one series can hold the same occurrence. The expansion, the export, and the edit of the occurrence use one rule: the row of the owner calendar wins, then the lowest ID. Only a delete by UID and recurrence ID returns `ErrAmbiguousOverride`, so the user chooses the row. An occurrence delete (`DeleteInstance`) chooses no row. It hides every row of the occurrence that the series owns, and the occurrence log names each of them. The rule has one SQL form and one Go form. The SQL form is the view column `beside_master` of migration 057, and the series override queries order by it. The Go form is `uidmove.TieBefore`, beside `uidmove.LegacyOwner`. Change the two forms together.
 
@@ -252,7 +252,9 @@ n, err := svc.PurgeDeleted(ctx, cutoff) // all rows older than cutoff
 
 When you restore a recurring override, the same transaction also clears the related EXDATE on the master. Expansion then shows the occurrence again.
 
-The EXDATE-provenance rule lives in `softdelete.ClearMasterEXDATE`. Strip only EXDATEs that a delete recorded. Do not strip imported EXDATEs (issue #86). Each domain `clearMasterEXDATE` is a thin wrapper that binds the sqlc queries of that domain to the shared helper. Fix the contract in the shared helper. Do not fix it per domain.
+The EXDATE-provenance rule lives in `internal/softdelete`. Strip only EXDATEs that a delete recorded. Do not strip imported EXDATEs (issue #86). The todo and journal services call `softdelete.ClearMasterEXDATE` through a thin `clearMasterEXDATE` wrapper. The event service calls `softdelete.ReleaseOccurrenceRows` through `releaseOccurrenceRowsTx`, because an event occurrence log lists the rows that its deletes hid (`hidden_ids`). Four restore paths of an event occurrence call it. These are the undo, the restore by ID of an override, the edit that revives an override, and the trash restore. The release removes the given rows from the list. It strips the EXDATE and drops the log only when no row is left. Fix the contract in the shared helper. Do not fix it per domain.
+
+The undo of an event occurrence delete keeps the ID of its log (`UndoMeta.ExdateLogID`). When the log at the occurrence is another row, the undo refuses with `ErrAlreadyRestored`. An ID of 0 means that the delete wrote no log of the master, and the undo un-hides its rows only. A restore of an occurrence or an override refuses with `ErrMasterInTrash` while the master is in the trash. Restore the series first.
 
 ### List or purge mixed trash
 

@@ -969,7 +969,7 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int6
 // master of the edit. Two calendars can hold the same UID, so the EXDATE
 // rule reads that calendar only. It uses the restore rule of the trash:
 // the master loses the EXDATE that the delete recorded, and an imported
-// EXDATE stays (issue #86, see softdelete.ClearMasterEXDATE).
+// EXDATE stays (issue #86, see softdelete.ReleaseOccurrenceRows).
 //
 // The edit makes a fresh override, so the old child rows of the row go:
 // the attendees, the alarms, the attachments, the comments, the contacts,
@@ -981,14 +981,24 @@ func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.
 		return ErrOccurrenceOutsideSeries
 	}
 	masterCalendarID := master.CalendarID
+	// The revive trigger changes the list of the occurrence log, so the
+	// read of the log comes first.
+	log, logged, err := exdateLogTx(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID)
+	if err != nil {
+		return err
+	}
 	if err := qtx.RestoreEvent(ctx, row.ID); err != nil {
 		return fmt.Errorf("revive override: %w", err)
 	}
 	// The revive trigger of migration 057 removes the row from the delete
 	// logs, as for a restore by ID. A later restore of the series or of a
-	// truncation then does not reverse a delete of the row on its own.
-	if err := clearMasterEXDATE(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID); err != nil {
-		return err
+	// truncation then does not reverse a delete of the row on its own. The
+	// release takes the row from the occurrence log. Other rows of the log
+	// keep the EXDATE.
+	if logged {
+		if err := releaseOccurrenceRowsTx(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID, log, []int64{row.ID}); err != nil {
+			return err
+		}
 	}
 	if err := replaceRelationsTx(ctx, qtx, row.ID, nil, nil); err != nil {
 		return err

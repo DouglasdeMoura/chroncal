@@ -121,3 +121,70 @@ func TestClearMasterEXDATE_GetDeleteLogError(t *testing.T) {
 		t.Fatalf("expected wrapped sentinel error, got %v", err)
 	}
 }
+
+// release wires f into an OccurrenceRelease. setHidden receives the shorter
+// list of the log.
+func (f *fakeStore) release(setHidden *[]int64) OccurrenceRelease {
+	return OccurrenceRelease{
+		ExdateProvenance: f.provenance(),
+		SetHiddenIDs: func(ctx context.Context, logID int64, ids []int64) error {
+			*setHidden = ids
+			return nil
+		},
+	}
+}
+
+// TestReleaseOccurrenceRows covers the three rules of the release.
+func TestReleaseOccurrenceRows(t *testing.T) {
+	log := OccurrenceLog{ID: 7, HiddenIDs: []int64{11, 12}}
+	t.Run("rows of another delete", func(t *testing.T) {
+		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
+		var hidden []int64
+		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), log, []int64{99}, testSlot); err != nil {
+			t.Fatal(err)
+		}
+		if hidden != nil || f.updatedExdates != nil || f.deletedLogID != nil {
+			t.Errorf("release of a row the log does not name wrote %v, %v, %v; want nothing", hidden, f.updatedExdates, f.deletedLogID)
+		}
+	})
+	t.Run("rows left", func(t *testing.T) {
+		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
+		var hidden []int64
+		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), log, []int64{11}, testSlot); err != nil {
+			t.Fatal(err)
+		}
+		if len(hidden) != 1 || hidden[0] != 12 || f.updatedExdates != nil || f.deletedLogID != nil {
+			t.Errorf("release of one of two rows = list %v, exdates %v, log %v; want [12] and the EXDATE kept", hidden, f.updatedExdates, f.deletedLogID)
+		}
+	})
+	t.Run("no row left", func(t *testing.T) {
+		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
+		var hidden []int64
+		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), log, []int64{11, 12}, testSlot); err != nil {
+			t.Fatal(err)
+		}
+		if f.updatedExdates == nil || *f.updatedExdates != "" || f.deletedLogID == nil || *f.deletedLogID != 7 {
+			t.Errorf("release of every row = exdates %v, log %v; want the EXDATE and the log gone", f.updatedExdates, f.deletedLogID)
+		}
+	})
+	t.Run("log with an empty list", func(t *testing.T) {
+		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
+		var hidden []int64
+		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), OccurrenceLog{ID: 7}, []int64{11}, testSlot); err != nil {
+			t.Fatal(err)
+		}
+		if f.updatedExdates == nil || *f.updatedExdates != "" || f.deletedLogID == nil {
+			t.Errorf("release of a row from a log with no list = exdates %v, log %v; want the EXDATE and the log gone", f.updatedExdates, f.deletedLogID)
+		}
+	})
+	t.Run("delete with no row", func(t *testing.T) {
+		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
+		var hidden []int64
+		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), OccurrenceLog{ID: 7}, nil, testSlot); err != nil {
+			t.Fatal(err)
+		}
+		if f.deletedLogID == nil || *f.deletedLogID != 7 {
+			t.Errorf("release of an empty log = log %v; want it gone", f.deletedLogID)
+		}
+	})
+}

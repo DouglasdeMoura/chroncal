@@ -11,7 +11,6 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/storage"
-	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // TrashKind discriminates the three shapes a trash row can have:
@@ -328,24 +327,15 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	if err != nil {
 		return err
 	}
-	if _, err := restoreHiddenRowsTx(ctx, qtx, log.CalendarID, hidden); err != nil {
+	// A row that a purge or an earlier restore took is no error: the
+	// EXDATE still goes.
+	if _, _, err := restoreHiddenRowsTx(ctx, qtx, log.CalendarID, hidden); err != nil {
 		return err
 	}
-
-	existing := ParseTimeList(storage.NullableToString(master.Exdates))
-	target, err := time.Parse(time.RFC3339, log.RecurrenceID)
-	if err != nil {
-		return fmt.Errorf("parse recurrence_id %q: %w", log.RecurrenceID, err)
-	}
-	filtered := timeutil.RemoveTimeFromList(existing, target)
-	if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
-		Exdates: storage.StringToNullable(SerializeTimeList(filtered)),
-		ID:      master.ID,
-	}); err != nil {
-		return fmt.Errorf("update exdates: %w", err)
-	}
-	if err := qtx.DeleteEventExdateDelete(ctx, logID); err != nil {
-		return fmt.Errorf("delete log row: %w", err)
+	// The release of every row of the log strips the EXDATE that it
+	// recorded, and it drops the log (softdelete.ReleaseOccurrenceRows).
+	if err := releaseOccurrenceRowsTx(ctx, qtx, log.CalendarID, log.Uid, log.RecurrenceID, log, hidden); err != nil {
+		return err
 	}
 	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, log.Uid, "event"); err != nil {
 		return fmt.Errorf("mark resource dirty: %w", err)

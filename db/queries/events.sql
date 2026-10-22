@@ -325,6 +325,12 @@ WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence
     WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id))
 ORDER BY events.recurrence_id;
 
+-- name: ListEventCalendarsOfIDs :many
+-- The calendar of each row of a set, live or in the trash. The restore of an
+-- occurrence delete reads it once: for the access guard, and for the
+-- occurrence logs of the restored rows.
+SELECT id, calendar_id FROM events WHERE id IN (sqlc.slice(ids)) ORDER BY id;
+
 -- name: ListEventCalendarIDsByIDs :many
 -- The calendars of a set of rows, live or in the trash. The access guard
 -- of a log-driven restore reads it in one query.

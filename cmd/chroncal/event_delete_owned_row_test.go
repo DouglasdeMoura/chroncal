@@ -161,8 +161,8 @@ func TestEventDeleteSeries_OwnTrashedMasterRefusedBeforePrompt(t *testing.T) {
 	if err := a.Events.DeleteSeries(ctx, home, uid); err != nil {
 		t.Fatalf("DeleteSeries(Home): %v", err)
 	}
-	if err := a.Events.RestoreByID(ctx, override.ID); err != nil {
-		t.Fatalf("RestoreByID(override): %v", err)
+	if _, err := a.DB.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE id = ?`, override.ID); err != nil {
+		t.Fatalf("revive the override as a pull does: %v", err)
 	}
 	_, err = eventResource.resolveIn(ctx, a, uid, "Home", true)
 	if err == nil || !strings.Contains(err.Error(), "is in the trash in calendar") {
@@ -257,8 +257,8 @@ func TestResolveEventOccurrence_CalendarWithTrashedMasterStops(t *testing.T) {
 	if err := a.Events.DeleteSeries(ctx, home, uid); err != nil {
 		t.Fatalf("DeleteSeries(Home): %v", err)
 	}
-	if err := a.Events.RestoreByID(ctx, override.ID); err != nil {
-		t.Fatalf("RestoreByID(override): %v", err)
+	if _, err := a.DB.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE id = ?`, override.ID); err != nil {
+		t.Fatalf("revive the override as a pull does: %v", err)
 	}
 	_, _, _, err = resolveEventOccurrence(ctx, a, uid, at.Format(time.RFC3339), home, "Home", true)
 	if err == nil || !strings.Contains(err.Error(), "restore the series first") {

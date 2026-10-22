@@ -639,8 +639,8 @@ func TestRestore_PrefersLiveMasterOverTrashedCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("override row of B: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, row.ID); err != nil {
-		t.Fatalf("RestoreByID(B override): %v", err)
+	if err := reviveRow(svc, row.ID); err != nil {
+		t.Fatalf("revive the B override row: %v", err)
 	}
 }
 
@@ -932,11 +932,17 @@ func TestRestoreOverrideByID_ThenMaster(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, "single-uid"); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, override.ID); err != nil {
-		t.Fatalf("RestoreByID(override): %v", err)
+	if err := svc.RestoreByID(ctx, override.ID); !errors.Is(err, ErrMasterInTrash) {
+		t.Fatalf("RestoreByID(override) beside the trashed master = %v, want ErrMasterInTrash", err)
 	}
 	if err := svc.RestoreByID(ctx, master.ID); err != nil {
 		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, override.ID); err != nil || r.DeletedAt == nil {
+		t.Fatalf("override after the master restore = trashed %v, %v; want it in the trash", r.DeletedAt != nil, err)
+	}
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID(override): %v", err)
 	}
 	m, err := svc.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "single-uid"})
 	if err != nil {
@@ -1036,18 +1042,18 @@ func TestUndo_OverrideDeletedWhileMasterInTrash(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, override.ID); err != nil {
-		t.Fatalf("RestoreByID(override): %v", err)
+	if err := reviveRow(svc, override.ID); err != nil {
+		t.Fatalf("revive the override row: %v", err)
 	}
 	meta, err := svc.DeleteWithUndo(ctx, override.ID)
 	if err != nil {
 		t.Fatalf("DeleteWithUndo(override): %v", err)
 	}
-	if err := svc.RestoreUndo(ctx, meta); err != nil {
-		t.Fatalf("RestoreUndo: %v", err)
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterInTrash) {
+		t.Fatalf("RestoreUndo = %v, want ErrMasterInTrash", err)
 	}
-	if r, err := svc.Get(ctx, override.ID); err != nil || r.DeletedAt != nil {
-		t.Errorf("override after the undo = %+v, %v; want it live", r, err)
+	if r, err := svc.GetIncludingDeleted(ctx, override.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("override after the refused undo = trashed %v, %v; want it in the trash", r.DeletedAt != nil, err)
 	}
 	if m, err := svc.GetIncludingDeleted(ctx, master.ID); err != nil || m.DeletedAt == nil {
 		t.Errorf("master after the undo = %+v, %v; want it still in the trash", m, err)
@@ -1438,11 +1444,11 @@ func TestUndo_LegacyOccurrenceAfterSeriesDelete(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, calB, "legacy-uid"); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreUndo(ctx, meta); err != nil {
-		t.Fatalf("RestoreUndo: %v", err)
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterInTrash) {
+		t.Fatalf("RestoreUndo = %v, want ErrMasterInTrash", err)
 	}
-	if r, err := svc.Get(ctx, legacy.ID); err != nil || r.DeletedAt != nil {
-		t.Errorf("legacy override after the undo = %+v, %v; want it live", r, err)
+	if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("legacy override after the refused undo = trashed %v, %v; want it in the trash", r.DeletedAt != nil, err)
 	}
 	m, err := svc.GetIncludingDeleted(ctx, master.ID)
 	if err != nil {
@@ -1451,8 +1457,8 @@ func TestUndo_LegacyOccurrenceAfterSeriesDelete(t *testing.T) {
 	if m.DeletedAt == nil {
 		t.Errorf("the master came back with the undo, want it still in the trash")
 	}
-	if m.ExDates != "" {
-		t.Errorf("exdates of the trashed master = %q, want the occurrence cleared", m.ExDates)
+	if m.ExDates == "" {
+		t.Errorf("exdates of the trashed master = %q, want the occurrence still deleted", m.ExDates)
 	}
 }
 
@@ -1949,8 +1955,8 @@ func TestDeleteSeries_OrphanRowsBesideTrashedMaster(t *testing.T) {
 	}
 	// The series delete of calendar 1 hid the legacy row with it, so
 	// bring it back alone to get the exact state.
-	if err := svc.RestoreByID(ctx, legacy.ID); err != nil {
-		t.Fatalf("RestoreByID(legacy): %v", err)
+	if err := reviveRow(svc, legacy.ID); err != nil {
+		t.Fatalf("revive the legacy row: %v", err)
 	}
 	if err := svc.DeleteSeries(ctx, calL, "orphan-uid"); err != nil {
 		t.Fatalf("DeleteSeries(legacy calendar): %v", err)
@@ -2192,8 +2198,8 @@ func TestUndoSeries_OrphanRows(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, "orphan-uid"); err != nil {
 		t.Fatalf("DeleteSeries(1): %v", err)
 	}
-	if err := svc.RestoreByID(ctx, legacy.ID); err != nil {
-		t.Fatalf("RestoreByID(legacy): %v", err)
+	if err := reviveRow(svc, legacy.ID); err != nil {
+		t.Fatalf("revive the legacy row: %v", err)
 	}
 	meta, err := svc.DeleteSeriesWithUndo(ctx, calL, "orphan-uid")
 	if err != nil {
@@ -2367,8 +2373,8 @@ func TestRestoreByID_DropsRowFromLogs(t *testing.T) {
 		if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 			t.Fatalf("DeleteSeries: %v", err)
 		}
-		if err := svc.RestoreByID(ctx, override.ID); err != nil {
-			t.Fatalf("RestoreByID(override): %v", err)
+		if err := reviveRow(svc, override.ID); err != nil {
+			t.Fatalf("revive the override row: %v", err)
 		}
 		log, err := svc.q.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: 1, Uid: master.UID})
 		if err != nil {
@@ -2484,8 +2490,8 @@ func TestOrphanDelete_MergesIntoSeriesLog(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, o1.ID); err != nil {
-		t.Fatalf("RestoreByID(o1): %v", err)
+	if err := reviveRow(svc, o1.ID); err != nil {
+		t.Fatalf("revive the o1 row: %v", err)
 	}
 	// o1 is an orphan beside the trashed master: its series delete logs
 	// it next to o2, and does not touch the master.
@@ -2530,8 +2536,8 @@ func TestUndoOrphanDelete_LeavesMasterInTrash(t *testing.T) {
 	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); err != nil {
 		t.Fatalf("hide the series: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, o1.ID); err != nil {
-		t.Fatalf("RestoreByID(o1): %v", err)
+	if err := reviveRow(svc, o1.ID); err != nil {
+		t.Fatalf("revive the o1 row: %v", err)
 	}
 	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
 	if err != nil {
@@ -2680,8 +2686,8 @@ func TestUndoOrphanDelete_Exact(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, o1.ID); err != nil {
-		t.Fatalf("RestoreByID(o1): %v", err)
+	if err := reviveRow(svc, o1.ID); err != nil {
+		t.Fatalf("revive the o1 row: %v", err)
 	}
 	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
 	if err != nil {
@@ -3246,8 +3252,8 @@ func TestUndoOverrideOfTrashedMaster_KeepsTombstone(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, override.ID); err != nil {
-		t.Fatalf("RestoreByID(override): %v", err)
+	if err := reviveRow(svc, override.ID); err != nil {
+		t.Fatalf("revive the override row: %v", err)
 	}
 	meta, err := svc.DeleteWithUndo(ctx, override.ID)
 	if err != nil {
@@ -3257,8 +3263,8 @@ func TestUndoOverrideOfTrashedMaster_KeepsTombstone(t *testing.T) {
 	if _, err := storage.CreateTombstoneIfSynced(ctx, svc.db, 1, master.UID); err != nil {
 		t.Fatalf("tombstone: %v", err)
 	}
-	if err := svc.RestoreUndo(ctx, meta); err != nil {
-		t.Fatalf("RestoreUndo: %v", err)
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterInTrash) {
+		t.Fatalf("RestoreUndo = %v, want ErrMasterInTrash", err)
 	}
 	// The master stays in the trash, so the tombstone of the series stays.
 	tombstones, err := svc.q.ListTombstonesByCalendar(ctx, 1)
@@ -3338,8 +3344,8 @@ func TestRestoreOverrideByID_TrashedOwnMasterKeepsTombstone(t *testing.T) {
 	if tombstones, err := svc.q.ListTombstonesByCalendar(ctx, 1); err != nil || len(tombstones) != 1 {
 		t.Fatalf("tombstones after the series delete = %d, %v; want 1", len(tombstones), err)
 	}
-	if err := svc.RestoreByID(ctx, override.ID); err != nil {
-		t.Fatalf("RestoreByID(override): %v", err)
+	if err := reviveRow(svc, override.ID); err != nil {
+		t.Fatalf("revive the override row: %v", err)
 	}
 	if tombstones, err := svc.q.ListTombstonesByCalendar(ctx, 1); err != nil || len(tombstones) != 1 {
 		t.Errorf("tombstones after the restore = %d, %v; want 1 (the master is in the trash)", len(tombstones), err)
@@ -3373,8 +3379,8 @@ func liveRowBesideTrashedMaster(t *testing.T, svc *Service, name, uid string, st
 	if err := svc.DeleteSeries(ctx, cal, uid); err != nil {
 		t.Fatalf("DeleteSeries(%s): %v", name, err)
 	}
-	if err := svc.RestoreByID(ctx, row.ID); err != nil {
-		t.Fatalf("RestoreByID(%s override): %v", name, err)
+	if err := reviveRow(svc, row.ID); err != nil {
+		t.Fatalf("revive the %s override row: %v", name, err)
 	}
 	return row
 }
@@ -3801,8 +3807,8 @@ func TestDeleteOverrideBesideTrashedMaster_NoDirtyMark(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, override.ID); err != nil {
-		t.Fatalf("RestoreByID(override): %v", err)
+	if err := reviveRow(svc, override.ID); err != nil {
+		t.Fatalf("revive the override row: %v", err)
 	}
 	if _, err := svc.db.ExecContext(ctx, `UPDATE sync_resources SET dirty = 0`); err != nil {
 		t.Fatalf("clear dirty: %v", err)
@@ -4118,8 +4124,8 @@ func TestUndoOrphanDeleteBesideTrashedMaster_KeepsTombstone(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, override.ID); err != nil {
-		t.Fatalf("RestoreByID(override): %v", err)
+	if err := reviveRow(svc, override.ID); err != nil {
+		t.Fatalf("revive the override row: %v", err)
 	}
 	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
 	if err != nil {
@@ -4369,8 +4375,8 @@ func TestEmptiedSeriesLog_StaysBesideTrashedMaster(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, masterA.CalendarID, masterA.UID); err != nil {
 		t.Fatalf("DeleteSeries(A): %v", err)
 	}
-	if err := svc.RestoreByID(ctx, overrideA.ID); err != nil {
-		t.Fatalf("RestoreByID(override A): %v", err)
+	if err := reviveRow(svc, overrideA.ID); err != nil {
+		t.Fatalf("revive the override A row: %v", err)
 	}
 	log, err := svc.q.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: masterA.CalendarID, Uid: masterA.UID})
 	if err != nil || log.HiddenIds != "" {
@@ -4514,8 +4520,8 @@ func TestPurgeMaster_RefusesLiveOverridesThenTakesItsRows(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, live.ID); err != nil {
-		t.Fatalf("RestoreByID(live override): %v", err)
+	if err := reviveRow(svc, live.ID); err != nil {
+		t.Fatalf("revive the live override row: %v", err)
 	}
 	if err := svc.PurgeByID(ctx, master.ID); !errors.Is(err, ErrSeriesHasLiveOverrides) {
 		t.Fatalf("PurgeByID(master) err = %v, want ErrSeriesHasLiveOverrides", err)
@@ -4754,8 +4760,8 @@ func TestPurgeDeleted_SkipsMasterWithLiveOverride(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, live.ID); err != nil {
-		t.Fatalf("RestoreByID(live override): %v", err)
+	if err := reviveRow(svc, live.ID); err != nil {
+		t.Fatalf("revive the live override row: %v", err)
 	}
 	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE id = ?`, master.ID); err != nil {
 		t.Fatalf("age the master: %v", err)
@@ -4889,8 +4895,8 @@ func TestPurgeMaster_RefusalNamesTheLiveRows(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, live.ID); err != nil {
-		t.Fatalf("RestoreByID(live override): %v", err)
+	if err := reviveRow(svc, live.ID); err != nil {
+		t.Fatalf("revive the live override row: %v", err)
 	}
 	err = svc.PurgeByID(ctx, master.ID)
 	var refusal *SeriesHasLiveOverridesError
@@ -5054,8 +5060,8 @@ func TestPurgeDeleted_KeptMasterKeepsItsLoggedRows(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := svc.RestoreByID(ctx, live.ID); err != nil {
-		t.Fatalf("RestoreByID(live override): %v", err)
+	if err := reviveRow(svc, live.ID); err != nil {
+		t.Fatalf("revive the live override row: %v", err)
 	}
 	calB := insertCalendar(t, svc, "B")
 	if _, err := svc.UpsertByUID(ctx, UpsertParams{
