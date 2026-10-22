@@ -377,6 +377,7 @@ type SyncResource struct {
 	Rev           int64
 	PushFailCount int64
 	LastPushError string
+	EditUnowned   int64
 }
 
 type Timezone struct {

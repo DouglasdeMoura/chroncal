@@ -362,19 +362,3 @@ func (q *Queries) UpdateEventTruncateDeleteHiddenIds(ctx context.Context, arg Up
 	_, err := q.db.ExecContext(ctx, updateEventTruncateDeleteHiddenIds, arg.HiddenIds, arg.ID)
 	return err
 }
-
-const updateEventTruncateDeletePreviousRrule = `-- name: UpdateEventTruncateDeletePreviousRrule :exec
-UPDATE event_truncate_deletes SET previous_rrule = ? WHERE id = ?
-`
-
-type UpdateEventTruncateDeletePreviousRruleParams struct {
-	PreviousRrule string
-	ID            int64
-}
-
-// Rewrite the rule before the truncation of one log row. The restore of an
-// older truncation at the same cutoff hands its rule to the newer rows.
-func (q *Queries) UpdateEventTruncateDeletePreviousRrule(ctx context.Context, arg UpdateEventTruncateDeletePreviousRruleParams) error {
-	_, err := q.db.ExecContext(ctx, updateEventTruncateDeletePreviousRrule, arg.PreviousRrule, arg.ID)
-	return err
-}

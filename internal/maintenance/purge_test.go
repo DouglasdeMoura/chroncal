@@ -180,20 +180,11 @@ func keptSeriesFixture(t *testing.T, db *sql.DB, events *event.Service) (int64, 
 	return master.ID, overrides[0]
 }
 
-// resetKeptLog empties the set of kept masters that this process logged, so
-// each test starts as a new process.
-func resetKeptLog(t *testing.T) {
-	t.Helper()
-	keptLogged.Lock()
-	keptLogged.ids = make(map[int64]bool)
-	keptLogged.Unlock()
-}
-
-// TestPurger_LogsAKeptMasterOncePerProcess: the purge logs a kept master once
-// per process, at Info. A later run logs it at Debug, also a run of another
-// Purger in the same process. No run logs at Warn.
-func TestPurger_LogsAKeptMasterOncePerProcess(t *testing.T) {
-	resetKeptLog(t)
+// TestPurger_LogsAKeptMasterOncePerPurger: each Purger logs a kept master
+// once, at Info. A later run of the same Purger logs it at Debug. A second
+// Purger, as the next launch of the TUI makes, logs it at Info again. No run
+// logs at Warn.
+func TestPurger_LogsAKeptMasterOncePerPurger(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	events := event.NewService(db, q)
 	trashSvc := trash.NewService(events, todo.NewService(db, q), journal.NewService(db, q))
@@ -212,18 +203,17 @@ func TestPurger_LogsAKeptMasterOncePerProcess(t *testing.T) {
 	if n := strings.Count(out, "level=WARN"); n != 0 {
 		t.Errorf("warnings = %d, want 0:\n%s", n, out)
 	}
-	if n := strings.Count(out, `level=INFO msg="soft-delete purge kept a master`); n != 1 {
-		t.Errorf("Info records of the kept master = %d, want 1:\n%s", n, out)
+	if n := strings.Count(out, `level=INFO msg="soft-delete purge kept a master`); n != 2 {
+		t.Errorf("Info records of the kept master = %d, want 1 for each Purger:\n%s", n, out)
 	}
-	if n := strings.Count(out, `level=DEBUG msg="soft-delete purge kept a master`); n != 3 {
-		t.Errorf("Debug records of the kept master = %d, want 3:\n%s", n, out)
+	if n := strings.Count(out, `level=DEBUG msg="soft-delete purge kept a master`); n != 2 {
+		t.Errorf("Debug records of the kept master = %d, want 2:\n%s", n, out)
 	}
 }
 
 // TestTrashList_NamesTheRowsThatKeepAMaster: the trash entry of a master that
 // the purge keeps names the live override rows that keep it.
 func TestTrashList_NamesTheRowsThatKeepAMaster(t *testing.T) {
-	resetKeptLog(t)
 	db, q := testutil.NewTestDB(t)
 	events := event.NewService(db, q)
 	trashSvc := trash.NewService(events, todo.NewService(db, q), journal.NewService(db, q))

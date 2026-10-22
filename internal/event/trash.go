@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -323,14 +322,9 @@ func (s *Service) keptOverrideIDs(ctx context.Context, evts []Event) (map[int64]
 	}
 	out := make(map[int64][]int64)
 	for _, m := range masters {
-		for _, r := range overrides[seriesKeyOf(m.CalendarID, m.UID)] {
-			if r.DeletedAt == nil {
-				out[m.ID] = append(out[m.ID], r.ID)
-			}
+		if live := overrides.liveIDs(m); len(live) > 0 {
+			out[m.ID] = live
 		}
-	}
-	for id := range out {
-		slices.Sort(out[id])
 	}
 	return out, nil
 }

@@ -112,9 +112,11 @@ type SyncStatus struct {
 	// StuckHrefs lists the known hrefs whose retries the pull stopped.
 	// Each one keeps its local row. See issue #816.
 	StuckHrefs []StuckHref
-	// PushFailures lists the sync rows whose last push attempt failed. An
-	// edit of an item that no series owns stays local with such a failure.
+	// PushFailures lists the sync rows whose last push attempt failed.
 	PushFailures []PushFailure
+	// UnownedEdits lists the UIDs whose edit stays local, because no series
+	// owns the edited row (storage.NoSeriesOwnerMsg).
+	UnownedEdits []string
 }
 
 // PushFailure is a sync row whose last push attempt failed. Count is the
@@ -170,6 +172,13 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 		if err != nil {
 			conflicts = nil
 		}
+		// Like the other counts, a read failure shows no unowned edits.
+		var unowned []string
+		if rows, err := s.q.ListUnownedEditSyncResources(ctx, cal.ID); err == nil {
+			for _, r := range rows {
+				unowned = append(unowned, r.Uid)
+			}
+		}
 		// Like the other counts, a read failure shows no push failures.
 		var failures []PushFailure
 		if rows, err := s.q.ListSyncResourcePushFailures(ctx, cal.ID); err == nil {
@@ -188,6 +197,7 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 			Conflicts:           len(conflicts),
 			StuckHrefs:          stuckByCalendar[cal.ID],
 			PushFailures:        failures,
+			UnownedEdits:        unowned,
 		})
 	}
 	return statuses, nil

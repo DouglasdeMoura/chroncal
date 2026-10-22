@@ -27,7 +27,7 @@ func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 	if target == unownedCalendar {
 		return recordUnownedEdit(ctx, db, calendarID, uid, ownerType)
 	}
-	if err := clearUnownedEdit(ctx, db, calendarID, uid); err != nil {
+	if err := clearUnownedEdit(ctx, db, calendarID, uid, ownerType); err != nil {
 		return err
 	}
 	if target == 0 {
@@ -36,10 +36,10 @@ func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 	return markCalendarDirty(ctx, db, target, uid, ownerType)
 }
 
-// NoSeriesOwnerMsg is the push failure of an edit of a legacy override that
-// no series owns. Two calendars hold a live master of its UID. No
-// export holds the row, so a dirty mark would drop the edit in silence.
-// MarkResourceDirty records the edit as a push failure of the calendar of the
+// NoSeriesOwnerMsg tells the user why an edit stays local: no series owns
+// the legacy override, because two calendars hold a live master of its UID.
+// No export holds the row, so a dirty mark would drop the edit in silence.
+// MarkResourceDirty sets edit_unowned on the sync row of the calendar of the
 // row instead, and the sync status shows this text.
 const NoSeriesOwnerMsg = "the item belongs to no series because two calendars hold its master; use the row ID of one series"
 
@@ -47,23 +47,21 @@ const NoSeriesOwnerMsg = "the item belongs to no series because two calendars ho
 // no series owns (NoSeriesOwnerMsg).
 const unownedCalendar = -1
 
-// recordUnownedEdit records an edit of a legacy override with no owner as a
-// push failure of its sync row in calendarID (NoSeriesOwnerMsg). The row
-// stays clean, so no push drops the edit. The edit stays local, and the sync
-// status shows the failure. A local calendar has no sync row, so it records
-// nothing.
+// recordUnownedEdit sets edit_unowned on the sync row of uid in calendarID.
+// The row stays clean, so no push drops the edit. The edit stays local, and
+// the sync status lists the row. The mark has its own column: the push
+// failures of the row stay as they are. A local calendar has no sync row, so
+// it records nothing.
 func recordUnownedEdit(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
 	linked, err := calendarHasAccount(ctx, db, calendarID)
 	if err != nil || !linked {
 		return err
 	}
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, push_fail_count, last_push_error)
-		 VALUES (?, ?, ?, 0, 'sync-token', 1, ?)
-		 ON CONFLICT(calendar_id, uid) DO UPDATE SET
-		     push_fail_count = push_fail_count + 1,
-		     last_push_error = excluded.last_push_error`,
-		calendarID, uid, ownerType, NoSeriesOwnerMsg,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, edit_unowned)
+		 VALUES (?, ?, ?, 0, 'sync-token', 1)
+		 ON CONFLICT(calendar_id, uid) DO UPDATE SET edit_unowned = 1`,
+		calendarID, uid, ownerType,
 	)
 	if err != nil {
 		return fmt.Errorf("record the edit with no series: %w", err)
@@ -71,14 +69,18 @@ func recordUnownedEdit(ctx context.Context, db DBTX, calendarID int64, uid, owne
 	return nil
 }
 
-// clearUnownedEdit drops the push failure of recordUnownedEdit from the sync
-// row of uid in calendarID. A later edit with an owner, or with its own
-// master, makes the failure stale.
-func clearUnownedEdit(ctx context.Context, db DBTX, calendarID int64, uid string) error {
+// clearUnownedEdit clears edit_unowned on the sync row of uid in calendarID.
+// A later edit with an owner, or with its own master, makes the mark stale.
+// Only an event row can carry the mark. The update writes only a marked row:
+// for any other edit it is one lookup on the unique key of the sync row.
+func clearUnownedEdit(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
+	if ownerType != "event" {
+		return nil
+	}
 	if _, err := db.ExecContext(ctx,
-		`UPDATE sync_resources SET push_fail_count = 0, last_push_error = ''
-		 WHERE calendar_id = ? AND uid = ? AND last_push_error = ?`,
-		calendarID, uid, NoSeriesOwnerMsg,
+		`UPDATE sync_resources SET edit_unowned = 0
+		 WHERE calendar_id = ? AND uid = ? AND edit_unowned = 1`,
+		calendarID, uid,
 	); err != nil {
 		return fmt.Errorf("clear the edit with no series: %w", err)
 	}
@@ -103,10 +105,10 @@ func ReconcileAfterRestore(ctx context.Context, db DBTX, calendarID int64, uid, 
 	}
 	if target == unownedCalendar {
 		// No series owns the restored row. The tombstone stays, and the
-		// sync status shows the failure.
+		// sync status lists the row.
 		return recordUnownedEdit(ctx, db, calendarID, uid, ownerType)
 	}
-	if err := clearUnownedEdit(ctx, db, calendarID, uid); err != nil {
+	if err := clearUnownedEdit(ctx, db, calendarID, uid, ownerType); err != nil {
 		return err
 	}
 	if target == 0 {

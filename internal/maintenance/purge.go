@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -26,27 +25,12 @@ type Purger struct {
 	q      *storage.Queries
 	days   int
 	logger *slog.Logger
-}
-
-// keptLogged holds the masters that a purge run of this process kept and
-// logged at Info. A later run in the same process, also by another Purger,
-// logs them again at Debug only. The trash view names the rows that keep a
-// master (trash.Entry.KeptNote), so the user can act without the log.
-var keptLogged = struct {
-	sync.Mutex
-	ids map[int64]bool
-}{ids: make(map[int64]bool)}
-
-// firstKeptLog reports whether this process logs the kept master id for the
-// first time, and records it.
-func firstKeptLog(id int64) bool {
-	keptLogged.Lock()
-	defer keptLogged.Unlock()
-	if keptLogged.ids[id] {
-		return false
-	}
-	keptLogged.ids[id] = true
-	return true
+	// keptLogged holds the masters that a run of this Purger kept and
+	// logged at Info. A later run of the same Purger logs them at Debug
+	// only. The TUI makes one Purger for each launch, so a kept master logs
+	// at Info once for each launch. The trash view names the rows that keep
+	// a master (trash.Entry.KeptNote), so the user can act without the log.
+	keptLogged map[int64]bool
 }
 
 // NewPurger returns a Purger bound to the trash aggregator. A days value
@@ -59,7 +43,7 @@ func NewPurger(trashSvc *trash.Service, q *storage.Queries, days int, logger *sl
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	return &Purger{trash: trashSvc, q: q, days: days, logger: logger}
+	return &Purger{trash: trashSvc, q: q, days: days, logger: logger, keptLogged: make(map[int64]bool)}
 }
 
 // RunOnce purges rows soft-deleted more than Days ago. Safe to call
@@ -74,13 +58,15 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("trash purge: %w", err)
 	}
-	// A kept master logs once per process at Info. A launch of the TUI runs
-	// the purge, so a Warn would repeat on every launch.
+	// A kept master logs once for each Purger at Info (see keptLogged). Each
+	// launch of the TUI runs the purge, so a Warn would repeat on every
+	// launch.
 	for _, m := range counts.EventMastersSkipped {
 		level := slog.LevelInfo
-		if !firstKeptLog(m.ID) {
+		if p.keptLogged[m.ID] {
 			level = slog.LevelDebug
 		}
+		p.keptLogged[m.ID] = true
 		p.logger.Log(ctx, level, "soft-delete purge kept a master: the series still has live overrides",
 			"event_id", m.ID, "calendar_id", m.CalendarID, "uid", m.UID)
 	}

@@ -39,11 +39,6 @@ WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
 -- (issue #842).
 SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? AND cutoff_time = ? AND delete_token = ?;
 
--- name: UpdateEventTruncateDeletePreviousRrule :exec
--- Rewrite the rule before the truncation of one log row. The restore of an
--- older truncation at the same cutoff hands its rule to the newer rows.
-UPDATE event_truncate_deletes SET previous_rrule = ? WHERE id = ?;
-
 -- name: ListEventTruncateDeletesByCalendarUID :many
 SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY cutoff_time, id;
 

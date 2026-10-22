@@ -559,6 +559,12 @@ func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 		m.undoStack.Remove(msg.meta)
 		return m, tea.Batch(m.loadEvents(), m.toast.Failed("the master is purged; nothing to restore"))
 	}
+	if errors.Is(msg.err, event.ErrUndoNotYet) {
+		// The undo can succeed after another restore, for example of a
+		// newer truncation of the series. The entry stays on the stack,
+		// and the toast tells the user what to restore first.
+		return m, m.toast.Failed(msg.err.Error())
+	}
 	if errors.Is(msg.err, event.ErrUndoNotPossible) {
 		// Any other permanent refusal: a read-only calendar, an ambiguous
 		// UID, or a master that changed. A retry gives the same refusal,

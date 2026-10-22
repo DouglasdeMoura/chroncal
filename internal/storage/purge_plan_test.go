@@ -26,7 +26,6 @@ func TestPurgeQueriesSearchTheUIDIndex(t *testing.T) {
 		args  []any
 	}{
 		{"ListSeriesOverridesOfUIDs", strings.Replace(listSeriesOverridesOfUIDs, "/*SLICE:uids*/?", "?, ?", 1), []any{"a", "b"}},
-		{"ListLiveSeriesOverrideIDs", listLiveSeriesOverrideIDs, []any{"a", int64(1)}},
 		{"ListTrashedMastersBefore", listTrashedMastersBefore, []any{"2026-01-01T00:00:00Z"}},
 	} {
 		rows, err := db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+tc.query, tc.args...)

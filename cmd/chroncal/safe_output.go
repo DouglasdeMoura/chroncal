@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
@@ -72,6 +73,13 @@ func writeSyncStatusLine(w io.Writer, status syncPkg.SyncStatus) {
 			safeText(h.UID),
 			safeText(h.Reason),
 			safeText(h.GaveUpAt),
+		)
+	}
+	// An edit that no series owns stays local. This line is its signal.
+	for _, uid := range status.UnownedEdits {
+		fmt.Fprintf(w, "    edit not pushed uid=%s  reason=%s  (local copy kept)\n",
+			safeText(uid),
+			storage.NoSeriesOwnerMsg,
 		)
 	}
 	// A push failure keeps an edit local. This line is its signal.
