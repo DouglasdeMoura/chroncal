@@ -4414,3 +4414,160 @@ func TestListTrash_HidesStaleOccurrenceLog(t *testing.T) {
 		t.Errorf("trash entries = %d, %v; want 0", len(entries), err)
 	}
 }
+
+// purgedMasterSeries deletes the series of calendar 1 with undo data, and
+// then removes its master row as an older purge did. The trashed override at
+// second stays. It returns the undo data and the override row.
+func purgedMasterSeries(t *testing.T, svc *Service) (UndoMeta, storage.Event, Event) {
+	t.Helper()
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	override, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `DELETE FROM events WHERE id = ?`, master.ID); err != nil {
+		t.Fatalf("purge the master row: %v", err)
+	}
+	return meta, override, master
+}
+
+// TestRestorePurgedMasterRows_RefusedBesideLiveMaster: the rows of a purged
+// master do not come back while another calendar holds a live master of the
+// UID. That unrelated series would take them over as legacy overrides.
+func TestRestorePurgedMasterRows_RefusedBesideLiveMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	meta, override, master := purgedMasterSeries(t, svc)
+	calB := insertCalendar(t, svc, "B")
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calB, Title: "Other series",
+		StartTime: master.StartTime, EndTime: master.EndTime, RecurrenceRule: master.RecurrenceRule,
+	}); err != nil {
+		t.Fatalf("upsert master B: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterPurged) {
+		t.Errorf("RestoreUndo err = %v, want ErrMasterPurged", err)
+	}
+	if err := svc.RestoreByUID(ctx, master.UID); !errors.Is(err, ErrMasterPurged) {
+		t.Errorf("RestoreByUID err = %v, want ErrMasterPurged", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, override.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("override after the refusals = trashed %v, %v; want it still in the trash", r.DeletedAt != nil, err)
+	}
+}
+
+// TestPurgeMaster_PurgesItsTrashedOverrides: the purge of a master takes its
+// trashed overrides in its calendar along, and keeps the live ones.
+func TestPurgeMaster_PurgesItsTrashedOverrides(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	get := func(at time.Time) storage.Event {
+		t.Helper()
+		r, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: at.Format(time.RFC3339)})
+		if err != nil {
+			t.Fatalf("get override: %v", err)
+		}
+		return r
+	}
+	trashed, live := get(second), get(third)
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, live.ID); err != nil {
+		t.Fatalf("RestoreByID(live override): %v", err)
+	}
+	if err := svc.PurgeByID(ctx, master.ID); err != nil {
+		t.Fatalf("PurgeByID(master): %v", err)
+	}
+	if _, err := svc.GetIncludingDeleted(ctx, trashed.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("trashed override after the purge: err = %v, want it purged", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, live.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("live override after the purge = trashed %v, %v; want it live", r.DeletedAt != nil, err)
+	}
+}
+
+// TestUndoOverrideDelete_PurgedMasterHasNothingToRestore: the undo of an
+// override delete whose master a purge took has nothing to restore. The row
+// stays in the trash, and the tombstone of the series stays.
+func TestUndoOverrideDelete_PurgedMasterHasNothingToRestore(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	override, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	meta, err := svc.DeleteWithUndo(ctx, override.ID)
+	if err != nil {
+		t.Fatalf("DeleteWithUndo(override): %v", err)
+	}
+	seedTombstone(t, svc, 1, master.UID)
+	if _, err := svc.db.ExecContext(ctx, `DELETE FROM events WHERE id = ?`, master.ID); err != nil {
+		t.Fatalf("purge the master row: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("RestoreUndo err = %v, want ErrNotDeleted", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, override.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("override after the undo = trashed %v, %v; want it in the trash", r.DeletedAt != nil, err)
+	}
+	if n := countTombstones(t, svc, 1, master.UID); n != 1 {
+		t.Errorf("tombstones after the undo = %d, want 1", n)
+	}
+}
+
+// TestPruneMarker_RestoreByIDDropsIt: a restore by ID of a pruned row drops
+// the pruned marker of its occurrence.
+func TestPruneMarker_RestoreByIDDropsIt(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	override, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T10:00:00Z' WHERE id = ?`, override.ID); err != nil {
+		t.Fatalf("prune the row: %v", err)
+	}
+	if err := svc.q.RecordEventExdatePrune(ctx, storage.RecordEventExdatePruneParams{CalendarID: 1, Uid: master.UID, RecurrenceID: override.RecurrenceID}); err != nil {
+		t.Fatalf("write the marker: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID: %v", err)
+	}
+	var n int64
+	if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_exdate_deletes WHERE uid = ? AND pruned = 1`, master.UID).Scan(&n); err != nil || n != 0 {
+		t.Errorf("pruned markers after the restore = %d, %v; want 0", n, err)
+	}
+}
+
+// TestReconcileAfterRestore_LegacyKeepsItsTombstone: the restore of a legacy
+// override marks the calendar of its master. The tombstone of the calendar
+// of the row stays, because the server object there still needs its delete.
+func TestReconcileAfterRestore_LegacyKeepsItsTombstone(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	calL := insertCalendar(t, svc, "Legacy")
+	fourth := second.Add(48 * time.Hour)
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calL, Title: "Legacy",
+		StartTime: fourth, EndTime: fourth.Add(time.Hour), RecurrenceID: fourth.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	seedTombstone(t, svc, calL, master.UID)
+	if err := storage.ReconcileAfterRestore(ctx, svc.db, calL, master.UID, "event"); err != nil {
+		t.Fatalf("ReconcileAfterRestore: %v", err)
+	}
+	if n := countTombstones(t, svc, calL, master.UID); n != 1 {
+		t.Errorf("tombstones of the legacy calendar = %d, want 1 (the mark went to the master calendar)", n)
+	}
+}

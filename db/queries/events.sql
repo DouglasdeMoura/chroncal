@@ -400,3 +400,9 @@ SELECT * FROM events WHERE uid = ? AND deleted_at IS NOT NULL ORDER BY id;
 SELECT CAST(EXISTS (
     SELECT 1 FROM event_series_rows AS s WHERE s.id = sqlc.arg(id) AND s.owner_calendar_id = sqlc.arg(calendar_id)
 ) AS BOOLEAN) AS owned;
+
+-- name: PurgeTrashedOverridesInCalendar :exec
+-- Hard-delete the override rows of one UID in one calendar that are in the
+-- trash. The purge of a master takes them along, and the live rows stay.
+DELETE FROM events
+WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL;

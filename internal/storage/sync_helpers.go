@@ -29,8 +29,9 @@ func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 
 // ReconcileAfterRestore resets the sync state of uid in calendarID after a
 // restore. It drops the unsent tombstone of the calendar and marks the
-// resource dirty (see MarkResourceDirty). The two steps go together: when
-// dirtyCalendar names no calendar for the mark, the tombstone stays too.
+// resource dirty (see MarkResourceDirty). The two steps go together: the
+// tombstone goes only when the mark goes to calendarID itself. When
+// dirtyCalendar names no calendar, or another calendar, the tombstone stays.
 // The rows then stay local until their master comes back, and the server
 // object still gets its delete. A restore never leaves a dropped tombstone
 // with no dirty mark.
@@ -42,8 +43,13 @@ func ReconcileAfterRestore(ctx context.Context, db DBTX, calendarID int64, uid, 
 	if err != nil || target == 0 {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?`, calendarID, uid); err != nil {
-		return fmt.Errorf("clear tombstone after restore: %w", err)
+	// The mark of a legacy override goes to the calendar of its master. The
+	// tombstone of the calendar of the row then stays: the server object
+	// there still needs its delete.
+	if target == calendarID {
+		if _, err := db.ExecContext(ctx, `DELETE FROM tombstones WHERE calendar_id = ? AND uid = ?`, calendarID, uid); err != nil {
+			return fmt.Errorf("clear tombstone after restore: %w", err)
+		}
 	}
 	return markCalendarDirty(ctx, db, target, uid, ownerType)
 }

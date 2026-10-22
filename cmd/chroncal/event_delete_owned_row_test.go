@@ -228,3 +228,40 @@ func TestResolveEventOccurrence_OrphanByCalendar(t *testing.T) {
 		t.Errorf("resolve single in Other err = %v, want a hint that names Work", err)
 	}
 }
+
+// TestResolveEventOccurrence_CalendarWithTrashedMasterStops: --calendar on a
+// calendar whose own master is in the trash stops the edit of an occurrence
+// there. The lookup does not fall back to the series of another calendar.
+func TestResolveEventOccurrence_CalendarWithTrashedMasterStops(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid := seedSameUIDInWorkAndHome(t)
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	home, err := resolveCalendarID(ctx, a, "Home")
+	if err != nil {
+		t.Fatalf("resolve Home: %v", err)
+	}
+	at := time.Date(2026, 4, 7, 9, 0, 0, 0, time.UTC)
+	override, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
+		UID: uid, CalendarID: home, Title: "Home late",
+		StartTime: at.Add(time.Hour), EndTime: at.Add(2 * time.Hour), RecurrenceID: at.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert Home override: %v", err)
+	}
+	if err := a.Events.DeleteSeries(ctx, home, uid); err != nil {
+		t.Fatalf("DeleteSeries(Home): %v", err)
+	}
+	if err := a.Events.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID(override): %v", err)
+	}
+	_, _, _, err = resolveEventOccurrence(ctx, a, uid, at.Format(time.RFC3339), home, "Home")
+	if err == nil || !strings.Contains(err.Error(), "restore the series first") {
+		t.Errorf("resolveEventOccurrence(Home) err = %v, want the series-in-trash stop", err)
+	}
+}

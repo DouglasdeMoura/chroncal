@@ -20,6 +20,11 @@ import (
 // a caller that tests for ErrNotDeleted still matches it.
 var ErrAlreadyRestored = fmt.Errorf("%w: the delete is already restored", ErrNotDeleted)
 
+// ErrMasterPurged reports a restore of rows whose master a purge took,
+// while another calendar holds a live master of the UID. The view would
+// give the rows to that unrelated series, so they stay in the trash.
+var ErrMasterPurged = errors.New("event: the master of this series is purged; its overrides cannot come back")
+
 // ErrMasterInTrash reports a restore that needs the live master of its
 // series, while that master is in the trash. Restore the series first.
 var ErrMasterInTrash = errors.New("event: the master of the series is in the trash; restore the series first")
@@ -631,6 +636,24 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 			return 0, err
 		}
 	}
+	if !requireMaster && len(ids) > 0 {
+		// The rows come back into a calendar with no master row. Another
+		// calendar with a live master would take them over as legacy
+		// overrides, also when they belong to a purged master.
+		holds, err := calendarHoldsMasterTx(ctx, qtx, calendarID, uid)
+		if err != nil {
+			return 0, err
+		}
+		if !holds {
+			live, err := qtx.EventUIDMasterCalendars(ctx, uid)
+			if err != nil {
+				return 0, fmt.Errorf("find master calendars: %w", err)
+			}
+			if live.Calendars > 0 {
+				return 0, ErrMasterPurged
+			}
+		}
+	}
 	var n int64
 	if requireMaster && master.DeletedAt != nil {
 		k, err := qtx.RestoreEventsByIDs(ctx, []int64{master.ID})
@@ -709,6 +732,12 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 		if err := deleteOccurrenceLogRowsTx(ctx, qtx, r.CalendarID, r.Uid); err != nil {
 			return err
 		}
+		// The trashed overrides of the master go with it. Kept, they would
+		// look like legacy overrides, and a series with the same UID in
+		// another calendar would take them over. The live overrides stay.
+		if err := qtx.PurgeTrashedOverridesInCalendar(ctx, storage.PurgeTrashedOverridesInCalendarParams{CalendarID: r.CalendarID, Uid: r.Uid}); err != nil {
+			return fmt.Errorf("purge trashed overrides: %w", err)
+		}
 	}
 	if r.RecurrenceID != "" {
 		holds, err := calendarHoldsMasterTx(ctx, qtx, r.CalendarID, r.Uid)
@@ -731,9 +760,14 @@ func (s *Service) restoreSingle(ctx context.Context, meta UndoMeta) error {
 	r, err := s.undoMaster(ctx, meta)
 	if errors.Is(err, ErrNotDeleted) {
 		// No master: an orphan row, or a master that a purge took. The
-		// delete of an override still has its own record, the row.
+		// delete of an orphan override has its own record, the row. A
+		// purged master leaves a dead series: its row has nothing to come
+		// back to, so the undo has nothing to restore.
 		if rowID == 0 {
 			return err
+		}
+		if meta.MasterID != 0 {
+			return fmt.Errorf("%w: the master of the series is purged", ErrNotDeleted)
 		}
 		if err := s.restoreOverrideRow(ctx, calendarID, uid, recurrenceID, rowID); err != nil {
 			return err
@@ -916,10 +950,9 @@ func dropHiddenRowsTx(ctx context.Context, qtx *storage.Queries, uid string, ids
 			// in the trash, the log still records the series delete, and
 			// RestoreByUID ranks that calendar first: the row stays with an
 			// empty list. With the master live or gone, the log goes.
-			m, err := qtx.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: log.CalendarID, Uid: log.Uid})
-			found, err := storage.Found(err)
+			m, found, err := calendarMasterTx(ctx, qtx, log.CalendarID, log.Uid)
 			if err != nil {
-				return fmt.Errorf("get master: %w", err)
+				return err
 			}
 			if !found || m.DeletedAt == nil {
 				if err := qtx.DeleteEventSeriesDeletesByCalendarUID(ctx, storage.DeleteEventSeriesDeletesByCalendarUIDParams{CalendarID: log.CalendarID, Uid: log.Uid}); err != nil {
@@ -1563,15 +1596,23 @@ func (s *Service) deleteRow(ctx context.Context, id int64, undoMaster *storage.E
 	return s.q.SoftDeleteEvent(ctx, id)
 }
 
-// calendarHoldsMasterTx reports whether calendarID holds a master row of
-// uid, live or in the trash. One lookup on the unique key.
-func calendarHoldsMasterTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (bool, error) {
-	_, err := qtx.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: calendarID, Uid: uid})
-	found, err := storage.Found(err)
+// calendarMasterTx returns the master row of uid in calendarID, live or in
+// the trash. found is false with no master row. One lookup on the unique
+// key. Every rule that asks whether a calendar holds a master reads it.
+func calendarMasterTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (master storage.Event, found bool, err error) {
+	m, err := qtx.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: calendarID, Uid: uid})
+	found, err = storage.Found(err)
 	if err != nil {
-		return false, fmt.Errorf("get master: %w", err)
+		return storage.Event{}, false, fmt.Errorf("get master: %w", err)
 	}
-	return found, nil
+	return m, found, nil
+}
+
+// calendarHoldsMasterTx reports whether calendarID holds a master row of
+// uid, live or in the trash (see calendarMasterTx).
+func calendarHoldsMasterTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (bool, error) {
+	_, found, err := calendarMasterTx(ctx, qtx, calendarID, uid)
+	return found, err
 }
 
 // recordOrphanDeleteTx writes the occurrence log of a delete by ID of an
@@ -2092,12 +2133,9 @@ func resolveSeriesDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID
 			return seriesDeleteTarget{}, fmt.Errorf("find master calendars: %w", err)
 		}
 		if n.Calendars > 0 {
-			_, err := qtx.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{
-				CalendarID: calendarID, Uid: uid,
-			})
-			found, err := storage.Found(err)
+			found, err := calendarHoldsMasterTx(ctx, qtx, calendarID, uid)
 			if err != nil {
-				return seriesDeleteTarget{}, fmt.Errorf("get master: %w", err)
+				return seriesDeleteTarget{}, err
 			}
 			if found {
 				return seriesDeleteTarget{}, ErrSeriesInTrash

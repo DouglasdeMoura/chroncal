@@ -819,10 +819,12 @@ func TestSoftDelete_RestoreByUIDOrphanTailClearsTombstone(t *testing.T) {
 		t.Fatalf("tombstones after DeleteSeries = %d, want 1", len(tombstones))
 	}
 
-	// Purge the master row on its own. The soft-deleted override stays behind
-	// as an orphan tail with the UID.
-	if err := svc.PurgeByID(ctx, master.ID); err != nil {
-		t.Fatalf("PurgeByID master: %v", err)
+	// An older purge took the master row on its own. The soft-deleted
+	// override stays behind as an orphan tail with the UID. PurgeByID now
+	// purges the trashed overrides with the master, so the test removes
+	// the master row directly, as that older purge did.
+	if _, err := svc.db.ExecContext(ctx, `DELETE FROM events WHERE id = ?`, master.ID); err != nil {
+		t.Fatalf("purge the master row: %v", err)
 	}
 
 	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
@@ -907,10 +909,12 @@ func TestSoftDelete_RestoreUndoSeriesOrphanTailClearsTombstone(t *testing.T) {
 		t.Fatalf("tombstones after DeleteSeriesWithUndo = %d, want 1", len(tombstones))
 	}
 
-	// Purge the master row on its own. The soft-deleted override stays behind
-	// as an orphan tail with the UID.
-	if err := svc.PurgeByID(ctx, master.ID); err != nil {
-		t.Fatalf("PurgeByID master: %v", err)
+	// An older purge took the master row on its own. The soft-deleted
+	// override stays behind as an orphan tail with the UID. PurgeByID now
+	// purges the trashed overrides with the master, so the test removes
+	// the master row directly, as that older purge did.
+	if _, err := svc.db.ExecContext(ctx, `DELETE FROM events WHERE id = ?`, master.ID); err != nil {
+		t.Fatalf("purge the master row: %v", err)
 	}
 
 	if err := svc.RestoreUndo(ctx, meta); err != nil {
