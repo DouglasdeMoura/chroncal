@@ -83,6 +83,46 @@ func (q *Queries) GetEventSeriesDeleteByCalendarUID(ctx context.Context, arg Get
 	return i, err
 }
 
+const listEventSeriesDeletesByCalendarUID = `-- name: ListEventSeriesDeletesByCalendarUID :many
+SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id
+`
+
+type ListEventSeriesDeletesByCalendarUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// The series-delete logs of one UID in one calendar, one row per delete.
+func (q *Queries) ListEventSeriesDeletesByCalendarUID(ctx context.Context, arg ListEventSeriesDeletesByCalendarUIDParams) ([]EventSeriesDelete, error) {
+	rows, err := q.db.QueryContext(ctx, listEventSeriesDeletesByCalendarUID, arg.CalendarID, arg.Uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventSeriesDelete
+	for rows.Next() {
+		var i EventSeriesDelete
+		if err := rows.Scan(
+			&i.ID,
+			&i.CalendarID,
+			&i.Uid,
+			&i.HiddenIds,
+			&i.DeletedAt,
+			&i.HadMaster,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventSeriesDeletesByUID = `-- name: ListEventSeriesDeletesByUID :many
 SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE uid = ? ORDER BY calendar_id
 `

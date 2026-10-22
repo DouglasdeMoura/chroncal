@@ -16,12 +16,13 @@ must follow these steps:
 1. Drop the view: `DROP VIEW IF EXISTS event_series_rows;`
 2. Rebuild the table as migration 050 does.
 3. Create the view again with the statement below.
-4. Create the four triggers of migration 057 again:
+4. Create the five triggers of migration 057 again:
    `events_master_revive_drops_series_log`,
    `events_master_insert_drops_stale_logs`,
-   `events_override_revive_drops_stale_logs`, and
-   `events_override_insert_drops_prune_marker`. The drop of `events` drops
-   them. Copy their statements from migration 057.
+   `events_override_revive_drops_stale_logs`,
+   `events_override_insert_drops_prune_marker`, and
+   `events_purge_drops_row_from_logs`. The drop of `events` drops them.
+   Copy their statements from migration 057.
 
 The triggers drop the stale delete logs of a calendar. The revive
 trigger of a master drops the series-delete log when a master of that
@@ -31,7 +32,9 @@ master arrives. The two triggers of an override drop the pruned marker
 of an occurrence when its row comes back. The revive trigger also
 removes the row from the delete logs. Without them, a log that a pull or
 an import left behind can bring back the wrong rows on the next restore.
-It can also strip an imported EXDATE.
+It can also strip an imported EXDATE. The purge trigger removes a purged
+override row from the delete logs, so a log never names a row that is
+gone.
 
 Each statement below must stay equal to the one in migration 057. The
 storage test `TestMigrationsReadmeMatches057` compares them, and the
@@ -123,5 +126,22 @@ WHEN NEW.recurrence_id != '' AND NEW.deleted_at IS NULL
 BEGIN
     DELETE FROM event_exdate_deletes
     WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
+END;
+```
+
+```sql
+CREATE TRIGGER events_purge_drops_row_from_logs
+AFTER DELETE ON events
+WHEN OLD.recurrence_id != ''
+BEGIN
+    UPDATE event_series_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || OLD.id || ',', ','), ',')
+    WHERE uid = OLD.uid AND ',' || hidden_ids || ',' LIKE '%,' || OLD.id || ',%';
+    UPDATE event_truncate_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || OLD.id || ',', ','), ',')
+    WHERE uid = OLD.uid AND hidden_ids IS NOT NULL AND ',' || hidden_ids || ',' LIKE '%,' || OLD.id || ',%';
+    UPDATE event_exdate_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ':' || OLD.id || ',', ':,'), ',')
+    WHERE uid = OLD.uid AND ',' || hidden_ids || ',' LIKE '%:' || OLD.id || ',%';
 END;
 ```

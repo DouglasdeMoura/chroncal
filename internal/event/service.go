@@ -701,6 +701,20 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	}
 	defer rollback()
 
+	// The EXDATE list of the master before the write. A pull or an import
+	// that changes it takes the EXDATE ownership from the occurrence logs.
+	var prevExdates *string
+	if p.RecurrenceID == "" {
+		prev, found, err := calendarMasterTx(ctx, qtx, p.CalendarID, p.UID)
+		if err != nil {
+			return Event{}, err
+		}
+		if found {
+			e := storage.NullableToString(prev.Exdates)
+			prevExdates = &e
+		}
+	}
+
 	r, err := qtx.UpsertEventByUID(ctx, storage.UpsertEventByUIDParams{
 		Uid:            p.UID,
 		CalendarID:     p.CalendarID,
@@ -728,6 +742,15 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	})
 	if err != nil {
 		return Event{}, err
+	}
+	// The copy of an EXDATE in a rewritten list comes from the server or the
+	// import. A restore must never strip it (issue #86), so no log of the
+	// master owns an EXDATE after the write. A list with the same instants
+	// keeps the ownership: the server echoes the EXDATE of a pushed delete.
+	if prevExdates != nil && !sameExdateSet(*prevExdates, storage.NullableToString(r.Exdates)) {
+		if err := qtx.ClearEventExdateDeleteOwnership(ctx, storage.ClearEventExdateDeleteOwnershipParams{CalendarID: r.CalendarID, Uid: r.Uid}); err != nil {
+			return Event{}, fmt.Errorf("clear exdate ownership: %w", err)
+		}
 	}
 	// A pull or an import can write a live override at an occurrence that a
 	// delete excluded. The occurrence log then gives up its EXDATE: the
@@ -944,6 +967,14 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int6
 		}
 	}
 
+	// The override is live at the occurrence now, so the occurrence log of
+	// a delete gives up its EXDATE (softdelete.SettleOccurrence). The create
+	// of a new override needs it most: a delete with no stored override
+	// excluded the occurrence before.
+	if err := settleOccurrenceTx(ctx, qtx, master, recID, withoutRows(r.ID)); err != nil {
+		return Event{}, err
+	}
+
 	// An override that an older version saved in another calendar can move
 	// back to the calendar of the master. Record that move. The other rows
 	// of the UID then move too, and the server object in the old calendar
@@ -971,11 +1002,11 @@ func updateInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID int6
 // truncation that ended the series before the occurrence gives
 // ErrOccurrenceOutsideSeries. A row that a series delete hid, or that an
 // UNTIL hid until the user removed it, is an occurrence again, so it
-// revives. masterCalendarID is the calendar of the
-// master of the edit. Two calendars can hold the same UID, so the EXDATE
-// rule reads that calendar only. It uses the restore rule of the trash:
-// the master loses the EXDATE that the delete recorded, and an imported
-// EXDATE stays (issue #86, see softdelete.ReleaseOccurrenceRows).
+// revives. The row is live at the occurrence again, so the occurrence log
+// of the master settles (softdelete.SettleOccurrence). The log gives up an
+// EXDATE that its delete appended, and an imported or a server EXDATE stays
+// (issue #86). Two calendars can hold the same UID, so the rule reads the
+// log in the calendar of master only.
 //
 // The edit makes a fresh override, so the old child rows of the row go:
 // the attendees, the alarms, the attachments, the comments, the contacts,

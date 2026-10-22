@@ -218,7 +218,29 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- A purge of an override row removes its ID from the delete logs of its
+-- UID. Every purge path runs it: the purge by ID, the age purge, and the
+-- purge of a series. A log then never names a row that is gone. The
+-- occurrence log keeps the entry of the delete with no row.
+-- +goose StatementBegin
+CREATE TRIGGER events_purge_drops_row_from_logs
+AFTER DELETE ON events
+WHEN OLD.recurrence_id != ''
+BEGIN
+    UPDATE event_series_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || OLD.id || ',', ','), ',')
+    WHERE uid = OLD.uid AND ',' || hidden_ids || ',' LIKE '%,' || OLD.id || ',%';
+    UPDATE event_truncate_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || OLD.id || ',', ','), ',')
+    WHERE uid = OLD.uid AND hidden_ids IS NOT NULL AND ',' || hidden_ids || ',' LIKE '%,' || OLD.id || ',%';
+    UPDATE event_exdate_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ':' || OLD.id || ',', ':,'), ',')
+    WHERE uid = OLD.uid AND ',' || hidden_ids || ',' LIKE '%:' || OLD.id || ',%';
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS events_purge_drops_row_from_logs;
 DROP TRIGGER IF EXISTS events_override_insert_drops_prune_marker;
 DROP TRIGGER IF EXISTS events_override_revive_drops_stale_logs;
 DROP TRIGGER IF EXISTS events_master_insert_drops_stale_logs;

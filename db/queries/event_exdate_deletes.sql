@@ -84,3 +84,9 @@ SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY re
 -- A restore at the occurrence writes the entries that stay and the EXDATE
 -- flag (see softdelete.SettleOccurrence). The time of the delete stays.
 UPDATE event_exdate_deletes SET hidden_ids = ?, owns_exdate = ? WHERE id = ?;
+
+-- name: ClearEventExdateDeleteOwnership :exec
+-- A pull or an import rewrites the EXDATE list of the master of one UID in
+-- one calendar. The logs of that master then own no EXDATE: the copy in the
+-- list now comes from the server or the import (issue #86).
+UPDATE event_exdate_deletes SET owns_exdate = 0 WHERE calendar_id = ? AND uid = ?;

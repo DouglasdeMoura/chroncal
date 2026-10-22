@@ -798,18 +798,21 @@ func (q *Queries) ListEventMastersByUIDIncludingDeleted(ctx context.Context, uid
 }
 
 const listEventRowStatesByIDs = `-- name: ListEventRowStatesByIDs :many
-SELECT id, calendar_id, deleted_at FROM events WHERE id IN (/*SLICE:ids*/?) ORDER BY id
+SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM events WHERE id IN (/*SLICE:ids*/?) ORDER BY id
 `
 
 type ListEventRowStatesByIDsRow struct {
-	ID         int64
-	CalendarID int64
-	DeletedAt  *string
+	ID           int64
+	CalendarID   int64
+	Uid          string
+	RecurrenceID string
+	DeletedAt    *string
 }
 
-// The calendar and the trash state of each row of a set. A restore by IDs
-// reads it once: for the access guard of each calendar, and to tell a row
-// in the trash from a live row and a purged row.
+// The calendar, the occurrence, and the trash state of each row of a set. A
+// purge reads the occurrences to settle their logs. A restore by IDs
+// reads it once. The access guard reads the calendars, and the restore tells
+// a row in the trash from a live row.
 func (q *Queries) ListEventRowStatesByIDs(ctx context.Context, ids []int64) ([]ListEventRowStatesByIDsRow, error) {
 	query := listEventRowStatesByIDs
 	var queryParams []interface{}
@@ -829,7 +832,13 @@ func (q *Queries) ListEventRowStatesByIDs(ctx context.Context, ids []int64) ([]L
 	var items []ListEventRowStatesByIDsRow
 	for rows.Next() {
 		var i ListEventRowStatesByIDsRow
-		if err := rows.Scan(&i.ID, &i.CalendarID, &i.DeletedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.CalendarID,
+			&i.Uid,
+			&i.RecurrenceID,
+			&i.DeletedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
