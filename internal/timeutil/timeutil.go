@@ -157,18 +157,23 @@ func SerializeTimeList(times []time.Time) string {
 	return strings.Join(parts, ",")
 }
 
-// RemoveTimeFromList returns list with the first element equal to target
-// (after UTC normalization) removed. Used to reverse a single EXDATE
+// sameListInstant reports whether a and b name one instant of a time list,
+// to the second. The EXDATE and RDATE lists store whole seconds.
+func sameListInstant(a, b time.Time) bool {
+	return a.Truncate(time.Second).Equal(b.Truncate(time.Second))
+}
+
+// RemoveTimeFromList returns list with the first element at the instant of
+// target removed (sameListInstant). Used to reverse a single EXDATE
 // insertion. Soft-delete appends exactly one EXDATE per delete, so undo must
 // drop exactly one. A drop of every match would discard a stored
 // exclusion for the same slot (for example an imported EXDATE beside a
 // detached override). Shared by the event, todo, and journal restore paths.
 func RemoveTimeFromList(list []time.Time, target time.Time) []time.Time {
 	out := make([]time.Time, 0, len(list))
-	targetKey := target.UTC().Format(time.RFC3339)
 	removed := false
 	for _, t := range list {
-		if !removed && strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
+		if !removed && sameListInstant(t, target) {
 			removed = true
 			continue
 		}
@@ -177,13 +182,13 @@ func RemoveTimeFromList(list []time.Time, target time.Time) []time.Time {
 	return out
 }
 
-// TimeListHas reports whether list holds target. It uses the key of
-// RemoveTimeFromList, so a check before an append keeps one copy of an
-// EXDATE. RemoveTimeFromList removes one copy only.
+// TimeListHas reports whether list holds the instant of target. It uses the
+// compare of RemoveTimeFromList (sameListInstant), so a check before an
+// append keeps one copy of an EXDATE. RemoveTimeFromList removes one copy
+// only.
 func TimeListHas(list []time.Time, target time.Time) bool {
-	targetKey := target.UTC().Format(time.RFC3339)
 	for _, t := range list {
-		if strings.EqualFold(t.UTC().Format(time.RFC3339), targetKey) {
+		if sameListInstant(t, target) {
 			return true
 		}
 	}

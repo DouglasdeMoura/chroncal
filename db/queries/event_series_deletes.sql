@@ -54,3 +54,9 @@ SELECT * FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id
 -- or by undo drops the row from the list. A later series restore then does
 -- not reverse an independent delete of that row.
 UPDATE event_series_deletes SET hidden_ids = ? WHERE id = ?;
+
+-- name: UpdateEventSeriesDeleteAsOrphanLog :exec
+-- The undo of a series delete of a master takes its own rows from the log.
+-- The rows that a delete of orphan rows merged into the log stay. The log
+-- keeps them as an orphan log, with no master and no token of a master.
+UPDATE event_series_deletes SET hidden_ids = ?, had_master = 0, delete_token = 0 WHERE id = ?;

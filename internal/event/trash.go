@@ -406,14 +406,18 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID, token int
 		return ErrMasterInTrash
 	}
 	// The undo of a truncation (token non-zero) refuses when a row of the
-	// log went to the trash again in a later delete (tokenCheckTx). The
+	// log went to the trash again in a later delete (tokenSplitTx). The
 	// check comes before any write.
 	if token != 0 && log.HiddenIds != nil {
 		ids, err := parseRowIDs(*log.HiddenIds)
 		if err != nil {
 			return err
 		}
-		if _, err := tokenCheckTx(ctx, qtx, ids, token); err != nil {
+		split, err := tokenSplitTx(ctx, qtx, ids, token)
+		if err != nil {
+			return err
+		}
+		if _, err := split.refuseOther(); err != nil {
 			return err
 		}
 	}

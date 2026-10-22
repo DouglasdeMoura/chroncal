@@ -465,7 +465,7 @@ func restoreOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, uid string
 			ids = append(ids, r.ID)
 		}
 	}
-	if _, err := qtx.RestoreEventsByIDs(ctx, ids); err != nil {
+	if _, err := restoreEventsByIDsTx(ctx, qtx, ids); err != nil {
 		return 0, fmt.Errorf("restore orphan rows: %w", err)
 	}
 	return calendarID, nil
@@ -732,8 +732,12 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 			return 0, nil, fmt.Errorf("get master: %w", err)
 		}
 		// The undo of a series delete restores the master only while the
-		// master carries the token of that delete (tokenCheckTx).
-		if _, err := tokenCheckTx(ctx, qtx, []int64{master.ID}, token); err != nil {
+		// master carries the token of that delete (tokenSplitTx).
+		split, err := tokenSplitTx(ctx, qtx, []int64{master.ID}, token)
+		if err != nil {
+			return 0, nil, err
+		}
+		if _, err := split.refuseOther(); err != nil {
 			return 0, nil, err
 		}
 	}
@@ -760,9 +764,10 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 		logged = false
 	}
 	if logID != 0 && !logged && !requireMaster {
-		// The master is gone, and the log of the undo is gone too. No other
-		// log of the calendar belongs to this delete.
-		return 0, nil, ErrAlreadyRestored
+		// The master is gone, and the purge of the master took the log of
+		// the undo with it. No other log of the calendar belongs to this
+		// delete.
+		return 0, nil, ErrMasterPurged
 	}
 	var ids []int64
 	switch {
@@ -773,13 +778,24 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 		}
 		// The undo brings back the rows of its own delete only: the rows
 		// with its token. A delete of orphan rows can merge its rows into
-		// this log with another token, and its own undo brings them back.
+		// this log with another token. Those rows stay in the log, which
+		// becomes an orphan log, so a restore by UID or their own undo
+		// brings them back.
+		var rest []int64
 		if token != 0 {
-			if ids, err = rowsWithTokenTx(ctx, qtx, ids, token); err != nil {
+			all := ids
+			split, err := tokenSplitTx(ctx, qtx, all, token)
+			if err != nil {
 				return 0, nil, err
 			}
+			ids = split.matchIDs()
+			rest = slices.DeleteFunc(slices.Clone(all), func(id int64) bool { return slices.Contains(ids, id) })
 		}
-		if err := qtx.DeleteEventSeriesDeleteByID(ctx, log.ID); err != nil {
+		if len(rest) > 0 {
+			if err := qtx.UpdateEventSeriesDeleteAsOrphanLog(ctx, storage.UpdateEventSeriesDeleteAsOrphanLogParams{HiddenIds: formatRowIDs(rest), ID: log.ID}); err != nil {
+				return 0, nil, fmt.Errorf("keep the merged rows in the log: %w", err)
+			}
+		} else if err := qtx.DeleteEventSeriesDeleteByID(ctx, log.ID); err != nil {
 			return 0, nil, fmt.Errorf("delete series delete log: %w", err)
 		}
 	case requireMaster && master.DeletedAt != nil:
@@ -1297,7 +1313,11 @@ func (s *Service) restoreSingle(ctx context.Context, meta UndoMeta) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 	// The transaction reads the master again: the token rule decides.
-	trashed, err := tokenCheckTx(ctx, qtx, []int64{r.ID}, meta.DeleteToken)
+	split, err := tokenSplitTx(ctx, qtx, []int64{r.ID}, meta.DeleteToken)
+	if err != nil {
+		return err
+	}
+	trashed, err := split.refuseOther()
 	if err != nil {
 		return err
 	}
@@ -1327,7 +1347,7 @@ func restoreLoggedIDsTx(ctx context.Context, qtx *storage.Queries, calendarID in
 	}
 	// The revive trigger of migration 057 removes the rows from every other
 	// log of the UID.
-	n, err := qtx.RestoreEventsByIDs(ctx, ids)
+	n, err := restoreEventsByIDsTx(ctx, qtx, ids)
 	if err != nil {
 		return 0, fmt.Errorf("restore logged rows: %w", err)
 	}
@@ -2233,7 +2253,7 @@ func (s *Service) deleteInstance(ctx context.Context, calendarID int64, uid stri
 		if token, err = qtx.NextEventDeleteToken(ctx); err != nil {
 			return storage.Event{}, occurrenceDeletion{}, fmt.Errorf("delete token: %w", err)
 		}
-		if err := qtx.SoftDeleteEventsByIDs(ctx, storage.SoftDeleteEventsByIDsParams{Ids: hidden, DeleteToken: token}); err != nil {
+		if err := softDeleteEventsByIDsTx(ctx, qtx, hidden, token); err != nil {
 			return storage.Event{}, occurrenceDeletion{}, fmt.Errorf("soft-delete overrides: %w", err)
 		}
 	}
@@ -2348,7 +2368,7 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 		if token, err = qtx.NextEventDeleteToken(ctx); err != nil {
 			return 0, fmt.Errorf("delete token: %w", err)
 		}
-		if err := qtx.SoftDeleteEventsByIDs(ctx, storage.SoftDeleteEventsByIDsParams{Ids: rowIDs, DeleteToken: token}); err != nil {
+		if err := softDeleteEventsByIDsTx(ctx, qtx, rowIDs, token); err != nil {
 			return 0, fmt.Errorf("soft-delete future overrides: %w", err)
 		}
 	}

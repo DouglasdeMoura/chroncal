@@ -619,7 +619,7 @@ func TestPullDeletes_WriteANewDeleteToken(t *testing.T) {
 	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE uid = ?`, master.UID); err != nil {
 		t.Fatalf("revive the rows: %v", err)
 	}
-	if err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID); err != nil {
+	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID, true); err != nil {
 		t.Fatalf("delete of the pull: %v", err)
 	}
 	if got := token(override.ID); got == 0 || got == pruned {
@@ -644,11 +644,43 @@ func TestPullDelete_OneTransactionWithTheSyncState(t *testing.T) {
 		`CREATE TRIGGER test_refuse_sync_drop BEFORE DELETE ON sync_resources BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
 		t.Fatalf("seed trigger: %v", err)
 	}
-	if err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID); err == nil {
+	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID, true); err == nil {
 		t.Fatal("deleteLocalResourceByUID = nil, want the error of the drop")
 	}
 	var deleted *string
 	if err := engine.db.QueryRowContext(ctx, `SELECT deleted_at FROM events WHERE id = ?`, master.ID).Scan(&deleted); err != nil || deleted != nil {
 		t.Errorf("master after the failed delete = deleted_at %v, %v; want it live", deleted, err)
+	}
+}
+
+// TestPullApply_ExplicitTombstoneFailureCountsAsFailed: the server reports the
+// delete of a UID that a tombstone holds. The drop of the sync row and of the
+// tombstone share one transaction. A failure of the drop counts as a failed
+// UID, so the sync token stays, and the sync row stays too.
+func TestPullApply_ExplicitTombstoneFailureCountsAsFailed(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	const uid = "tombstoned-uid"
+	if _, err := engine.db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, remote_url) VALUES (?, ?, 'event', 0, 'sync-token', 'x')`, calA, uid); err != nil {
+		t.Fatalf("seed sync row: %v", err)
+	}
+	if err := q.CreateTombstone(ctx, storage.CreateTombstoneParams{CalendarID: calA, Uid: uid, RemoteUrl: "/cal/a/" + uid + ".ics"}); err != nil {
+		t.Fatalf("seed tombstone: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx,
+		`CREATE TRIGGER test_refuse_tombstone_drop BEFORE DELETE ON tombstones BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+		t.Fatalf("seed trigger: %v", err)
+	}
+	p := newPendingDeletions(engine.logger)
+	p.owner[uid] = ownerTypeEvent
+	p.explicit[uid] = true
+	if deleted, failed := p.apply(ctx, engine, calA, nil); deleted != 0 || failed != 1 {
+		t.Fatalf("apply = %d deleted, %d failed; want 0 and 1", deleted, failed)
+	}
+	var n int
+	if err := engine.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_resources WHERE calendar_id = ? AND uid = ?`, calA, uid).Scan(&n); err != nil || n != 1 {
+		t.Errorf("sync rows after the failed drop = %d, %v; want 1: the rollback keeps it", n, err)
 	}
 }
