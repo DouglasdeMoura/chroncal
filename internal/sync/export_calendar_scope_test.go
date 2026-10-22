@@ -202,8 +202,8 @@ func TestExportResource_LegacyRowsOfTrashedOwnerRefused(t *testing.T) {
 	if err := engine.events.DeleteSeries(ctx, calA, master.UID); err != nil {
 		t.Fatalf("DeleteSeries(A): %v", err)
 	}
-	if err := engine.events.RestoreByID(ctx, legacy.ID); err != nil {
-		t.Fatalf("RestoreByID(legacy): %v", err)
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE id = ?`, legacy.ID); err != nil {
+		t.Fatalf("revive the legacy as a pull does: %v", err)
 	}
 	// An owner in the trash gets no mark, and no other calendar gets it.
 	clearDirty()
@@ -282,8 +282,8 @@ func TestExportResource_LiveRowBesideTrashedMaster_Refused(t *testing.T) {
 	if err := engine.events.DeleteSeries(ctx, calB, masterA.UID); err != nil {
 		t.Fatalf("DeleteSeries(B): %v", err)
 	}
-	if err := engine.events.RestoreByID(ctx, overrideB.ID); err != nil {
-		t.Fatalf("RestoreByID(override B): %v", err)
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE id = ?`, overrideB.ID); err != nil {
+		t.Fatalf("revive the override B as a pull does: %v", err)
 	}
 	if _, err := engine.exportResource(ctx, calB, "event", masterA.UID); !errors.Is(err, errResourceMissing) {
 		t.Fatalf("exportResource(B) err = %v, want errResourceMissing (the master of B is in the trash)", err)
@@ -304,8 +304,8 @@ func TestPush_LiveRowBesideTrashedMasterKeepsServerSeries(t *testing.T) {
 	if err := engine.events.DeleteSeries(ctx, calB, masterA.UID); err != nil {
 		t.Fatalf("DeleteSeries(B): %v", err)
 	}
-	if err := engine.events.RestoreByID(ctx, overrideB.ID); err != nil {
-		t.Fatalf("RestoreByID(override B): %v", err)
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE id = ?`, overrideB.ID); err != nil {
+		t.Fatalf("revive the override B as a pull does: %v", err)
 	}
 	path := "/cal/b/" + masterA.UID + ".ics"
 	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:" + masterA.UID +

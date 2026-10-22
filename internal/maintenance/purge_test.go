@@ -164,8 +164,8 @@ func keptSeriesFixture(t *testing.T, db *sql.DB, events *event.Service) (int64, 
 	if err := events.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
-	if err := events.RestoreByID(ctx, overrides[1]); err != nil {
-		t.Fatalf("RestoreByID(live override): %v", err)
+	if _, err := db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE id = ?`, overrides[1]); err != nil {
+		t.Fatalf("revive the live override as a pull does: %v", err)
 	}
 	for _, stmt := range []string{
 		`UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = 'kept-series' AND deleted_at IS NOT NULL`,

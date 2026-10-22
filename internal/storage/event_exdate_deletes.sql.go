@@ -263,13 +263,14 @@ func (q *Queries) MoveEventExdateDeletesUIDToCalendar(ctx context.Context, arg M
 	return err
 }
 
-const recordEventExdateDelete = `-- name: RecordEventExdateDelete :exec
+const recordEventExdateDelete = `-- name: RecordEventExdateDelete :one
 INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_ids)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     pruned = 0,
     hidden_ids = excluded.hidden_ids
+RETURNING id
 `
 
 type RecordEventExdateDeleteParams struct {
@@ -284,15 +285,18 @@ type RecordEventExdateDeleteParams struct {
 // the user turns a pruned marker of the occurrence into a delete log.
 // hidden_ids lists the override rows that the deletes hid. The caller
 // passes the union with the list of an earlier delete of the occurrence
-// (see recordExdateDeleteTx).
-func (q *Queries) RecordEventExdateDelete(ctx context.Context, arg RecordEventExdateDeleteParams) error {
-	_, err := q.db.ExecContext(ctx, recordEventExdateDelete,
+// (see recordExdateDeleteTx). It returns the ID of the log, which the undo
+// keeps (UndoMeta.ExdateLogID).
+func (q *Queries) RecordEventExdateDelete(ctx context.Context, arg RecordEventExdateDeleteParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, recordEventExdateDelete,
 		arg.CalendarID,
 		arg.Uid,
 		arg.RecurrenceID,
 		arg.HiddenIds,
 	)
-	return err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const recordEventExdatePrune = `-- name: RecordEventExdatePrune :exec

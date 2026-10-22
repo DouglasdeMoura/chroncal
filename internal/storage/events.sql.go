@@ -779,6 +779,51 @@ func (q *Queries) ListEventCalendarIDsByUID(ctx context.Context, uid string) ([]
 	return items, nil
 }
 
+const listEventCalendarsOfIDs = `-- name: ListEventCalendarsOfIDs :many
+SELECT id, calendar_id FROM events WHERE id IN (/*SLICE:ids*/?) ORDER BY id
+`
+
+type ListEventCalendarsOfIDsRow struct {
+	ID         int64
+	CalendarID int64
+}
+
+// The calendar of each row of a set, live or in the trash. The restore of an
+// occurrence delete reads it once: for the access guard, and for the
+// occurrence logs of the restored rows.
+func (q *Queries) ListEventCalendarsOfIDs(ctx context.Context, ids []int64) ([]ListEventCalendarsOfIDsRow, error) {
+	query := listEventCalendarsOfIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListEventCalendarsOfIDsRow
+	for rows.Next() {
+		var i ListEventCalendarsOfIDsRow
+		if err := rows.Scan(&i.ID, &i.CalendarID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventMastersByUIDIncludingDeleted = `-- name: ListEventMastersByUIDIncludingDeleted :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events WHERE uid = ? AND recurrence_id = '' ORDER BY id
 `

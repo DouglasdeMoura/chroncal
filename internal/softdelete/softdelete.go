@@ -51,15 +51,25 @@ func ClearMasterEXDATE(ctx context.Context, p ExdateProvenance, recurrenceID str
 		return nil
 	}
 
-	masterID, exdates, found, err := p.GetMaster(ctx)
+	return stripAndDrop(ctx, p.GetMaster, p.UpdateExdates, p.DeleteDeleteLog, logID, recurrenceID)
+}
+
+// stripAndDrop removes one copy of the EXDATE of recurrenceID from the master
+// and drops the log logID. With no master, it drops the log only.
+func stripAndDrop(ctx context.Context,
+	getMaster func(ctx context.Context) (int64, string, bool, error),
+	updateExdates func(ctx context.Context, masterID int64, exdates string) error,
+	deleteLog func(ctx context.Context, logID int64) error,
+	logID int64, recurrenceID string,
+) error {
+	masterID, exdates, found, err := getMaster(ctx)
 	if err != nil {
 		return fmt.Errorf("get master: %w", err)
 	}
 	if !found {
 		// Master gone; drop the now-orphaned provenance row.
-		return p.DeleteDeleteLog(ctx, logID)
+		return deleteLog(ctx, logID)
 	}
-
 	target, err := timeutil.ParseRecurrenceID(recurrenceID)
 	if err != nil {
 		return fmt.Errorf("parse recurrence_id %q: %w", recurrenceID, err)
@@ -67,12 +77,74 @@ func ClearMasterEXDATE(ctx context.Context, p ExdateProvenance, recurrenceID str
 	existing := timeutil.ParseTimeList(exdates)
 	filtered := timeutil.RemoveTimeFromList(existing, target)
 	if len(filtered) != len(existing) {
-		if err := p.UpdateExdates(ctx, masterID, timeutil.SerializeTimeList(filtered)); err != nil {
+		if err := updateExdates(ctx, masterID, timeutil.SerializeTimeList(filtered)); err != nil {
 			return fmt.Errorf("update exdates: %w", err)
 		}
 	}
-	if err := p.DeleteDeleteLog(ctx, logID); err != nil {
+	if err := deleteLog(ctx, logID); err != nil {
 		return fmt.Errorf("delete exdate log: %w", err)
 	}
 	return nil
+}
+
+// OccurrenceLog is one occurrence log, as the caller read it before the
+// restore of its rows.
+type OccurrenceLog struct {
+	ID int64
+	// HiddenIDs lists the override rows that the deletes of the occurrence
+	// hid. The list can be empty: a delete of an occurrence with no stored
+	// override.
+	HiddenIDs []int64
+}
+
+// OccurrenceRelease adapts the queries of one domain to the operations of
+// ReleaseOccurrenceRows. The closures bind to the active transaction. The
+// fields of ExdateProvenance do the same jobs as there. GetDeleteLog is not
+// used: the caller passes the log.
+type OccurrenceRelease struct {
+	ExdateProvenance
+	// SetHiddenIDs writes the shorter row list of the log logID.
+	SetHiddenIDs func(ctx context.Context, logID int64, ids []int64) error
+}
+
+// ReleaseOccurrenceRows releases the rows of rowIDs from log, the occurrence
+// log of recurrenceID. Four restore paths call it. These are the undo, the
+// restore by ID of an override, the edit that revives an override, and the
+// trash restore. The rules:
+//  1. rowIDs that the log does not name give no change, when the log names
+//     rows. The log records another delete of the occurrence. A log with an
+//     empty list names no row: a delete with no stored override, or a log
+//     from before the list (migration 057). Its release goes on to rule 3.
+//  2. With rows of the log left, the log keeps them, and the EXDATE stays.
+//     The rows of another delete stay hidden.
+//  3. With no row left, the release removes one copy of the EXDATE that the
+//     log recorded, and it drops the log. An imported EXDATE has no log, so
+//     it stays (issue #86).
+//
+// Empty rowIDs release a delete that hid no row. The caller then must know
+// that log is the log of that delete.
+func ReleaseOccurrenceRows(ctx context.Context, p OccurrenceRelease, log OccurrenceLog, rowIDs []int64, recurrenceID string) error {
+	release := make(map[int64]bool, len(rowIDs))
+	for _, id := range rowIDs {
+		release[id] = true
+	}
+	rest := make([]int64, 0, len(log.HiddenIDs))
+	named := false
+	for _, id := range log.HiddenIDs {
+		if release[id] {
+			named = true
+			continue
+		}
+		rest = append(rest, id)
+	}
+	if len(rowIDs) > 0 && len(log.HiddenIDs) > 0 && !named {
+		return nil
+	}
+	if len(rest) > 0 {
+		if err := p.SetHiddenIDs(ctx, log.ID, rest); err != nil {
+			return fmt.Errorf("update exdate log: %w", err)
+		}
+		return nil
+	}
+	return stripAndDrop(ctx, p.GetMaster, p.UpdateExdates, p.DeleteDeleteLog, log.ID, recurrenceID)
 }

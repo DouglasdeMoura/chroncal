@@ -481,7 +481,7 @@ func TestUpdateInstance_RevivesOverrideOfItsOwnSeries(t *testing.T) {
 		work.UID, home.ID, exdate, inst.Add(time.Hour).Format(time.RFC3339), exdate); err != nil {
 		t.Fatalf("seed deleted override: %v", err)
 	}
-	if err := svc.q.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{CalendarID: home.ID, Uid: work.UID, RecurrenceID: exdate}); err != nil {
+	if _, err := svc.q.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{CalendarID: home.ID, Uid: work.UID, RecurrenceID: exdate}); err != nil {
 		t.Fatalf("seed delete log: %v", err)
 	}
 
