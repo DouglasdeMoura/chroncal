@@ -100,9 +100,9 @@ func TestEventDeleteHooks_PushTheMasterCalendar(t *testing.T) {
 	if err := a.Events.RestoreByID(ctx, legacyID); err != nil {
 		t.Fatalf("RestoreByID(legacy row): %v", err)
 	}
-	got, err = eventResource.delSeries(ctx, a, row{UID: uid, CalendarID: home})
-	if err != nil || got != work {
-		t.Errorf("delSeries(through Home) = calendar %d, %v; want Work %d", got, err, work)
+	pushed, err := eventResource.delSeries(ctx, a, row{UID: uid, CalendarID: home})
+	if err != nil || len(pushed) == 0 || pushed[0] != work {
+		t.Errorf("delSeries(through Home) = calendars %v, %v; want Work %d first", pushed, err, work)
 	}
 }
 
@@ -319,5 +319,33 @@ func TestAmbiguousUIDHint_PerCommand(t *testing.T) {
 	_, stderr, err := runChroncalCommand(t, "event", "restore", uid)
 	if err == nil || strings.Contains(stderr, "--calendar") {
 		t.Errorf("event restore: err = %v, stderr = %q; want a refusal with no --calendar hint", err, stderr)
+	}
+}
+
+// TestEventDeleteSeries_UIDMessagesAndResolvedCalendar: a series delete
+// with no calendar names the UID in its refusal, not calendar "0". With
+// --calendar on the calendar of a legacy override, the target is the
+// calendar of the series that the service resolved.
+func TestEventDeleteSeries_UIDMessagesAndResolvedCalendar(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	uid, _ := seedLegacyOverrideInHome(t)
+	_, stderr, err := runChroncalCommand(t, "event", "delete", "no-such-series", "--series", "--yes")
+	if err == nil || !strings.Contains(stderr, "event series no-such-series not found") || strings.Contains(stderr, `"0"`) {
+		t.Errorf("delete of an unknown series: err = %v, stderr = %q; want a UID-only not-found", err, stderr)
+	}
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	work, err := resolveCalendarID(ctx, a, "Work")
+	if err != nil {
+		t.Fatalf("resolve Work: %v", err)
+	}
+	target, err := eventResource.resolveIn(ctx, a, uid, "Home", true)
+	if err != nil || target.CalendarID != work {
+		t.Errorf("resolveIn(uid, Home) = calendar %d, %v; want the series calendar Work %d", target.CalendarID, err, work)
 	}
 }

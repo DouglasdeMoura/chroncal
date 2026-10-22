@@ -225,39 +225,83 @@ func (s *Service) RestoreTrash(ctx context.Context, entry TrashEntry) error {
 }
 
 // PurgeOldInstanceDeletes drops event_exdate_deletes rows older than olderThan.
+// The logs of the series of keep stay: the purge of the same run kept those
+// masters (PurgeReport.Skipped).
 // Returns the number of rows purged. The related EXDATEs on the master
 // stay in place. The user intended those instances to be gone.
-func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Time) (int, error) {
+func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Time, keep ...SkippedMaster) (int, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
-	n, err := s.q.PurgeOldEventExdateDeletes(ctx, cutoff)
+	rows, err := s.q.ListOldEventExdateDeletes(ctx, cutoff)
 	if err != nil {
 		return 0, err
 	}
-	return int(n), nil
+	ids := make([]int64, 0, len(rows))
+	for _, r := range rows {
+		if !keptSeries(keep, r.CalendarID, r.Uid) {
+			ids = append(ids, r.ID)
+		}
+	}
+	var total int64
+	for _, chunk := range chunkIDs(ids) {
+		n, err := s.q.DeleteEventExdateDeletesByIDs(ctx, chunk)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return int(total), nil
 }
 
 // PurgeOldTruncationDeletes drops event_truncate_deletes rows older than
 // olderThan. Returns the number of rows purged. The truncated RRULE and
 // soft-deleted overrides on the master stay in place.
-func (s *Service) PurgeOldTruncationDeletes(ctx context.Context, olderThan time.Time) (int, error) {
+func (s *Service) PurgeOldTruncationDeletes(ctx context.Context, olderThan time.Time, keep ...SkippedMaster) (int, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
-	n, err := s.q.PurgeOldEventTruncateDeletes(ctx, cutoff)
+	rows, err := s.q.ListOldEventTruncateDeletes(ctx, cutoff)
 	if err != nil {
 		return 0, err
 	}
-	return int(n), nil
+	ids := make([]int64, 0, len(rows))
+	for _, r := range rows {
+		if !keptSeries(keep, r.CalendarID, r.Uid) {
+			ids = append(ids, r.ID)
+		}
+	}
+	var total int64
+	for _, chunk := range chunkIDs(ids) {
+		n, err := s.q.DeleteEventTruncateDeletesByIDs(ctx, chunk)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return int(total), nil
 }
 
 // PurgeOldSeriesDeletes drops event_series_deletes rows older than
 // olderThan. Returns the number of rows purged. A restore of the series
 // then brings the master back alone.
-func (s *Service) PurgeOldSeriesDeletes(ctx context.Context, olderThan time.Time) (int, error) {
+func (s *Service) PurgeOldSeriesDeletes(ctx context.Context, olderThan time.Time, keep ...SkippedMaster) (int, error) {
 	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
-	n, err := s.q.PurgeOldEventSeriesDeletes(ctx, cutoff)
+	rows, err := s.q.ListOldEventSeriesDeletes(ctx, cutoff)
 	if err != nil {
 		return 0, err
 	}
-	return int(n), nil
+	ids := make([]int64, 0, len(rows))
+	for _, r := range rows {
+		if !keptSeries(keep, r.CalendarID, r.Uid) {
+			ids = append(ids, r.ID)
+		}
+	}
+	var total int64
+	for _, chunk := range chunkIDs(ids) {
+		n, err := s.q.DeleteEventSeriesDeletesByIDs(ctx, chunk)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return int(total), nil
 }
 
 // PurgeTrashEntry hard-removes entry from the trash. For TrashKindEvent it
@@ -469,4 +513,15 @@ func restoreTruncatedOverrides(ctx context.Context, qtx *storage.Queries, log st
 		}
 	}
 	return nil
+}
+
+// keptSeries reports whether the series of uid in calendarID belongs to a
+// master of keep.
+func keptSeries(keep []SkippedMaster, calendarID int64, uid string) bool {
+	for _, m := range keep {
+		if m.CalendarID == calendarID && m.UID == uid {
+			return true
+		}
+	}
+	return false
 }

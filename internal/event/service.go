@@ -637,18 +637,6 @@ func deleteCollidingLogRowsTx(ctx context.Context, qtx *storage.Queries, arg sto
 	return nil
 }
 
-// deleteOccurrenceLogRowsTx drops the occurrence log and the truncation
-// log of one UID in one calendar.
-func deleteOccurrenceLogRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) error {
-	if err := qtx.DeleteEventExdateDeletesByCalendarUID(ctx, storage.DeleteEventExdateDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
-		return fmt.Errorf("delete event_exdate_deletes: %w", err)
-	}
-	if err := qtx.DeleteEventTruncateDeletesByCalendarUID(ctx, storage.DeleteEventTruncateDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
-		return fmt.Errorf("delete event_truncate_deletes: %w", err)
-	}
-	return nil
-}
-
 // localSpanEdit reports whether an update replaces the stored end time or
 // duration. Only a local edit goes through UpdateParams. A sync upsert
 // bypasses this rule, because a fresh server body sets the slot again

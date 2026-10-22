@@ -2,6 +2,7 @@ package trash
 
 import (
 	"context"
+	"database/sql"
 	"reflect"
 	"testing"
 	"time"
@@ -347,5 +348,82 @@ func TestService_PurgeOldCountsSeriesLogs(t *testing.T) {
 	}
 	if counts.EventSeriesLogs != 1 {
 		t.Errorf("EventSeriesLogs = %d, want 1", counts.EventSeriesLogs)
+	}
+}
+
+// keptSeriesFixture builds a series whose master is old in the trash while
+// its series still owns a live override. The trashed override, the series
+// log, and the occurrence log are old too. It returns the master ID and the
+// ID of the trashed override.
+func keptSeriesFixture(t *testing.T, db *sql.DB, events *event.Service) (int64, int64) {
+	t.Helper()
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	master, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "kept-series", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	overrides := make([]int64, 0, 2)
+	for _, days := range []int{1, 2} {
+		at := start.AddDate(0, 0, days)
+		o, err := events.UpsertByUID(ctx, event.UpsertParams{
+			UID: master.UID, CalendarID: 1, Title: "Late",
+			StartTime: at.Add(time.Hour), EndTime: at.Add(2 * time.Hour), RecurrenceID: at.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("upsert override: %v", err)
+		}
+		overrides = append(overrides, o.ID)
+	}
+	if err := events.DeleteInstance(ctx, 1, master.UID, start.AddDate(0, 0, 3)); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	if err := events.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := events.RestoreByID(ctx, overrides[1]); err != nil {
+		t.Fatalf("RestoreByID(live override): %v", err)
+	}
+	for _, stmt := range []string{
+		`UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = 'kept-series' AND deleted_at IS NOT NULL`,
+		`UPDATE event_series_deletes SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = 'kept-series'`,
+		`UPDATE event_exdate_deletes SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = 'kept-series'`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("age the series: %v", err)
+		}
+	}
+	return master.ID, overrides[0]
+}
+
+// TestPurgeOld_KeepsTheRowsAndLogsOfAKeptMaster: a master that the purge
+// keeps keeps its whole series in the same run: its old trashed override,
+// its series log, and its occurrence log.
+func TestPurgeOld_KeepsTheRowsAndLogsOfAKeptMaster(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	ctx := context.Background()
+	masterID, trashedID := keptSeriesFixture(t, db, events)
+	counts, err := svc.PurgeOld(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("PurgeOld: %v", err)
+	}
+	if len(counts.EventMastersSkipped) != 1 || counts.EventMastersSkipped[0].ID != masterID {
+		t.Fatalf("skipped = %+v, want the master %d", counts.EventMastersSkipped, masterID)
+	}
+	for _, id := range []int64{masterID, trashedID} {
+		if _, err := events.GetIncludingDeleted(ctx, id); err != nil {
+			t.Errorf("row %d after the purge: %v, want it kept", id, err)
+		}
+	}
+	for _, table := range []string{"event_series_deletes", "event_exdate_deletes"} {
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE uid = 'kept-series'`).Scan(&n); err != nil || n != 1 {
+			t.Errorf("%s rows after the purge = %d, %v; want 1", table, n, err)
+		}
 	}
 }

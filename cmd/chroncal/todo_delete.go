@@ -23,8 +23,8 @@ var todoResource = resource{
 	del: func(ctx context.Context, a *app.App, target row) (int64, error) {
 		return target.CalendarID, a.Todos.Delete(ctx, target.ID)
 	},
-	delSeries: func(ctx context.Context, a *app.App, target row) (int64, error) {
-		return target.CalendarID, a.Todos.DeleteSeries(ctx, target.UID)
+	delSeries: func(ctx context.Context, a *app.App, target row) ([]int64, error) {
+		return []int64{target.CalendarID}, a.Todos.DeleteSeries(ctx, target.UID)
 	},
 	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Todos.RestoreByID(ctx, id) },
 	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Todos.RestoreByUID(ctx, uid) },

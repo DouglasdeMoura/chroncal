@@ -35,8 +35,13 @@ SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurre
 -- name: DeleteEventExdateDelete :exec
 DELETE FROM event_exdate_deletes WHERE id = ?;
 
--- name: PurgeOldEventExdateDeletes :execrows
-DELETE FROM event_exdate_deletes WHERE deleted_at < ?;
+-- name: ListOldEventExdateDeletes :many
+-- The log rows before the cutoff. The age purge drops them by ID, except the
+-- logs of the masters that the purge of the same run keeps.
+SELECT id, calendar_id, uid FROM event_exdate_deletes WHERE deleted_at < ?;
+
+-- name: DeleteEventExdateDeletesByIDs :execrows
+DELETE FROM event_exdate_deletes WHERE id IN (sqlc.slice(ids));
 
 -- name: MoveEventExdateDeletesUIDToCalendar :exec
 -- Move every row of one UID (live or soft-deleted) from one calendar to

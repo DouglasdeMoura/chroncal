@@ -3,7 +3,9 @@ package maintenance
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,5 +128,76 @@ func TestPurger_RunOnce_NilQueriesSkipsAlarmStateCleanup(t *testing.T) {
 	p := NewPurger(trashSvc, nil, 30, nil)
 	if _, err := p.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce with nil queries: %v", err)
+	}
+}
+
+// keptSeriesFixture builds a series whose master is old in the trash while
+// its series still owns a live override. The trashed override, the series
+// log, and the occurrence log are old too. It returns the master ID and the
+// ID of the trashed override.
+func keptSeriesFixture(t *testing.T, db *sql.DB, events *event.Service) (int64, int64) {
+	t.Helper()
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	master, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "kept-series", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	overrides := make([]int64, 0, 2)
+	for _, days := range []int{1, 2} {
+		at := start.AddDate(0, 0, days)
+		o, err := events.UpsertByUID(ctx, event.UpsertParams{
+			UID: master.UID, CalendarID: 1, Title: "Late",
+			StartTime: at.Add(time.Hour), EndTime: at.Add(2 * time.Hour), RecurrenceID: at.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("upsert override: %v", err)
+		}
+		overrides = append(overrides, o.ID)
+	}
+	if err := events.DeleteInstance(ctx, 1, master.UID, start.AddDate(0, 0, 3)); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	if err := events.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := events.RestoreByID(ctx, overrides[1]); err != nil {
+		t.Fatalf("RestoreByID(live override): %v", err)
+	}
+	for _, stmt := range []string{
+		`UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = 'kept-series' AND deleted_at IS NOT NULL`,
+		`UPDATE event_series_deletes SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = 'kept-series'`,
+		`UPDATE event_exdate_deletes SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = 'kept-series'`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("age the series: %v", err)
+		}
+	}
+	return master.ID, overrides[0]
+}
+
+// TestPurger_WarnsOncePerKeptMaster: the purge loop warns about a kept
+// master once. A later run that keeps it again logs at Debug.
+func TestPurger_WarnsOncePerKeptMaster(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	trashSvc := trash.NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	keptSeriesFixture(t, db, events)
+	var buf bytes.Buffer
+	p := NewPurger(trashSvc, nil, 30, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	for i := 0; i < 2; i++ {
+		if _, err := p.RunOnce(context.Background()); err != nil {
+			t.Fatalf("RunOnce %d: %v", i, err)
+		}
+	}
+	out := buf.String()
+	if n := strings.Count(out, "level=WARN"); n != 1 {
+		t.Errorf("warnings = %d, want 1:\n%s", n, out)
+	}
+	if !strings.Contains(out, "level=DEBUG") {
+		t.Errorf("the second run logs no Debug record:\n%s", out)
 	}
 }

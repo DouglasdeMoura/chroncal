@@ -7,6 +7,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 )
 
 const deleteEventTruncateDelete = `-- name: DeleteEventTruncateDelete :exec
@@ -32,6 +33,28 @@ type DeleteEventTruncateDeletesByCalendarUIDParams struct {
 func (q *Queries) DeleteEventTruncateDeletesByCalendarUID(ctx context.Context, arg DeleteEventTruncateDeletesByCalendarUIDParams) error {
 	_, err := q.db.ExecContext(ctx, deleteEventTruncateDeletesByCalendarUID, arg.CalendarID, arg.Uid)
 	return err
+}
+
+const deleteEventTruncateDeletesByIDs = `-- name: DeleteEventTruncateDeletesByIDs :execrows
+DELETE FROM event_truncate_deletes WHERE id IN (/*SLICE:ids*/?)
+`
+
+func (q *Queries) DeleteEventTruncateDeletesByIDs(ctx context.Context, ids []int64) (int64, error) {
+	query := deleteEventTruncateDeletesByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	result, err := q.db.ExecContext(ctx, query, queryParams...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteEventTruncateDeletesCollidingWithMove = `-- name: DeleteEventTruncateDeletesCollidingWithMove :exec
@@ -223,6 +246,41 @@ func (q *Queries) ListEventTruncateDeletesByUID(ctx context.Context, uid string)
 	return items, nil
 }
 
+const listOldEventTruncateDeletes = `-- name: ListOldEventTruncateDeletes :many
+SELECT id, calendar_id, uid FROM event_truncate_deletes WHERE deleted_at < ?
+`
+
+type ListOldEventTruncateDeletesRow struct {
+	ID         int64
+	CalendarID int64
+	Uid        string
+}
+
+// The log rows before the cutoff. The age purge drops them by ID, except the
+// logs of the masters that the purge of the same run keeps.
+func (q *Queries) ListOldEventTruncateDeletes(ctx context.Context, deletedAt string) ([]ListOldEventTruncateDeletesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOldEventTruncateDeletes, deletedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOldEventTruncateDeletesRow
+	for rows.Next() {
+		var i ListOldEventTruncateDeletesRow
+		if err := rows.Scan(&i.ID, &i.CalendarID, &i.Uid); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const moveEventTruncateDeletesUIDToCalendar = `-- name: MoveEventTruncateDeletesUIDToCalendar :exec
 UPDATE event_truncate_deletes SET calendar_id = ?1
 WHERE calendar_id = ?2 AND uid = ?3
@@ -239,18 +297,6 @@ type MoveEventTruncateDeletesUIDToCalendarParams struct {
 func (q *Queries) MoveEventTruncateDeletesUIDToCalendar(ctx context.Context, arg MoveEventTruncateDeletesUIDToCalendarParams) error {
 	_, err := q.db.ExecContext(ctx, moveEventTruncateDeletesUIDToCalendar, arg.ToCalendarID, arg.FromCalendarID, arg.Uid)
 	return err
-}
-
-const purgeOldEventTruncateDeletes = `-- name: PurgeOldEventTruncateDeletes :execrows
-DELETE FROM event_truncate_deletes WHERE deleted_at < ?
-`
-
-func (q *Queries) PurgeOldEventTruncateDeletes(ctx context.Context, deletedAt string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, purgeOldEventTruncateDeletes, deletedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 const recordEventTruncateDelete = `-- name: RecordEventTruncateDelete :exec

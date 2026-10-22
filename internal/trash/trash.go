@@ -200,17 +200,19 @@ func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCount
 			return counts, fmt.Errorf("purge events: %w", err)
 		}
 		counts.Events = n
-		n, err = s.events.PurgeOldInstanceDeletes(ctx, olderThan)
+		// The logs of a kept master stay with it in this run.
+		keep := report.Skipped
+		n, err = s.events.PurgeOldInstanceDeletes(ctx, olderThan, keep...)
 		if err != nil {
 			return counts, fmt.Errorf("purge event instance logs: %w", err)
 		}
 		counts.EventInstanceLogs = n
-		n, err = s.events.PurgeOldTruncationDeletes(ctx, olderThan)
+		n, err = s.events.PurgeOldTruncationDeletes(ctx, olderThan, keep...)
 		if err != nil {
 			return counts, fmt.Errorf("purge event truncation logs: %w", err)
 		}
 		counts.EventTruncateLogs = n
-		n, err = s.events.PurgeOldSeriesDeletes(ctx, olderThan)
+		n, err = s.events.PurgeOldSeriesDeletes(ctx, olderThan, keep...)
 		if err != nil {
 			return counts, fmt.Errorf("purge event series logs: %w", err)
 		}

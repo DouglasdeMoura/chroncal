@@ -41,11 +41,11 @@ var eventResource = resource{
 				// with the rule of the service before the prompt. A delete
 				// that the service would refuse asks nothing.
 				target := row{UID: ref, CalendarID: calendarID}
-				label, err := a.Events.SeriesDeleteTarget(ctx, calendarID, ref)
+				label, seriesCalendarID, err := a.Events.SeriesDeleteTarget(ctx, calendarID, ref)
 				if err != nil {
 					return row{}, seriesDeleteErr(ctx, a, target, err)
 				}
-				target.Summary = label
+				target.Summary, target.CalendarID = label, seriesCalendarID
 				return target, nil
 			}
 		}
@@ -69,18 +69,18 @@ var eventResource = resource{
 	resolveSeriesUID: func(ctx context.Context, a *app.App, uid string) (row, error) {
 		// The service rule of a series delete with no calendar: the one
 		// live master of the UID, or the orphan rows of one calendar.
-		label, err := a.Events.SeriesDeleteTarget(ctx, 0, uid)
-		switch {
-		case errors.Is(err, event.ErrNotDeleted):
-			return row{}, errNotFoundf("event series %s not found", uid)
-		case err != nil:
-			return row{}, notFoundErrFor(err, "event", uid, true)
+		label, calendarID, err := a.Events.SeriesDeleteTarget(ctx, 0, uid)
+		if err != nil {
+			return row{}, seriesDeleteErr(ctx, a, row{UID: uid}, err)
 		}
-		return row{UID: uid, Summary: label}, nil
+		return row{UID: uid, CalendarID: calendarID, Summary: label}, nil
 	},
-	delSeries: func(ctx context.Context, a *app.App, target row) (int64, error) {
+	delSeries: func(ctx context.Context, a *app.App, target row) ([]int64, error) {
 		meta, err := a.Events.DeleteSeriesWithUndo(ctx, target.CalendarID, target.UID)
-		return meta.PushCalendar(target.CalendarID), seriesDeleteErr(ctx, a, target, err)
+		if err != nil {
+			return nil, seriesDeleteErr(ctx, a, target, err)
+		}
+		return meta.PushCalendarIDs(target.CalendarID), nil
 	},
 	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Events.RestoreByID(ctx, id) },
 	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Events.RestoreByUID(ctx, uid) },
@@ -355,7 +355,7 @@ any override at that time). --following truncates the series at that date.`,
 			if err := a.Events.DeleteFromInstance(ctx, e.CalendarID, e.UID, followingAt); err != nil {
 				return fmt.Errorf("delete this and following: %w", err)
 			}
-			return reportDeleted(cmd, a, w, e.CalendarID,
+			return reportDeleted(cmd, a, w, []int64{e.CalendarID},
 				map[string]any{"deleted": true, "uid": e.UID, "following": followingAt.UTC().Format(time.RFC3339)},
 				fmt.Sprintf("Deleted %q and following occurrences.\n", safeText(e.Title)))
 		}
@@ -363,7 +363,7 @@ any override at that time). --following truncates the series at that date.`,
 		if err := a.Events.DeleteInstance(ctx, e.CalendarID, e.UID, occurrenceAt); err != nil {
 			return fmt.Errorf("delete occurrence: %w", notFoundErrFor(err, "event", e.UID, true))
 		}
-		return reportDeleted(cmd, a, w, e.CalendarID,
+		return reportDeleted(cmd, a, w, []int64{e.CalendarID},
 			map[string]any{"deleted": true, "uid": e.UID, "recurrence_id": occurrenceAt.UTC().Format(time.RFC3339)},
 			fmt.Sprintf("Deleted occurrence of %q at %s.\n", safeText(e.Title), occurrenceAt.Format(time.RFC3339)))
 	}
@@ -373,6 +373,16 @@ any override at that time). --following truncates the series at that date.`,
 // seriesDeleteErr maps the error of a series delete of target to the CLI
 // error of that case.
 func seriesDeleteErr(ctx context.Context, a *app.App, target row, err error) error {
+	if target.CalendarID == 0 {
+		// No calendar names the series yet: the message names the UID.
+		switch {
+		case errors.Is(err, event.ErrNotDeleted):
+			return errNotFoundf("event series %s not found", target.UID)
+		case errors.Is(err, event.ErrSeriesInTrash):
+			return errInvalidInputf("the series %s is in the trash; restore the series first (chroncal event restore)", target.UID)
+		}
+		return notFoundErrFor(err, "event", target.UID, true)
+	}
 	if errors.Is(err, event.ErrNotDeleted) {
 		return errNotFoundf("event series %s has no live row in calendar %q", target.UID, calendarName(ctx, a, target.CalendarID))
 	}

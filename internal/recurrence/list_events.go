@@ -47,8 +47,8 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 	// queries: the row beside the master of the series comes first, then
 	// the lowest ID. A row is beside the master when its calendar holds a
 	// master row of its UID, as the view column beside_master says. An
-	// orphan row is not. The common case reads no view, so the order is
-	// set here.
+	// orphan row is not. The common case reads no view, so this loop sets
+	// the order.
 	for key, group := range byUID {
 		if len(group) < 2 {
 			continue

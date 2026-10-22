@@ -7,6 +7,7 @@ package storage
 
 import (
 	"context"
+	"strings"
 )
 
 const deleteEventExdateDelete = `-- name: DeleteEventExdateDelete :exec
@@ -33,6 +34,28 @@ type DeleteEventExdateDeletesByCalendarUIDParams struct {
 func (q *Queries) DeleteEventExdateDeletesByCalendarUID(ctx context.Context, arg DeleteEventExdateDeletesByCalendarUIDParams) error {
 	_, err := q.db.ExecContext(ctx, deleteEventExdateDeletesByCalendarUID, arg.CalendarID, arg.Uid)
 	return err
+}
+
+const deleteEventExdateDeletesByIDs = `-- name: DeleteEventExdateDeletesByIDs :execrows
+DELETE FROM event_exdate_deletes WHERE id IN (/*SLICE:ids*/?)
+`
+
+func (q *Queries) DeleteEventExdateDeletesByIDs(ctx context.Context, ids []int64) (int64, error) {
+	query := deleteEventExdateDeletesByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	result, err := q.db.ExecContext(ctx, query, queryParams...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteEventExdateDeletesCollidingWithMove = `-- name: DeleteEventExdateDeletesCollidingWithMove :exec
@@ -183,6 +206,41 @@ func (q *Queries) ListEventExdateDeletesByCalendarUID(ctx context.Context, arg L
 	return items, nil
 }
 
+const listOldEventExdateDeletes = `-- name: ListOldEventExdateDeletes :many
+SELECT id, calendar_id, uid FROM event_exdate_deletes WHERE deleted_at < ?
+`
+
+type ListOldEventExdateDeletesRow struct {
+	ID         int64
+	CalendarID int64
+	Uid        string
+}
+
+// The log rows before the cutoff. The age purge drops them by ID, except the
+// logs of the masters that the purge of the same run keeps.
+func (q *Queries) ListOldEventExdateDeletes(ctx context.Context, deletedAt string) ([]ListOldEventExdateDeletesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOldEventExdateDeletes, deletedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOldEventExdateDeletesRow
+	for rows.Next() {
+		var i ListOldEventExdateDeletesRow
+		if err := rows.Scan(&i.ID, &i.CalendarID, &i.Uid); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const moveEventExdateDeletesUIDToCalendar = `-- name: MoveEventExdateDeletesUIDToCalendar :exec
 UPDATE event_exdate_deletes SET calendar_id = ?1
 WHERE calendar_id = ?2 AND uid = ?3
@@ -199,18 +257,6 @@ type MoveEventExdateDeletesUIDToCalendarParams struct {
 func (q *Queries) MoveEventExdateDeletesUIDToCalendar(ctx context.Context, arg MoveEventExdateDeletesUIDToCalendarParams) error {
 	_, err := q.db.ExecContext(ctx, moveEventExdateDeletesUIDToCalendar, arg.ToCalendarID, arg.FromCalendarID, arg.Uid)
 	return err
-}
-
-const purgeOldEventExdateDeletes = `-- name: PurgeOldEventExdateDeletes :execrows
-DELETE FROM event_exdate_deletes WHERE deleted_at < ?
-`
-
-func (q *Queries) PurgeOldEventExdateDeletes(ctx context.Context, deletedAt string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, purgeOldEventExdateDeletes, deletedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 const recordEventExdateDelete = `-- name: RecordEventExdateDelete :exec
