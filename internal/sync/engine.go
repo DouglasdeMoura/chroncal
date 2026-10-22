@@ -945,6 +945,10 @@ type engineTestHooks struct {
 	// statement that stamps the final state. Tests use it to install a
 	// trigger that fails that statement.
 	beforeFinishCancel func()
+
+	// settleRetryDelays, when not nil, replaces the waits of
+	// putAfterSettle. Tests use short waits to keep the suite fast.
+	settleRetryDelays []time.Duration
 }
 
 // clearDirtyAfterImport adopts the server ETag and clears the dirty flag.

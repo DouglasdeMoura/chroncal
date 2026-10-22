@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/emersion/go-ical"
 
@@ -762,12 +763,14 @@ func (e *Engine) moveTargetIn(ctx context.Context, ts storage.Tombstone, cal sto
 // the same statement (CreateMoveConflictReplacingEdit).
 func (e *Engine) recordGatedTargetMoveConflict(ctx context.Context, client *caldav.Client, calendarID int64, res storage.SyncResource, replaceEdit bool) (gatedOutcome, error) {
 	// A gated row with no move costs one query. With no move tombstone that
-	// names this calendar, no move into this calendar exists. endMovesOf
-	// reads the list itself, with a read-only source and a source of
-	// another account in it.
-	hasMove, err := e.q.HasMoveTombstonesOfTarget(ctx, storage.HasMoveTombstonesOfTargetParams{Uid: res.Uid, CalendarID: &calendarID})
+	// names this calendar and no move conflict that is not final, no move
+	// into this calendar exists. A tombstone that names a third calendar
+	// is the move into that calendar, so it never enters this path.
+	// endMovesOf reads the list itself, with a read-only source and a
+	// source of another account in it.
+	hasMove, err := e.q.HasMoveIntoCalendar(ctx, storage.HasMoveIntoCalendarParams{Uid: res.Uid, CalendarID: calendarID})
 	if err != nil {
-		return gatedPlain, fmt.Errorf("check the move tombstones of %s: %w", res.Uid, err)
+		return gatedPlain, fmt.Errorf("check the moves into this calendar of %s: %w", res.Uid, err)
 	}
 	if hasMove == 0 {
 		return gatedPlain, nil
@@ -1791,9 +1794,41 @@ func (e *Engine) putOrSettleMove(ctx context.Context, client *caldav.Client, cal
 		return "", putErr, err
 	}
 	if retryPut {
-		newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag)
+		newEtag, putErr = e.putAfterSettle(ctx, client, putPath, cal, res.Etag)
 	}
 	return newEtag, putErr, nil
+}
+
+// settleRetryDelays are the waits before each extra PUT after a settle. A
+// server can free the UID of a deleted source object a short time after
+// the DELETE. Without the extra PUTs, the object is in no calendar on the
+// server until the next pass.
+var settleRetryDelays = []time.Duration{500 * time.Millisecond, 2 * time.Second}
+
+// putAfterSettle sends the PUT of a create after settleMovedSources
+// deleted the move sources. It sends the PUT again after each wait of
+// settleRetryDelays while the server refuses the create. Another answer
+// ends the retries. The last answer is the result.
+func (e *Engine) putAfterSettle(ctx context.Context, client *caldav.Client, putPath string, cal *ical.Calendar, etag string) (string, error) {
+	delays := settleRetryDelays
+	if e.testHooks != nil && e.testHooks.settleRetryDelays != nil {
+		delays = e.testHooks.settleRetryDelays
+	}
+	newEtag, err := e.putResource(ctx, client, putPath, cal, etag)
+	for _, delay := range delays {
+		if err == nil || !(caldav.IsConflict(err) || caldav.IsUIDConflict(err)) {
+			break
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+		newEtag, err = e.putResource(ctx, client, putPath, cal, etag)
+	}
+	return newEtag, err
 }
 
 // putResource sends one PUT with the sync retry policy. A PUT can reach the

@@ -9,18 +9,18 @@ ALTER TABLE sync_conflicts ADD COLUMN move_source_calendar_id INTEGER
     REFERENCES calendars(id) ON DELETE CASCADE;
 
 -- move_state is the state of the move of a move conflict. An edit
--- conflict keeps ''. The resolver and the sync engine write it at the
--- moment the state changes:
---   open          the record; no pick yet
---   local-picked  the local pick ran; the move continues
---   finished      the source delete went out, or the server deleted the
---                 source object; the move is complete
---   cancelled     the server pick ran
---   cancel-failed the server pick moved the rows back, and the import of
---                 the server body failed; the pick runs again
---   abandoned     the moved copy is gone; no pick applies
---   detached      an unlink of the source calendar ended the move; no
---                 pick applies
+-- conflict keeps ''. The resolver and the sync engine write it when the
+-- state changes. These are the states:
+--   open          The push recorded the conflict. No pick ran yet.
+--   local-picked  The local pick ran. The move continues.
+--   finished      The source delete went out, or the server deleted the
+--                 source object. The move is complete.
+--   cancelled     The server pick ran.
+--   cancel-failed The server pick moved the rows back. Then the import of
+--                 the server body failed. The pick runs again.
+--   abandoned     The moved copy is gone. No pick applies.
+--   detached      An unlink of the source calendar ended the move. No
+--                 pick applies.
 ALTER TABLE sync_conflicts ADD COLUMN move_state TEXT NOT NULL DEFAULT ''
     CHECK(move_state IN ('', 'open', 'local-picked', 'finished', 'cancelled', 'cancel-failed', 'abandoned', 'detached'));
 

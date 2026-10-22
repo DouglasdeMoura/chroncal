@@ -479,12 +479,24 @@ INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
 VALUES (sqlc.arg(calendar_id), sqlc.arg(uid), sqlc.arg(owner_type), 1, 'sync-token')
 ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
 
--- name: HasMoveTombstonesOfTarget :one
--- Report whether a move tombstone of uid names calendar_id as the target.
--- The organizer gate uses it for its early return. See issue #841.
-SELECT EXISTS (
-  SELECT 1 FROM tombstones WHERE uid = sqlc.arg(uid) AND moved_to_calendar_id = sqlc.arg(calendar_id)
-) AS has_tombstone;
+-- name: HasMoveIntoCalendar :one
+-- Report whether a move of uid into calendar_id exists. Two rows show it:
+-- a move tombstone that names calendar_id as the target, and a move
+-- conflict on calendar_id that is not in a final state. The organizer gate
+-- uses it for its early return. A tombstone that names a third calendar
+-- does not count: that move goes into the third calendar. See issues #841
+-- and #863.
+SELECT CAST(
+  EXISTS (
+    SELECT 1 FROM tombstones t
+    WHERE t.uid = sqlc.arg(uid) AND t.moved_to_calendar_id = CAST(sqlc.arg(calendar_id) AS INTEGER)
+  )
+  OR EXISTS (
+    SELECT 1 FROM sync_conflicts sc
+    WHERE sc.calendar_id = CAST(sqlc.arg(calendar_id) AS INTEGER) AND sc.uid = sqlc.arg(uid)
+      AND sc.move_source_calendar_id IS NOT NULL
+      AND sc.move_state IN ('open', 'local-picked', 'cancel-failed')
+  ) AS INTEGER) AS has_move;
 
 -- name: MarkMovedCopiesDirtyInCalendar :exec
 -- Give each live moved copy in a linked calendar a dirty sync row. The query

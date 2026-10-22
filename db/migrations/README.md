@@ -49,6 +49,27 @@ that no series owned (`edit_unowned`) then reaches the owner of the row
 again. The calendar of a live owner master gets a dirty mark, and the mark
 of the row clears.
 
+## Rebuild of other tables
+
+The views of migration 060 also read other tables. A rebuild by rename of
+one of these tables must drop the views that read it first. Then create
+the views again after the rename. Create `open_move_holders` before
+`move_wait_tombstones`, because `move_wait_tombstones` reads it.
+
+| Table            | Views that read the table                                    |
+| ---------------- | ------------------------------------------------------------ |
+| `tombstones`     | `move_wait_tombstones`, `live_move_copies`                   |
+| `sync_conflicts` | `open_move_holders`, `move_wait_tombstones`                  |
+| `sync_resources` | `move_wait_tombstones`, `live_move_copies`                   |
+| `calendars`      | `open_move_holders`, `move_wait_tombstones`, `live_move_copies` |
+| `todos`          | `live_move_copies`                                           |
+| `journals`       | `live_move_copies`                                           |
+
+Copy the statements of the views from migration 060. Add a test for the
+rebuild, as `TestEventsRebuildKeepsSeriesView` does for `events`.
+
+## Statements of migration 057
+
 Each statement below must stay equal to the one in migration 057. The
 storage test `TestMigrationsReadmeMatches057` compares them, and the
 storage test `TestEventsRebuildKeepsSeriesView` runs this sequence

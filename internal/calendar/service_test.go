@@ -215,6 +215,78 @@ func TestCalendarService_LinkToAccount(t *testing.T) {
 	}
 }
 
+// seedMovedCopy puts a live event of uid in calendar 1 and a move tombstone
+// of uid in a second calendar that names calendar 1 as the target.
+func seedMovedCopy(t *testing.T, q *storage.Queries, db *sql.DB, uid string) {
+	t.Helper()
+	ctx := context.Background()
+	src, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Source"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO events (uid, calendar_id, title, start_time, end_time)
+		VALUES (?, 1, 'Moved', '2026-04-03T10:00:00Z', '2026-04-03T11:00:00Z')`, uid); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO tombstones (calendar_id, uid, remote_url, moved_to_calendar_id)
+		VALUES (?, ?, '/cal/source/x.ics', 1)`, src.ID, uid); err != nil {
+		t.Fatalf("insert tombstone: %v", err)
+	}
+}
+
+// TestCalendarService_LinkToAccountMarksAMovedCopy links a local calendar
+// that holds a moved copy. The link must give the copy a dirty sync row
+// (issue #841).
+func TestCalendarService_LinkToAccountMarksAMovedCopy(t *testing.T) {
+	svc, q, db := newTestServiceWithDB(t)
+	ctx := context.Background()
+	seedMovedCopy(t, q, db, "moved@example.com")
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+
+	if err := svc.LinkToAccount(ctx, 1, account.ID, "https://example.com/cal/work"); err != nil {
+		t.Fatalf("LinkToAccount: %v", err)
+	}
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: 1, Uid: "moved@example.com"})
+	if err != nil || sr.Dirty != 1 || sr.OwnerType != "event" {
+		t.Fatalf("sync resource = %+v, %v; want a dirty event row", sr, err)
+	}
+}
+
+// TestCalendarService_LinkToAccountIsOneTransaction fails the sync row of
+// the moved copy. The link and the mark run in one transaction, so the
+// calendar must stay local (issue #863).
+func TestCalendarService_LinkToAccountIsOneTransaction(t *testing.T) {
+	svc, q, db := newTestServiceWithDB(t)
+	ctx := context.Background()
+	seedMovedCopy(t, q, db, "moved@example.com")
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "test", ServerUrl: "https://example.com", AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_sync_row BEFORE INSERT ON sync_resources
+		BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	if err := svc.LinkToAccount(ctx, 1, account.ID, "https://example.com/cal/work"); err == nil {
+		t.Fatal("LinkToAccount = nil, want the injected failure")
+	}
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if cal.AccountID != 0 || cal.RemoteURL != "" {
+		t.Fatalf("calendar = account %d, remote %q; want it still local", cal.AccountID, cal.RemoteURL)
+	}
+}
+
 func TestCalendarService_UnlinkFromAccount(t *testing.T) {
 	svc, q, _ := newTestServiceWithDB(t)
 	ctx := context.Background()
