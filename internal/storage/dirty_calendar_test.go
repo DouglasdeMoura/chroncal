@@ -77,10 +77,11 @@ func TestMarkResourceDirtyKeepsTrashedSeriesInItsCalendar(t *testing.T) {
 
 // TestMarkResourceDirtyRecordsAnUnownedEdit: A and B hold a live master of one
 // UID, and C holds a legacy override of it. No series owns the override, so
-// no export holds it. A mark of C marks no calendar dirty. It records the
-// edit as a push failure of the sync row of C (NoSeriesOwnerMsg). The edit
-// stays local, and the sync status shows it. After the delete of the master of
-// B, A owns the override: the mark goes to A, and the failure of C goes.
+// no export holds it. A mark of C marks no calendar dirty. It sets
+// edit_unowned on the sync row of C. The edit stays local, and the sync
+// status lists it. The mark has its own column: the real push failures of
+// the row survive the mark and its clear. After the delete of the master of
+// B, A owns the override: the mark goes to A, and edit_unowned of C clears.
 func TestMarkResourceDirtyRecordsAnUnownedEdit(t *testing.T) {
 	t.Parallel()
 	db, q := testutil.NewTestDB(t)
@@ -113,28 +114,38 @@ func TestMarkResourceDirtyRecordsAnUnownedEdit(t *testing.T) {
 			t.Fatalf("insert row: %v", err)
 		}
 	}
-	state := func(calendarID int64) (dirty bool, failures int64, lastErr string) {
+	// A real push failure of the sync row of C, from before the edit.
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, push_fail_count, last_push_error)
+		 VALUES (?, 'u1', 'event', '/c/u1.ics', 3, 'HTTP 500')`, calC); err != nil {
+		t.Fatalf("seed a push failure: %v", err)
+	}
+	state := func(calendarID int64) storage.SyncResource {
 		t.Helper()
-		sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "u1"})
-		if err != nil {
-			return false, 0, ""
+		sr, _ := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "u1"})
+		return sr
+	}
+	wantFailure := func(when string) {
+		t.Helper()
+		if sr := state(calC); sr.PushFailCount != 3 || sr.LastPushError != "HTTP 500" {
+			t.Errorf("push failure of C %s = %d, %q; want 3, %q", when, sr.PushFailCount, sr.LastPushError, "HTTP 500")
 		}
-		return sr.Dirty == 1, sr.PushFailCount, sr.LastPushError
 	}
 	if err := storage.MarkResourceDirty(ctx, db, calC, "u1", "event"); err != nil {
 		t.Fatalf("MarkResourceDirty C: %v", err)
 	}
 	for _, c := range []int64{calA, calB, calC} {
-		if dirty, _, _ := state(c); dirty {
+		if state(c).Dirty == 1 {
 			t.Errorf("calendar %d dirty after the mark of the unowned row; want no mark", c)
 		}
 	}
-	if _, n, msg := state(calC); n != 1 || msg != storage.NoSeriesOwnerMsg {
-		t.Fatalf("push failure of C = %d, %q; want 1, %q", n, msg, storage.NoSeriesOwnerMsg)
+	if sr := state(calC); sr.EditUnowned != 1 {
+		t.Fatalf("edit_unowned of C = %d, want 1", sr.EditUnowned)
 	}
-	failures, err := q.ListSyncResourcePushFailures(ctx, calC)
-	if err != nil || len(failures) != 1 || failures[0].Uid != "u1" {
-		t.Fatalf("ListSyncResourcePushFailures(C) = %+v, %v; want the row of u1", failures, err)
+	wantFailure("after the mark")
+	unowned, err := q.ListUnownedEditSyncResources(ctx, calC)
+	if err != nil || len(unowned) != 1 || unowned[0].Uid != "u1" {
+		t.Fatalf("ListUnownedEditSyncResources(C) = %+v, %v; want the row of u1", unowned, err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE calendar_id = ?`, calB); err != nil {
 		t.Fatalf("delete the master of B: %v", err)
@@ -142,10 +153,11 @@ func TestMarkResourceDirtyRecordsAnUnownedEdit(t *testing.T) {
 	if err := storage.MarkResourceDirty(ctx, db, calC, "u1", "event"); err != nil {
 		t.Fatalf("MarkResourceDirty C again: %v", err)
 	}
-	if dirty, _, _ := state(calA); !dirty {
+	if state(calA).Dirty != 1 {
 		t.Errorf("A not dirty after the mark with one live master; want the mark")
 	}
-	if _, n, msg := state(calC); n != 0 || msg != "" {
-		t.Errorf("push failure of C after the owner came back = %d, %q; want none", n, msg)
+	if sr := state(calC); sr.EditUnowned != 0 {
+		t.Errorf("edit_unowned of C after the owner came back = %d, want 0", sr.EditUnowned)
 	}
+	wantFailure("after the clear")
 }

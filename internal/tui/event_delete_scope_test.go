@@ -290,3 +290,37 @@ func TestUndo_TransientErrorKeepsTheEntry(t *testing.T) {
 	m = updated.(Model)
 	require.Equal(t, 1, m.undoStack.Len())
 }
+
+// TestUndo_NewerTruncationKeepsTheEntry: the undo of a truncation while a
+// newer truncation of the series is in the trash is no permanent refusal
+// (event.ErrUndoNotYet). It can succeed after the restore of the newer one.
+// The entry stays on the stack, and the toast names what to restore first.
+func TestUndo_NewerTruncationKeepsTheEntry(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+	cals, err := a.Calendars.List(ctx)
+	require.NoError(t, err)
+	start := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	master, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "tui-truncations", CalendarID: cals[0].ID, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=20",
+	})
+	require.NoError(t, err)
+	later, err := a.Events.DeleteFromInstanceWithUndo(ctx, cals[0].ID, master.UID, start.AddDate(0, 0, 9))
+	require.NoError(t, err)
+	_, err = a.Events.DeleteFromInstanceWithUndo(ctx, cals[0].ID, master.UID, start.AddDate(0, 0, 3))
+	require.NoError(t, err)
+	m.undoStack.Push(UndoEntry{Meta: later, DeletedAt: time.Now()})
+
+	m.focus = focusCalendar
+	next, cmd, handled := m.interceptGlobalKeys(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	require.True(t, handled)
+	msg, ok := cmd().(eventRestoredMsg)
+	require.True(t, ok)
+	require.ErrorIs(t, msg.err, event.ErrUndoNotYet)
+	require.NotErrorIs(t, msg.err, event.ErrUndoNotPossible)
+	updated, _ := next.Update(msg)
+	m = updated.(Model)
+	require.Equal(t, 1, m.undoStack.Len())
+	require.Contains(t, m.toast.reason, "restore the newer truncation of this series first")
+}

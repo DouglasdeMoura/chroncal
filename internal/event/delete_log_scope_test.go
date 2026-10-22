@@ -2249,9 +2249,11 @@ func TestRestoreTruncation_NewerAtAnEarlierCutoffComesFirst(t *testing.T) {
 	if !strings.Contains(err.Error(), "restore the newer truncation of this series first (cutoff "+second.Format(time.RFC3339)+")") {
 		t.Errorf("text = %q, want the cutoff of the newer truncation", err.Error())
 	}
-	// The undo of the older truncation is a permanent refusal for the TUI.
-	if err := svc.RestoreUndo(ctx, later); !errors.Is(err, ErrUndoNotPossible) {
-		t.Errorf("RestoreUndo(later) = %v, want ErrUndoNotPossible", err)
+	// The undo of the older truncation can succeed after the restore of the
+	// newer one. It is a refusal for now (ErrUndoNotYet), not a permanent
+	// one.
+	if err := svc.RestoreUndo(ctx, later); !errors.Is(err, ErrUndoNotYet) || errors.Is(err, ErrUndoNotPossible) || !errors.Is(err, ErrNewerTruncation) {
+		t.Errorf("RestoreUndo(later) = %v, want ErrUndoNotYet with ErrNewerTruncation", err)
 	}
 	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, earlier.DeleteToken), 0); err != nil {
 		t.Fatalf("restore the earlier cutoff: %v", err)
@@ -2511,4 +2513,72 @@ func TestOrphanDelete_JoinsTheLogOfTheTrashedMaster(t *testing.T) {
 	}
 	wantTrashed(t, svc, false, master.ID, own.ID)
 	wantTrashed(t, svc, true, merged.ID)
+}
+
+// TestUndoSeries_ReadsTheMasterInTheTransaction: the undo of a series delete
+// reads the master in its transaction and chooses its path there. No master
+// read runs outside it.
+func TestUndoSeries_ReadsTheMasterInTheTransaction(t *testing.T) {
+	svc, spy := spiedService(t)
+	ctx := context.Background()
+	master, _, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo: %v", err)
+	}
+	spy.names = nil
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if spy.ran("GetEvent") {
+		t.Errorf("queries outside the transaction = %v, want no read of the master", spy.names)
+	}
+}
+
+// TestUndoSeries_VanishedMasterGivesMasterPurged: a purge took the master and
+// its log. Undo data that names no log (from before the log ID) then has
+// nothing to reverse. The undo gives ErrMasterPurged, not ErrNotDeleted or a
+// raw sql.ErrNoRows.
+func TestUndoSeries_VanishedMasterGivesMasterPurged(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, _, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo: %v", err)
+	}
+	if err := svc.PurgeByID(ctx, master.ID); err != nil {
+		t.Fatalf("PurgeByID(master): %v", err)
+	}
+	meta.SeriesLogID = 0
+	err = svc.RestoreUndo(ctx, meta)
+	if !errors.Is(err, ErrMasterPurged) || errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("RestoreUndo = %v, want ErrMasterPurged", err)
+	}
+}
+
+// TestPurgeMaster_RefusalNamesOwnAndLegacyRows: the refusal of the purge of a
+// master names every live override row that its series owns, from the one
+// read of the view. A legacy override in another calendar counts, and the
+// IDs come in ID order.
+func TestPurgeMaster_RefusalNamesOwnAndLegacyRows(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, _, third := singleSeriesWithOverrides(t, svc)
+	own, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := reviveRow(svc, own.ID); err != nil {
+		t.Fatalf("revive the own row: %v", err)
+	}
+	legacy := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "Legacy"), third.Add(24*time.Hour))
+	err = svc.PurgeByID(ctx, master.ID)
+	var refusal *SeriesHasLiveOverridesError
+	if !errors.As(err, &refusal) || !slices.Equal(refusal.IDs, []int64{own.ID, legacy.ID}) {
+		t.Fatalf("PurgeByID err = %v, want a refusal that names rows %d and %d", err, own.ID, legacy.ID)
+	}
 }

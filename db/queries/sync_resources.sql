@@ -55,6 +55,13 @@ SELECT uid, owner_type, push_fail_count, last_push_error FROM sync_resources
 WHERE calendar_id = ? AND push_fail_count > 0
 ORDER BY uid;
 
+-- name: ListUnownedEditSyncResources :many
+-- The sync rows of one calendar with an edit that no series owns
+-- (edit_unowned). The sync status lists them: the edit stays local.
+SELECT uid, owner_type FROM sync_resources
+WHERE calendar_id = ? AND edit_unowned = 1
+ORDER BY uid;
+
 -- name: ClearSyncResourcePushFailure :exec
 -- Reset the failure bookkeeping after a successful push. The engine clears
 -- it next to FinalizePushedResource. The sync doctor clears it after its

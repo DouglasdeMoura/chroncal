@@ -85,7 +85,7 @@ func (e *NewerTruncationError) Unwrap() error { return ErrNewerTruncation }
 
 // undoRefusals are the permanent refusals of an undo (ErrUndoNotPossible).
 var undoRefusals = []error{
-	ErrNotDeleted, ErrMasterInTrash, ErrMasterPurged, ErrMasterAdvanced, ErrNewerTruncation,
+	ErrNotDeleted, ErrMasterInTrash, ErrMasterPurged, ErrMasterAdvanced,
 	ErrSeriesInTrash, ErrAmbiguousUID, ErrAmbiguousOverride, ErrOccurrenceOutsideSeries,
 	calendaraccess.ErrReadOnly, calendaraccess.ErrUnsupportedComponent,
 }
@@ -98,11 +98,35 @@ func (e undoRefusal) Error() string        { return e.cause.Error() }
 func (e undoRefusal) Unwrap() error        { return e.cause }
 func (e undoRefusal) Is(target error) bool { return target == ErrUndoNotPossible }
 
-// classifyUndo wraps a permanent refusal of an undo with ErrUndoNotPossible.
-// It returns a transient error and nil as they are.
+// ErrUndoNotYet reports an undo that cannot run now but can succeed later,
+// after another restore. An example is the undo of a truncation while a newer
+// truncation of the series is in the trash (ErrNewerTruncation). A caller
+// keeps the undo entry and shows the message.
+var ErrUndoNotYet = errors.New("event: the undo is not possible yet")
+
+// undoNotYet are the refusals of an undo that a later restore can lift
+// (ErrUndoNotYet).
+var undoNotYet = []error{ErrNewerTruncation}
+
+// undoLater is a refusal of an undo that a later restore can lift. Its text
+// is the text of the cause, and it matches ErrUndoNotYet and the cause.
+type undoLater struct{ cause error }
+
+func (e undoLater) Error() string        { return e.cause.Error() }
+func (e undoLater) Unwrap() error        { return e.cause }
+func (e undoLater) Is(target error) bool { return target == ErrUndoNotYet }
+
+// classifyUndo wraps a permanent refusal of an undo with ErrUndoNotPossible,
+// and a refusal that a later restore can lift with ErrUndoNotYet. It returns a
+// transient error and nil as they are.
 func classifyUndo(err error) error {
-	if err == nil || errors.Is(err, ErrUndoNotPossible) {
+	if err == nil || errors.Is(err, ErrUndoNotPossible) || errors.Is(err, ErrUndoNotYet) {
 		return err
+	}
+	for _, later := range undoNotYet {
+		if errors.Is(err, later) {
+			return undoLater{cause: err}
+		}
 	}
 	for _, refusal := range undoRefusals {
 		if errors.Is(err, refusal) {
@@ -737,14 +761,9 @@ func recordSeriesDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID 
 	return id, nil
 }
 
-// restoreSeriesLog runs restoreSeriesLogTx in one transaction.
-func (s *Service) restoreSeriesLog(ctx context.Context, calendarID int64, uid string, requireMaster bool, token, logID int64) (int64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
+// restoreSeriesLogAndSyncTx is restoreSeriesLogTx plus the sync state of the
+// rows that came back, in the transaction of qtx.
+func restoreSeriesLogAndSyncTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string, requireMaster bool, token, logID int64) (int64, error) {
 	n, ids, err := restoreSeriesLogTx(ctx, qtx, calendarID, uid, requireMaster, token, logID)
 	if err != nil {
 		return 0, err
@@ -756,9 +775,6 @@ func (s *Service) restoreSeriesLog(ctx context.Context, calendarID int64, uid st
 		if err := clearOtherTombstonesTx(ctx, qtx, calendarID, uid, ids); err != nil {
 			return 0, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
 	}
 	return n, nil
 }
@@ -1138,6 +1154,19 @@ func (o seriesOverrides) hasLive(m seriesRef) bool {
 	return slices.ContainsFunc(o[seriesKeyOf(m.CalendarID, m.UID)], func(r storage.ListSeriesOverridesOfUIDsRow) bool { return r.DeletedAt == nil })
 }
 
+// liveIDs returns the IDs of the live override rows that the series of m
+// owns, in ID order.
+func (o seriesOverrides) liveIDs(m seriesRef) []int64 {
+	var ids []int64
+	for _, r := range o[seriesKeyOf(m.CalendarID, m.UID)] {
+		if r.DeletedAt == nil {
+			ids = append(ids, r.ID)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 // seriesOverridesTx reads the override rows of the UIDs of masters from the
 // view, in chunks of bound UIDs. A bound UID list lets SQLite filter each arm
 // of the view by the index on uid. A filter that joins the view to the
@@ -1307,17 +1336,14 @@ func (e *SeriesHasLiveOverridesError) Unwrap() error { return ErrSeriesHasLiveOv
 // seriesPurgeSetTx and the logs of the series go, on the shared path of
 // PurgeDeletedReport. It returns the count of purged rows.
 func purgeMasterRowsTx(ctx context.Context, qtx *storage.Queries, master storage.Event) (int64, error) {
-	live, err := qtx.ListLiveSeriesOverrideIDs(ctx, storage.ListLiveSeriesOverrideIDsParams{Uid: master.Uid, CalendarID: master.CalendarID})
-	if err != nil {
-		return 0, fmt.Errorf("list live overrides: %w", err)
-	}
-	if len(live) > 0 {
-		return 0, &SeriesHasLiveOverridesError{IDs: live}
-	}
+	// One read of the view gives the live rows and the purge set.
 	ref := []seriesRef{{ID: master.ID, CalendarID: master.CalendarID, UID: master.Uid}}
 	overrides, err := seriesOverridesTx(ctx, qtx, ref)
 	if err != nil {
 		return 0, err
+	}
+	if live := overrides.liveIDs(ref[0]); len(live) > 0 {
+		return 0, &SeriesHasLiveOverridesError{IDs: live}
 	}
 	ids, err := seriesPurgeSetTx(ctx, qtx, ref, overrides)
 	if err != nil {
@@ -1460,7 +1486,7 @@ func restoreSingleTx(ctx context.Context, qtx *storage.Queries, meta UndoMeta) e
 	}
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		if recurrenceID != "" {
-			return restoreEXDATEOnlyTx(ctx, qtx, r.ID, uid, recurrenceID, rowIDs, deleteIdentity{exdateLogID: meta.ExdateLogID, seq: meta.ExdateDeleteSeq, token: meta.DeleteToken})
+			return restoreEXDATEOnlyTx(ctx, qtx, r, uid, recurrenceID, rowIDs, deleteIdentity{exdateLogID: meta.ExdateLogID, seq: meta.ExdateDeleteSeq, token: meta.DeleteToken})
 		}
 		// The undo reverses a delete of the master row, and the master
 		// is live: a restore from the trash came first. The undo has
@@ -1674,9 +1700,9 @@ func undoMasterTx(ctx context.Context, qtx *storage.Queries, meta UndoMeta) (sto
 // it un-hides that master and the rows of its own series-delete log
 // (meta.SeriesLogID) that carry its delete token. With RowIDs (a delete of
 // orphan rows), it un-hides exactly those rows and drops them from the log.
-// The rest of the log stays for the restore of the master. A purged master,
-// a master that a restore from the trash brought back first, or rows that
-// are live again give ErrNotDeleted. Undo
+// The rest of the log stays for the restore of the master. A purged master
+// gives ErrMasterPurged. A master that a restore from the trash brought back
+// first, or rows that are live again, give ErrNotDeleted. Undo
 // data with neither field names no delete. An occurrence that the user
 // deleted on its own before the series delete stays deleted (issue #287, see
 // restoreSeriesLogTx).
@@ -1684,29 +1710,17 @@ func (s *Service) restoreSeries(ctx context.Context, meta UndoMeta) error {
 	uid := meta.UID
 	switch {
 	case meta.MasterID != 0:
-		master, err := s.q.GetEventIncludingDeleted(ctx, meta.MasterID)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			// The master row is gone. A purge drops the log with the
-			// master, so only an older purge leaves a log that names the
-			// hidden rows (an orphan tail). The undo then reverses that
-			// record, with the refusal of restoreSeriesLogTx. The series
-			// rule stays out.
-			n, err := s.restoreSeriesLog(ctx, meta.CalendarID, uid, false, meta.DeleteToken, meta.SeriesLogID)
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return ErrNotDeleted
-			}
-			return nil
-		case err != nil:
-			return fmt.Errorf("get master: %w", err)
-		case master.DeletedAt == nil:
-			return ErrAlreadyRestored
+		// One transaction holds the read of the master, the choice of the
+		// path, and the restore.
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
 		}
-		_, err = s.restoreSeriesLog(ctx, master.CalendarID, uid, true, meta.DeleteToken, meta.SeriesLogID)
-		return err
+		defer tx.Rollback()
+		if err := restoreSeriesOfMasterTx(ctx, s.q.WithTx(tx), meta); err != nil {
+			return err
+		}
+		return tx.Commit()
 	case len(meta.RowIDs) != 0:
 		n, err := s.restoreRows(ctx, meta.CalendarID, uid, meta.RowIDs, deleteIdentity{seriesLogID: meta.SeriesLogID, token: meta.DeleteToken})
 		if err != nil {
@@ -1719,6 +1733,35 @@ func (s *Service) restoreSeries(ctx context.Context, meta UndoMeta) error {
 	default:
 		return fmt.Errorf("%w: the undo data names no master and no rows", ErrNotDeleted)
 	}
+}
+
+// restoreSeriesOfMasterTx is restoreSeries for undo data with a master, in
+// the transaction of qtx. A master that a purge took gives ErrMasterPurged.
+func restoreSeriesOfMasterTx(ctx context.Context, qtx *storage.Queries, meta UndoMeta) error {
+	uid := meta.UID
+	master, err := qtx.GetEventIncludingDeleted(ctx, meta.MasterID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// The master row is gone. A purge drops the log with the master,
+		// so only an older purge leaves a log that names the hidden rows
+		// (an orphan tail). The undo then reverses that record, with the
+		// refusal of restoreSeriesLogTx. The series rule stays out. With
+		// nothing to reverse, the purge took the delete.
+		n, err := restoreSeriesLogAndSyncTx(ctx, qtx, meta.CalendarID, uid, false, meta.DeleteToken, meta.SeriesLogID)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrMasterPurged
+		}
+		return nil
+	case err != nil:
+		return fmt.Errorf("get master: %w", err)
+	case master.DeletedAt == nil:
+		return ErrAlreadyRestored
+	}
+	_, err = restoreSeriesLogAndSyncTx(ctx, qtx, master.CalendarID, uid, true, meta.DeleteToken, meta.SeriesLogID)
+	return err
 }
 
 // restoreRows is the undo of a series delete of orphan rows. ids are the rows
@@ -1851,7 +1894,7 @@ func restoreRowsBesideTrashedMasterTx(ctx context.Context, qtx *storage.Queries,
 }
 
 // restoreEXDATEOnlyTx reverses an occurrence delete of the live series of
-// masterID for the undo. rowIDs are the rows that the delete hid. logID and
+// master for the undo. The caller read master in the transaction of qtx. rowIDs are the rows that the delete hid. logID and
 // seq name the entry of the delete in the occurrence log
 // (UndoMeta.ExdateLogID and UndoMeta.ExdateDeleteSeq). The steps:
 //  1. A master in the trash gives ErrMasterInTrash.
@@ -1863,18 +1906,10 @@ func restoreRowsBesideTrashedMasterTx(ctx context.Context, qtx *storage.Queries,
 //  4. The entry goes, and the log settles (softdelete.SettleOccurrence). A
 //     live override at the occurrence takes the EXDATE away. The entries of
 //     other deletes keep their rows hidden.
-func restoreEXDATEOnlyTx(ctx context.Context, qtx *storage.Queries, masterID int64, uid, recurrenceID string, rowIDs []int64, id deleteIdentity) error {
+func restoreEXDATEOnlyTx(ctx context.Context, qtx *storage.Queries, master storage.Event, uid, recurrenceID string, rowIDs []int64, id deleteIdentity) error {
 	logID, seq := id.exdateLogID, id.seq
-	master, err := qtx.GetEventIncludingDeleted(ctx, masterID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotDeleted
-	}
-	if err != nil {
-		return fmt.Errorf("get master: %w", err)
-	}
 	// Live rows beside a master in the trash would block its purge. The
-	// caller reads the master in the same transaction, so this check only
-	// guards a direct call.
+	// caller read master in the same transaction.
 	if master.DeletedAt != nil {
 		return ErrMasterInTrash
 	}

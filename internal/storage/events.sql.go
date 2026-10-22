@@ -1147,43 +1147,6 @@ func (q *Queries) ListLiveOverridesInCalendarByUID(ctx context.Context, arg List
 	return items, nil
 }
 
-const listLiveSeriesOverrideIDs = `-- name: ListLiveSeriesOverrideIDs :many
-SELECT s.id FROM event_series_rows AS s
-WHERE s.uid = ?1 AND s.owner_calendar_id = ?2
-  AND s.recurrence_id != '' AND s.deleted_at IS NULL
-ORDER BY s.id
-`
-
-type ListLiveSeriesOverrideIDsParams struct {
-	Uid        string
-	CalendarID int64
-}
-
-// The IDs of the live override rows that the series of one UID in one
-// calendar owns. The purge of a master refuses while one exists.
-func (q *Queries) ListLiveSeriesOverrideIDs(ctx context.Context, arg ListLiveSeriesOverrideIDsParams) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, listLiveSeriesOverrideIDs, arg.Uid, arg.CalendarID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listLiveSeriesOverridesAtOrAfter = `-- name: ListLiveSeriesOverridesAtOrAfter :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token FROM events
 WHERE events.recurrence_id != '' AND events.recurrence_id >= ?1 AND events.deleted_at IS NULL

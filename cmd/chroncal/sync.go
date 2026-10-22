@@ -308,6 +308,7 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 				"conflicts":              s.Conflicts,
 				"stuck_hrefs":            stuck,
 				"push_failures":          failures,
+				"unowned_edits":          append([]string{}, s.UnownedEdits...),
 			})
 		}
 		return printOutput(w, items)

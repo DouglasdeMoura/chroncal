@@ -422,14 +422,6 @@ WHERE recurrence_id = '' AND deleted_at IS NOT NULL AND deleted_at < sqlc.arg(cu
 SELECT s.id, s.uid, s.owner_calendar_id, s.deleted_at FROM event_series_rows AS s
 WHERE s.uid IN (sqlc.slice(uids)) AND s.recurrence_id != '';
 
--- name: ListLiveSeriesOverrideIDs :many
--- The IDs of the live override rows that the series of one UID in one
--- calendar owns. The purge of a master refuses while one exists.
-SELECT s.id FROM event_series_rows AS s
-WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
-  AND s.recurrence_id != '' AND s.deleted_at IS NULL
-ORDER BY s.id;
-
 -- name: ListSeriesLogsOfMasters :many
 -- The series-delete logs of the calendars of the masters.
 SELECT d.hidden_ids, d.deleted_at FROM event_series_deletes AS d

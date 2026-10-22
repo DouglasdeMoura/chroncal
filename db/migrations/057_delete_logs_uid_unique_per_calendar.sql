@@ -318,7 +318,14 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- edit_unowned marks a sync row whose UID has a legacy override that no
+-- series owns: two calendars hold a live master of the UID. An edit of that
+-- row reaches no export, so it stays local. The sync status lists the row.
+-- The mark has its own column, so it never mixes with the push failures.
+ALTER TABLE sync_resources ADD COLUMN edit_unowned INTEGER NOT NULL DEFAULT 0;
+
 -- +goose Down
+ALTER TABLE sync_resources DROP COLUMN edit_unowned;
 DROP TABLE IF EXISTS event_delete_token;
 DROP INDEX IF EXISTS idx_event_exdate_deletes_uid;
 DROP INDEX IF EXISTS idx_event_truncate_deletes_uid;
