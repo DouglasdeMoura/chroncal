@@ -68,6 +68,10 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 			"event_id", m.ID, "calendar_id", m.CalendarID, "uid", m.UID)
 	}
 	p.warned = warned
+	if len(counts.EventReadOnlySkipped) > 0 {
+		p.logger.Info("soft-delete purge kept rows of calendars that refuse a write",
+			"event_ids", counts.EventReadOnlySkipped)
+	}
 	total := counts.Events + counts.EventInstanceLogs + counts.EventTruncateLogs + counts.EventSeriesLogs +
 		counts.Todos + counts.TodoInstanceLogs + counts.Journals + counts.JournalInstanceLogs
 	if total > 0 {

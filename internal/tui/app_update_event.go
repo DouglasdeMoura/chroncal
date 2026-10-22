@@ -539,6 +539,10 @@ func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 			// A newer delete owns the rows. Its own undo or the trash
 			// brings them back.
 			reason = "the item was deleted again; restore that delete instead"
+		case errors.Is(msg.err, event.ErrChangedSince):
+			// A pull hid the rows again with no log of this delete. The
+			// trash still restores them.
+			reason = "the item changed after the delete; restore it from the trash if you want it back"
 		}
 		return m, tea.Batch(m.loadEvents(), m.toast.Failed(reason))
 	}

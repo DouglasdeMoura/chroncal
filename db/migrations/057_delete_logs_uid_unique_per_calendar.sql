@@ -141,17 +141,23 @@ FROM events AS e
 WHERE NOT EXISTS (
     SELECT 1 FROM events AS m WHERE m.uid = e.uid AND m.recurrence_id = '');
 
--- A log from before this migration records one delete, and that delete
--- recorded the EXDATE. The backfill writes it in the entry form: delete 1
--- names the overrides that it hid, or no row. The code then has one log
--- format. The old schema has no pruned marker. The rows are the trashed rows
--- of the series of the log at its occurrence. The view adds the legacy
--- overrides in other calendars by the owner rule. A row counts only when:
---   - it went to the trash within one second of the time of the log. The
---     old delete wrote the row and the log in one transaction. A row of an
---     earlier or a later delete falls outside.
---   - the master did not go to the trash at the same time. A series delete
---     hides the master and its rows in one statement.
+-- A log from before this migration records the deletes of one occurrence,
+-- and those deletes recorded the EXDATE. A later delete of the occurrence
+-- moved the time of the log. The backfill writes the log in the entry form:
+-- delete 1 names the overrides that the deletes hid, or no row. The code
+-- then has one log format. The old schema has no pruned marker. The rows
+-- are the trashed rows of the series of the log at its occurrence. The view
+-- adds the legacy overrides in other calendars by the owner rule. The old
+-- restore brought back each such row by its recurrence ID, so the backfill
+-- takes the same rows, with three exceptions:
+--   - a row that went to the trash more than one second after the log: a
+--     later delete hid it.
+--   - a row that went to the trash with the master: a series delete hides
+--     the master and its rows in one statement.
+--   - a row that a truncation hid at the same time: its truncation log
+--     owns it.
+-- The times compare as instants (julianday), so a fraction of a second
+-- compares right. One second is 1/86400 of a day.
 UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
     hidden_ids = COALESCE((
         SELECT GROUP_CONCAT('1:' || s.id, ',') FROM event_series_rows AS s
@@ -159,12 +165,17 @@ UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
           AND s.owner_calendar_id = event_exdate_deletes.calendar_id
           AND s.recurrence_id = event_exdate_deletes.recurrence_id
           AND s.deleted_at IS NOT NULL
-          AND s.deleted_at BETWEEN strftime('%Y-%m-%dT%H:%M:%SZ', event_exdate_deletes.deleted_at, '-1 second')
-                               AND strftime('%Y-%m-%dT%H:%M:%SZ', event_exdate_deletes.deleted_at, '+1 second')
+          AND julianday(s.deleted_at) <= julianday(event_exdate_deletes.deleted_at) + 1.0 / 86400
           AND NOT EXISTS (
             SELECT 1 FROM events AS m
             WHERE m.uid = s.uid AND m.calendar_id = s.owner_calendar_id
-              AND m.recurrence_id = '' AND m.deleted_at = s.deleted_at)), '1:');
+              AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL
+              AND abs(julianday(m.deleted_at) - julianday(s.deleted_at)) < 1.0 / 86400)
+          AND NOT EXISTS (
+            SELECT 1 FROM event_truncate_deletes AS t
+            WHERE t.uid = s.uid AND t.calendar_id = s.owner_calendar_id
+              AND julianday(t.cutoff_time) <= julianday(s.recurrence_id)
+              AND abs(julianday(t.deleted_at) - julianday(s.deleted_at)) < 1.0 / 86400)), '1:');
 
 -- A master that comes back from the trash by any path consumes the
 -- series-delete log of its calendar. The restore of the series reads and

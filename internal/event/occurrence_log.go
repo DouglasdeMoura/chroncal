@@ -244,29 +244,46 @@ func restoreHiddenRowsTx(ctx context.Context, qtx *storage.Queries, calendarID i
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := guardRowCalendarsTx(ctx, qtx, calendarID, rows); err != nil {
-		return nil, nil, err
-	}
 	notBack = ErrNotDeleted
+	trashed := make([]storage.ListEventRowStatesByIDsRow, 0, len(rows))
 	for _, r := range rows {
 		if r.DeletedAt == nil {
 			notBack = ErrAlreadyRestored
 			continue
 		}
-		restored = append(restored, r.ID)
+		trashed = append(trashed, r)
 	}
-	if len(restored) == 0 {
+	if len(trashed) == 0 {
 		if len(ids) == 0 {
 			return nil, nil, nil
 		}
 		return nil, notBack, nil
 	}
+	restored, err = restoreStatesTx(ctx, qtx, calendarID, trashed)
+	return restored, nil, err
+}
+
+// restoreStatesTx un-hides the rows of states in one statement, after the
+// guard of the calendar of each row. calendarID is the calendar of the
+// series, which the caller guards; 0 guards every calendar. The caller read
+// the states in the transaction. It returns the IDs that came back.
+func restoreStatesTx(ctx context.Context, qtx *storage.Queries, calendarID int64, states []storage.ListEventRowStatesByIDsRow) ([]int64, error) {
+	if len(states) == 0 {
+		return nil, nil
+	}
+	if err := guardRowCalendarsTx(ctx, qtx, calendarID, states); err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(states))
+	for _, r := range states {
+		ids = append(ids, r.ID)
+	}
 	// The revive trigger of migration 057 removes each row from the delete
 	// logs of its UID.
-	if _, err := qtx.RestoreEventsByIDs(ctx, restored); err != nil {
-		return nil, nil, fmt.Errorf("restore rows: %w", err)
+	if _, err := qtx.RestoreEventsByIDs(ctx, ids); err != nil {
+		return nil, fmt.Errorf("restore rows: %w", err)
 	}
-	return restored, nil, nil
+	return ids, nil
 }
 
 // sameExdateSet reports whether the EXDATE lists a and b hold the same
@@ -405,34 +422,47 @@ type deleteIdentity struct {
 	seriesLogID int64
 }
 
-// identityRefusalTx sorts the rows of ids, the rows that the delete of id
-// hid, for its undo. It reads the delete logs of uid once. For each row:
-//   - No row: a purge took it.
-//   - A live row: a restore came first.
-//   - A row in the trash that id names: the undo brings it back.
-//   - A row in the trash that a newer entry or log names: a newer delete
-//     owns it. The undo refuses with ErrDeletedAgain, so it never brings
-//     back a part of the rows.
-//   - A row in the trash that no log names: a trigger dropped the log, for
-//     example the insert or the revive of a master. The delete of the user
-//     is still the last action on the row, so the undo brings it back.
+// owner names the record that holds a row in the trash for the undo.
+type owner int
+
+const (
+	ownedBySelf  owner = iota + 1 // the identity of the delete names the row
+	ownedByOther                  // a newer entry or log names the row
+)
+
+// identityRefusalTx decides the undo of the delete of id, whose rows are
+// ids. It reads the delete logs of uid once. A newer record wins over the
+// identity: a pruned marker is no log. For each row:
+//   - No row, or a live row: the row is done. A purge took it, or a restore
+//     came first.
+//   - A row in the trash that a newer entry or log names: the undo refuses
+//     with ErrDeletedAgain.
+//   - A row in the trash that id names: the row comes back.
+//   - A row in the trash that no log names: a pull hid it, for example with
+//     a prune, or a trigger dropped the log. The undo refuses with
+//     ErrChangedSince. The trash still restores the row. The zero identity
+//     wrote no log, so for it such a row comes back.
 //
-// It returns the rows to bring back. With none, it gives ErrAlreadyRestored
-// when a row is live, else ErrNotDeleted.
-func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, ids []int64, id deleteIdentity) ([]int64, error) {
+// The undo is all or nothing: one refusal refuses the whole undo. It returns
+// the states of the rows to bring back. With none, it gives
+// ErrAlreadyRestored when a row is live, else ErrNotDeleted.
+func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, ids []int64, id deleteIdentity) ([]storage.ListEventRowStatesByIDsRow, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	own := make(map[int64]bool)
-	other := make(map[int64]bool)
-	mark := func(rows []int64, owned bool) {
+	owners := make(map[int64]owner)
+	set := func(rows []int64, o owner) {
 		for _, r := range rows {
-			if owned {
-				own[r] = true
-			} else {
-				other[r] = true
+			if owners[r] != ownedByOther {
+				owners[r] = o
 			}
 		}
+	}
+	ownerOf := func(self bool) owner {
+		if self {
+			return ownedBySelf
+		}
+		return ownedByOther
 	}
 	occurrences, err := qtx.ListEventExdateDeletesByUID(ctx, uid)
 	if err != nil {
@@ -444,7 +474,7 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 			return nil, err
 		}
 		for _, e := range log.Entries {
-			mark(e.Rows, id.exdateLogID != 0 && l.ID == id.exdateLogID && e.Seq == id.seq)
+			set(e.Rows, ownerOf(id.exdateLogID != 0 && l.ID == id.exdateLogID && e.Seq == id.seq))
 		}
 	}
 	series, err := qtx.ListEventSeriesDeletesByUID(ctx, uid)
@@ -456,7 +486,7 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 		if err != nil {
 			return nil, err
 		}
-		mark(rows, id.seriesLogID != 0 && l.ID == id.seriesLogID)
+		set(rows, ownerOf(id.seriesLogID != 0 && l.ID == id.seriesLogID))
 	}
 	truncs, err := qtx.ListEventTruncateDeletesByUID(ctx, uid)
 	if err != nil {
@@ -467,30 +497,30 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 		if err != nil {
 			return nil, err
 		}
-		mark(rows, false)
+		set(rows, ownedByOther)
 	}
 	states, err := rowStatesTx(ctx, qtx, ids)
 	if err != nil {
 		return nil, err
 	}
-	present := make(map[int64]storage.ListEventRowStatesByIDsRow, len(states))
-	for _, st := range states {
-		present[st.ID] = st
-	}
-	var restore []int64
+	zero := id == deleteIdentity{}
+	var restore []storage.ListEventRowStatesByIDsRow
 	live := false
-	for _, rowID := range ids {
-		st, ok := present[rowID]
-		switch {
-		case !ok:
-		case st.DeletedAt == nil:
+	for _, st := range states {
+		if st.DeletedAt == nil {
 			live = true
-		case own[rowID]:
-			restore = append(restore, rowID)
-		case other[rowID]:
+			continue
+		}
+		switch owners[st.ID] {
+		case ownedByOther:
 			return nil, ErrDeletedAgain
+		case ownedBySelf:
+			restore = append(restore, st)
 		default:
-			restore = append(restore, rowID)
+			if !zero {
+				return nil, ErrChangedSince
+			}
+			restore = append(restore, st)
 		}
 	}
 	if len(restore) == 0 {
@@ -500,4 +530,26 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 		return nil, ErrNotDeleted
 	}
 	return restore, nil
+}
+
+// writableCalendarsTx returns a cached check of the write policy of a
+// calendar. A calendar that refuses a write gives false. Another error of the
+// check is an error.
+func writableCalendarsTx(ctx context.Context, qtx *storage.Queries) func(calendarID int64) (bool, error) {
+	cache := make(map[int64]bool)
+	return func(calendarID int64) (bool, error) {
+		if ok, seen := cache[calendarID]; seen {
+			return ok, nil
+		}
+		err := calendaraccess.EnsureWritable(ctx, qtx, calendarID, "VEVENT")
+		switch {
+		case err == nil:
+			cache[calendarID] = true
+		case errors.Is(err, calendaraccess.ErrReadOnly) || errors.Is(err, calendaraccess.ErrUnsupportedComponent):
+			cache[calendarID] = false
+		default:
+			return false, err
+		}
+		return cache[calendarID], nil
+	}
 }

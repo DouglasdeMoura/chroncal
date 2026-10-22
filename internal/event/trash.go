@@ -530,9 +530,9 @@ func (s *Service) purgeInstanceByLogID(ctx context.Context, logID int64) error {
 		return err
 	}
 	rows := parsed.AllRows()
-	// The purge writes the calendar of each row: a legacy override lives in
-	// another calendar than its master.
-	if err := ensureRowsWritableTx(ctx, qtx, log.CalendarID, rows); err != nil {
+	// The purge writes the calendar of each row, the calendar of the master
+	// too: a legacy override lives in another calendar than its master.
+	if err := ensureRowsWritableTx(ctx, qtx, 0, rows); err != nil {
 		return err
 	}
 	// The log goes first, so the settle of the purge finds no log.
