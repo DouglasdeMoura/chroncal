@@ -51,9 +51,9 @@ func TestBuildRemoteResourcePathUsesUID(t *testing.T) {
 	}
 
 	// A UID with path-hostile characters must not escape its segment. The
-	// URL encoder escapes the '%' of each escape sequence once more.
-	got = buildRemoteResourcePath("https://caldav.example.com/cal", "a/b c?d")
-	want = "https://caldav.example.com/cal/a%252Fb%20c%253Fd.ics"
+	// href keeps each escape exactly once (issue #860).
+	got = buildRemoteResourcePath("https://caldav.example.com/cal", "a/b c?d%e")
+	want = "https://caldav.example.com/cal/a%2Fb%20c%3Fd%25e.ics"
 	if got != want {
 		t.Errorf("buildRemoteResourcePath = %q, want %q", got, want)
 	}
