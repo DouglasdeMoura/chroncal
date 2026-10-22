@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"io"
 	"net/http"
@@ -898,5 +899,84 @@ func TestEnginePullDeletesLocalResourceWhenServerRemovesIt(t *testing.T) {
 		Uid:        "remote-deleted",
 	}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("GetSyncResource err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+// TestEnginePushSecondEditKeepsEscapedHref covers the second PUT of a UID
+// with escape bytes (issue #860). The first push stores RemoteUrl in its
+// escaped form. The next edit must PUT to that same href. A decoded ref
+// turned "%2F" into '/', and path.Clean then folded the ".." segments.
+func TestEnginePushSecondEditKeepsEscapedHref(t *testing.T) {
+	cases := []struct {
+		uid      string
+		wantPath string
+	}{
+		{"a/b", "/calendar/a%2Fb.ics"},
+		{"../../escape", "/calendar/..%2F..%2Fescape.ics"},
+		{"x#y?z", "/calendar/x%23y%3Fz.ics"},
+		{"p%q r", "/calendar/p%25q%20r.ics"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.uid, func(t *testing.T) {
+			engine, db, q := newTestEngine(t)
+			ctx := context.Background()
+
+			cals, err := q.ListCalendars(ctx)
+			if err != nil {
+				t.Fatalf("ListCalendars: %v", err)
+			}
+			calendarID := cals[0].ID
+			insertTestEvent(t, db, calendarID, tc.uid)
+
+			var putPaths []string
+			client := newTestCalDAVClient(t, func(r *http.Request) (*http.Response, error) {
+				if r.Method != http.MethodPut {
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.EscapedPath())
+				}
+				putPaths = append(putPaths, r.URL.EscapedPath())
+				return &http.Response{
+					StatusCode: http.StatusCreated,
+					Status:     "201 Created",
+					Header:     http.Header{"Etag": []string{fmt.Sprintf(`"etag-%d"`, len(putPaths))}},
+					Body:       io.NopCloser(http.NoBody),
+					Request:    r,
+				}, nil
+			})
+
+			markDirty := func(remoteURL, etag string) {
+				t.Helper()
+				if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+					CalendarID:   calendarID,
+					Uid:          tc.uid,
+					OwnerType:    "event",
+					RemoteUrl:    remoteURL,
+					Etag:         etag,
+					Dirty:        1,
+					SyncStrategy: "sync-token",
+				}); err != nil {
+					t.Fatalf("UpsertSyncResource: %v", err)
+				}
+			}
+
+			markDirty("", "")
+			if _, err := engine.push(ctx, client, calendarID, "/calendar/", "", ConflictServerWins, false); err != nil {
+				t.Fatalf("first push: %v", err)
+			}
+			res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: tc.uid})
+			if err != nil {
+				t.Fatalf("GetSyncResource: %v", err)
+			}
+			if res.RemoteUrl != tc.wantPath {
+				t.Fatalf("RemoteUrl = %q, want %q", res.RemoteUrl, tc.wantPath)
+			}
+
+			markDirty(res.RemoteUrl, res.Etag)
+			if _, err := engine.push(ctx, client, calendarID, "/calendar/", "", ConflictServerWins, false); err != nil {
+				t.Fatalf("second push: %v", err)
+			}
+			if len(putPaths) != 2 || putPaths[0] != tc.wantPath || putPaths[1] != tc.wantPath {
+				t.Fatalf("PUT paths = %q, want two PUTs to %q", putPaths, tc.wantPath)
+			}
+		})
 	}
 }

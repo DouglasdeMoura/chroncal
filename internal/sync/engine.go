@@ -316,21 +316,28 @@ func buildRemoteResourcePath(calendarRef, uid string) string {
 		return normalizeRemoteRef(strings.TrimRight(calendarRef, "/") + "/" + name)
 	}
 
-	basePath := parsed.Path
-	if basePath == "" {
-		basePath = "/"
-	}
-	parsed.Path = path.Join(basePath, name)
-	return normalizeRemoteRef(parsed.String())
+	// Join the escaped forms. A join of the decoded Path makes the URL
+	// encoder escape the '%' of each escape sequence once more.
+	basePath := strings.TrimRight(parsed.EscapedPath(), "/")
+	parsed.Path, parsed.RawPath = "", ""
+	return normalizeRemoteRef(parsed.String() + basePath + "/" + escapeObjectName(name))
+}
+
+// escapeObjectName escapes the bytes of name that are not legal in a path.
+// The '%' of each escape that sanitizeRemoteObjectName wrote stays as it is,
+// so the href keeps each escape exactly once.
+func escapeObjectName(name string) string {
+	escaped := (&url.URL{Path: name}).EscapedPath()
+	// Each '%' in name starts an escape of the sanitizer, and the encoder
+	// wrote each one as "%25". Restore the single escapes.
+	return strings.ReplaceAll(escaped, "%25", "%")
 }
 
 // sanitizeRemoteObjectName derives a single path segment from a UID. It
 // percent-encodes the bytes that change the path structure or the escape
 // pass: '/', '?', '#', and '%'. The mapping is injective, so two UIDs that
-// differ only in those bytes cannot map to the same remote object. The URL
-// encoder escapes the '%' of each escape sequence once more.
-// CanonicalObjectRef removes that extra escape, so the PUT href keeps each
-// escape exactly once.
+// differ only in those bytes cannot map to the same remote object.
+// escapeObjectName escapes the other bytes for the href.
 func sanitizeRemoteObjectName(uid string) string {
 	var b strings.Builder
 	b.Grow(len(uid) + len(".ics"))

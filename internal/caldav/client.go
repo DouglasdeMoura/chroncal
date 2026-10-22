@@ -503,7 +503,8 @@ func (c *Client) ResolveURL(ref string) string {
 
 // CanonicalCollectionRef resolves a calendar collection href against the
 // configured endpoint, validates it stays on the CalDAV origin, and returns a
-// normalized server-relative path.
+// normalized server-relative path. The path keeps its percent escapes, so
+// it is the same string as the href on the wire and the stored RemoteUrl.
 func (c *Client) CanonicalCollectionRef(ref string) (string, error) {
 	return canonicalCollectionRefAt(c.endpoint, ref)
 }
@@ -528,7 +529,7 @@ func canonicalCollectionRefAt(endpoint, ref string) (string, error) {
 		return "", fmt.Errorf("calendar href must stay on the configured CalDAV origin")
 	}
 
-	collectionPath := normalizePath(resolved.Path)
+	collectionPath := normalizePath(canonicalEscapes(resolved.EscapedPath()))
 	if collectionPath == "" {
 		collectionPath = "/"
 	}
@@ -540,7 +541,8 @@ func canonicalCollectionRefAt(endpoint, ref string) (string, error) {
 
 // CanonicalObjectRef resolves a calendar object href against the linked
 // calendar collection. It validates that the href stays on the configured
-// CalDAV origin. It returns a normalized server-relative path.
+// CalDAV origin. It returns a normalized server-relative path with its
+// percent escapes.
 //
 // We intentionally do not require the object path to stay within the
 // calendar collection's URL prefix. Several CalDAV servers (GMX/Cosmo, for
@@ -584,7 +586,7 @@ func CanonicalObjectRefAt(endpoint, calendarRef, objectRef string) (string, erro
 		return "", fmt.Errorf("calendar object href must stay on the configured CalDAV origin")
 	}
 
-	objectPath := normalizePath(resolved.Path)
+	objectPath := normalizePath(canonicalEscapes(resolved.EscapedPath()))
 	if objectPath == "" || strings.HasSuffix(objectPath, "/") {
 		return "", fmt.Errorf("calendar object href must point to a resource, not a collection")
 	}
@@ -601,6 +603,36 @@ func resolveRef(base *url.URL, ref string) (*url.URL, error) {
 
 func sameOrigin(a, b *url.URL) bool {
 	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+// canonicalEscapes gives one spelling to each escaped path. It keeps the
+// escapes of '/', '?', '#', and '%', because the decoded byte changes the
+// path structure. A "%23" decoded to "#" becomes a fragment at the next
+// parse, and a "%2F" decoded to "/" lets path.Clean fold a ".." segment
+// (issue #860). It decodes every other escape, and the URL encoder then
+// escapes again only the bytes that are not legal in a path. A server that
+// reports "%40" for "@" then matches the "@" of a stored RemoteUrl.
+func canonicalEscapes(escaped string) string {
+	var b strings.Builder
+	b.Grow(len(escaped))
+	for i := 0; i < len(escaped); i++ {
+		if escaped[i] == '%' && i+2 < len(escaped) {
+			if v, err := strconv.ParseUint(escaped[i+1:i+3], 16, 8); err == nil {
+				switch c := byte(v); c {
+				case '/', '?', '#', '%':
+					fmt.Fprintf(&b, "%%%02X", c)
+				default:
+					b.WriteByte(c)
+				}
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(escaped[i])
+	}
+	// Each '%' left in b starts a kept escape, and the encoder writes each
+	// one as "%25". Restore the single escapes.
+	return strings.ReplaceAll((&url.URL{Path: b.String()}).EscapedPath(), "%25", "%")
 }
 
 func normalizePath(raw string) string {
