@@ -383,29 +383,42 @@ func clearOtherTombstonesTx(ctx context.Context, qtx *storage.Queries, seriesCal
 
 // restoreOrphanDeleteTx is RestoreByUID for a UID with no master row and no
 // series-delete log. trashed holds the rows of the UID in the trash. A row
-// that an occurrence log names had its own delete, and it stays in the trash.
+// that an occurrence log names by ID had its own delete, and it stays in the
+// trash. A pruned marker names no row.
 // An example is a delete by ID of an orphan row. Of the other rows, one
 // orphan delete hides the rows of one calendar with one deleted_at, to the
 // second. The restore takes the calendar of those rows, and brings back its
 // rows of the newest deleted_at. Two calendars give ErrAmbiguousUID. No row
 // gives ErrNotDeleted.
 func restoreOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, uid string, trashed []storage.Event) (int64, error) {
-	ownDelete := make(map[int64]map[string]bool)
+	// The occurrence logs name the rows of their deletes by ID. A pruned
+	// marker is no delete of the user, so it names no row here.
+	logged := make(map[int64]bool)
+	read := make(map[int64]bool)
 	var candidates []storage.Event
 	for _, r := range trashed {
-		logged, ok := ownDelete[r.CalendarID]
-		if !ok {
+		if !read[r.CalendarID] {
+			read[r.CalendarID] = true
 			logs, err := qtx.ListEventExdateDeletesByCalendarUID(ctx, storage.ListEventExdateDeletesByCalendarUIDParams{CalendarID: r.CalendarID, Uid: uid})
 			if err != nil {
 				return 0, fmt.Errorf("list exdate logs: %w", err)
 			}
-			logged = make(map[string]bool, len(logs))
 			for _, l := range logs {
-				logged[l.RecurrenceID] = true
+				if l.Pruned == 1 {
+					continue
+				}
+				log, err := parseOccurrenceLog(l)
+				if err != nil {
+					return 0, err
+				}
+				for _, e := range log.Entries {
+					for _, id := range e.Rows {
+						logged[id] = true
+					}
+				}
 			}
-			ownDelete[r.CalendarID] = logged
 		}
-		if r.RecurrenceID != "" && logged[r.RecurrenceID] {
+		if logged[r.ID] {
 			continue
 		}
 		candidates = append(candidates, r)
@@ -1091,7 +1104,16 @@ func purgeMasterRowsTx(ctx context.Context, qtx *storage.Queries, master storage
 // the row is live (or absent). Callers then cannot purge a live event with
 // the wrong ID.
 func (s *Service) PurgeByID(ctx context.Context, id int64) error {
-	r, err := s.q.GetEventIncludingDeleted(ctx, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	// The read of the row and the purge share the transaction, so a restore
+	// in between cannot make the purge take a live row. PurgeEventByID
+	// refuses a live row too.
+	r, err := qtx.GetEventIncludingDeleted(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotDeleted
@@ -1101,12 +1123,6 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		return ErrNotDeleted
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-	qtx := s.q.WithTx(tx)
 	// The rows of a master go before the master: the view names them only
 	// while the master row exists.
 	if r.RecurrenceID == "" {
@@ -1724,12 +1740,12 @@ func sameDeleteRowsTx(ctx context.Context, qtx *storage.Queries, master storage.
 		return nil, fmt.Errorf("list exdate logs: %w", err)
 	}
 	// An occurrence log names the rows of its deletes by ID. A pruned marker
-	// and a log from before the entries (migration 057, no delete_seq) name
-	// no row, so they keep the match by recurrence ID.
+	// names no row, so it keeps the match by recurrence ID: the pull hid
+	// that row. Migration 057 writes the older logs in the entry form.
 	ownRows := make(map[int64]bool)
 	byRecID := make(map[string]bool)
 	for _, l := range exdateLogs {
-		if l.Pruned == 1 || (l.DeleteSeq == 0 && l.HiddenIds == "") {
+		if l.Pruned == 1 {
 			byRecID[l.RecurrenceID] = true
 			continue
 		}
@@ -1997,7 +2013,7 @@ func (s *Service) deleteRow(ctx context.Context, id int64, out *deletedRow) erro
 			// An orphan row gets an occurrence log of its own delete. A
 			// restore by UID then leaves the row to its own restore, as for
 			// an occurrence of a series.
-			if err := recordOrphanDeleteTx(ctx, qtx, evt.CalendarID, evt.UID, evt.RecurrenceID); err != nil {
+			if err := recordOrphanDeleteTx(ctx, qtx, evt.CalendarID, evt.UID, evt.RecurrenceID, evt.ID); err != nil {
 				return err
 			}
 		}
@@ -2053,15 +2069,16 @@ func calendarHoldsMasterTx(ctx context.Context, qtx *storage.Queries, calendarID
 }
 
 // recordOrphanDeleteTx writes the occurrence log of a delete by ID of an
-// orphan row: the UID has no master row, live or in the trash. The log owns
-// no EXDATE. A master would hold the record of an occurrence delete.
-func recordOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string) error {
+// orphan row: the UID has no master row, live or in the trash. The entry
+// names the row, so a restore by UID leaves the row to its own restore. The
+// log owns no EXDATE. A master would hold the record of an occurrence delete.
+func recordOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string, rowID int64) error {
 	log, _, err := occurrenceLogTx(ctx, qtx, calendarID, uid, recurrenceID)
 	if err != nil {
 		return err
 	}
 	log.LastSeq++
-	log.Entries = append(log.Entries, softdelete.OccurrenceEntry{Seq: log.LastSeq})
+	log.Entries = append(log.Entries, softdelete.OccurrenceEntry{Seq: log.LastSeq, Rows: []int64{rowID}})
 	log.OwnsExdate = false
 	if _, err := occurrenceStoreTx(qtx, calendarID, uid, recurrenceID, true).SaveLog(ctx, log); err != nil {
 		return fmt.Errorf("record orphan delete: %w", err)

@@ -4064,8 +4064,9 @@ func TestRestoreByUID_OrphanFallbackTakesNewestDelete(t *testing.T) {
 	for _, id := range ids[1:] {
 		trash(id, "2026-05-02T10:00:00Z")
 	}
-	if _, err := svc.db.ExecContext(ctx, `INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id) VALUES (1, ?, ?)`,
-		uid, base.Add(72*time.Hour).Format(time.RFC3339)); err != nil {
+	// The occurrence log of a delete by ID names its row (seq:row).
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_ids, owns_exdate, delete_seq) VALUES (1, ?, ?, ?, 0, 1)`,
+		uid, base.Add(72*time.Hour).Format(time.RFC3339), "1:"+strconv.FormatInt(ids[3], 10)); err != nil {
 		t.Fatalf("seed the occurrence log: %v", err)
 	}
 	if err := svc.RestoreByUID(ctx, uid); err != nil {

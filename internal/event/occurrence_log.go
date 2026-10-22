@@ -303,22 +303,35 @@ func purgedOccurrencesTx(ctx context.Context, qtx *storage.Queries, rows []stora
 		calendarID int64
 		uid, recID string
 	}
+	type series struct {
+		calendarID int64
+		uid        string
+	}
+	// One lookup for each series of the rows: the rows of one calendar and
+	// one UID share their master.
+	masters := make(map[series]*storage.Event)
 	done := make(map[key]bool)
 	var out []purgedOccurrence
 	for _, r := range rows {
 		if r.RecurrenceID == "" {
 			continue
 		}
-		// The row is in the trash, so the lookup reads the rows of the
-		// trash too. Only a live master settles.
-		master, err := findSeriesMasterIncludingDeletedTx(ctx, qtx, r.CalendarID, r.Uid)
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrAmbiguousUID) {
-			continue
+		sk := series{r.CalendarID, r.Uid}
+		master, seen := masters[sk]
+		if !seen {
+			// The row is in the trash, so the lookup reads the rows of the
+			// trash too. Only a live master settles.
+			m, err := findSeriesMasterIncludingDeletedTx(ctx, qtx, r.CalendarID, r.Uid)
+			switch {
+			case errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrAmbiguousUID):
+			case err != nil:
+				return nil, fmt.Errorf("get master: %w", err)
+			case m.DeletedAt == nil:
+				master = &m
+			}
+			masters[sk] = master
 		}
-		if err != nil {
-			return nil, fmt.Errorf("get master: %w", err)
-		}
-		if master.DeletedAt != nil {
+		if master == nil {
 			continue
 		}
 		k := key{master.CalendarID, master.Uid, r.RecurrenceID}
@@ -326,7 +339,7 @@ func purgedOccurrencesTx(ctx context.Context, qtx *storage.Queries, rows []stora
 			continue
 		}
 		done[k] = true
-		out = append(out, purgedOccurrence{master: master, recID: r.RecurrenceID})
+		out = append(out, purgedOccurrence{master: *master, recID: r.RecurrenceID})
 	}
 	return out, nil
 }

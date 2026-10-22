@@ -1088,3 +1088,49 @@ func TestPurgeByID_DropsALogThatHidesNothing(t *testing.T) {
 		t.Error("log after the purge of L1 exists, want it gone")
 	}
 }
+
+// TestRestoreByUID_OrphanTwinsSkipByRowNotByMarker: two orphan rows of one
+// occurrence in two calendars. A delete by ID hid R1, and its log names R1.
+// A pull prune hid R2 and wrote a pruned marker, which names no row. The
+// restore by UID leaves R1 to its own restore and brings back R2.
+func TestRestoreByUID_OrphanTwinsSkipByRowNotByMarker(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-twins"
+	at := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
+	calB := insertCalendar(t, svc, "B")
+	r1 := legacyAt(t, svc, uid, 1, at)
+	r2 := legacyAt(t, svc, uid, calB, at)
+	if err := svc.Delete(ctx, r1.ID); err != nil {
+		t.Fatalf("Delete(R1): %v", err)
+	}
+	if err := svc.q.SoftDeleteEvent(ctx, r2.ID); err != nil {
+		t.Fatalf("pull prune of R2: %v", err)
+	}
+	if err := svc.q.RecordEventExdatePrune(ctx, storage.RecordEventExdatePruneParams{CalendarID: calB, Uid: uid, RecurrenceID: at.Format(time.RFC3339)}); err != nil {
+		t.Fatalf("pruned marker of R2: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	wantTrashed(t, svc, true, r1.ID)
+	wantTrashed(t, svc, false, r2.ID)
+}
+
+// TestPurgeByID_RefusesALiveRow: the purge by ID reads the row in its own
+// transaction and refuses a live row with ErrNotDeleted.
+func TestPurgeByID_RefusesALiveRow(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	row, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
+	if err := svc.PurgeByID(ctx, row.ID); !errors.Is(err, ErrNotDeleted) {
+		t.Fatalf("PurgeByID(live row) = %v, want ErrNotDeleted", err)
+	}
+	wantTrashed(t, svc, false, row.ID)
+}

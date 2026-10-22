@@ -31,6 +31,17 @@ CREATE TABLE event_exdate_deletes_new (
 );
 INSERT INTO event_exdate_deletes_new (id, calendar_id, uid, recurrence_id, deleted_at)
 SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM event_exdate_deletes;
+-- A log from before this migration records one delete, and that delete
+-- recorded the EXDATE. The backfill writes it in the entry form: delete 1
+-- names each override in the trash at its occurrence, or no row. The code
+-- then has one log format. The old schema has no pruned marker.
+UPDATE event_exdate_deletes_new SET delete_seq = 1, owns_exdate = 1,
+    hidden_ids = COALESCE((
+        SELECT GROUP_CONCAT('1:' || e.id, ',') FROM events AS e
+        WHERE e.calendar_id = event_exdate_deletes_new.calendar_id
+          AND e.uid = event_exdate_deletes_new.uid
+          AND e.recurrence_id = event_exdate_deletes_new.recurrence_id
+          AND e.deleted_at IS NOT NULL), '1:');
 DROP INDEX IF EXISTS idx_event_exdate_deletes_calendar;
 DROP INDEX IF EXISTS idx_event_exdate_deletes_deleted_at;
 DROP TABLE event_exdate_deletes;
