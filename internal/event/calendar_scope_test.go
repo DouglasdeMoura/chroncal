@@ -3718,7 +3718,8 @@ func TestTruncation_SecondAtSameCutoffKeepsItsOwnLog(t *testing.T) {
 // countTombstones counts the tombstones of uid in calendarID.
 func countTombstones(t *testing.T, svc *Service, calendarID int64, uid string) int64 {
 	t.Helper()
-	n, err := svc.q.CountTombstonesByCalendarAndUID(context.Background(), storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+	var n int64
+	err := svc.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM tombstones WHERE calendar_id = ? AND uid = ?`, calendarID, uid).Scan(&n)
 	if err != nil {
 		t.Fatalf("count tombstones: %v", err)
 	}

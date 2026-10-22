@@ -10,17 +10,19 @@ import (
 )
 
 // TestDeleteSeries_DirtyMarkGatedOnMaster verifies that DeleteSeries on a
-// synced calendar marks the series resource dirty when the master exists.
-// It does NOT touch sync_resources (in particular no spurious calendar_id=0
-// row) when no master row exists for the UID. Regression test for the
-// master-existence guard that err reuse defeated (issue #119).
+// synced calendar removes the unpushed sync row of the series when the
+// master exists. The series never reached the server, so nothing waits for a
+// push (issue #841). It does NOT touch sync_resources (in particular no
+// spurious calendar_id=0 row) when no master row exists for the UID.
+// Regression test for the master-existence guard that err reuse defeated
+// (issue #119).
 func TestDeleteSeries_DirtyMarkGatedOnMaster(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
 	ctx := context.Background()
 	testutil.LinkCalendarToAccount(t, db)
 
-	// Master exists -> series should be marked dirty.
+	// Master exists -> the unpushed sync row of the series goes.
 	master, err := svc.UpsertByUID(ctx, UpsertParams{
 		UID: "have-master", CalendarID: 1, Summary: "Weekly",
 		DueDate:        time.Date(2026, 4, 1, 23, 59, 59, 0, time.UTC).Format(time.RFC3339),
@@ -32,14 +34,14 @@ func TestDeleteSeries_DirtyMarkGatedOnMaster(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, master.UID); err != nil {
 		t.Fatalf("DeleteSeries (master): %v", err)
 	}
-	var dirty int
+	var rows int
 	if err := db.QueryRowContext(ctx,
-		`SELECT dirty FROM sync_resources WHERE calendar_id = 1 AND uid = ?`, master.UID,
-	).Scan(&dirty); err != nil {
-		t.Fatalf("expected sync_resources row for master series: %v", err)
+		`SELECT COUNT(*) FROM sync_resources WHERE calendar_id = 1 AND uid = ?`, master.UID,
+	).Scan(&rows); err != nil {
+		t.Fatalf("count sync_resources of the master series: %v", err)
 	}
-	if dirty != 1 {
-		t.Errorf("master series dirty = %d, want 1", dirty)
+	if rows != 0 {
+		t.Errorf("sync_resources rows of the unpushed master series = %d, want 0", rows)
 	}
 
 	// No master row for this UID -> must not write any sync_resources row,

@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -138,4 +140,55 @@ func mainDatabasePath(ctx context.Context, db *sql.DB) (string, error) {
 func onceRelease(release func()) func() {
 	var once sync.Once
 	return func() { once.Do(release) }
+}
+
+// Calendars locks a set of calendars. resolve maps each calendar ID to
+// lock to its lock ID: the account ID, or the negative calendar ID for a
+// calendar without an account. Calendars takes the account locks in
+// order of lock ID, then the calendar locks in order of calendar ID. This
+// order prevents a deadlock between two callers.
+//
+// After the locks, Calendars calls resolve again. When the result
+// changed, it releases the locks and tries again. The returned function
+// releases every lock.
+func Calendars(ctx context.Context, db *sql.DB, resolve func(context.Context) (map[int64]int64, error)) (func(), error) {
+	for {
+		before, err := resolve(ctx)
+		if err != nil {
+			return nil, err
+		}
+		lockIDs := slices.Sorted(maps.Values(before))
+		lockIDs = slices.Compact(lockIDs)
+		calendarIDs := slices.Sorted(maps.Keys(before))
+
+		var releases []func()
+		releaseAll := func() {
+			for i := len(releases) - 1; i >= 0; i-- {
+				releases[i]()
+			}
+		}
+		for _, id := range lockIDs {
+			release, err := Account(ctx, db, id)
+			if err != nil {
+				releaseAll()
+				return nil, fmt.Errorf("lock sync account: %w", err)
+			}
+			releases = append(releases, release)
+		}
+		for _, id := range calendarIDs {
+			lock := Calendar(db, id)
+			lock.Lock()
+			releases = append(releases, lock.Unlock)
+		}
+		after, err := resolve(ctx)
+		if err != nil {
+			releaseAll()
+			return nil, fmt.Errorf("revalidate calendar lifecycle lock: %w", err)
+		}
+		if !maps.Equal(before, after) {
+			releaseAll()
+			continue
+		}
+		return releaseAll, nil
+	}
 }

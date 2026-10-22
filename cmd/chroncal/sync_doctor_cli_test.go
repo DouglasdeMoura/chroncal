@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -224,5 +225,74 @@ func TestSyncDoctorPushUnknownUIDIsNotFound(t *testing.T) {
 	}
 	if !strings.Contains(payload.Error, "missing@example.com") {
 		t.Fatalf("error = %q, want it to name the uid", payload.Error)
+	}
+}
+
+// seedWaitingCLIResource inserts one dirty event row with a wait for the
+// source delete of a sibling calendar, as the push records it.
+func seedWaitingCLIResource(t *testing.T, dbPath string) {
+	t.Helper()
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	ctx := context.Background()
+	cals, err := a.Queries.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	if err := a.Queries.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: cals[0].ID, Uid: "wait-cli@example.com", OwnerType: "event", Dirty: 1, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	// A create waits for the source delete of a sibling calendar. The row
+	// is dirty with no href. A tombstone of the UID waits in a second
+	// calendar of the same account.
+	if _, err := a.DB.ExecContext(ctx, `UPDATE sync_resources SET wait_kind = 2 WHERE uid = ?`, "wait-cli@example.com"); err != nil {
+		t.Fatalf("record the wait: %v", err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO accounts (id, name, server_url, auth_type, username) VALUES (900, 'wait-acct', 'https://example.com', 'basic', 'u')`,
+		`UPDATE calendars SET account_id = 900, remote_url = '/own/' WHERE id = ` + fmt.Sprint(cals[0].ID),
+		`INSERT INTO calendars (name, account_id, remote_url) VALUES ('Sibling', 900, '/sibling/')`,
+	} {
+		if _, err := a.DB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	if _, err := a.DB.ExecContext(ctx, `INSERT INTO tombstones (calendar_id, uid, remote_url) SELECT id, ?, '/sibling/x.ics' FROM calendars WHERE name = 'Sibling'`, "wait-cli@example.com"); err != nil {
+		t.Fatalf("record the wait: %v", err)
+	}
+}
+
+// TestSyncDoctorListsAWaitingResource checks that the doctor shows a row
+// whose push waits as a wait, not as a wedge or a failure (issue #841).
+func TestSyncDoctorListsAWaitingResource(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	seedWaitingCLIResource(t, dbPath)
+
+	stdout, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
+	if err != nil {
+		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stdout, `uid wait-cli@example.com (event): waiting on the source delete of the UID in another calendar`) {
+		t.Errorf("output %q misses the waiting line", stdout)
+	}
+	if !strings.Contains(stdout, "No wedged resources.") {
+		t.Errorf("output %q misses the empty wedge report", stdout)
+	}
+
+	stdout, _, err = runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--output", "json")
+	if err != nil {
+		t.Fatalf("sync doctor --output json: %v", err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &items); err != nil {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	if len(items) != 1 || items[0]["state"] != "waiting" || items[0]["reason"] != "the source delete of the UID in another calendar" {
+		t.Fatalf("items = %v, want one waiting item with its reason", items)
 	}
 }

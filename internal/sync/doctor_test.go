@@ -456,7 +456,7 @@ func TestDoctorPushRefusesOpenConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEventByUID: %v", err)
 	}
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: cal.ID,
 		OwnerType:  "event",
 		OwnerID:    evt.ID,

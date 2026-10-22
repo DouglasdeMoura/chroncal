@@ -343,11 +343,25 @@ func (s *Service) LinkToAccount(ctx context.Context, id, accountID int64, remote
 	if err := s.CheckLinkable(existing); err != nil {
 		return err
 	}
-	return s.q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
 		ID:        id,
 		AccountID: &accountID,
 		RemoteUrl: storage.StringToNullable(remoteURL),
-	})
+	}); err != nil {
+		return err
+	}
+	// As Connect does: a moved copy gets its sync row, in the transaction
+	// of the link (issue #841).
+	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) UnlinkFromAccount(ctx context.Context, id int64) error {

@@ -288,8 +288,9 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 	deletions.inferFromAbsence(calendarID, localResources, remoteUIDs, true, "complete (QueryAll)")
 	// The full-snapshot path stores no sync-token, so a failed deletion here is
 	// self-healing: the next snapshot re-infers the absence and retries.
-	deleted, _ := deletions.apply(ctx, e, calendarID, tombstonedUIDs)
+	deleted, _, deleteWarnings := deletions.apply(ctx, e, calendarID, tombstonedUIDs)
 	result.deleted += deleted
+	result.warnings = append(result.warnings, deleteWarnings...)
 
 	return result, nil
 }
@@ -384,22 +385,64 @@ func (p *pendingDeletions) inferFromAbsence(calendarID int64, locals []storage.S
 // them when the pull started. The absence of such a UID proves nothing, so
 // apply keeps it. For the other UIDs, apply reads the tombstones when it
 // runs: a local delete, restore, or move can change them during the pull.
-// It returns the count actually deleted and
-// the count that failed. A failed soft-delete (for example a transient
+// It returns the count actually deleted and the count that failed. It
+// also returns a warning for each server delete of a source that a move
+// conflict holds. A failed soft-delete (for example a transient
 // SQLITE_BUSY) leaves the local row orphaned. The server dropped it, but we
 // did not. The caller must treat failed > 0 as an incomplete pull and
 // withhold the sync-token. Otherwise the server, now past the old token,
 // never re-reports the deletion. The orphan then survives forever with no
 // retry.
-func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int64, skipped map[string]bool) (deleted, failed int) {
+func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int64, skipped map[string]bool) (deleted, failed int, warnings []ImportWarning) {
 	for uid, ownerType := range p.owner {
 		if skipped[uid] && !p.explicit[uid] {
 			continue
 		}
-		// One transaction reads the tombstones and writes the rows, the sync
-		// row, and the tombstones (deleteLocalResourceByUID). A failure of
-		// any write counts as a failed UID, so the sync token stays.
-		outcome, err := e.deleteLocalResourceByUID(ctx, calendarID, ownerType, uid, p.explicit[uid])
+		// A tombstone of the UID in this calendar marks a local delete or
+		// a local move out of the calendar that is not sent yet. The local
+		// rows stay: after a move they live in another calendar, and after
+		// a delete they are in the trash already. When the server reported
+		// the delete, it did what the tombstone wanted, so the sync row and
+		// the tombstone go. An absence-inferred UID keeps both: the pull
+		// skips a tombstoned href, so its absence proves nothing, and the
+		// tombstone pass sends the DELETE (a 404 then clears both rows).
+		ts, err := e.q.GetTombstoneByCalendarAndUID(ctx, storage.GetTombstoneByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+		tombstoned, err := storage.Found(err)
+		if err != nil {
+			e.logger.Error("get tombstone", "uid", uid, "error", err)
+			failed++
+			continue
+		}
+		if tombstoned {
+			if !p.explicit[uid] {
+				continue
+			}
+			// The server did what the tombstone wanted. A move tombstone
+			// then marks its move conflict finished (issue #841).
+			// A write that changed the tombstone leaves the move open: the
+			// clear makes no move write then, and the next pass acts on it.
+			// An open move conflict of a third calendar that names this
+			// source holds the tombstone too, in the same transaction. The
+			// clear marks the source gone then, and the pull reports the
+			// wait. The row stores the wait, so the sync doctor and the sync
+			// status show it.
+			res, err := e.clearDeletedTombstone(ctx, calendarID, ts, clearSourceGone(0))
+			if err != nil {
+				e.logger.Error("clear deleted tombstone", "uid", uid, "error", err)
+				failed++
+				continue
+			}
+			if held := res.heldError(uid); held != nil {
+				w := e.recordPushWait(ctx, calendarID, ts.RemoteUrl, held)
+				w.Message = "the server deleted the source object; " + w.Message
+				warnings = append(warnings, w)
+			}
+			continue
+		}
+		// One transaction reads the tombstones again and writes the rows and
+		// the sync row (deleteLocalResourceByUID). A failure of any write
+		// counts as a failed UID, so the sync token stays.
+		outcome, err := e.deleteLocalResourceByUID(ctx, calendarID, ownerType, uid)
 		if err != nil {
 			e.logger.Error("apply remote delete", "uid", uid, "owner_type", ownerType, "error", err)
 			failed++
@@ -410,5 +453,5 @@ func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int6
 		}
 		deleted++
 	}
-	return deleted, failed
+	return deleted, failed, warnings
 }

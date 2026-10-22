@@ -150,6 +150,11 @@ func relinkDiscoveredCalendar(ctx context.Context, qtx *storage.Queries, acct Ac
 	if err := applyDiscoveredCalendarMetadata(ctx, qtx, item, calendarID); err != nil {
 		return err
 	}
+	// A moved copy in the relinked calendar gets its sync row, in the
+	// transaction of the relink (issue #841).
+	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, calendarID); err != nil {
+		return err
+	}
 	return qtx.UpdateCalendarOwnerEmail(ctx, storage.UpdateCalendarOwnerEmailParams{
 		OwnerEmail: acct.Username,
 		ID:         calendarID,

@@ -174,6 +174,26 @@ func ValidateDestination(ctx context.Context, a *app.App, calendarID int64, prev
 // to collect warnings. This matches the legacy CLI behavior.
 func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.ImportResult) Summary {
 	var summary Summary
+	// Each upsert applies the import rules of issue #841 in its
+	// transaction (UpsertParams.Import). Storage derives the split: a
+	// synced calendar gets every rule, and a local calendar gets only the
+	// cross-calendar rules of a todo or a journal. A refused or failed
+	// upsert rolls back and becomes a warning of the failed item. The
+	// lookup below reads the calendar once for every row (the import mode)
+	// and decides the warnings of override imports.
+	clearPending, err := calendarSynced(ctx, a, calendarID)
+	if err != nil {
+		// The rules can refuse an item, so the import does not guess.
+		summary.Failed = len(result.Events) + len(result.Todos) + len(result.Journals)
+		result.Warnings = append(result.Warnings, fmt.Sprintf("check the calendar of the import: %v", err))
+		summary.Warnings = append([]string(nil), result.Warnings...)
+		return summary
+	}
+	mode := storage.NewImport(clearPending)
+
+	// An override alone does not clear the pending delete of its series.
+	// The import warns about such an override after the loops.
+	var overrideUIDs []string
 
 	// Store imported VTIMEZONE components.
 	for _, tz := range result.Timezones {
@@ -189,7 +209,7 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 	for _, e := range result.Events {
 		_, lookupErr := lookupEvent(ctx, a.Events, calendarID, e.UID, e.RecurrenceID)
 		saved, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
-			UID: e.UID, CalendarID: calendarID,
+			UID: e.UID, CalendarID: calendarID, Import: mode,
 			Title: e.Title, Description: e.Description, Location: e.Location,
 			StartTime: e.StartTime, EndTime: e.EndTime, AllDay: e.AllDay,
 			RecurrenceRule: e.RecurrenceRule, Timezone: e.Timezone,
@@ -205,6 +225,9 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 			summary.Failed++
 			continue
 		}
+		if e.RecurrenceID != "" {
+			overrideUIDs = append(overrideUIDs, e.UID)
+		}
 		result.Warnings = append(result.Warnings, importEventFields(ctx, a.Events, saved.ID, e)...)
 		summary.Events = append(summary.Events, saved)
 		if lookupErr != nil {
@@ -218,7 +241,7 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 	for _, t := range result.Todos {
 		_, lookupErr := lookupTodo(ctx, a.Todos, t.UID, t.RecurrenceID)
 		saved, err := a.Todos.UpsertByUID(ctx, todo.UpsertParams{
-			UID: t.UID, CalendarID: calendarID,
+			UID: t.UID, CalendarID: calendarID, Import: mode,
 			Summary: t.Summary, Description: t.Description, Location: t.Location,
 			DueDate: t.DueDate, StartDate: t.StartDate, Duration: t.Duration,
 			CompletedAt: t.CompletedAt, PercentComplete: t.PercentComplete,
@@ -234,6 +257,9 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 			summary.Failed++
 			continue
 		}
+		if t.RecurrenceID != "" {
+			overrideUIDs = append(overrideUIDs, t.UID)
+		}
 		result.Warnings = append(result.Warnings, importTodoFields(ctx, a.Todos, saved.ID, t)...)
 		summary.Todos = append(summary.Todos, saved)
 		if lookupErr != nil {
@@ -247,7 +273,7 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 	for _, j := range result.Journals {
 		_, lookupErr := lookupJournal(ctx, a.Journals, j.UID, j.RecurrenceID)
 		saved, err := a.Journals.UpsertByUID(ctx, journal.UpsertParams{
-			UID: j.UID, CalendarID: calendarID,
+			UID: j.UID, CalendarID: calendarID, Import: mode,
 			Summary: j.Summary, Description: j.Description,
 			StartDate: j.StartDate, Status: j.Status, Class: j.Class,
 			URL: j.URL, Categories: j.Categories,
@@ -261,6 +287,9 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 			summary.Failed++
 			continue
 		}
+		if j.RecurrenceID != "" {
+			overrideUIDs = append(overrideUIDs, j.UID)
+		}
 		result.Warnings = append(result.Warnings, importJournalFields(ctx, a.Journals, saved.ID, j)...)
 		summary.Journals = append(summary.Journals, saved)
 		if lookupErr != nil {
@@ -270,8 +299,37 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 		}
 	}
 
+	if clearPending && len(overrideUIDs) > 0 {
+		result.Warnings = append(result.Warnings, deletedSeriesWarnings(ctx, a, calendarID, overrideUIDs)...)
+	}
 	summary.Warnings = append([]string(nil), result.Warnings...)
 	return summary
+}
+
+// deletedSeriesWarnings warns once for each imported override whose
+// series has a pending delete in calendarID. The override lands, but the
+// delete of its series stays, so the override does not reach the server.
+// A move tombstone never reaches this point: the import refuses an
+// override into the source of a pending move (storage.PrepareImport).
+func deletedSeriesWarnings(ctx context.Context, a *app.App, calendarID int64, uids []string) []string {
+	tombstones, err := a.Queries.ListTombstonesByCalendar(ctx, calendarID)
+	if err != nil {
+		return []string{fmt.Sprintf("check the deleted series of the imported overrides: %v", err)}
+	}
+	deleted := make(map[string]bool, len(tombstones))
+	for _, ts := range tombstones {
+		deleted[ts.Uid] = true
+	}
+	var warns []string
+	seen := map[string]bool{}
+	for _, uid := range uids {
+		if !deleted[uid] || seen[uid] {
+			continue
+		}
+		seen[uid] = true
+		warns = append(warns, fmt.Sprintf("the series of %s is deleted; the override stays local", textsafe.Display(uid)))
+	}
+	return warns
 }
 
 // importEventFields attaches the transient child collections (alarms,
@@ -449,4 +507,14 @@ func lookupJournal(ctx context.Context, svc *journal.Service, uid, recurrenceID 
 		return svc.GetByUIDAndRecurrenceID(ctx, uid, recurrenceID)
 	}
 	return svc.GetByUID(ctx, uid)
+}
+
+// calendarSynced reports whether calendarID is linked to an account. It
+// returns the error of a failed lookup. The caller then fails the import.
+func calendarSynced(ctx context.Context, a *app.App, calendarID int64) (bool, error) {
+	cal, err := a.Queries.GetCalendar(ctx, calendarID)
+	if err != nil {
+		return false, fmt.Errorf("get calendar %d: %w", calendarID, err)
+	}
+	return storage.CalendarLinked(cal), nil
 }

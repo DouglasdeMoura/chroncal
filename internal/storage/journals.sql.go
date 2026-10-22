@@ -49,6 +49,54 @@ func (q *Queries) CountJournalUIDRowsInCalendar(ctx context.Context, arg CountJo
 	return i, err
 }
 
+const countLiveJournalRowsInCalendar = `-- name: CountLiveJournalRowsInCalendar :one
+SELECT COUNT(*) FROM journals WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
+`
+
+type CountLiveJournalRowsInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Count the live rows of one UID in one calendar. A local calendar has no
+// sync row, so the sync engine reads the rows to tell whether a moved
+// copy still exists there. See issue #841.
+func (q *Queries) CountLiveJournalRowsInCalendar(ctx context.Context, arg CountLiveJournalRowsInCalendarParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveJournalRowsInCalendar, arg.CalendarID, arg.Uid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countLiveJournalRowsInMoveScope = `-- name: CountLiveJournalRowsInMoveScope :one
+SELECT COUNT(*)
+FROM journals x
+JOIN calendars c ON c.id = x.calendar_id
+WHERE x.calendar_id != ?1
+  AND x.uid = ?2
+  AND x.deleted_at IS NULL
+  AND (
+    c.account_id IS NULL OR c.account_id = 0
+    OR c.account_id = (SELECT own.account_id FROM calendars own WHERE own.id = ?1)
+  )
+`
+
+type CountLiveJournalRowsInMoveScopeParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Count the live rows of one UID outside calendar_id, in the calendars of
+// the account of calendar_id and in the local calendars. The restore of a
+// cancelled move refuses when a later move took the item there. A copy of
+// the UID in another account is another item. See issue #841.
+func (q *Queries) CountLiveJournalRowsInMoveScope(ctx context.Context, arg CountLiveJournalRowsInMoveScopeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveJournalRowsInMoveScope, arg.CalendarID, arg.Uid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createJournal = `-- name: CreateJournal :one
 INSERT INTO journals (
     uid, calendar_id, summary, description,
@@ -266,6 +314,41 @@ func (q *Queries) GetJournalByUIDIncludingDeleted(ctx context.Context, uid strin
 	return i, err
 }
 
+const getJournalCalendarByUIDAndRecurrenceID = `-- name: GetJournalCalendarByUIDAndRecurrenceID :one
+SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM journals WHERE uid = ? AND recurrence_id = ?
+`
+
+type GetJournalCalendarByUIDAndRecurrenceIDParams struct {
+	Uid          string
+	RecurrenceID string
+}
+
+type GetJournalCalendarByUIDAndRecurrenceIDRow struct {
+	CalendarID int64
+	Trashed    int64
+}
+
+// The calendar of the row of one UID and recurrence ID, live or in the
+// trash, and whether the row is in the trash. The key spans calendars.
+// See issue #841.
+func (q *Queries) GetJournalCalendarByUIDAndRecurrenceID(ctx context.Context, arg GetJournalCalendarByUIDAndRecurrenceIDParams) (GetJournalCalendarByUIDAndRecurrenceIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getJournalCalendarByUIDAndRecurrenceID, arg.Uid, arg.RecurrenceID)
+	var i GetJournalCalendarByUIDAndRecurrenceIDRow
+	err := row.Scan(&i.CalendarID, &i.Trashed)
+	return i, err
+}
+
+const getJournalCalendarOfRow = `-- name: GetJournalCalendarOfRow :one
+SELECT calendar_id FROM journals WHERE id = ?
+`
+
+func (q *Queries) GetJournalCalendarOfRow(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getJournalCalendarOfRow, id)
+	var calendar_id int64
+	err := row.Scan(&calendar_id)
+	return calendar_id, err
+}
+
 const getJournalIncludingDeleted = `-- name: GetJournalIncludingDeleted :one
 SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE id = ?
 `
@@ -481,6 +564,42 @@ func (q *Queries) ListJournalOverridesByUID(ctx context.Context, uid string) ([]
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJournalRowIDsOfUIDInCalendar = `-- name: ListJournalRowIDsOfUIDInCalendar :many
+SELECT id FROM journals WHERE calendar_id = ? AND uid = ? ORDER BY id
+`
+
+type ListJournalRowIDsOfUIDInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// The IDs of the rows of one UID (live and in the trash) in one calendar.
+// The push reads them before the first PUT of a resource. A domain move
+// keeps the row IDs, so a moved row names the target of a move. See issue
+// #841.
+func (q *Queries) ListJournalRowIDsOfUIDInCalendar(ctx context.Context, arg ListJournalRowIDsOfUIDInCalendarParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listJournalRowIDsOfUIDInCalendar, arg.CalendarID, arg.Uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

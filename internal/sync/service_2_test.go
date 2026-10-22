@@ -35,7 +35,7 @@ func TestService_ResetCalendar(t *testing.T) {
 		Uid:        "reset-tombstone",
 		RemoteUrl:  "https://example.com/cal/old.ics",
 	})
-	_ = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	_, _ = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
@@ -91,7 +91,7 @@ func TestServiceResolveConflictWaitsForCalendarLifecycle(t *testing.T) {
 		"DTSTAMP:20260401T120000Z\r\n" +
 		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
 		"SUMMARY:Locked\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calendarID, OwnerType: "event", OwnerID: 1, Uid: "locked-conflict",
 		LocalIcal: localIcal, ServerIcal: "server", ServerEtag: `"etag"`,
 	}); err != nil {
@@ -101,7 +101,7 @@ func TestServiceResolveConflictWaitsForCalendarLifecycle(t *testing.T) {
 	if err != nil || len(conflicts) != 1 {
 		t.Fatalf("ListSyncConflictsByCalendar = (%+v, %v)", conflicts, err)
 	}
-	release, err := svc.engine.lockCalendarLifecycle(ctx, calendarID)
+	release, err := svc.engine.lockCalendars(ctx, calendarID)
 	if err != nil {
 		t.Fatalf("lock calendar lifecycle: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestServiceResetCalendarWaitsForLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertSyncResource: %v", err)
 	}
-	release, err := svc.engine.lockCalendarLifecycle(ctx, calendarID)
+	release, err := svc.engine.lockCalendars(ctx, calendarID)
 	if err != nil {
 		t.Fatalf("lock calendar lifecycle: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestService_ResolveConflict_ServerReturnsImportWarnings(t *testing.T) {
 		"END:VEVENT\r\n" +
 		"END:VCALENDAR\r\n"
 
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
@@ -272,7 +272,7 @@ func TestService_ResolveConflict_LocalReturnsNoImportWarnings(t *testing.T) {
 		"DTSTAMP:20260401T120000Z\r\n" +
 		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
 		"SUMMARY:Local\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: cals[0].ID,
 		OwnerType:  "event",
 		OwnerID:    1,

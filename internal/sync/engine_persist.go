@@ -3,7 +3,9 @@ package sync
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -507,6 +509,12 @@ func (e *Engine) importICal(ctx context.Context, calendarID int64, data string) 
 	if err != nil {
 		return false, nil, nil, err
 	}
+	if e.testHooks != nil && e.testHooks.beforeImport != nil {
+		e.testHooks.beforeImport()
+	}
+	if e.testHooks != nil && e.testHooks.importFailure != nil {
+		return false, nil, nil, e.testHooks.importFailure
+	}
 	revs, alarmWarnings, err := e.persistImported(ctx, calendarID, importResult)
 	if err != nil {
 		return false, nil, nil, err
@@ -577,8 +585,60 @@ func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, to
 		e.logger.Debug("skip tombstoned remote resource by uid", "uid", uid, "path", res.path)
 		return uid, false, warnings, nil
 	}
-	if e.hasOpenConflict(ctx, calendarID, uid) {
+	if blocked, moveRow := e.openConflictBlocksImport(ctx, calendarID, uid); blocked {
 		e.logger.Debug("skip pull: open conflict pending resolution", "uid", uid)
+		if moveRow {
+			// The record of a move conflict holds the source object, so
+			// the fresher body of the moved copy has no row to go to. The
+			// row keeps its stale etag: the push after the resolution gets
+			// 412 and records this change as an edit conflict. Tell the
+			// user now that the copy diverged (issue #841), once for each
+			// new etag of the copy.
+			// A server without an etag gets a hash of the body instead, so
+			// the warning still names each new body once. A body that the
+			// encoder rejects has no hash: the pass then warns each time.
+			var n int64
+			var err error
+			switch {
+			case res.etag != "":
+				n, err = e.q.MarkMoveConflictWarned(ctx, storage.MarkMoveConflictWarnedParams{Etag: res.etag, CalendarID: calendarID, Uid: uid})
+			case serverBody != "":
+				// The record knows no body of the copy on the server, so
+				// the first pull only stores the hash as the baseline. A
+				// warning then names each later body once.
+				sum := sha256.Sum256([]byte(serverBody))
+				hash := hex.EncodeToString(sum[:])
+				row, gerr := e.q.GetMoveConflictOfUID(ctx, storage.GetMoveConflictOfUIDParams{CalendarID: calendarID, Uid: uid})
+				if gerr != nil {
+					// Without the row the pass cannot tell a baseline from
+					// a change, so it skips the warning. A row that is gone
+					// (the conflict closed) is no error to log.
+					if !errors.Is(gerr, sql.ErrNoRows) {
+						e.logger.Warn("read the diverged-copy hash", "uid", uid, "error", gerr)
+					}
+					return uid, false, warnings, nil
+				}
+				n, err = e.q.MarkMoveConflictWarnedHash(ctx, storage.MarkMoveConflictWarnedHashParams{Hash: hash, CalendarID: calendarID, Uid: uid})
+				if err == nil && row.WarnedHash == "" {
+					n = 0
+				}
+			default:
+				n = 1
+			}
+			if err != nil {
+				e.logger.Warn("record the diverged-copy warning", "uid", uid, "error", err)
+			}
+			if err == nil && n == 0 {
+				return uid, false, warnings, nil
+			}
+			w := ImportWarning{
+				Path:    res.href,
+				UID:     uid,
+				Message: "the moved copy changed on the server while its move conflict is open; resolve the move conflict, and the next push records the change",
+			}
+			logImportWarnings(e.logger, []ImportWarning{w})
+			return uid, false, append(warnings, w), nil
+		}
 		// The fetched body is newer than the recorded one. Record it so a
 		// later resolve picks current server data. The sync-token may then
 		// advance: the row, not the token, carries the obligation.
@@ -683,4 +743,32 @@ func filterTombstoned[T any](logger *slog.Logger, items []T, tombstoned map[stri
 		kept = append(kept, it)
 	}
 	return kept
+}
+
+// openConflictBlocksImport reports whether an open conflict of uid keeps
+// the pull from an import of the server body. An edit conflict always
+// blocks: the local row holds the edit that the conflict records. A move
+// conflict blocks only while the target row is dirty. A landed moved copy
+// is clean. Its server body is the target object, not the recorded source
+// object, so the import keeps the copy fresh (issue #841). A dirty moved
+// copy keeps its local edit and its stale etag. The push after the
+// resolution of the move then gets 412 and records the remote edit of the
+// target object as an edit conflict. A lookup error blocks. moveRow
+// reports that a move conflict blocks the import.
+func (e *Engine) openConflictBlocksImport(ctx context.Context, calendarID int64, uid string) (blocked, moveRow bool) {
+	// One slim read: the source calendar of the conflict and the dirty
+	// flag of the row, not the conflict bodies.
+	open, err := e.q.GetOpenConflictImportBlock(ctx, storage.GetOpenConflictImportBlockParams{CalendarID: calendarID, Uid: uid})
+	found, err := storage.Found(err)
+	if err != nil {
+		e.logger.Error("check open conflict", "uid", uid, "error", err)
+		return true, false
+	}
+	if !found {
+		return false, false
+	}
+	if open.MoveSourceCalendarID == nil {
+		return true, false
+	}
+	return open.RowDirty != 0, true
 }

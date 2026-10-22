@@ -68,7 +68,7 @@ func PushMove(ctx context.Context, q *storage.Queries, fromCalendarID, toCalenda
 	if fromCalendarID == 0 || fromCalendarID == toCalendarID {
 		return
 	}
-	if safe, err := storage.MoveSourceDeleteSafe(ctx, q, fromCalendarID, toCalendarID, uid); err != nil || !safe {
+	if safe, err := storage.MoveSourceDeleteSafe(ctx, q, fromCalendarID, uid); err != nil || !safe {
 		return
 	}
 	push(fromCalendarID)
@@ -112,6 +112,9 @@ type SyncStatus struct {
 	// StuckHrefs lists the known hrefs whose retries the pull stopped.
 	// Each one keeps its local row. See issue #816.
 	StuckHrefs []StuckHref
+	// Waiting lists the rows whose last push failure is a wait. See
+	// WaitingResource.
+	Waiting []WaitingResource
 	// PushFailures lists the sync rows whose last push attempt failed.
 	PushFailures []PushFailure
 	// UnownedEdits lists the UIDs whose edit stays local, because no series
@@ -128,6 +131,36 @@ type PushFailure struct {
 	Error     string
 }
 
+// WaitingResource is a sync row whose push waits for another step, for
+// example the resolution of a move conflict. A wait is no failure. Reason
+// names the step. The list derives it from the kind of the wait and the
+// name of the holder calendar. See issue #841.
+type WaitingResource struct {
+	CalendarID int64
+	UID        string
+	OwnerType  string
+	Reason     string
+}
+
+// WaitingResources lists the rows of every calendar whose push waits, in
+// one query. A wait whose cause ended does not show.
+func (s *Service) WaitingResources(ctx context.Context) ([]WaitingResource, error) {
+	rows, err := s.q.ListWaitingSyncResources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list waiting resources: %w", err)
+	}
+	out := make([]WaitingResource, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, WaitingResource{
+			CalendarID: r.CalendarID,
+			UID:        r.Uid,
+			OwnerType:  r.OwnerType,
+			Reason:     waitReason(r.WaitKind, r.HolderName),
+		})
+	}
+	return out, nil
+}
+
 // StuckHref is a known href whose server body the pull cannot import
 // after the retry budget. Reason is "missing" (multiget 404) or
 // "unparseable" (the ical decoder rejects the body).
@@ -136,6 +169,15 @@ type StuckHref struct {
 	UID      string
 	Reason   string
 	GaveUpAt string // RFC 3339
+}
+
+// waitReason derives the reason text of a wait from its kind and the name
+// of its holder calendar. The list query reads the name in the same row.
+func waitReason(kind int64, holderName string) string {
+	if kind == waitKindHeld {
+		return heldWaitReason(holderName)
+	}
+	return sourceDeleteWaitReason
 }
 
 // Status returns sync status for all synced calendars.
@@ -158,9 +200,16 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 		})
 	}
 
+	// Like the stuck hrefs, a read failure shows no waits.
+	waits, _ := s.WaitingResources(ctx)
+	waitsByCalendar := make(map[int64][]WaitingResource)
+	for _, w := range waits {
+		waitsByCalendar[w.CalendarID] = append(waitsByCalendar[w.CalendarID], w)
+	}
+
 	var statuses []SyncStatus
 	for _, cal := range cals {
-		if cal.AccountID == nil || *cal.AccountID == 0 {
+		if !storage.CalendarLinked(cal) {
 			continue
 		}
 
@@ -172,6 +221,7 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 		if err != nil {
 			conflicts = nil
 		}
+
 		// Like the other counts, a read failure shows no unowned edits.
 		var unowned []string
 		if rows, err := s.q.ListUnownedEditUIDs(ctx, cal.ID); err == nil {
@@ -194,6 +244,7 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 			PendingPush:         len(dirty),
 			Conflicts:           len(conflicts),
 			StuckHrefs:          stuckByCalendar[cal.ID],
+			Waiting:             waitsByCalendar[cal.ID],
 			PushFailures:        failures,
 			UnownedEdits:        unowned,
 		})
@@ -216,6 +267,15 @@ type Conflict struct {
 	// the recorded local body.
 	Resolution string
 	ResolvedAt time.Time
+	// MoveSourceCalendarID names the source calendar of a move conflict. The
+	// user moved the item to CalendarID, and the source object changed on the
+	// server before the source DELETE (issue #841). It is 0 for an edit
+	// conflict.
+	MoveSourceCalendarID int64
+	// MoveState is the state of the move of a move conflict (see
+	// MoveStateOpen and the other constants). It is empty for an edit
+	// conflict.
+	MoveState string
 }
 
 // ListConflicts returns all unresolved sync conflicts.
@@ -262,6 +322,10 @@ func conflictFromRow(r storage.SyncConflict) Conflict {
 	if r.ResolvedAt != nil {
 		c.ResolvedAt = parseTime(*r.ResolvedAt)
 	}
+	if r.MoveSourceCalendarID != nil {
+		c.MoveSourceCalendarID = *r.MoveSourceCalendarID
+	}
+	c.MoveState = r.MoveState
 	return c
 }
 
@@ -275,6 +339,23 @@ func conflictFromRow(r storage.SyncConflict) Conflict {
 // afterImportRevCapture and issues #466 and #510.
 var resolveConflictAfterRevCapture func()
 
+// ResolveResult is the outcome of a conflict pick. MoveFinished reports a
+// move that the pick finished because its source object is gone (issue
+// #841). The pick did not apply the picked side then. Note says what
+// remains, for a finished move and for a pick that ran with a note.
+type ResolveResult struct {
+	Warnings     []ImportWarning
+	MoveFinished bool
+	UID          string
+	Note         string
+}
+
+// ResolveConflictOutcome is ResolveConflict with the outcome of the pick.
+func (s *Service) ResolveConflictOutcome(ctx context.Context, conflictID int64, pick string) (ResolveResult, error) {
+	res, err := s.resolveConflict(ctx, conflictID, pick)
+	return ResolveResult{Warnings: res.Warnings, MoveFinished: res.Finished, UID: res.UID, Note: res.Note}, err
+}
+
 // ResolveConflict resolves a conflict by a pick of the local or server
 // version. The local pick first imports the recorded local body, then marks
 // the resource dirty with the server ETag so the next push sends it. The
@@ -285,22 +366,75 @@ var resolveConflictAfterRevCapture func()
 // again: the row survives resolution so the recorded local body stays
 // recoverable.
 func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick string) ([]ImportWarning, error) {
+	res, err := s.ResolveConflictOutcome(ctx, conflictID, pick)
+	if res.Note != "" {
+		// The note of a pick goes to this caller as one more warning.
+		return append(res.Warnings, ImportWarning{UID: res.UID, Message: res.Note}), err
+	}
+	return res.Warnings, err
+}
+
+// resolveConflict runs the pick. See ResolveConflict.
+func (s *Service) resolveConflict(ctx context.Context, conflictID int64, pick string) (moveResolution, error) {
 	if pick != "server" && pick != "local" {
-		return nil, fmt.Errorf("invalid pick: %q (use 'local' or 'server')", pick)
+		return moveResolution{}, fmt.Errorf("invalid pick: %q (use 'local' or 'server')", pick)
 	}
 
 	conflict, err := s.q.GetSyncConflict(ctx, conflictID)
 	if err != nil {
-		return nil, fmt.Errorf("get conflict: %w", err)
+		return moveResolution{}, fmt.Errorf("get conflict: %w", err)
 	}
-	release, err := s.engine.lockCalendarLifecycle(ctx, conflict.CalendarID)
+	if conflict.MoveSourceCalendarID != nil {
+		// A move conflict touches two calendars. Take both lifecycle locks
+		// up front, in one order, so two resolves in opposite directions
+		// cannot block each other (issue #841). A move back also rewrites
+		// the tombstones of third calendars that name the target, so their
+		// locks come with it (storage.MoveResolveLockSet).
+		lockedSource, lockedTarget := *conflict.MoveSourceCalendarID, conflict.CalendarID
+		release, err := s.engine.lockMoveResolve(ctx, lockedSource, lockedTarget, conflict.Uid)
+		if err != nil {
+			return moveResolution{}, fmt.Errorf("lock move calendars lifecycle: %w", err)
+		}
+		defer release()
+		if s.engine.testHooks != nil && s.engine.testHooks.afterConflictLock != nil {
+			s.engine.testHooks.afterConflictLock()
+		}
+		conflict, err = s.q.GetSyncConflict(ctx, conflictID)
+		if err != nil {
+			return moveResolution{}, fmt.Errorf("revalidate conflict: %w", err)
+		}
+		// The locks cover the two calendars read before the wait. A row
+		// that names other calendars now needs other locks.
+		if conflict.MoveSourceCalendarID == nil || *conflict.MoveSourceCalendarID != lockedSource || conflict.CalendarID != lockedTarget {
+			return moveResolution{}, fmt.Errorf("conflict %d changed while it waited for the lock; run chroncal sync conflicts again", conflictID)
+		}
+		// An account delete keeps the move conflicts of its calendars, so a
+		// re-link resumes them. Until then no move pick can reach a server.
+		// The check runs after the locks and the re-read, so an account
+		// delete during the wait counts. An edit-conflict pick is local
+		// only, so it has no such check (issue #841).
+		for _, id := range []int64{lockedTarget, lockedSource} {
+			if err := s.refuseUnlinkedCalendar(ctx, id); err != nil {
+				return moveResolution{}, err
+			}
+		}
+		return s.resolveMoveConflict(ctx, conflict, pick)
+	}
+	lockedCalendar := conflict.CalendarID
+	release, err := s.engine.lockCalendars(ctx, lockedCalendar)
 	if err != nil {
-		return nil, fmt.Errorf("lock conflict calendar lifecycle: %w", err)
+		return moveResolution{}, fmt.Errorf("lock conflict calendar lifecycle: %w", err)
 	}
 	defer release()
+	if s.engine.testHooks != nil && s.engine.testHooks.afterConflictLock != nil {
+		s.engine.testHooks.afterConflictLock()
+	}
 	conflict, err = s.q.GetSyncConflict(ctx, conflictID)
 	if err != nil {
-		return nil, fmt.Errorf("revalidate conflict: %w", err)
+		return moveResolution{}, fmt.Errorf("revalidate conflict: %w", err)
+	}
+	if conflict.MoveSourceCalendarID != nil || conflict.CalendarID != lockedCalendar {
+		return moveResolution{}, fmt.Errorf("conflict %d changed while it waited for the lock; run chroncal sync conflicts again", conflictID)
 	}
 
 	// serverRev captures the sync_resources rev right after the accept-server
@@ -308,6 +442,21 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 	// "server" case in the transaction). Unused for the "local" pick.
 	var serverRev int64
 	var warnings []ImportWarning
+	// An edit conflict on a create (the row has no server object, and the
+	// record names an object) adopts the object at the planned href.
+	var createConflictHref string
+	if pick == "server" && conflict.ServerEtag != "" {
+		sr, err := s.q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: conflict.CalendarID, Uid: conflict.Uid})
+		found, err := storage.Found(err)
+		if err != nil {
+			return moveResolution{}, fmt.Errorf("get sync resource: %w", err)
+		}
+		if found && sr.RemoteUrl == "" {
+			if createConflictHref, err = s.engine.plannedHref(ctx, conflict.CalendarID, conflict.Uid); err != nil {
+				return moveResolution{}, fmt.Errorf("planned href of %q: %w", conflict.Uid, err)
+			}
+		}
+	}
 	if pick == "server" {
 		// Accept the server version: import the recorded server iCal into the
 		// local row so it reflects the server state. Without the import the
@@ -322,14 +471,14 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 		// conflict survives and the whole resolution replays cleanly.
 		imported, revs, importWarnings, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.ServerIcal)
 		if err != nil {
-			return nil, fmt.Errorf("import server version: %w", err)
+			return moveResolution{}, fmt.Errorf("import server version: %w", err)
 		}
 		if !imported {
 			// ImportFile returns no error for empty or component-less iCal, so a
 			// blank ServerIcal would otherwise clear dirty and stamp the server
 			// ETag onto the unchanged local row — the silent-overwrite bug this
 			// branch exists to prevent. Refuse instead of resolving falsely.
-			return nil, fmt.Errorf("server version has no importable data for %q", conflict.Uid)
+			return moveResolution{}, fmt.Errorf("server version has no importable data for %q", conflict.Uid)
 		}
 		warnings = importWarnings
 		// Use the rev importICal captured inside persistImported's transaction so
@@ -347,50 +496,7 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 			resolveConflictAfterRevCapture()
 		}
 	} else {
-		// Restore the recorded local body before the transaction below marks
-		// the resource dirty. The current row may no longer hold that body: a
-		// server-wins pass (or any later import) can have replaced it after
-		// the conflict was recorded. Without the restore, the dirty mark
-		// faithfully re-pushes the server content and the local edit stays
-		// lost. See issue #610.
-		//
-		// Skip the import when the resource is still dirty. The live row is
-		// then the unpushed local edit, which can be newer than LocalIcal.
-		// A tombstoned UID is a pending delete. Refuse it. importICal reports
-		// imported=true for a payload that still has a component, then drops
-		// the tombstoned UID, so the imported flag cannot detect this.
-		tombstoned, err := s.engine.hasTombstone(ctx, conflict.CalendarID, conflict.Uid)
-		if err != nil {
-			return nil, err
-		}
-		if tombstoned {
-			return nil, fmt.Errorf("local version cannot be restored for %q: the item is pending delete", conflict.Uid)
-		}
-		sr, srErr := s.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
-			CalendarID: conflict.CalendarID,
-			Uid:        conflict.Uid,
-		})
-		if srErr != nil && !errors.Is(srErr, sql.ErrNoRows) {
-			return nil, fmt.Errorf("get sync resource: %w", srErr)
-		}
-		if errors.Is(srErr, sql.ErrNoRows) || sr.Dirty == 0 {
-			// The import runs before the transaction below because it flows
-			// through the event/todo/journal services, which use their own
-			// connection. UpsertByUID is idempotent, so if the transaction
-			// fails to commit the conflict survives and the whole resolution
-			// replays cleanly.
-			imported, revs, importWarnings, err := s.engine.importICal(ctx, conflict.CalendarID, conflict.LocalIcal)
-			if err != nil {
-				return nil, fmt.Errorf("import local version: %w", err)
-			}
-			if !imported {
-				return nil, fmt.Errorf("local version has no importable data for %q", conflict.Uid)
-			}
-			if _, ok := revs[conflict.Uid]; !ok {
-				return nil, fmt.Errorf("local version has no importable data for %q", conflict.Uid)
-			}
-			warnings = importWarnings
-		}
+		return resolutionOf(s.restoreLocalVersion(ctx, conflict.CalendarID, conflict.CalendarID, conflict.Uid, conflict.LocalIcal, conflict.ServerEtag, nil))
 	}
 
 	// Wrap the dirty/etag mutation and the resolution stamp in one
@@ -399,56 +505,213 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 	// re-trigger an HTTP 412 loop on the next push. Issue #89 gap #3.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
+		return moveResolution{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	switch pick {
-	case "server":
-		// Adopt the server ETag and clear the pending local push now that the
-		// local row reflects the server version — but only when no local edit
-		// has landed since serverRev was captured. FinalizePushedResource always
-		// advances the ETag yet clears dirty only on rev == serverRev, so a
-		// concurrent edit (which bumped rev) keeps dirty=1 and survives to the
-		// next push. The unconditional ClearSyncResourceDirty used here before
-		// wiped that edit — issues #92/#417/#466.
-		if err := qtx.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
-			CalendarID: conflict.CalendarID,
-			Uid:        conflict.Uid,
-			Etag:       conflict.ServerEtag,
-			Rev:        serverRev,
-		}); err != nil {
-			return nil, fmt.Errorf("clear dirty: %w", err)
-		}
-	case "local":
-		// Mark the resource as dirty so the next sync pushes the local
-		// version, and replace the stored etag with the server etag recorded
-		// at conflict-detection time. The previously stored etag may be stale
-		// (it could be the value that already failed If-Match); reusing it
-		// would re-trigger HTTP 412 forever. Using the conflict's ServerEtag
-		// keeps the concurrency check intact: the next push sends
-		// If-Match: <ServerEtag>, which succeeds if the server is unchanged
-		// (fixing the loop) but 412s and surfaces a fresh conflict if the
-		// server was edited again after this conflict was recorded.
-		if err := qtx.MarkSyncResourceDirtyWithEtag(ctx, storage.MarkSyncResourceDirtyWithEtagParams{
-			CalendarID: conflict.CalendarID,
-			Uid:        conflict.Uid,
-			Etag:       conflict.ServerEtag,
-		}); err != nil {
-			return nil, fmt.Errorf("mark dirty: %w", err)
-		}
+	// Adopt the server ETag and clear the pending local push now that the
+	// local row reflects the server version. Do this only when no local edit
+	// landed after the capture of serverRev. FinalizePushedResource always
+	// advances the ETag, but it clears dirty only on rev == serverRev. A
+	// concurrent edit (which bumped rev) then keeps dirty=1 and survives to
+	// the next push. The unconditional ClearSyncResourceDirty used here before
+	// wiped that edit — issues #92/#417/#466.
+	//
+	// An edit conflict on a create: the planned href held the object that the
+	// pick adopts. The same statement records that href, as the server-wins
+	// pass does. A move tombstone then does not wait on a row that never
+	// pushes (issue #841). An empty href keeps the row's href.
+	if _, err := qtx.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
+		CalendarID: conflict.CalendarID,
+		Uid:        conflict.Uid,
+		Etag:       conflict.ServerEtag,
+		Rev:        serverRev,
+		RemoteUrl:  createConflictHref,
+	}); err != nil {
+		return moveResolution{}, fmt.Errorf("clear dirty: %w", err)
 	}
 
 	// Mark the conflict resolved instead of deleting the row. The row keeps
 	// the local body, so a later `sync resolve --pick local` can still
 	// restore the edit an auto-resolution discarded. See issue #610.
-	resolution := ResolutionServer
-	if pick == "local" {
-		resolution = ResolutionLocal
+	if err := markConflictResolvedOn(ctx, qtx, conflict.CalendarID, conflict.Uid, ResolutionServer); err != nil {
+		return moveResolution{}, fmt.Errorf("mark conflict resolved: %w", err)
 	}
-	if err := markConflictResolvedOn(ctx, qtx, conflict.CalendarID, conflict.Uid, resolution); err != nil {
+	if err := tx.Commit(); err != nil {
+		return moveResolution{}, err
+	}
+	return moveResolution{Warnings: warnings}, nil
+}
+
+// restoreMove holds the move fields of a local pick on a move conflict.
+type restoreMove struct {
+	// newState, when not empty, sets the state of the move conflict in the
+	// transaction of the resolution.
+	newState string
+	// source is the source calendar of the move conflict.
+	source *int64
+	// cancelRev is the rev of the source row after the cancel.
+	cancelRev int64
+	// cancelRowID is the id of that source row, or 0 when the cancel
+	// recorded no id. A re-created row has a new id.
+	cancelRowID int64
+	// strictRev refuses any source rev other than cancelRev, clean or
+	// dirty (a cancelled move).
+	strictRev bool
+	// probeGone, when not nil, reports whether the source object is gone
+	// from the server. The restore calls it after its local refusals and
+	// before the import, and stores the answer in sourceGone. An error of
+	// the probe refuses the restore, which then writes nothing.
+	probeGone func(ctx context.Context) (gone bool, err error)
+	// sourceGone marks a source object that is gone from the server. The
+	// row then drops its href and its etag in the transaction of the
+	// resolution, and the next push creates the item.
+	sourceGone bool
+}
+
+// restoreLocalVersion is the local pick. It writes the recorded local body
+// localIcal into calendarID and marks the resource dirty with etag, so the
+// next push sends it. move is nil for an edit conflict. For a move conflict,
+// the restore imports the recorded body even into a dirty row from the
+// cancel. It refuses a dirty row that the user edited after the cancel. The
+// conflict row lives on conflictCalendarID and gets the resolution stamp. An
+// edit conflict restores into its own calendar. The local pick on a
+// cancelled move restores into the source calendar, where the rows are then
+// (issue #841).
+//
+// The current row may no longer hold the body: a server-wins pass (or any
+// later import) replaces it after the record. Without the restore, the dirty
+// mark pushes the server content again and the local edit stays lost. See
+// issue #610. The function skips the import when the resource is still
+// dirty. The live row is then the unpushed local edit, which can be newer
+// than localIcal. A tombstoned UID is a pending delete, and the pick refuses
+// it. importICal reports imported=true for a payload that still has a
+// component and then drops the tombstoned UID, so the imported flag cannot
+// detect this.
+//
+// The push sends If-Match with etag. The etag of the record keeps the
+// concurrency check intact. The push succeeds when the server is unchanged.
+// It gets 412 and records a fresh conflict when the server changed again
+// after the record. The stored etag of the row can be the value that already
+// failed If-Match, and that value gets 412 without end. A row without a
+// server object keeps an empty etag, with one exception. The row of an edit
+// conflict on a create takes the planned href and the etag.
+func (s *Service) restoreLocalVersion(ctx context.Context, conflictCalendarID, calendarID int64, uid, localIcal, etag string, move *restoreMove) ([]ImportWarning, error) {
+	_, err := s.q.GetTombstoneByCalendarAndUID(ctx, storage.GetTombstoneByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+	tombstoned, err := storage.Found(err)
+	if err != nil {
+		return nil, fmt.Errorf("get tombstone: %w", err)
+	}
+	if tombstoned {
+		return nil, fmt.Errorf("local version cannot be restored for %q: the item is pending delete", uid)
+	}
+	sr, srErr := s.q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
+	if srErr != nil && !errors.Is(srErr, sql.ErrNoRows) {
+		return nil, fmt.Errorf("get sync resource: %w", srErr)
+	}
+	// An edit conflict on a create: the row existed before the pick, and it
+	// has no server object. The record holds the etag of the object at its
+	// planned href. The import never creates such a row, so a row that only
+	// the import below creates keeps the rule of an empty etag.
+	var createConflictHref string
+	if srErr == nil && sr.RemoteUrl == "" && etag != "" && conflictCalendarID == calendarID {
+		href, err := s.engine.plannedHref(ctx, calendarID, uid)
+		if err != nil {
+			return nil, fmt.Errorf("planned href of %q: %w", uid, err)
+		}
+		createConflictHref = href
+	}
+	var warnings []ImportWarning
+	// A restore of a move conflict imports the recorded body even into a dirty
+	// source row when the dirt comes from the cancel itself. The user picked
+	// it. A source without a server object stays dirty after the cancel. A
+	// dirty row with another rev holds an edit after the cancel, and the
+	// restore refuses to overwrite it. With strictRev (a cancelled move), any
+	// other rev refuses, clean or dirty: a pushed edit or a pull after the
+	// cancel changed the source.
+	changed := move != nil && srErr == nil && (sr.Rev != move.cancelRev || (move.cancelRowID != 0 && sr.ID != move.cancelRowID))
+	if changed && (sr.Dirty != 0 || move.strictRev) {
+		return nil, fmt.Errorf("the item %q changed after the cancel; the recorded version stays in the conflict", uid)
+	}
+	// Every local refusal ran above. Only now does a move restore probe the
+	// source object, so a refused pick sends no request.
+	if move != nil && move.probeGone != nil {
+		gone, err := move.probeGone(ctx)
+		if err != nil {
+			return nil, err
+		}
+		move.sourceGone = gone
+	}
+	if errors.Is(srErr, sql.ErrNoRows) || sr.Dirty == 0 || move != nil {
+		// The import runs before the transaction below because it flows
+		// through the event/todo/journal services, which use their own
+		// connection. UpsertByUID is idempotent, so if the transaction
+		// fails to commit the conflict survives and the whole resolution
+		// replays cleanly.
+		imported, revs, importWarnings, err := s.engine.importICal(ctx, calendarID, localIcal)
+		if err != nil {
+			return nil, fmt.Errorf("import local version: %w", err)
+		}
+		if _, ok := revs[uid]; !imported || !ok {
+			return nil, fmt.Errorf("local version has no importable data for %q", uid)
+		}
+		warnings = importWarnings
+	}
+
+	// The dirty mark and the resolution stamp commit together, so a failure
+	// cannot half-resolve the conflict (issue #89 gap #3).
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	// A row without a server object keeps an empty etag: a create PUT
+	// with If-Match fails. Only a row with a server object takes the etag
+	// of the record. The import above can create the row, so the check
+	// reads the row again.
+	after, afterErr := qtx.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
+	if afterErr != nil && !errors.Is(afterErr, sql.ErrNoRows) {
+		return nil, fmt.Errorf("get sync resource after the import: %w", afterErr)
+	}
+	switch {
+	case move != nil && move.sourceGone && afterErr == nil:
+		if err := qtx.ClearSyncResourceRemote(ctx, storage.ClearSyncResourceRemoteParams{CalendarID: calendarID, Uid: uid}); err != nil {
+			return nil, fmt.Errorf("drop the href of the gone source: %w", err)
+		}
+	case createConflictHref != "" && afterErr == nil && after.RemoteUrl == "":
+		// An edit conflict on a create: the planned href held an object.
+		// The row names that object with the recorded etag, so the push is
+		// a conditional update and a newer remote edit gets 412.
+		if err := qtx.SetSyncResourceCreateConflictRef(ctx, storage.SetSyncResourceCreateConflictRefParams{
+			RemoteUrl: createConflictHref, Etag: etag, CalendarID: calendarID, Uid: uid,
+		}); err != nil {
+			return nil, fmt.Errorf("mark dirty: %w", err)
+		}
+	case afterErr != nil || after.RemoteUrl == "":
+		if err := qtx.MarkSyncResourceDirty(ctx, storage.MarkSyncResourceDirtyParams{CalendarID: calendarID, Uid: uid}); err != nil {
+			return nil, fmt.Errorf("mark dirty: %w", err)
+		}
+	default:
+		if err := qtx.MarkSyncResourceDirtyWithEtag(ctx, storage.MarkSyncResourceDirtyWithEtagParams{
+			CalendarID: calendarID,
+			Uid:        uid,
+			Etag:       etag,
+		}); err != nil {
+			return nil, fmt.Errorf("mark dirty: %w", err)
+		}
+	}
+	if err := markConflictResolvedOn(ctx, qtx, conflictCalendarID, uid, ResolutionLocal); err != nil {
 		return nil, fmt.Errorf("mark conflict resolved: %w", err)
+	}
+	// The state of a move conflict commits with the resolution, so a
+	// failure cannot leave a resolved row in its old state.
+	if move != nil && move.newState != "" {
+		row := storage.SyncConflict{CalendarID: conflictCalendarID, Uid: uid, MoveSourceCalendarID: move.source}
+		if err := setMoveState(ctx, qtx, row, move.newState); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -457,9 +720,21 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 }
 
 // ResetCalendar clears all sync state for a calendar. Local data stays.
-// The next sync will perform a full initial sync.
+// The next sync will perform a full initial sync. Two kinds of sync state
+// stay (issue #841):
+//   - the move tombstones of live moves from the calendar, with their sync
+//     rows, so their source DELETE still goes out
+//   - the sync rows of the moved copies in the calendar that a move
+//     tombstone names. An unpushed copy keeps its create, and a landed copy
+//     keeps its href and etag.
+//
+// A calendar with an open move conflict, as the target or as the source,
+// refuses the reset.
+//
+// The reset runs under the locks of the calendars that a move links to
+// it.
 func (s *Service) ResetCalendar(ctx context.Context, calendarID int64) error {
-	release, err := s.engine.lockCalendarLifecycle(ctx, calendarID)
+	release, err := s.engine.lockCalendarWithMoves(ctx, calendarID)
 	if err != nil {
 		return fmt.Errorf("lock calendar reset lifecycle: %w", err)
 	}
@@ -470,11 +745,28 @@ func (s *Service) ResetCalendar(ctx context.Context, calendarID int64) error {
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
-	if err := qtx.DeleteSyncResourcesByCalendar(ctx, calendarID); err != nil {
-		return fmt.Errorf("delete sync resources: %w", err)
+	// The reset deletes the conflicts of the calendar. An open move
+	// conflict on it, or one whose source it is, holds a move that the user
+	// must settle first. So the reset refuses (issue #841).
+	open, err := qtx.CountOpenMoveConflictsTouchingCalendar(ctx, calendarID)
+	if err != nil {
+		return fmt.Errorf("count the open move conflicts: %w", err)
 	}
-	if err := qtx.DeleteTombstonesByCalendar(ctx, calendarID); err != nil {
+	if open > 0 {
+		return fmt.Errorf("calendar %q has open move conflicts; resolve them first (chroncal sync conflicts)", storage.CalendarLabel(ctx, qtx, calendarID))
+	}
+	if err := qtx.DeleteTombstonesForReset(ctx, calendarID); err != nil {
 		return fmt.Errorf("delete tombstones: %w", err)
+	}
+	// A moved copy without a sync row gets one first. The delete below then
+	// keeps the rows of the copies that a move tombstone names. So a landed
+	// copy keeps its href and etag, and no second create goes out (issue
+	// #841).
+	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("mark the moved copies dirty: %w", err)
+	}
+	if err := qtx.DeleteSyncResourcesForReset(ctx, calendarID); err != nil {
+		return fmt.Errorf("delete sync resources: %w", err)
 	}
 	if err := qtx.DeleteSyncHrefRetriesByCalendar(ctx, calendarID); err != nil {
 		return err
@@ -496,4 +788,18 @@ func parseTime(s string) time.Time {
 		t, _ = time.Parse("2006-01-02 15:04:05", s)
 	}
 	return t
+}
+
+// refuseUnlinkedCalendar refuses a pick when calendarID lost its account to
+// an account delete. Such a calendar keeps its remote_url for a re-link,
+// so it differs from a local calendar, which has none.
+func (s *Service) refuseUnlinkedCalendar(ctx context.Context, calendarID int64) error {
+	cal, err := s.q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		return fmt.Errorf("get calendar %d: %w", calendarID, err)
+	}
+	if storage.CalendarUnlinkedByAccountDelete(cal) {
+		return fmt.Errorf("calendar %q is not linked; add the account again or unlink the calendar", cal.Name)
+	}
+	return nil
 }

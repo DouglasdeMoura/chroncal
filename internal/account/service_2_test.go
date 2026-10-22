@@ -852,3 +852,52 @@ func TestServiceRemoveWithCalendarsRefusesLastCalendar(t *testing.T) {
 		t.Fatalf("last calendar was removed: %v", err)
 	}
 }
+
+// TestServiceDeleteKeepsTheMovesOfItsCalendars records a move conflict
+// whose source is a calendar of the account and deletes the account. The
+// delete keeps the conflict open, so a re-add of the same origin resumes
+// it.
+func TestServiceDeleteKeepsTheMovesOfItsCalendars(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	account, err := svc.Create(ctx, CreateParams{
+		Name: "Work", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	source, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Source"})
+	if err != nil {
+		t.Fatalf("CreateCalendar source: %v", err)
+	}
+	target, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Target"})
+	if err != nil {
+		t.Fatalf("CreateCalendar target: %v", err)
+	}
+	for _, c := range []struct {
+		id  int64
+		url string
+	}{{source.ID, "https://cal.example.test/source/"}, {target.ID, "https://cal.example.test/target/"}} {
+		u := c.url
+		if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{ID: c.id, AccountID: &account.ID, RemoteUrl: &u}); err != nil {
+			t.Fatalf("link calendar: %v", err)
+		}
+	}
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: target.ID, OwnerType: "event", OwnerID: 1, Uid: "moved",
+		LocalIcal: "l", ServerIcal: "s", ServerEtag: "e", MoveSourceCalendarID: &source.ID,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+	if err := svc.Delete(ctx, account.ID, store); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	row, err := q.GetMoveConflictOfUID(ctx, storage.GetMoveConflictOfUIDParams{CalendarID: target.ID, Uid: "moved"})
+	if err != nil || row.MoveState != "open" || row.ResolvedAt != nil {
+		t.Fatalf("move conflict = %+v, %v; want it kept open", row, err)
+	}
+}

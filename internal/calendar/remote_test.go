@@ -655,7 +655,7 @@ func TestDisconnect_HiddenAccountWithMultipleCalendars_PreservesCredential(t *te
 	}); err != nil {
 		t.Fatalf("seed tombstone: %v", err)
 	}
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: 1, OwnerType: "event", OwnerID: 1, Uid: "conflict",
 		LocalIcal: "local", ServerIcal: "server", ServerEtag: `"old"`,
 	}); err != nil {
@@ -909,5 +909,96 @@ func TestConnectTargetNamesTheAccountConnectWrites(t *testing.T) {
 	}
 	if id != 0 {
 		t.Fatalf("account ID = %d, want 0 for a named account", id)
+	}
+}
+
+// TestDisconnect_DetachesTheMovesFromTheCalendar records a move conflict
+// whose source is calendar 1 and unlinks calendar 1. The unlink deletes
+// the source tombstones, so it must end the move conflict in the target
+// calendar as detached.
+func TestDisconnect_DetachesTheMovesFromTheCalendar(t *testing.T) {
+	svc, q, _ := newTestServiceWithDB(t)
+	ctx := context.Background()
+
+	target, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Target", Color: "#0000ff"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	account, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: hiddenAccountPrefix + "moves", ServerUrl: "https://example.com", AuthType: "basic", Username: "user",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	for i, id := range []int64{1, target.ID} {
+		if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+			ID: id, AccountID: &account.ID, RemoteUrl: storage.StringToNullable([]string{"https://example.com/dav/a/", "https://example.com/dav/b/"}[i]),
+		}); err != nil {
+			t.Fatalf("LinkCalendarToAccount(%d): %v", id, err)
+		}
+	}
+	source := int64(1)
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: target.ID, OwnerType: "event", OwnerID: 1, Uid: "moved",
+		LocalIcal: "local", ServerIcal: "server", ServerEtag: "e2", MoveSourceCalendarID: &source,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+	// A failed cancel of the same source ends too: its replay cannot reach
+	// a server after the unlink.
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: target.ID, OwnerType: "event", OwnerID: 2, Uid: "failed",
+		LocalIcal: "local", ServerIcal: "server", ServerEtag: "e2", MoveSourceCalendarID: &source,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict failed: %v", err)
+	}
+	if _, err := q.SetMoveConflictState(ctx, storage.SetMoveConflictStateParams{MoveState: "cancel-failed", CalendarID: target.ID, Uid: "failed", MoveSourceCalendarID: &source}); err != nil {
+		t.Fatalf("SetMoveConflictState: %v", err)
+	}
+	cal1, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get cal1: %v", err)
+	}
+	if err := svc.Disconnect(ctx, cal1, &memCredStore{}); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	for _, uid := range []string{"moved", "failed"} {
+		row, err := q.GetMoveConflictOfUID(ctx, storage.GetMoveConflictOfUIDParams{CalendarID: target.ID, Uid: uid})
+		if err != nil || row.MoveState != "detached" || row.ResolvedAt == nil {
+			t.Fatalf("move conflict %s = %+v, %v; want it detached", uid, row, err)
+		}
+	}
+}
+
+// TestConnect_MarksAMovedCopyOfALocalCalendarDirty moves an item into a
+// local calendar, so the copy has no sync row there. The link of that
+// calendar must give the copy a dirty row, so the copy pushes and counts as
+// live (issue #841).
+func TestConnect_MarksAMovedCopyOfALocalCalendarDirty(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	source, err := svc.q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "source"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, status, transp, class) VALUES ('moved', 1, 'Moved', '2026-04-03T10:00:00Z', '2026-04-03T11:00:00Z', 'CONFIRMED', 'OPAQUE', 'PUBLIC')`,
+		fmt.Sprintf(`INSERT INTO tombstones (calendar_id, uid, remote_url, moved_to_calendar_id) VALUES (%d, 'moved', '/s/moved.ics', 1)`, source.ID),
+	} {
+		if _, err := svc.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	link := RemoteLink{RemoteURL: "https://example.com/dav/calendars/work/", Username: "user", AuthType: "basic"}
+	if err := svc.Connect(ctx, cal, link, auth.Credential{Username: "user", Password: "pass"}, &memCredStore{}); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	sr, err := svc.q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: 1, Uid: "moved"})
+	if err != nil || sr.Dirty != 1 || sr.RemoteUrl != "" {
+		t.Fatalf("sync row of the copy = %+v, %v; want a dirty row", sr, err)
 	}
 }

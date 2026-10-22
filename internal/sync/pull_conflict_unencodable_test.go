@@ -39,7 +39,7 @@ func TestEnginePullOpenConflictKeepsServerBodyWhenUnencodable(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertSyncResource: %v", err)
 	}
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calendarID,
 		OwnerType:  "event",
 		Uid:        uid,

@@ -151,6 +151,11 @@ type UpsertParams struct {
 	RecurrenceID    string
 	Geo             string
 	DtStamp         string
+	// Import applies the import rules of issue #841 in the transaction of
+	// the upsert. The ical import sets it for every import calendar: one
+	// value for the whole import. nil marks an upsert that is not an
+	// import. See storage.PrepareImport and storage.ApplyImport.
+	Import *storage.Import
 }
 
 const (
@@ -585,6 +590,21 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 	}
 	defer rollback()
 
+	// The import rules that come before the upsert (issue #841). The key
+	// spans calendars, so the rules read the prior row first.
+	var guard storage.PreparedImport
+	if p.Import != nil {
+		var err error
+		guard, err = storage.PrepareImport(ctx, qtx, p.Import, p.CalendarID, p.UID, p.RecurrenceID, "todo", func(ctx context.Context) (int64, bool, bool, error) {
+			row, err := qtx.GetTodoCalendarByUIDAndRecurrenceID(ctx, storage.GetTodoCalendarByUIDAndRecurrenceIDParams{Uid: p.UID, RecurrenceID: p.RecurrenceID})
+			found, err := storage.Found(err)
+			return row.CalendarID, row.Trashed == 1, found, err
+		})
+		if err != nil {
+			return Todo{}, err
+		}
+	}
+
 	r, err := qtx.UpsertTodoByUID(ctx, storage.UpsertTodoByUIDParams{
 		Uid:             p.UID,
 		CalendarID:      p.CalendarID,
@@ -615,6 +635,11 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 	t := fromStorage(r)
 	if err := replaceCategoriesTx(ctx, qtx, t.ID, timeutil.ParseCategoryList(p.Categories)); err != nil {
 		return Todo{}, fmt.Errorf("replace categories: %w", err)
+	}
+	if p.Import != nil {
+		if err := storage.ApplyImport(ctx, qtx, guard); err != nil {
+			return Todo{}, err
+		}
 	}
 	if err := commit(); err != nil {
 		return Todo{}, fmt.Errorf("commit upsert todo: %w", err)
@@ -759,11 +784,19 @@ func (s *Service) hydrate(ctx context.Context, t *Todo, failFast bool) error {
 	return s.collect(ctx, t, failFast).Err()
 }
 
+// UIDMoveRows binds the queries of qtx to the calendar-move rules of uid
+// (uidmove.Rows). The cancel of a move in the sync engine moves the rows
+// back through it (Rows.MoveBack), so the move rules stay in uidmove
+// (issue #841).
+func UIDMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
+	return uidMoveRows(qtx, uid)
+}
+
 // uidMoveRows binds the todo queries of the transaction to the shared
 // calendar-move rules for uid (see uidmove.SingleMasterRows). The todos
 // table keeps the key UNIQUE(uid, recurrence_id) across all calendars.
 func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
-	return uidmove.SingleMasterRows(qtx, uid, ErrInstanceCalendarMove,
+	rows := uidmove.SingleMasterRows(qtx, uid, ErrInstanceCalendarMove,
 		func(ctx context.Context) (uidmove.Master, bool, error) {
 			m, err := qtx.GetTodoByUIDIncludingDeleted(ctx, uid)
 			found, err := storage.Found(err)
@@ -776,4 +809,8 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 			return qtx.MoveTodoExdateDeletesUIDToCalendar(ctx, storage.MoveTodoExdateDeletesUIDToCalendarParams{FromCalendarID: from, ToCalendarID: to, Uid: uid})
 		}},
 	)
+	rows.LiveRowsIn = func(ctx context.Context, calendarID int64) (int64, error) {
+		return qtx.CountLiveTodoRowsInCalendar(ctx, storage.CountLiveTodoRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
+	}
+	return rows
 }

@@ -238,10 +238,7 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 // marks the resource dirty. The next push then re-CREATEs it on the server
 // if the sync_resource was already swept out.
 func (s *Service) reconcileSyncAfterRestore(ctx context.Context, calendarID int64, uid string) error {
-	if err := s.q.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{
-		CalendarID: calendarID,
-		Uid:        uid,
-	}); err != nil {
+	if err := storage.ClearTombstonesOfUIDInTx(ctx, s.db, s.q, calendarID, uid); err != nil {
 		return fmt.Errorf("clear tombstone after restore: %w", err)
 	}
 	if err := storage.MarkResourceDirty(ctx, s.db, calendarID, uid, "todo"); err != nil {
@@ -296,9 +293,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		if err := qtx.SoftDeleteTodo(ctx, id); err != nil {
 			return fmt.Errorf("soft-delete todo: %w", err)
 		}
-		if err := storage.MarkResourceDirty(ctx, tx, td.CalendarID, td.UID, "todo"); err != nil {
-			return fmt.Errorf("mark resource dirty: %w", err)
-		}
+		// No dirty mark: the tombstone carries the delete, and a UID without
+		// a server object has no sync row now (CreateTombstoneIfSynced).
 		return tx.Commit()
 	}
 
@@ -387,14 +383,14 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 
-	// Tombstone, dirty-mark, and soft-delete commit together. A failed
-	// sync-track write cannot leave a tombstone for a still-live series
-	// whose next sync would DELETE it from the server (issue #107). No
-	// master means there is nothing to track.
+	// The tombstone and the soft-delete commit together. A failed write
+	// then leaves no tombstone for a live series, which the next sync
+	// would delete from the server (issue #107). The delete writes no
+	// dirty mark (see Delete). With no master, nothing needs a tombstone.
 	master, mErr := qtx.GetTodoByUID(ctx, uid)
 	// Only ErrNoRows means "no master to track". A genuine lookup error must
-	// abort. Otherwise the series is soft-deleted locally without a tombstone
-	// or dirty mark. It would then resurface on the next pull (issue #290).
+	// abort. Otherwise the series is soft-deleted locally without a
+	// tombstone. It would then resurface on the next pull (issue #290).
 	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
 		return fmt.Errorf("get master: %w", mErr)
 	}
@@ -408,10 +404,6 @@ func (s *Service) DeleteSeries(ctx context.Context, uid string) error {
 	if err := qtx.SoftDeleteTodosByUID(ctx, uid); err != nil {
 		return fmt.Errorf("soft-delete series: %w", err)
 	}
-	if haveMaster {
-		if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, uid, "todo"); err != nil {
-			return fmt.Errorf("mark resource dirty: %w", err)
-		}
-	}
+	// No dirty mark after the series delete: see Delete.
 	return tx.Commit()
 }

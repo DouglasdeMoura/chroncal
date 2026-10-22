@@ -27,7 +27,7 @@ Core data services:
 
 Integration packages and infrastructure packages do not use the `NewService` shape above. Each package has its own constructor:
 
-- **sync** - CalDAV sync engine. Detect and resolve conflicts (`NewService` with extra dependencies). Write paths push through `PushLocalEdits`; a 412 records a conflict and keeps the edit dirty. The conflict strategy governs full passes only. A resolved conflict row stays, so `sync resolve --pick local` can restore the recorded local body.
+- **sync** - CalDAV sync engine. Detect and resolve conflicts (`NewService` with extra dependencies). Write paths push through `PushLocalEdits`; a 412 records a conflict and keeps the edit dirty. The conflict strategy governs full passes only. A resolved conflict row stays, so `sync resolve --pick local` can restore the recorded local body. One exception applies. A new move of the UID drops the resolved move rows of the earlier move in its account. Their recorded bodies describe a move that no longer exists.
 - **caldav** - Low-level CalDAV client (discovery, REPORT, PROPFIND, VFREEBUSY). Constructor: `NewClient`
 - **freebusy** - Local free/busy results plus a remote CalDAV query. Plain functions (`Compute`)
 - **auth** - Credential store (OS keyring, optional plaintext). OAuth2 PKCE. Plain functions
@@ -147,7 +147,7 @@ Confirm dialogs focus Cancel by default (`form.FocusCancel()`). A quick Enter ca
 Three rules keep the suite fast. Follow them in every new test.
 
 1. Never touch the real OS keyring. `TestMain` in `cmd/chroncal/main_test.go` sets `CHRONCAL_SECURITY_DISABLE_KEYRING=1` for the test binary and its child processes. A locked desktop keyring blocks each D-Bus call for the full method timeout. One credential command then stalls a test for tens of seconds.
-2. Take test databases from `internal/testutil`. Use `testutil.NewTestDB(t)` or `testutil.DBPath(t)`. Do not call `storage.Open` on a fresh path per test. A fresh open runs the full migration set and costs about a quarter second of CPU. Migration up/down tests in internal/storage are the one exception, because they must run the migration set.
+2. Take test databases from `internal/testutil`. Use `testutil.NewTestDB(t)` or `testutil.DBPath(t)`. Do not call `storage.Open` on a fresh path per test. A fresh open runs the full migration set and costs about a quarter second of CPU. The migration up/down tests in `internal/storage` are the one exception, because they must run the migration set.
 3. Keep `tea.Tick` on the fake clock. A `tea.Tick` starts its timer when the code builds the command, not when the command runs. Run the model update and the command check inside one `synctest.Test` bubble. See `batchEmits` in `internal/tui/oauth_wiring_test.go`.
 
 ## Common Tasks

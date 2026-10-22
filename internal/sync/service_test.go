@@ -168,7 +168,7 @@ func TestService_ResolveConflict_InvalidPick(t *testing.T) {
 	_ = account
 
 	// Create a conflict
-	err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	_, err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
@@ -244,7 +244,7 @@ func TestService_ResolveConflict_Server(t *testing.T) {
 		"END:VEVENT\r\n" +
 		"END:VCALENDAR\r\n"
 
-	err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	_, err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
@@ -349,7 +349,7 @@ func TestService_ResolveConflict_ServerPreservesConcurrentEdit(t *testing.T) {
 		"END:VEVENT\r\n" +
 		"END:VCALENDAR\r\n"
 
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
@@ -457,7 +457,7 @@ func TestService_ResolveConflict_ServerPreservesConcurrentEditAfterPersist(t *te
 		"END:VEVENT\r\n" +
 		"END:VCALENDAR\r\n"
 
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
@@ -562,7 +562,7 @@ func TestService_ResolveConflict_ServerDoesNotResurrectDeleted(t *testing.T) {
 		"BEGIN:VEVENT\r\nUID:" + uid + "\r\n" +
 		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
 		"SUMMARY:Server Title\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID, OwnerType: "event", OwnerID: created.ID, Uid: uid,
 		LocalIcal: "local", ServerIcal: serverIcal, ServerEtag: "etag-456",
 	}); err != nil {
@@ -642,7 +642,7 @@ func TestService_ResolveConflict_Local(t *testing.T) {
 		"DTSTAMP:20260401T120000Z\r\n" +
 		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
 		"SUMMARY:Local Title\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	_, err = q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,
@@ -744,7 +744,7 @@ func TestService_ResolveConflict_LocalDoesNotResurrectDeleted(t *testing.T) {
 		"DTSTAMP:20260401T120000Z\r\n" +
 		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
 		"SUMMARY:Local Title\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID, OwnerType: "event", OwnerID: created.ID, Uid: uid,
 		LocalIcal: localIcal, ServerIcal: "server", ServerEtag: "etag-456",
 	}); err != nil {
@@ -805,7 +805,7 @@ func TestService_ResolveConflict_LocalKeepsANewerDirtyEdit(t *testing.T) {
 		"DTSTAMP:20260401T120000Z\r\n" +
 		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
 		"SUMMARY:Local Title\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID, OwnerType: "event", OwnerID: 1, Uid: uid,
 		LocalIcal: localIcal, ServerIcal: "server", ServerEtag: "etag-456",
 	}); err != nil {
@@ -853,7 +853,7 @@ func TestService_ResolveConflict_ServerEmptyIcal(t *testing.T) {
 		t.Fatalf("UpsertSyncResource: %v", err)
 	}
 
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calID,
 		OwnerType:  "event",
 		OwnerID:    1,

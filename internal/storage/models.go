@@ -333,18 +333,44 @@ type JournalsFt struct {
 	Categories  string
 }
 
-type SyncConflict struct {
-	ID         int64
+type LiveMoveCopy struct {
 	CalendarID int64
-	OwnerType  string
-	OwnerID    int64
 	Uid        string
-	LocalIcal  string
-	ServerIcal string
-	ServerEtag string
-	DetectedAt string
-	ResolvedAt *string
-	Resolution *string
+	OwnerType  string
+}
+
+type MoveWaitTombstone struct {
+	ID                int64
+	CalendarID        int64
+	Uid               string
+	MovedToCalendarID *int64
+}
+
+type OpenMoveHolder struct {
+	CalendarID       int64
+	Uid              string
+	SourceCalendarID *int64
+	CalendarName     string
+}
+
+type SyncConflict struct {
+	ID                   int64
+	CalendarID           int64
+	OwnerType            string
+	OwnerID              int64
+	Uid                  string
+	LocalIcal            string
+	ServerIcal           string
+	ServerEtag           string
+	DetectedAt           string
+	ResolvedAt           *string
+	Resolution           *string
+	MoveSourceCalendarID *int64
+	MoveState            string
+	WarnedEtag           string
+	WarnedHash           string
+	CancelSourceRev      int64
+	CancelSourceRowID    int64
 }
 
 type SyncKnownMiss struct {
@@ -367,17 +393,19 @@ type SyncPendingHref struct {
 }
 
 type SyncResource struct {
-	ID            int64
-	CalendarID    int64
-	Uid           string
-	OwnerType     string
-	RemoteUrl     string
-	Etag          string
-	Dirty         int64
-	SyncStrategy  string
-	Rev           int64
-	PushFailCount int64
-	LastPushError string
+	ID                   int64
+	CalendarID           int64
+	Uid                  string
+	OwnerType            string
+	RemoteUrl            string
+	Etag                 string
+	Dirty                int64
+	SyncStrategy         string
+	Rev                  int64
+	PushFailCount        int64
+	LastPushError        string
+	WaitKind             int64
+	WaitHolderCalendarID int64
 }
 
 type Timezone struct {
@@ -524,11 +552,15 @@ type TodosFt struct {
 }
 
 type Tombstone struct {
-	ID         int64
-	CalendarID int64
-	Uid        string
-	RemoteUrl  string
-	DeletedAt  string
+	ID                int64
+	CalendarID        int64
+	Uid               string
+	RemoteUrl         string
+	DeletedAt         string
+	MovedToCalendarID *int64
+	LegacyMove        int64
+	Version           int64
+	SourceGone        int64
 }
 
 type XProperty struct {

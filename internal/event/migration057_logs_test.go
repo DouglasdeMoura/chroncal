@@ -57,8 +57,10 @@ func migratedLegacyLogs(t *testing.T) legacyLogFixture {
 			t.Fatalf("seed at 056: %v", err)
 		}
 	}
-	if _, err := provider.UpTo(ctx, 57); err != nil {
-		t.Fatalf("up to 57: %v", err)
+	// The test migrates to the newest version: the service code reads the
+	// columns of the later migrations.
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("up: %v", err)
 	}
 	f.svc, f.masterID, f.rowID = NewService(conn, q), 1, 2
 	return f
@@ -162,8 +164,10 @@ func migratedAt056(t *testing.T, seed func(exec func(string, ...any))) *Service 
 			t.Fatalf("seed at 056: %v", err)
 		}
 	})
-	if _, err := provider.UpTo(ctx, 57); err != nil {
-		t.Fatalf("up to 57: %v", err)
+	// The test migrates to the newest version: the service code reads the
+	// columns of the later migrations.
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("up: %v", err)
 	}
 	return NewService(conn, q)
 }

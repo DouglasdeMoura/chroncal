@@ -55,6 +55,7 @@ func (m Model) handleSyncCalendarFinished(msg syncCalendarFinishedMsg) (tea.Mode
 		m.syncTotals.conflicts += msg.result.Conflicts
 		m.syncTotals.autoResolved += msg.result.AutoResolved
 		m.syncTotals.skippedConflicts += msg.result.SkippedConflicts
+		m.syncTotals.skippedPendingDeletes += msg.result.SkippedPendingDeletes
 		m.syncTotals.warnings += len(msg.result.Warnings)
 		m.syncTotals.errCount += len(msg.result.Errors)
 		if m.syncTotals.firstErr == nil && len(msg.result.Errors) > 0 {

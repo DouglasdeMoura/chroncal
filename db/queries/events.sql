@@ -205,6 +205,37 @@ SELECT
 FROM events
 WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
 
+-- name: CountLiveEventRowsInCalendar :one
+-- Count the live rows of one UID in one calendar. A local calendar has no
+-- sync row, so the sync engine reads the rows to tell whether a moved
+-- copy still exists there. See issue #841.
+SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
+
+-- name: CountLiveEventRowsInMoveScope :one
+-- Count the live rows of one UID outside calendar_id, in the calendars of
+-- the account of calendar_id and in the local calendars. The restore of a
+-- cancelled move refuses when a later move took the item there. A copy of
+-- the UID in another account is another item. See issue #841.
+SELECT COUNT(*)
+FROM events x
+JOIN calendars c ON c.id = x.calendar_id
+WHERE x.calendar_id != sqlc.arg(calendar_id)
+  AND x.uid = sqlc.arg(uid)
+  AND x.deleted_at IS NULL
+  AND (
+    c.account_id IS NULL OR c.account_id = 0
+    OR c.account_id = (SELECT own.account_id FROM calendars own WHERE own.id = sqlc.arg(calendar_id))
+  );
+
+-- name: ListEventRowIDsOfUIDInCalendar :many
+-- The IDs of the rows of one UID (live and in the trash) in one calendar.
+-- The push reads them before the first PUT of a resource. A domain move
+-- keeps the row IDs, so a moved row names the target of a move. See issue
+-- #841.
+SELECT id FROM events WHERE calendar_id = ? AND uid = ? ORDER BY id;
+
+-- name: GetEventCalendarOfRow :one
+SELECT calendar_id FROM events WHERE id = ?;
 -- name: GetEventByCalendarUIDIncludingDeleted :one
 -- The master row of one UID in one calendar, live or soft-deleted. A
 -- restore reads it: the master can be in the trash.

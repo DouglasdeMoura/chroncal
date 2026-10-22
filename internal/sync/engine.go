@@ -45,7 +45,11 @@ type SyncResult struct {
 	// SkippedConflicts counts dirty resources a full prompt-mode pass left
 	// unpushed because an open conflict already exists for them.
 	SkippedConflicts int
-	Errors           []error
+	// SkippedPendingDeletes counts dirty rows that the push held back
+	// because a pending delete of their UID waits in the calendar. The
+	// tombstone pass deletes their object (issue #841).
+	SkippedPendingDeletes int
+	Errors                []error
 	// Warnings lists what ImportFile could not represent faithfully while
 	// absorbing server resources during this cycle. It rides on the result —
 	// not just the engine logger — because most entry points run the engine
@@ -123,6 +127,32 @@ const (
 	ResolutionServerAuto = "server-auto"
 )
 
+// The states of the move of a move conflict (sync_conflicts.move_state).
+// The resolver and the engine write them at the moment the state changes,
+// and each pick reads the stored state only. See migration 058.
+const (
+	// MoveStateOpen is the record. No pick ran yet.
+	MoveStateOpen = "open"
+	// MoveStateLocalPicked means the local pick ran. The move continues.
+	MoveStateLocalPicked = "local-picked"
+	// MoveStateFinished means the source object left the server. The move
+	// is complete.
+	MoveStateFinished = "finished"
+	// MoveStateCancelled means the server pick ran, or a local restore
+	// completed a failed cancel.
+	MoveStateCancelled = "cancelled"
+	// MoveStateCancelFailed means the server pick moved the rows back, and
+	// the import of the server body failed. The pick runs again.
+	MoveStateCancelFailed = "cancel-failed"
+	// MoveStateAbandoned means the moved copy is gone. No move back ran,
+	// and the trashed copy can still hold the UID, so no pick applies.
+	MoveStateAbandoned = "abandoned"
+	// MoveStateDetached means that an unlink of the source calendar ended
+	// the move: the source tombstone is gone, so the move cannot finish.
+	// No pick applies.
+	MoveStateDetached = "detached"
+)
+
 // resolvedAtFormat stamps every resolution with the same shape. One format
 // keeps the timestamps comparable across engine and service paths.
 const resolvedAtFormat = "2006-01-02T15:04:05Z"
@@ -146,34 +176,6 @@ func markConflictResolvedOn(ctx context.Context, q *storage.Queries, calendarID 
 // engine's query handle.
 func (e *Engine) markConflictResolved(ctx context.Context, calendarID int64, uid, resolution string) error {
 	return markConflictResolvedOn(ctx, e.q, calendarID, uid, resolution)
-}
-
-func (e *Engine) hasTombstone(ctx context.Context, calendarID int64, uid string) (bool, error) {
-	tombstones, err := e.q.ListTombstonesByCalendar(ctx, calendarID)
-	if err != nil {
-		return false, fmt.Errorf("list tombstones: %w", err)
-	}
-	for _, ts := range tombstones {
-		if ts.Uid == uid {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// hasOpenConflict reports whether uid still has an unresolved conflict row.
-// A lookup error returns true so a pull does not import the server body
-// over a local edit it cannot confirm is free of a conflict.
-func (e *Engine) hasOpenConflict(ctx context.Context, calendarID int64, uid string) bool {
-	open, err := e.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{
-		CalendarID: calendarID,
-		Uid:        uid,
-	})
-	if err != nil {
-		e.logger.Error("check open conflict", "uid", uid, "error", err)
-		return true
-	}
-	return open > 0
 }
 
 // refreshConflictServerBody records the freshest server body on the open
@@ -377,7 +379,7 @@ func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (stor
 	if err != nil {
 		return storage.Calendar{}, storage.Account{}, nil, "", fmt.Errorf("get calendar: %w", err)
 	}
-	if cal.AccountID == nil || *cal.AccountID == 0 {
+	if !storage.CalendarLinked(cal) {
 		return cal, storage.Account{}, nil, "", fmt.Errorf("calendar %d is not linked to an account", calendarID)
 	}
 	account, err := e.q.GetAccount(ctx, *cal.AccountID)
@@ -404,58 +406,36 @@ func (e *Engine) loadCalendarClient(ctx context.Context, calendarID int64) (stor
 	return cal, account, client, remoteURL, nil
 }
 
-// lockCalendarLifecycle acquires locks in account-then-calendar order and
-// revalidates the association after the wait. A concurrent relink can change
-// the account between the initial lookup and lock acquisition. A retry makes
-// sure the returned lock always covers the account loadCalendarClient uses.
-func (e *Engine) lockCalendarLifecycle(ctx context.Context, calendarID int64) (func(), error) {
-	for {
-		before, err := e.q.GetCalendar(ctx, calendarID)
-		if err != nil {
-			return nil, fmt.Errorf("get calendar for lifecycle lock: %w", err)
-		}
-		lockID := nullableID(before.AccountID)
-		if lockID == 0 {
-			lockID = -calendarID
-		}
-		releaseAccount, err := synclock.Account(ctx, e.db, lockID)
-		if err != nil {
-			return nil, fmt.Errorf("lock sync account: %w", err)
-		}
-
-		calendarLock := synclock.Calendar(e.db, calendarID)
-		calendarLock.Lock()
-		after, err := e.q.GetCalendar(ctx, calendarID)
-		if err != nil {
-			calendarLock.Unlock()
-			releaseAccount()
-			return nil, fmt.Errorf("revalidate calendar lifecycle lock: %w", err)
-		}
-		afterLockID := nullableID(after.AccountID)
-		if afterLockID == 0 {
-			afterLockID = -calendarID
-		}
-		if afterLockID != lockID {
-			calendarLock.Unlock()
-			releaseAccount()
-			continue
-		}
-		return func() {
-			calendarLock.Unlock()
-			releaseAccount()
-		}, nil
-	}
+// lockCalendars acquires the lifecycle locks of a set of calendars in one
+// order. It takes the account locks (or the lock of a local calendar) by
+// lock ID, then the calendar locks by calendar ID. Two callers that hold the
+// set in different roles then never block each other. The function
+// revalidates the account of each calendar after the wait: a concurrent
+// relink can change the account between the lookup and the lock. A retry
+// makes sure the locks cover the accounts that loadCalendarClient uses.
+func (e *Engine) lockCalendars(ctx context.Context, ids ...int64) (func(), error) {
+	return synclock.Calendars(ctx, e.db, func(ctx context.Context) (map[int64]int64, error) {
+		return storage.CalendarLockIDs(ctx, e.q, ids)
+	})
 }
-func nullableID(id *int64) int64 {
-	if id == nil {
-		return 0
-	}
-	return *id
+
+// lockMoveResolve locks the two calendars of a move conflict and the
+// calendars whose tombstones name the target (storage.MoveResolveLockSet).
+// A move back rewrites those tombstones (issue #841).
+func (e *Engine) lockMoveResolve(ctx context.Context, sourceID, targetID int64, uid string) (func(), error) {
+	return synclock.Calendars(ctx, e.db, storage.MoveResolveLockSet(e.q, sourceID, targetID, uid))
+}
+
+// lockCalendarWithMoves locks calendarID and the calendars that a move
+// links to it (storage.MoveRelatedCalendars). A reset of calendarID
+// changes their move rows (issue #841).
+func (e *Engine) lockCalendarWithMoves(ctx context.Context, calendarID int64) (func(), error) {
+	return synclock.Calendars(ctx, e.db, storage.MoveLockSet(e.q, calendarID))
 }
 
 // SyncCalendar runs a full sync cycle for one calendar.
 func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy ConflictStrategy) (result *SyncResult, err error) {
-	release, err := e.lockCalendarLifecycle(ctx, calendarID)
+	release, err := e.lockCalendars(ctx, calendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -504,6 +484,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 			result.Conflicts = pushResult.conflicts
 			result.AutoResolved = pushResult.autoResolved
 			result.SkippedConflicts = pushResult.skippedConflicts
+			result.SkippedPendingDeletes = pushResult.skippedPendingDeletes
 			result.Errors = append(result.Errors, pushResult.errors...)
 			result.Warnings = append(result.Warnings, pushResult.warnings...)
 		}
@@ -522,7 +503,17 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	}
 
 	if !remoteCalendarIsReadOnly(cal) {
-		// Phase 3: Process tombstones only when the server permits writes.
+		// Phase 3: A move conflict whose moved copy is gone has no side to
+		// pick. Close it before the tombstone pass, so the source delete
+		// no longer waits for it (issue #841).
+		resolved, err := e.resolveMootMoveConflicts(ctx, calendarID)
+		result.AutoResolved += resolved
+		if err != nil {
+			e.logger.Warn("resolve moot move conflicts failed", "calendar_id", calendarID, "error", err)
+			result.Errors = append(result.Errors, fmt.Errorf("resolve moot move conflicts: %w", err))
+		}
+
+		// Phase 4: Process tombstones only when the server permits writes.
 		tombstoneResult, err := e.processTombstones(ctx, client, calendarID, remoteURL)
 		if err != nil {
 			e.logger.Warn("tombstone processing failed", "calendar_id", calendarID, "error", err)
@@ -530,10 +521,11 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		} else {
 			result.Deleted += tombstoneResult.deleted
 			result.AutoResolved += tombstoneResult.autoResolved
+			result.Conflicts += tombstoneResult.conflicts
 			result.Errors = append(result.Errors, tombstoneResult.errors...)
 		}
 
-		// Phase 4: A server-wins pass also closes open conflicts whose
+		// Phase 5: A server-wins pass also closes open conflicts whose
 		// resource is no longer dirty. Such a conflict outlived its
 		// substance — most often a pre-#610 server-wins pass adopted the
 		// server body without touching the row. Marking it resolved keeps
@@ -579,7 +571,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 // with SyncCalendar. The inner push lock continues to protect direct push
 // calls used by focused engine tests.
 func (e *Engine) PushLocalEdits(ctx context.Context, calendarID int64) (*SyncResult, error) {
-	release, err := e.lockCalendarLifecycle(ctx, calendarID)
+	release, err := e.lockCalendars(ctx, calendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -601,15 +593,22 @@ func (e *Engine) PushLocalEdits(ctx context.Context, calendarID int64) (*SyncRes
 	result.Conflicts = pushResult.conflicts
 	result.AutoResolved = pushResult.autoResolved
 	result.SkippedConflicts = pushResult.skippedConflicts
+	result.SkippedPendingDeletes = pushResult.skippedPendingDeletes
 	result.Errors = append(result.Errors, pushResult.errors...)
 	result.Warnings = append(result.Warnings, pushResult.warnings...)
 
+	resolved, err := e.resolveMootMoveConflicts(ctx, calendarID)
+	result.AutoResolved += resolved
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("resolve moot move conflicts: %w", err))
+	}
 	tombstoneResult, err := e.processTombstones(ctx, client, calendarID, remoteURL)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("tombstones: %w", err))
 	} else {
 		result.Deleted = tombstoneResult.deleted
 		result.AutoResolved += tombstoneResult.autoResolved
+		result.Conflicts += tombstoneResult.conflicts
 		result.Errors = append(result.Errors, tombstoneResult.errors...)
 	}
 	return result, nil
@@ -630,6 +629,12 @@ func (e *Engine) resolveMootConflicts(ctx context.Context, calendarID int64) (in
 	}
 	resolved := 0
 	for _, c := range open {
+		// A move conflict is never moot. Its target row is clean when the
+		// create landed, and the choice of the user is still open (issue
+		// #841).
+		if c.MoveSourceCalendarID != nil {
+			continue
+		}
 		sr, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{
 			CalendarID: calendarID,
 			Uid:        c.Uid,
@@ -646,6 +651,123 @@ func (e *Engine) resolveMootConflicts(ctx context.Context, calendarID int64) (in
 		resolved++
 	}
 	return resolved, nil
+}
+
+// resolveMootMoveConflicts closes the open move conflicts of calendarID (as
+// the target or as the source) as abandoned when the moved copy is gone. The
+// copy is gone when the target holds a tombstone of the UID. It is also gone
+// when a remote target holds no sync row of it, or the target holds no live
+// row of it. One join query (ListMootMoveConflicts) finds them, so the step
+// costs one read on each pass, the opportunistic push included. A failed
+// cancel whose item the user deleted or purged in the source closes too
+// (ListMootFailedCancels). A failed cancel whose source row carries the
+// server side closes as cancelled (ListSettledFailedCancels). The count is
+// the count of closes that committed, also with an error.
+//
+// The close writes a row of the target calendar under the locks of this
+// calendar. That is safe without the target's locks, for three reasons. The
+// close is one idempotent statement. A resolve of the row holds the account
+// lock of the source (lockCalendars with both calendars), which excludes the
+// pass of the source. The pass of the target runs the same close or writes
+// of another kind (the upsert guard of CreateSyncConflict). The user deleted
+// the copy, or a pass settled it, so the conflict has no local side to pick.
+// The resolution is server-auto: the source object keeps its remote edit.
+// The tombstone pass then follows the plain delete-vs-edit rule for the
+// source tombstone. Every pass runs this step, under every strategy, because
+// resolveMootConflicts leaves move rows alone (issue #841).
+func (e *Engine) resolveMootMoveConflicts(ctx context.Context, calendarID int64) (int, error) {
+	// One cheap read decides whether the view queries run at all.
+	open, err := e.q.CountOpenMoveConflictsTouchingCalendar(ctx, calendarID)
+	if err != nil {
+		return 0, fmt.Errorf("count open move conflicts: %w", err)
+	}
+	if open == 0 {
+		return 0, nil
+	}
+	// Each step lists its rows and closes them in order. A failed cancel waits
+	// for its replay. The user can delete or purge the item in the source
+	// after the cancel. The replay then has nothing to restore, so the row
+	// closes as abandoned. When the source row already carries the server
+	// side, the row closes as cancelled.
+	steps := []mootStep{
+		{
+			name: "moot move conflicts",
+			msg:  "move conflict is abandoned: the moved copy is gone",
+			list: func() ([]mootRow, error) {
+				rows, err := e.q.ListMootMoveConflicts(ctx, calendarID)
+				return mootRows(rows, err, func(r storage.ListMootMoveConflictsRow) mootRow { return mootRow{c: r.SyncConflict} })
+			},
+			close: func(r mootRow) error {
+				return e.q.CloseMoveConflict(ctx, storage.CloseMoveConflictParams{CalendarID: r.c.CalendarID, Uid: r.c.Uid})
+			},
+		},
+		{
+			name: "moot failed cancels",
+			msg:  "failed cancel is abandoned: the item is gone from the source",
+			list: func() ([]mootRow, error) {
+				rows, err := e.q.ListMootFailedCancels(ctx, calendarID)
+				return mootRows(rows, err, func(r storage.ListMootFailedCancelsRow) mootRow { return mootRow{c: r.SyncConflict} })
+			},
+			close: func(r mootRow) error {
+				return e.q.CloseMoveConflict(ctx, storage.CloseMoveConflictParams{CalendarID: r.c.CalendarID, Uid: r.c.Uid, AllowFailedCancel: 1})
+			},
+		},
+		{
+			name: "settled failed cancels",
+			msg:  "failed cancel is settled: the source holds the server side",
+			list: func() ([]mootRow, error) {
+				rows, err := e.q.ListSettledFailedCancels(ctx, calendarID)
+				return mootRows(rows, err, func(r storage.ListSettledFailedCancelsRow) mootRow {
+					return mootRow{c: r.SyncConflict, sourceRev: r.SourceRev, sourceRowID: r.SourceRowID}
+				})
+			},
+			close: func(r mootRow) error {
+				return e.q.CloseSettledFailedCancel(ctx, storage.CloseSettledFailedCancelParams{CancelSourceRev: r.sourceRev, CancelSourceRowID: r.sourceRowID, CalendarID: r.c.CalendarID, Uid: r.c.Uid})
+			},
+		},
+	}
+	closed := 0
+	for _, step := range steps {
+		rows, err := step.list()
+		if err != nil {
+			return closed, fmt.Errorf("list %s: %w", step.name, err)
+		}
+		for _, r := range rows {
+			e.logger.Info(step.msg, "uid", r.c.Uid, "calendar_id", r.c.CalendarID)
+			if err := step.close(r); err != nil {
+				return closed, fmt.Errorf("close %s %s: %w", step.name, r.c.Uid, err)
+			}
+			closed++
+		}
+	}
+	return closed, nil
+}
+
+// mootRow is one conflict row that a step of the moot step closes.
+type mootRow struct {
+	c           storage.SyncConflict
+	sourceRev   int64
+	sourceRowID int64
+}
+
+// mootStep lists the rows of one kind and closes each row.
+type mootStep struct {
+	name  string
+	msg   string
+	list  func() ([]mootRow, error)
+	close func(mootRow) error
+}
+
+// mootRows converts the rows of one list query to mootRow values.
+func mootRows[T any](rows []T, err error, conv func(T) mootRow) ([]mootRow, error) {
+	if err != nil {
+		return nil, err
+	}
+	out := make([]mootRow, len(rows))
+	for i, r := range rows {
+		out[i] = conv(r)
+	}
+	return out, nil
 }
 
 // accountCalendarSyncBudget bounds the sync of one calendar inside an
@@ -714,7 +836,7 @@ func (e *Engine) SyncAll(ctx context.Context, strategy ConflictStrategy) ([]*Syn
 	byAccount := make(map[int64][]calJob)
 	connected := 0
 	for _, cal := range cals {
-		if cal.AccountID == nil || *cal.AccountID == 0 {
+		if !storage.CalendarLinked(cal) {
 			continue
 		}
 		acct := *cal.AccountID
@@ -762,6 +884,67 @@ type engineTestHooks struct {
 	// clear window. That exercises the rev guard now that the persist
 	// transaction captures the rev. See issue #494.
 	afterImportPersist func()
+
+	// importFailure, when set, makes importICal fail before the persist.
+	// Tests use it to exercise a failed import inside a resolution.
+	importFailure error
+
+	// beforeImport runs in importICal before the persist. Tests use it to
+	// end the context of an import.
+	beforeImport func()
+
+	// afterPut runs in the push and in the doctor push right after a PUT
+	// landed and before the finalize of the row. Tests use it to land a
+	// local change in that window.
+	afterPut func()
+
+	// afterConflictLock runs in ResolveConflict right after the locks.
+	// Tests use it to change the conflict row in that window.
+	afterConflictLock func()
+
+	// beforeDoctorPut runs in DoctorPush after the check of open conflicts
+	// and before the PUT. Tests use it to record a conflict in that window.
+	beforeDoctorPut func()
+
+	// exportFailure, when set, makes exportResource fail with it. Tests use
+	// it to reach a copy that is gone while the gate still holds it back.
+	exportFailure error
+
+	// afterFinalize runs in the push right after the finalize of a pushed
+	// row. Tests use it to land a delete in that window.
+	afterFinalize func()
+
+	// beforeTombstoneDelete runs in the tombstone pass before it reads a
+	// tombstone again for its DELETE. afterTombstoneDelete runs after the
+	// answer to the DELETE, before the second read. Tests use them to
+	// rewrite the tombstone in those windows.
+	beforeTombstoneDelete func()
+	afterTombstoneDelete  func()
+
+	// beforeSettleSource runs in the settle of a moved resource before the
+	// first check of each source tombstone, ahead of every DELETE. Tests use it to hold a source with a
+	// conflict after the refused create.
+	beforeSettleSource func()
+
+	// beforeGatedSource runs in the gated record of a moved copy once before
+	// the check of the copy and then before the record of each source.
+	// Tests use it to remove the copy at one of those points.
+	beforeGatedSource func()
+
+	// beforeSourceFetch runs in the local pick of a move right before the
+	// fetch of the source object. Tests use it to change the target after
+	// the pick read whether the target can create the copy.
+	beforeSourceFetch func()
+
+	// beforeGoneSourceSettle runs in the settle of a gone source after the
+	// first check of the target and before the transaction. Tests use it
+	// to change the row of the copy in that window.
+	beforeGoneSourceSettle func()
+
+	// beforeFinishCancel runs in the cancel of a move right before the
+	// statement that stamps the final state. Tests use it to install a
+	// trigger that fails that statement.
+	beforeFinishCancel func()
 }
 
 // clearDirtyAfterImport adopts the server ETag and clears the dirty flag.
@@ -784,15 +967,25 @@ type engineTestHooks struct {
 // commit. That also closes the narrow window between persist-commit and the
 // read. See issues #92, #417 and #494.
 func (e *Engine) clearDirtyAfterImport(ctx context.Context, calendarID int64, uid, etag string, rev int64) error {
+	return e.clearDirtyAfterImportAt(ctx, calendarID, uid, etag, rev, "")
+}
+
+// clearDirtyAfterImportAt is clearDirtyAfterImport for a row without a
+// server object that now names the object at href. The href commits in
+// the same statement as the clear. An empty href keeps the href of the
+// row.
+func (e *Engine) clearDirtyAfterImportAt(ctx context.Context, calendarID int64, uid, etag string, rev int64, href string) error {
 	if e.testHooks != nil && e.testHooks.afterImportRevCapture != nil {
 		e.testHooks.afterImportRevCapture()
 	}
-	return e.q.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
+	_, err := e.q.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
 		CalendarID: calendarID,
 		Uid:        uid,
 		Etag:       etag,
 		Rev:        rev,
+		RemoteUrl:  href,
 	})
+	return err
 }
 
 func parseICalData(data []byte) (*ical.Calendar, error) {
@@ -950,7 +1143,7 @@ func resolvePushIdentity(cal storage.Calendar, account storage.Account) string {
 	if email := strings.TrimSpace(cal.OwnerEmail); email != "" {
 		return email
 	}
-	if cal.AccountID != nil && *cal.AccountID != 0 {
+	if storage.CalendarLinked(cal) {
 		return account.Username
 	}
 	return ""
@@ -966,14 +1159,20 @@ func resolvePushIdentity(cal storage.Calendar, account storage.Account) string {
 // no guess. The master is the one in calendarID: two calendars can
 // hold the same UID (issue #842).
 func (e *Engine) userOrganizesEvent(ctx context.Context, calendarID int64, uid, identity string) (bool, error) {
-	row, err := e.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+	return userOrganizesEventOn(ctx, e.q, calendarID, uid, identity)
+}
+
+// userOrganizesEventOn is userOrganizesEvent on the queries q, so a caller
+// in a transaction reads the organizer in that transaction.
+func userOrganizesEventOn(ctx context.Context, q *storage.Queries, calendarID int64, uid, identity string) (bool, error) {
+	row, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return true, nil
 		}
 		return false, fmt.Errorf("get event: %w", err)
 	}
-	attendees, err := e.q.ListAttendeesByEventID(ctx, row.ID)
+	attendees, err := q.ListAttendeesByEventID(ctx, row.ID)
 	if err != nil {
 		return false, fmt.Errorf("list attendees: %w", err)
 	}

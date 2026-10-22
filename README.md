@@ -620,6 +620,26 @@ Conflict handling:
 - Every write fires an opportunistic push. When the server answers 412, chroncal records a conflict and keeps the local edit. The edit stays dirty. The command prints a note on stderr. The note tells you to run `chroncal sync conflicts`.
 - The conflict strategy (`server-wins` or `prompt`) governs full sync passes only. The default is `prompt`; set `server-wins` in `config.toml` under `[sync]` to adopt the server body automatically. A full pass is `sync run`, the background service, or a TUI sync. A `server-wins` pass adopts the server body, clears the dirty flag, and marks the conflict resolved as `server-auto`. A `prompt` pass records the conflict and skips that row until you resolve it.
 - A resolved conflict keeps its row. Run `chroncal sync conflicts --resolved` to list resolved conflicts. Run `chroncal sync resolve <id> --pick local` on a resolved conflict to restore the recorded local version.
+- One exception applies to a move conflict. A new move of the item drops the resolved move conflicts of the earlier move in the same account. Their recorded versions describe a move that no longer exists.
+- A move between two calendars of one account can meet a remote edit. The item changed on the server in the source calendar before sync deleted it there. Sync then records a move conflict on the target calendar, and the source object stays on the server. When the server refuses the create of the copy, the moved copy stays unsent. When the create already landed, the copy is on the server in the target calendar. A cancel then deletes that copy on the next sync. A `server-wins` pass does not pick a side for you. Sync closes a move conflict by itself in three cases only, and an unlink of the source calendar ends it as `detached`. The conflict becomes `abandoned` when the moved copy is gone. A failed cancel becomes `cancelled` when a pull of the source brings the server version. The move becomes `finished` when the source object is gone from the server. The `sync conflicts` line shows `moved-from-calendar=<id>` and `move=<state>`. The JSON output has `move_source_calendar_id` and `move_state`. The state decides what each pick does:
+  - `open`: no pick ran yet. `--pick local` completes the move: the next sync deletes the source object and creates the target object. `--pick server` cancels the move. The pick reads the current source object from the server. The item then goes back to the source calendar with that version. When the move already created a copy in the target calendar, the next sync deletes that copy.
+  - `local-picked`: `--pick local` ran. The picks work as for `open`, so a second `--pick server` still cancels the move until the source object is gone.
+  - `finished`: the source object is gone from the server, so the next sync creates the moved copy. Both picks refuse. Move the item again instead.
+  - When the source object is gone and the move is still `open`, the move cannot be cancelled. No server version exists to bring back. Both picks follow one rule:
+    - The target calendar can carry the copy. This is true in three cases. The copy landed on the server already, and it has no unsent edit in a read-only calendar. The target is a local calendar. The target is linked and writable, and the organizer gate does not hold the copy back.
+    - Then both picks finish the move and exit with status 0. `sync resolve` prints `the source is gone, so the move finished`, with what remains. For example, the next sync creates the moved copy.
+    - The `-o json` output of a finished move has `"outcome": "finished"`, `"picked": "none"`, and a `note`. No side ran, so `picked` is `none`. `resolved` stays `true`, because the conflict is closed. A normal pick has `"outcome": "resolved"` and the side that ran in `picked`.
+    - A `cancel-failed` move has its rows back in the source calendar already, and they can hold a part of the failed import. When its source object is gone, `--pick server` refuses and changes nothing. The conflict stays `cancel-failed`.
+    - Then use `--pick local`. It imports your recorded version over those rows and closes the conflict as `cancelled`. The source calendar gets no server object, so the next sync creates the item there. A read-only source calendar refuses this pick.
+    - This pick asks the server first whether the source object is gone. When the server cannot be reached, the pick refuses and changes nothing. Try again when the server answers.
+    - A move can also lose its source half in the database. Then nothing remains to wait for, so both picks finish the move, whatever the target is. When the target calendar cannot create the copy, the item stays only in that calendar locally until the calendar is writable.
+    - The target calendar cannot carry the copy. Both picks refuse, and the conflict stays open. Make the target writable, or move the item to another calendar.
+  - `abandoned`: the moved copy is gone (deleted before a pick). Both picks refuse. Restore the copy from the trash and move it again.
+  - `detached`: an unlink of the source calendar ended the move. The source has no pending delete any more, so the move cannot finish. Both picks refuse. Move the item again. A `cancel-failed` move also becomes `detached`, because its replay cannot reach a server after the unlink. A `sync reset` of the source does not end a move. It keeps the pending delete of each move whose copy is live. A `sync reset` refuses a calendar with an open move conflict, as the target or as the source, and a failed cancel counts. Resolve those conflicts first (`chroncal sync conflicts`).
+  - `cancelled`: `--pick server` ran. `--pick local` restores your recorded version in the source calendar. The cancel records the version of the moved copy first, so the restore keeps your last edit. It does not move the item again. A second `--pick server` refuses.
+  - `cancel-failed`: the cancel moved the item back, and the import of the server version failed. `--pick server` runs the import again. `--pick local` restores your recorded version.
+  - `--pick local` needs the current ETag of the source object. A server that gives no ETag refuses the pick, because the source delete must stay conditional. Pick `server`, or delete the copy on the server by hand.
+  - A move into a local calendar follows the same rules. The conflict then lives on the local calendar.
 
 Stuck resources:
 
@@ -632,6 +652,13 @@ Failed pushes:
 
 - `chroncal sync status` lists each resource whose last push failed on a `push failed uid=...` line below its calendar. The line gives the count of failed attempts and the last error. The `-o json` output lists it under `push_failures`.
 - An edit of an occurrence that no series owns stays local. This occurs when two calendars hold a live master of its UID. `chroncal sync status` lists each such UID on an `edit not pushed uid=...` line, and the `-o json` output lists it under `unowned_edits`. The reason is "the item belongs to no series because two calendars hold its master; use the row ID of one series". Delete or move one of the two masters. The next edit of the occurrence then goes to the other series.
+Resources that wait:
+
+- A push can wait for another step. For example, an open move conflict on a third calendar names the source of a move. Sync then keeps the source delete until you resolve that conflict.
+- `chroncal sync status` lists each such resource on a `waiting uid=... on <reason>` line below its calendar. The `-o json` output lists it under `waiting`.
+- `chroncal sync doctor` lists it on a `waiting on <reason>` line. Its `-o json` items have `"state": "waiting"` and a `reason`. A wedged item has `"state": "wedged"`.
+- The reason names the step. Sync lists an entry only while its cause holds. When you resolve the conflict, or the source delete goes out, the entry goes.
+- A wait is no push failure. It does not count as a failed push attempt.
 
 ### Google Calendar via CalDAV
 
