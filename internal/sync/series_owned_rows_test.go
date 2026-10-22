@@ -96,7 +96,7 @@ func TestDeleteLocalResource_KeepsLegacyRowOfOtherCalendar(t *testing.T) {
 		t.Fatalf("persistImported: %v", err)
 	}
 	legacy := insertLegacyRow(t, engine, uid, "2026-07-02T17:00:00Z")
-	if _, err := engine.deleteLocalResourceByUID(ctx, calendarID, ownerTypeEvent, uid, true); err != nil {
+	if _, err := engine.deleteLocalResourceByUID(ctx, calendarID, ownerTypeEvent, uid); err != nil {
 		t.Fatalf("deleteLocalResourceByUID: %v", err)
 	}
 	if trashed(t, engine, legacy) {
@@ -146,7 +146,7 @@ func TestPruneMarker_KeepsPrunedRowOutOfSameSecondRestore(t *testing.T) {
 			t.Errorf("trash lists the pruned marker as an instance entry")
 		}
 	}
-	if _, err := engine.deleteLocalResourceByUID(ctx, calendarID, ownerTypeEvent, uid, true); err != nil {
+	if _, err := engine.deleteLocalResourceByUID(ctx, calendarID, ownerTypeEvent, uid); err != nil {
 		t.Fatalf("deleteLocalResourceByUID: %v", err)
 	}
 	// One second for every row, as one delete would leave them.

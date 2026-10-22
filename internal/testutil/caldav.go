@@ -10,8 +10,8 @@ import (
 
 // GenericCalDAV is a CalDAV test server handler that keeps a UID unique per
 // collection only, as most servers do (iCloud keeps it unique per
-// account). A PUT stores the object, and a DELETE removes it. Every other
-// method answers 405.
+// account). A PUT stores the object, and a DELETE removes it. A GET of a
+// path with no object answers 404. Every other request answers 405.
 type GenericCalDAV struct {
 	mu      sync.Mutex
 	objects map[string]bool
@@ -41,6 +41,12 @@ func (g *GenericCalDAV) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.tag++
 		w.Header().Set("ETag", fmt.Sprintf(`"e%d"`, g.tag))
 		w.WriteHeader(http.StatusCreated)
+	case http.MethodGet:
+		if !g.objects[r.URL.Path] {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	case http.MethodDelete:
 		if !g.objects[r.URL.Path] {
 			w.WriteHeader(http.StatusNotFound)

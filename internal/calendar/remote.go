@@ -34,46 +34,27 @@ type RemoteLink struct {
 	RemoteComponents []string
 }
 
+// lockRemoteLifecycle locks the account and the calendar of calendarID,
+// and the calendars that a move links to it, both ways. An unlink deletes
+// the sync state of the calendar and detaches the moves from it
+// (clearCalendarRemoteState). The tombstones of a move into it then wait
+// by the rules of a local target (issue #841).
 func (s *Service) lockRemoteLifecycle(ctx context.Context, calendarID int64) (Calendar, func(), error) {
-	for {
-		before, err := s.Get(ctx, calendarID)
-		if err != nil {
-			return Calendar{}, nil, err
-		}
-		lockID := before.AccountID
-		if lockID == 0 {
-			// An unlinked calendar has no account key yet. Its negative calendar
-			// ID gives concurrent processes a stable lock while Connect creates
-			// and attaches the new hidden account.
-			lockID = -calendarID
-		}
-		releaseAccount, err := synclock.Account(ctx, s.db, lockID)
-		if err != nil {
-			return Calendar{}, nil, fmt.Errorf("lock calendar account: %w", err)
-		}
-
-		calendarLock := synclock.Calendar(s.db, calendarID)
-		calendarLock.Lock()
-		after, err := s.Get(ctx, calendarID)
-		if err != nil {
-			calendarLock.Unlock()
-			releaseAccount()
-			return Calendar{}, nil, err
-		}
-		afterLockID := after.AccountID
-		if afterLockID == 0 {
-			afterLockID = -calendarID
-		}
-		if afterLockID != lockID {
-			calendarLock.Unlock()
-			releaseAccount()
-			continue
-		}
-		return after, func() {
-			calendarLock.Unlock()
-			releaseAccount()
-		}, nil
+	// A calendar that does not exist returns the error of the lookup as it
+	// is.
+	if _, err := s.Get(ctx, calendarID); err != nil {
+		return Calendar{}, nil, err
 	}
+	release, err := synclock.Calendars(ctx, s.db, storage.MoveLockSet(s.q, calendarID))
+	if err != nil {
+		return Calendar{}, nil, fmt.Errorf("lock calendar account: %w", err)
+	}
+	cal, err := s.Get(ctx, calendarID)
+	if err != nil {
+		release()
+		return Calendar{}, nil, err
+	}
+	return cal, release, nil
 }
 
 // reusableConnectAccount returns the account that Connect relinks instead of a
@@ -206,6 +187,12 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
 			return err
 		}
+		// A moved copy in a calendar that was local has no sync row. The
+		// link gives it one, so the copy pushes and counts as live (issue
+		// #841).
+		if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, cal.ID); err != nil {
+			return fmt.Errorf("mark the moved copies dirty: %w", err)
+		}
 		// Intentionally skip seeding RemoteColor on re-link: the calendar
 		// is already linked, the user may have just edited Color in the
 		// same save (Update set color_dirty=1), and the next sync's
@@ -266,6 +253,11 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
 		return err
 	}
+	// A moved copy in a calendar that was local has no sync row. The link
+	// gives it one, so the copy pushes and counts as live (issue #841).
+	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, cal.ID); err != nil {
+		return fmt.Errorf("mark the moved copies dirty: %w", err)
+	}
 	if link.RemoteColor != "" {
 		if err := qtx.UpdateCalendarColorFromSync(ctx, storage.UpdateCalendarColorFromSyncParams{
 			ID:          cal.ID,
@@ -316,6 +308,12 @@ func updateCalendarCapabilities(ctx context.Context, q *storage.Queries, calenda
 }
 
 func clearCalendarRemoteState(ctx context.Context, q *storage.Queries, calendarID int64, preserveColorDirty bool) error {
+	// The moves from the calendar end first (issue #841). lockRemoteLifecycle
+	// holds the locks of their target calendars. A move into the calendar
+	// follows the rules of a local target after the unlink.
+	if err := storage.DetachMovesFromCalendar(ctx, q, calendarID); err != nil {
+		return err
+	}
 	if err := q.DetachSyncResourcesByCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("detach calendar sync resources: %w", err)
 	}

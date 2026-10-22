@@ -409,7 +409,7 @@ func TestServiceDeletePreservesCalendarsAsLocal(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed tombstone: %v", err)
 	}
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calendarID, OwnerType: "event", Uid: "conflict",
 		LocalIcal: "local", ServerIcal: "server", ServerEtag: `"conflict"`,
 	}); err != nil {
@@ -716,7 +716,7 @@ func TestServiceDeleteRollsBackWhenCredentialRemovalFails(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed tombstone: %v", err)
 	}
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calendarID, OwnerType: "event", Uid: "conflict",
 		LocalIcal: "local", ServerIcal: "server", ServerEtag: `"conflict"`,
 	}); err != nil {
@@ -1068,5 +1068,79 @@ func TestServiceDiscoverWithCredentialKeepsAnotherConnectionsCredential(t *testi
 	}
 	if got := store.credentials[configured.ID].Password; got != "old" {
 		t.Fatalf("stored password = %q, want it untouched", got)
+	}
+}
+
+// TestServiceImportRelinkMarksAMovedCopyDirty relinks a calendar after an
+// account delete. The calendar holds a moved copy without a sync row, and a
+// move tombstone of the other calendar names it. The relink must give the
+// copy a dirty sync row in its transaction, so the copy pushes (issue
+// #841).
+func TestServiceImportRelinkMarksAMovedCopyDirty(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	remote := []caldav.RemoteCalendar{
+		{Path: "/cal/second/", Name: "Second Remote", Color: "#112233", SupportedComponentSet: []string{"VEVENT"}},
+		{Path: "/cal/seeded/", Name: "Seeded Calendar", Color: "#445566", SupportedComponentSet: []string{"VEVENT"}},
+	}
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return slices.Clone(remote), nil
+	}
+	account, err := svc.Create(ctx, CreateParams{
+		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	discovery, err := svc.Discover(ctx, account.ID, store)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	first, err := svc.Import(ctx, discovery, []string{"/cal/second/", "/cal/seeded/"})
+	if err != nil || len(first.CreatedIDs) != 2 {
+		t.Fatalf("Import = %+v, %v; want two created", first, err)
+	}
+	secondID, seededID := first.CreatedIDs[0], first.CreatedIDs[1]
+	copyEvt, err := event.NewService(db, q).Create(ctx, event.CreateParams{
+		CalendarID: seededID, Title: "Moved",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), EndTime: time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+	if err := svc.Delete(ctx, account.ID, store); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`DELETE FROM sync_resources WHERE calendar_id = ? AND uid = ?`, []any{seededID, copyEvt.UID}},
+		{`INSERT INTO tombstones (calendar_id, uid, remote_url, moved_to_calendar_id) VALUES (?, ?, '/cal/second/x.ics', ?)`, []any{secondID, copyEvt.UID, seededID}},
+	} {
+		if _, err := db.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed %q: %v", stmt.sql, err)
+		}
+	}
+	again, err := svc.Create(ctx, CreateParams{
+		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("re-Create: %v", err)
+	}
+	discovery, err = svc.Discover(ctx, again.ID, store)
+	if err != nil {
+		t.Fatalf("re-Discover: %v", err)
+	}
+	if _, err := svc.Import(ctx, discovery, []string{"/cal/second/", "/cal/seeded/"}); err != nil {
+		t.Fatalf("re-Import: %v", err)
+	}
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: seededID, Uid: copyEvt.UID})
+	if err != nil || sr.Dirty != 1 || sr.RemoteUrl != "" {
+		t.Fatalf("sync row of the copy = %+v, %v; want a dirty row", sr, err)
 	}
 }

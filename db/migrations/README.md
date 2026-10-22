@@ -9,14 +9,16 @@ SQLite cannot drop a table constraint, so a change of a constraint of
 `events` rebuilds the table (see migration 050). The rebuild creates
 `events_new`, copies the rows, drops `events`, and renames `events_new`.
 
-The view `event_series_rows` (migration 057) reads `events`. SQLite refuses
-the rename while a view reads the dropped table. A rebuild of `events`
-must follow these steps:
+The views `event_series_rows` (migration 057) and `live_move_copies`
+(migration 060) read `events`. SQLite refuses the rename while a view reads
+the dropped table. A rebuild of `events` must follow these steps:
 
-1. Drop the view: `DROP VIEW IF EXISTS event_series_rows;`
+1. Drop the two views: `DROP VIEW IF EXISTS event_series_rows;` and
+   `DROP VIEW IF EXISTS live_move_copies;`
 2. Rebuild the table as migration 050 does.
-3. Create the view again with the statement below.
-4. Create the seven triggers of migration 057 again:
+3. Create `event_series_rows` again with the statement below.
+4. Create `live_move_copies` again. Copy its statement from migration 060.
+5. Create the seven triggers of migration 057 again:
    `events_master_revive_drops_series_log`,
    `events_master_insert_drops_stale_logs`,
    `events_override_revive_drops_stale_logs`,

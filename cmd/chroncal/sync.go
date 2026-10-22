@@ -289,6 +289,14 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 					"gave_up_at": h.GaveUpAt,
 				})
 			}
+			waiting := make([]map[string]any, 0, len(s.Waiting))
+			for _, wt := range s.Waiting {
+				waiting = append(waiting, map[string]any{
+					"uid":        wt.UID,
+					"owner_type": wt.OwnerType,
+					"reason":     wt.Reason,
+				})
+			}
 			failures := make([]map[string]any, 0, len(s.PushFailures))
 			for _, f := range s.PushFailures {
 				failures = append(failures, map[string]any{
@@ -307,6 +315,7 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 				"pending_push":           s.PendingPush,
 				"conflicts":              s.Conflicts,
 				"stuck_hrefs":            stuck,
+				"waiting":                waiting,
 				"push_failures":          failures,
 				"unowned_edits":          append([]string{}, s.UnownedEdits...),
 			})
@@ -389,6 +398,13 @@ func renderSyncConflicts(cmd *cobra.Command, conflicts []syncPkg.Conflict, resol
 				item["resolution"] = nil
 				item["resolved_at"] = nil
 			}
+			if c.MoveSourceCalendarID != 0 {
+				item["move_source_calendar_id"] = c.MoveSourceCalendarID
+				item["move_state"] = c.MoveState
+			} else {
+				item["move_source_calendar_id"] = nil
+				item["move_state"] = nil
+			}
 			items = append(items, item)
 		}
 		return printOutput(w, items)
@@ -417,7 +433,18 @@ func syncResolveCmd() *cobra.Command {
 
 Use "chroncal sync conflicts" first to find the conflict ID. A resolved
 conflict stays listed under "chroncal sync conflicts --resolved"; resolving
-it again with --pick local restores the recorded local version.`,
+it again with --pick local restores the recorded local version.
+
+A conflict with a "moved-from-calendar" value is a move conflict: you moved
+the item to another calendar, and the item changed on the server in the
+source calendar first. The "move" value is the state of the move. On an
+open move, "--pick local" completes the move: the next sync deletes the
+source object and creates the target object. "--pick server" cancels the
+move: the item goes back to the source calendar with the server version,
+and the next sync deletes a copy that the move already created. After a
+cancel, "--pick local" restores your recorded version in the source
+calendar. It does not move the item again. A finished move refuses both
+picks. See the README for the states.`,
 		Example: `  chroncal sync resolve 12 --pick local
   chroncal sync resolve 12 --pick server`,
 		Args: exactOneArg,
@@ -438,16 +465,16 @@ it again with --pick local restores the recorded local version.`,
 				return err
 			}
 
-			warnings, err := svc.ResolveConflict(context.Background(), id, pick)
+			res, err := svc.ResolveConflictOutcome(context.Background(), id, pick)
 			if err != nil {
 				return err
 			}
 			// The service above runs with a nil (silent) engine logger, so the
 			// returned warnings are the only place an accept-server import's
 			// fabricated values surface. Stderr keeps them out of --output json.
-			fprintImportWarnings(cmd.ErrOrStderr(), warnings)
+			fprintImportWarnings(cmd.ErrOrStderr(), res.Warnings)
 
-			return renderSyncResolve(cmd, id, pick)
+			return renderSyncResolve(cmd, id, pick, res)
 		},
 	}
 	cmd.Flags().StringVar(&pick, "pick", "", "Which version to keep: local or server (required)")
@@ -558,16 +585,17 @@ func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, cal
 			}
 			totalErrors += len(r.Errors)
 			items = append(items, map[string]any{
-				"calendar_id":       r.CalendarID,
-				"calendar_name":     calNames[r.CalendarID],
-				"pushed":            r.Pushed,
-				"pulled":            r.Pulled,
-				"deleted":           r.Deleted,
-				"conflicts":         r.Conflicts,
-				"auto_resolved":     r.AutoResolved,
-				"skipped_conflicts": r.SkippedConflicts,
-				"errors":            errMsgs,
-				"warnings":          warnMsgs,
+				"calendar_id":             r.CalendarID,
+				"calendar_name":           calNames[r.CalendarID],
+				"pushed":                  r.Pushed,
+				"pulled":                  r.Pulled,
+				"deleted":                 r.Deleted,
+				"conflicts":               r.Conflicts,
+				"auto_resolved":           r.AutoResolved,
+				"skipped_conflicts":       r.SkippedConflicts,
+				"skipped_pending_deletes": r.SkippedPendingDeletes,
+				"errors":                  errMsgs,
+				"warnings":                warnMsgs,
 			})
 		}
 		if err := printOutput(w, map[string]any{
@@ -601,14 +629,39 @@ func renderSyncRunResults(cmd *cobra.Command, results []*syncPkg.SyncResult, cal
 
 // renderSyncResolve confirms a resolved conflict using the active --output
 // format so machine consumers get JSON/YAML instead of the prose line.
-func renderSyncResolve(cmd *cobra.Command, id int64, pick string) error {
+func renderSyncResolve(cmd *cobra.Command, id int64, pick string, res syncPkg.ResolveResult) error {
 	w := cmd.OutOrStdout()
+	// A pick on a move whose source object is gone finishes the move
+	// instead of the picked side (issue #841). The output says so.
+	outcome := "resolved"
+	if res.MoveFinished {
+		outcome = "finished"
+	}
 	if outputFmt != "text" {
-		return printOutput(w, map[string]any{
+		// picked names the side that ran. A finished move ran no side, so
+		// it is "none". resolved stays true: the conflict is closed.
+		picked := pick
+		if res.MoveFinished {
+			picked = "none"
+		}
+		item := map[string]any{
 			"id":       id,
-			"picked":   pick,
+			"picked":   picked,
 			"resolved": true,
-		})
+			"outcome":  outcome,
+		}
+		if res.Note != "" {
+			item["note"] = res.Note
+		}
+		return printOutput(w, item)
+	}
+	if res.MoveFinished {
+		fmt.Fprintf(w, "Conflict #%d: %s\n", id, safeText(res.Note))
+		return nil
+	}
+	if res.Note != "" {
+		fmt.Fprintf(w, "Conflict #%d resolved (picked %s); %s\n", id, pick, safeText(res.Note))
+		return nil
 	}
 	fmt.Fprintf(w, "Conflict #%d resolved (picked %s)\n", id, pick)
 	return nil

@@ -35,6 +35,9 @@ type Rows struct {
 	// Masters returns the master rows of the UID in all calendars, live
 	// and in the trash (Master.Trashed). Check reads it.
 	Masters func(ctx context.Context) ([]Master, error)
+	// LiveRowsIn counts the live rows of the UID in one calendar, in the
+	// table of the domain. MoveBack reads it for the destination.
+	LiveRowsIn func(ctx context.Context, calendarID int64) (int64, error)
 	// CountCollisions counts the live rows and the soft-deleted rows in
 	// toCalendarID that share the UID and a recurrence ID with a row in
 	// fromCalendarID. Leave it nil when the schema of the domain keeps a
@@ -198,9 +201,7 @@ func (r Rows) CheckTarget(ctx context.Context, fromCalendarID, toCalendarID int6
 	}
 	name := fmt.Sprint(toCalendarID)
 	if r.Q != nil {
-		if cal, err := r.Q.GetCalendar(ctx, toCalendarID); err == nil {
-			name = cal.Name
-		}
+		name = storage.CalendarLabel(ctx, r.Q, toCalendarID)
 	}
 	switch {
 	case live > 0 && trashed > 0:
@@ -320,6 +321,35 @@ func (r Rows) Record(ctx context.Context, fromCalendarID, toCalendarID int64, ta
 	return storage.RecordResourceMove(ctx, r.Q, fromCalendarID, toCalendarID, r.UID, func(ctx context.Context) error {
 		return r.MoveRows(ctx, fromCalendarID, toCalendarID, targetHoldsMaster)
 	})
+}
+
+// MoveBack moves the rows of the UID back from the target of a move to its
+// source. The cancel of the move in the sync engine uses it (issue #841). It
+// applies the target collision rule (CheckTarget) and then records the move
+// with storage.RecordResourceMoveBack. The tombstone of a landed target copy
+// names no move target, so its cleanup delete follows the plain
+// delete-vs-edit rule. Call it in the transaction of r.Q.
+func (r Rows) MoveBack(ctx context.Context, fromCalendarID, toCalendarID int64) error {
+	if err := r.CheckTarget(ctx, fromCalendarID, toCalendarID); err != nil {
+		return err
+	}
+	// The source of the move can hold a master of the UID. The move back is
+	// then a legacy override that goes back to its master (see Update).
+	targetHoldsMaster := false
+	if r.HoldsMaster != nil {
+		holds, err := r.HoldsMaster(ctx, toCalendarID)
+		if err != nil {
+			return fmt.Errorf("check target master: %w", err)
+		}
+		targetHoldsMaster = holds
+	}
+	var live func(context.Context) (int64, error)
+	if r.LiveRowsIn != nil {
+		live = func(ctx context.Context) (int64, error) { return r.LiveRowsIn(ctx, toCalendarID) }
+	}
+	return storage.RecordResourceMoveBack(ctx, r.Q, fromCalendarID, toCalendarID, r.UID, func(ctx context.Context) error {
+		return r.MoveRows(ctx, fromCalendarID, toCalendarID, targetHoldsMaster)
+	}, live)
 }
 
 // OverrideTie names one override row for the tie rule of one occurrence.

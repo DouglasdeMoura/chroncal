@@ -99,13 +99,14 @@ func (m Model) runSyncCalendar(parent context.Context, id int64, name string) te
 			label = "calendar"
 		}
 		summary := syncSummary(label, syncTotals{
-			pushed:           result.Pushed,
-			pulled:           result.Pulled,
-			deleted:          result.Deleted,
-			conflicts:        result.Conflicts,
-			autoResolved:     result.AutoResolved,
-			skippedConflicts: result.SkippedConflicts,
-			warnings:         len(result.Warnings),
+			pushed:                result.Pushed,
+			pulled:                result.Pulled,
+			deleted:               result.Deleted,
+			conflicts:             result.Conflicts,
+			autoResolved:          result.AutoResolved,
+			skippedConflicts:      result.SkippedConflicts,
+			skippedPendingDeletes: result.SkippedPendingDeletes,
+			warnings:              len(result.Warnings),
 		})
 		var firstErr error
 		if len(result.Errors) > 0 {
@@ -140,6 +141,7 @@ func (m Model) runSyncAccount(parent context.Context, accountID int64, name stri
 			totals.conflicts += result.Conflicts
 			totals.autoResolved += result.AutoResolved
 			totals.skippedConflicts += result.SkippedConflicts
+			totals.skippedPendingDeletes += result.SkippedPendingDeletes
 			totals.warnings += len(result.Warnings)
 			if totals.firstErr == nil && len(result.Errors) > 0 {
 				totals.firstErr = result.Errors[0]
@@ -265,9 +267,7 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 		if err != nil {
 			return opportunisticPushFinishedMsg{err: err}
 		}
-		if result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 && len(result.Warnings) == 0 &&
-			result.Conflicts == 0 && result.AutoResolved == 0 &&
-			result.SkippedConflicts == 0 {
+		if quietPushResult(result) {
 			return opportunisticPushFinishedMsg{}
 		}
 		label := name
@@ -275,12 +275,13 @@ func (m Model) runOpportunisticPush(calendarID int64) tea.Cmd {
 			label = "calendar"
 		}
 		summary := syncSummary(label, syncTotals{
-			pushed:           result.Pushed,
-			deleted:          result.Deleted,
-			conflicts:        result.Conflicts,
-			autoResolved:     result.AutoResolved,
-			skippedConflicts: result.SkippedConflicts,
-			warnings:         len(result.Warnings),
+			pushed:                result.Pushed,
+			deleted:               result.Deleted,
+			conflicts:             result.Conflicts,
+			autoResolved:          result.AutoResolved,
+			skippedConflicts:      result.SkippedConflicts,
+			skippedPendingDeletes: result.SkippedPendingDeletes,
+			warnings:              len(result.Warnings),
 		})
 		var firstErr error
 		if len(result.Errors) > 0 {
@@ -316,6 +317,9 @@ func syncSummary(label string, t syncTotals) string {
 	}
 	if t.skippedConflicts > 0 {
 		parts = append(parts, fmt.Sprintf("%d held by conflicts", t.skippedConflicts))
+	}
+	if t.skippedPendingDeletes > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s for a pending delete", t.skippedPendingDeletes, pluralize(t.skippedPendingDeletes, "edit waits", "edits wait")))
 	}
 	if t.warnings > 0 {
 		parts = append(parts, importWarningsSegment(t.warnings))
@@ -378,4 +382,13 @@ func (m Model) expireStatusAfter(d time.Duration, token int) tea.Cmd {
 			return syncStatusExpiredMsg{token: token}
 		})()
 	}
+}
+
+// quietPushResult reports whether an opportunistic push did nothing that
+// the status line names. An edit that waits for a pending delete counts as
+// something to name (issue #841).
+func quietPushResult(result *syncpkg.SyncResult) bool {
+	return result.Pushed == 0 && result.Deleted == 0 && len(result.Errors) == 0 && len(result.Warnings) == 0 &&
+		result.Conflicts == 0 && result.AutoResolved == 0 &&
+		result.SkippedConflicts == 0 && result.SkippedPendingDeletes == 0
 }

@@ -121,7 +121,7 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string, d
 	// Hold the calendar lifecycle lock across the dirty snapshot, the PUT,
 	// and the finalize, like SyncCalendar and PushLocalEdits do. A concurrent
 	// sync run must not interleave between them (issue #647).
-	release, err := e.lockCalendarLifecycle(ctx, calendarID)
+	release, err := e.lockCalendars(ctx, calendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,6 +163,30 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string, d
 		// #104). The doctor must not converge the server around them either.
 		return nil, fmt.Errorf("uid %s has an open sync conflict; resolve it first with chroncal sync resolve", uid)
 	}
+	// A pending delete of the UID in this calendar owns its href, as in the
+	// push (holdsBackForPendingDelete). The doctor must not PUT a body there
+	// first (issue #841).
+	ts, terr := e.q.GetTombstoneByCalendarAndUID(ctx, storage.GetTombstoneByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+	pending, terr := storage.Found(terr)
+	if terr != nil {
+		return nil, fmt.Errorf("check the pending delete of %s: %w", uid, terr)
+	}
+	hold, err := e.holdsBackForPendingDelete(ctx, pending, *res)
+	if err != nil {
+		return nil, err
+	}
+	if hold {
+		// A delete that waits for its move needs the user first. Any other
+		// pending delete goes out on the next sync.
+		waiting, werr := e.q.IsTombstoneWaiting(ctx, ts.ID)
+		if werr != nil {
+			return nil, fmt.Errorf("check the wait status of %s: %w", uid, werr)
+		}
+		if waiting > 0 {
+			return nil, fmt.Errorf("uid %s: the delete waits for its move; resolve the move conflict first", uid)
+		}
+		return nil, fmt.Errorf("uid %s: the item waits for its pending delete; the next sync sends the delete, then the edit", uid)
+	}
 
 	icalData, dropped, err := e.exportResourceBestEffortFor(ctx, calendarID, res.OwnerType, res.Uid)
 	if err != nil {
@@ -195,9 +219,44 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string, d
 	// putResource adopts a PUT that landed before a lost response (#647).
 	// putOrSettleMove also settles a refused create of a moved resource,
 	// as the normal push does (issue #828).
+	var rowIDs []int64
+	if res.RemoteUrl == "" {
+		rowIDs = e.resourceRowIDs(ctx, calendarID, *res)
+	}
+	if e.testHooks != nil && e.testHooks.beforeDoctorPut != nil {
+		e.testHooks.beforeDoctorPut()
+	}
 	newEtag, putErr, moveErr := e.putOrSettleMove(ctx, client, calendarID, putPath, body, *res)
+	if errors.Is(moveErr, errTombstoneChanged) {
+		// The settle of the move skipped: a write changed a source
+		// tombstone during the push. As in the push, no failure counts
+		// (issue #841).
+		return dropped, fmt.Errorf("uid %s: a source of its move changed during the push; run the doctor again after the next sync: %w", uid, moveErr)
+	}
+	var held *moveSourceHeldError
+	if errors.As(moveErr, &held) {
+		// A move conflict of another calendar holds a source. As in the
+		// push, the row stores the wait, and the error has the same message.
+		e.recordPushWait(ctx, calendarID, res.RemoteUrl, held)
+		return dropped, held
+	}
 	if moveErr != nil {
-		e.recordPushFailure(ctx, calendarID, uid, moveErr)
+		var changed *moveSourceChangedError
+		if errors.As(moveErr, &changed) {
+			// The source object of the move changed on the server. Record
+			// the move conflict, as the normal push does (issue #841).
+			if err := e.recordMoveConflict(ctx, client, calendarID, *res, icalData, changed.source, false); err != nil {
+				if errors.Is(err, errConflictHeld) {
+					// An open conflict of the other kind holds the row. The
+					// push skips the row then, so the doctor gives its own
+					// refusal of an open conflict. No push failure counts.
+					return dropped, fmt.Errorf("uid %s has an open sync conflict; resolve it first with chroncal sync resolve: %w", uid, err)
+				}
+				return dropped, err
+			}
+		} else {
+			e.recordPushFailure(ctx, calendarID, uid, moveErr)
+		}
 		return dropped, moveErr
 	}
 
@@ -207,29 +266,33 @@ func (e *Engine) DoctorPush(ctx context.Context, calendarID int64, uid string, d
 		return dropped, putErr
 	}
 
-	if err := e.q.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
+	if e.testHooks != nil && e.testHooks.afterPut != nil {
+		e.testHooks.afterPut()
+	}
+	finalized, err := e.q.FinalizePushedResource(ctx, storage.FinalizePushedResourceParams{
 		CalendarID: calendarID,
 		Uid:        res.Uid,
 		Etag:       newEtag,
 		Rev:        res.Rev,
-	}); err != nil {
+		RemoteUrl:  createdHref(*res, putPath),
+		RowID:      res.ID,
+	})
+	if err != nil {
 		return dropped, fmt.Errorf("finalize pushed resource %s: %w", uid, err)
 	}
 	// The incomplete record reached the server. Reset the failure
 	// bookkeeping like a regular successful push does.
 	e.clearPushFailure(ctx, calendarID, uid)
-	if res.RemoteUrl == "" {
-		if err := e.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-			CalendarID:   calendarID,
-			Uid:          res.Uid,
-			OwnerType:    res.OwnerType,
-			RemoteUrl:    normalizeRemoteRef(putPath),
-			Etag:         newEtag,
-			Dirty:        0,
-			SyncStrategy: res.SyncStrategy,
-		}); err != nil {
-			return dropped, fmt.Errorf("update sync resource URL %s: %w", uid, err)
+	if finalized == 0 {
+		// The row went away during the PUT. The push handles this case
+		// the same way (settleVanishedRow).
+		if err := e.settleVanishedRow(ctx, calendarID, *res, putPath, newEtag, rowIDs); err != nil {
+			// The push records the same failure, so the sync doctor lists
+			// the row.
+			e.recordPushFailure(ctx, calendarID, uid, err)
+			return dropped, err
 		}
+		return dropped, nil
 	}
 	e.logger.Warn("doctor push pushed an incomplete record",
 		"uid", uid, "owner_type", res.OwnerType, "dropped_relations", dropped)

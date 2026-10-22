@@ -505,7 +505,11 @@ func (c *Client) ResolveURL(ref string) string {
 // configured endpoint, validates it stays on the CalDAV origin, and returns a
 // normalized server-relative path.
 func (c *Client) CanonicalCollectionRef(ref string) (string, error) {
-	endpointURL, err := url.Parse(c.endpoint)
+	return canonicalCollectionRefAt(c.endpoint, ref)
+}
+
+func canonicalCollectionRefAt(endpoint, ref string) (string, error) {
+	endpointURL, err := url.Parse(endpoint)
 	if err != nil {
 		return "", fmt.Errorf("parse CalDAV endpoint: %w", err)
 	}
@@ -545,12 +549,19 @@ func (c *Client) CanonicalCollectionRef(ref string) (string, error) {
 // collection prefix would reject those same-origin hrefs and corrupt sync.
 // Same-origin remains the security boundary.
 func (c *Client) CanonicalObjectRef(calendarRef, objectRef string) (string, error) {
-	collectionPath, err := c.CanonicalCollectionRef(calendarRef)
+	return CanonicalObjectRefAt(c.endpoint, calendarRef, objectRef)
+}
+
+// CanonicalObjectRefAt is CanonicalObjectRef for the CalDAV endpoint
+// endpoint. It needs no client and no credential, so a caller can derive
+// an href offline (the planned href of a first push).
+func CanonicalObjectRefAt(endpoint, calendarRef, objectRef string) (string, error) {
+	collectionPath, err := canonicalCollectionRefAt(endpoint, calendarRef)
 	if err != nil {
 		return "", err
 	}
 
-	endpointURL, err := url.Parse(c.endpoint)
+	endpointURL, err := url.Parse(endpoint)
 	if err != nil {
 		return "", fmt.Errorf("parse CalDAV endpoint: %w", err)
 	}

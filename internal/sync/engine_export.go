@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	hydratepkg "github.com/douglasdemoura/chroncal/internal/hydrate"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 // Owner-type strings stamped on every sync_resource row and CalDAV change
@@ -42,6 +44,22 @@ type ownerOps struct {
 	lookupID func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error)
 	// export bundles the series of uid in one calendar.
 	export func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]byte, error)
+	// uidMove binds the move rules of uidmove to uid in the transaction of
+	// qtx.
+	uidMove func(qtx *storage.Queries, uid string) uidmove.Rows
+	// countLiveRows counts the live rows of uid in one calendar, through q.
+	// A caller in a transaction passes the queries of that transaction.
+	countLiveRows func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) (int64, error)
+	// rowIDs lists the IDs of the rows of uid (live and in the trash) in
+	// one calendar.
+	rowIDs func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]int64, error)
+	// calendarOfRow returns the calendar of one row. found is false for a
+	// row that is gone.
+	calendarOfRow func(ctx context.Context, e *Engine, id int64) (calendarID int64, found bool, err error)
+	// countLiveRowsInMoveScope counts the live rows of uid outside one
+	// calendar, in the calendars of its account and in the local
+	// calendars.
+	countLiveRowsInMoveScope func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error)
 }
 
 // byUID adapts a lookup by UID to the calendar-scoped signature of
@@ -63,6 +81,21 @@ func overridesByUID[T any](list func(context.Context, string) ([]T, error)) func
 
 var ownerOpsByType = map[string]ownerOps{
 	ownerTypeEvent: {
+		rowIDs: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]int64, error) {
+			return e.q.ListEventRowIDsOfUIDInCalendar(ctx, storage.ListEventRowIDsOfUIDInCalendarParams{CalendarID: calendarID, Uid: uid})
+		},
+		calendarOfRow: func(ctx context.Context, e *Engine, id int64) (int64, bool, error) {
+			calendarID, err := e.q.GetEventCalendarOfRow(ctx, id)
+			found, err := storage.Found(err)
+			return calendarID, found, err
+		},
+		countLiveRowsInMoveScope: func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error) {
+			return e.q.CountLiveEventRowsInMoveScope(ctx, storage.CountLiveEventRowsInMoveScopeParams{CalendarID: calendarID, Uid: uid})
+		},
+		countLiveRows: func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) (int64, error) {
+			return q.CountLiveEventRowsInCalendar(ctx, storage.CountLiveEventRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
+		},
+		uidMove: event.UIDMoveRows,
 		softDeleteByUID: func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error {
 			// A pull writes the rows of the pulled calendar only. A legacy
 			// override in another calendar keeps its row (see AGENTS.md).
@@ -89,6 +122,21 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 	},
 	ownerTypeTodo: {
+		rowIDs: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]int64, error) {
+			return e.q.ListTodoRowIDsOfUIDInCalendar(ctx, storage.ListTodoRowIDsOfUIDInCalendarParams{CalendarID: calendarID, Uid: uid})
+		},
+		calendarOfRow: func(ctx context.Context, e *Engine, id int64) (int64, bool, error) {
+			calendarID, err := e.q.GetTodoCalendarOfRow(ctx, id)
+			found, err := storage.Found(err)
+			return calendarID, found, err
+		},
+		countLiveRowsInMoveScope: func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error) {
+			return e.q.CountLiveTodoRowsInMoveScope(ctx, storage.CountLiveTodoRowsInMoveScopeParams{CalendarID: calendarID, Uid: uid})
+		},
+		countLiveRows: func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) (int64, error) {
+			return q.CountLiveTodoRowsInCalendar(ctx, storage.CountLiveTodoRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
+		},
+		uidMove: todo.UIDMoveRows,
 		softDeleteByUID: func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error {
 			return q.SoftDeleteTodosByCalendarUID(ctx, storage.SoftDeleteTodosByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
@@ -106,6 +154,21 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 	},
 	ownerTypeJournal: {
+		rowIDs: func(ctx context.Context, e *Engine, calendarID int64, uid string) ([]int64, error) {
+			return e.q.ListJournalRowIDsOfUIDInCalendar(ctx, storage.ListJournalRowIDsOfUIDInCalendarParams{CalendarID: calendarID, Uid: uid})
+		},
+		calendarOfRow: func(ctx context.Context, e *Engine, id int64) (int64, bool, error) {
+			calendarID, err := e.q.GetJournalCalendarOfRow(ctx, id)
+			found, err := storage.Found(err)
+			return calendarID, found, err
+		},
+		countLiveRowsInMoveScope: func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error) {
+			return e.q.CountLiveJournalRowsInMoveScope(ctx, storage.CountLiveJournalRowsInMoveScopeParams{CalendarID: calendarID, Uid: uid})
+		},
+		countLiveRows: func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) (int64, error) {
+			return q.CountLiveJournalRowsInCalendar(ctx, storage.CountLiveJournalRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
+		},
+		uidMove: journal.UIDMoveRows,
 		softDeleteByUID: func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error {
 			return q.SoftDeleteJournalsByCalendarUID(ctx, storage.SoftDeleteJournalsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
@@ -258,33 +321,28 @@ func ownerOpsFor(ownerType string) (ownerOps, error) {
 type remoteDeleteOutcome int
 
 const (
-	// remoteDeleteKept: a tombstone holds the UID, and the absence of the
-	// object proves nothing. The rows, the sync row, and the tombstone stay.
+	// remoteDeleteKept: a tombstone holds the UID. The rows, the sync row,
+	// and the tombstone stay.
 	remoteDeleteKept remoteDeleteOutcome = iota
-	// remoteDeleteSettled: a tombstone holds the UID, and the server
-	// reported the delete. The sync row and the tombstone go.
-	remoteDeleteSettled
 	// remoteDeleteDone: the local rows went to the trash.
 	remoteDeleteDone
 )
 
 // deleteLocalResourceByUID applies a remote delete of uid in calendarID in
 // one transaction. The delete stays in that calendar: another calendar can
-// hold the same UID (a local move, or a copy in another account). explicit
-// is true when the server reported the delete. A tombstone of the UID in this
-// calendar marks a local delete or a local move out of the calendar that is
-// not sent yet. The local rows then stay:
-//   - With explicit, the server did what the tombstone wanted, so the sync
-//     row and the tombstone go.
-//   - Else the pull skipped the tombstoned href, so its absence proves
-//     nothing, and the tombstone pass sends the DELETE.
+// hold the same UID (a local move, or a copy in another account).
+//
+// The caller settles a tombstone of the UID before the call (see
+// pendingDeletions.apply). A tombstone that a local delete or move writes
+// after that read keeps every row. The tombstone pass then sends the
+// DELETE, and its 404 settles the move with the move rules (issue #841).
 //
 // With no tombstone, the rows go to the trash, across every owner type, and
 // the sync row goes. A remote DELETE that races with a user action then keeps
 // the local row in the trash until the retention window ends. A later
 // restore re-CREATEs a fresh sync row via MarkResourceDirty. The read of the
 // tombstones and each write share the transaction.
-func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64, ownerType, uid string, explicit bool) (remoteDeleteOutcome, error) {
+func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64, ownerType, uid string) (remoteDeleteOutcome, error) {
 	ops, err := ownerOpsFor(ownerType)
 	if err != nil {
 		return remoteDeleteKept, err
@@ -295,21 +353,13 @@ func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64,
 	}
 	defer tx.Rollback()
 	qtx := e.q.WithTx(tx)
-	tombstones, err := qtx.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+	_, err = qtx.GetTombstoneByCalendarAndUID(ctx, storage.GetTombstoneByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+	tombstoned, err := storage.Found(err)
 	if err != nil {
-		return remoteDeleteKept, fmt.Errorf("count tombstones: %w", err)
+		return remoteDeleteKept, fmt.Errorf("get tombstone: %w", err)
 	}
-	if tombstones > 0 {
-		if !explicit {
-			return remoteDeleteKept, nil
-		}
-		if err := qtx.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{CalendarID: calendarID, Uid: uid}); err != nil {
-			return remoteDeleteKept, fmt.Errorf("delete sync resource: %w", err)
-		}
-		if err := qtx.DeleteTombstonesByCalendarAndUID(ctx, storage.DeleteTombstonesByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid}); err != nil {
-			return remoteDeleteKept, fmt.Errorf("delete tombstone: %w", err)
-		}
-		return remoteDeleteSettled, tx.Commit()
+	if tombstoned {
+		return remoteDeleteKept, nil
 	}
 	if err := ops.softDeleteByUID(ctx, qtx, calendarID, uid); err != nil {
 		return remoteDeleteKept, err
@@ -342,6 +392,9 @@ var errResourceMissing = errors.New("local resource missing for uid")
 // bytes. It dispatches on owner type. See exportResourceFor for the
 // master/override bundle behavior.
 func (e *Engine) exportResource(ctx context.Context, calendarID int64, ownerType string, uid string) ([]byte, error) {
+	if e.testHooks != nil && e.testHooks.exportFailure != nil {
+		return nil, e.testHooks.exportFailure
+	}
 	ops, err := ownerOpsFor(ownerType)
 	if err != nil {
 		return nil, err
@@ -363,4 +416,62 @@ func hydrateTodo(ctx context.Context, e *Engine, t *todo.Todo) ([]string, error)
 
 func hydrateJournal(ctx context.Context, e *Engine, j *journal.Journal) ([]string, error) {
 	return nil, e.journals.Hydrate(ctx, j)
+}
+
+// movedCopyExists reports whether calendarID still holds the moved copy of
+// uid as a live copy. The view live_move_copies holds the rule, so the moot
+// step (ListMootMoveConflicts) applies the same one. Live rows exist, no
+// tombstone of the UID waits in the calendar, and a remote calendar also
+// holds the sync row. A landed copy that the user deleted keeps its sync row
+// and gets a plain tombstone, so the row alone proves nothing (issue #841).
+func (e *Engine) movedCopyExists(ctx context.Context, calendarID int64, ownerType, uid string) (bool, error) {
+	present, err := e.q.MovedCopyExists(ctx, storage.MovedCopyExistsParams{CalendarID: calendarID, Uid: uid, OwnerType: ownerType})
+	if err != nil {
+		return false, fmt.Errorf("check the moved copy: %w", err)
+	}
+	return present != 0, nil
+}
+
+// plannedHref returns the href that the first push of uid into calendarID
+// uses. The name comes from the UID (buildRemoteResourcePath), and the
+// canonical form comes from the server URL of the account. The href is then
+// known before the push and without a credential, so an offline resolve
+// works.
+func (e *Engine) plannedHref(ctx context.Context, calendarID int64, uid string) (string, error) {
+	cal, err := e.q.GetCalendar(ctx, calendarID)
+	if err != nil {
+		return "", fmt.Errorf("get calendar: %w", err)
+	}
+	if !storage.CalendarLinked(cal) {
+		return "", fmt.Errorf("calendar %d is not linked to an account", calendarID)
+	}
+	account, err := e.q.GetAccount(ctx, *cal.AccountID)
+	if err != nil {
+		return "", fmt.Errorf("get account: %w", err)
+	}
+	remoteURL := storage.NullableToString(cal.RemoteUrl)
+	if remoteURL == "" {
+		return "", fmt.Errorf("calendar %d has no remote URL", calendarID)
+	}
+	return plannedObjectHref(account.ServerUrl, remoteURL, uid)
+}
+
+// plannedObjectHref builds the planned href of uid in the calendar
+// remoteURL at the CalDAV endpoint. It reads nothing.
+func plannedObjectHref(endpoint, remoteURL, uid string) (string, error) {
+	return plannedHrefWith(func(calendarRef, objectRef string) (string, error) {
+		return caldav.CanonicalObjectRefAt(endpoint, calendarRef, objectRef)
+	}, remoteURL, uid)
+}
+
+// plannedHrefWith builds the planned href of uid in the calendar remoteURL
+// with the canonicalizer canon, and normalizes it. plannedHref passes the
+// endpoint of the account, and the push passes its client. So both give
+// the same href.
+func plannedHrefWith(canon func(calendarRef, objectRef string) (string, error), remoteURL, uid string) (string, error) {
+	ref, err := canon(remoteURL, buildRemoteResourcePath(remoteURL, uid))
+	if err != nil {
+		return "", fmt.Errorf("build remote href for %s: %w", uid, err)
+	}
+	return normalizeRemoteRef(ref), nil
 }

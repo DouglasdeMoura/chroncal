@@ -882,7 +882,7 @@ func TestEnginePushLocalEditsRefreshesOpenConflict(t *testing.T) {
 
 	// A conflict from an earlier write is already open. Its recorded local
 	// body is stale: the user has edited the row again since.
-	if err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calendarID,
 		OwnerType:  "event",
 		Uid:        "conflict-event",

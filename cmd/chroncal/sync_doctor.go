@@ -67,6 +67,35 @@ type doctorEntry struct {
 	wedged       syncPkg.WedgedResource
 }
 
+// waitingEntry pairs one resource that waits with the calendar that holds it.
+type waitingEntry struct {
+	calendarName string
+	waiting      syncPkg.WaitingResource
+}
+
+// waitingAll collects the resources that wait in the calendars cals, with
+// one query. A wait is no wedge: the push of the row waits for another
+// step, for example the resolution of a move conflict (issue #841).
+func waitingAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar) ([]waitingEntry, error) {
+	rows, err := svc.WaitingResources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[int64]string, len(cals))
+	for _, cal := range cals {
+		names[cal.ID] = cal.Name
+	}
+	var entries []waitingEntry
+	for _, w := range rows {
+		name, ok := names[w.CalendarID]
+		if !ok {
+			continue
+		}
+		entries = append(entries, waitingEntry{calendarName: name, waiting: w})
+	}
+	return entries, nil
+}
+
 // diagnoseAll collects the wedged resources of every calendar.
 func diagnoseAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar) ([]doctorEntry, error) {
 	var entries []doctorEntry
@@ -82,20 +111,26 @@ func diagnoseAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calen
 	return entries, nil
 }
 
-// runDoctorList prints one line per wedged resource across all calendars.
-// JSON and YAML return an array, [] when no calendar holds a wedge, like
-// every sibling read command.
+// runDoctorList prints one line per wedged resource across all calendars,
+// then one line per resource that waits. JSON and YAML return an array, [] when
+// no calendar holds a wedge or a wait, like every sibling read command. The
+// state key of each item is "wedged" or "waiting".
 func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Calendar) error {
 	entries, err := diagnoseAll(context.Background(), svc, cals)
+	if err != nil {
+		return err
+	}
+	waits, err := waitingAll(context.Background(), svc, cals)
 	if err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()
 
 	if outputFmt != "text" {
-		items := make([]map[string]any, 0, len(entries))
+		items := make([]map[string]any, 0, len(entries)+len(waits))
 		for _, en := range entries {
 			items = append(items, map[string]any{
+				"state":           "wedged",
 				"calendar_id":     en.wedged.CalendarID,
 				"calendar_name":   en.calendarName,
 				"uid":             en.wedged.UID,
@@ -104,9 +139,23 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 				"push_fail_count": en.wedged.PushFailCount,
 			})
 		}
+		for _, wt := range waits {
+			items = append(items, map[string]any{
+				"state":         "waiting",
+				"calendar_id":   wt.waiting.CalendarID,
+				"calendar_name": wt.calendarName,
+				"uid":           wt.waiting.UID,
+				"owner_type":    wt.waiting.OwnerType,
+				"reason":        wt.waiting.Reason,
+			})
+		}
 		return printOutput(out, items)
 	}
 
+	for _, wt := range waits {
+		fmt.Fprintf(out, "calendar %q uid %s (%s): waiting on %s\n",
+			safeText(wt.calendarName), safeText(wt.waiting.UID), safeText(wt.waiting.OwnerType), safeText(wt.waiting.Reason))
+	}
 	if len(entries) == 0 {
 		fmt.Fprintln(out, "No wedged resources.")
 		return nil

@@ -9,6 +9,161 @@ import (
 	"context"
 )
 
+const closeMoveConflict = `-- name: CloseMoveConflict :exec
+UPDATE sync_conflicts
+SET move_state = 'abandoned',
+    resolved_at = COALESCE(resolved_at, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    resolution = COALESCE(resolution, 'server-auto')
+WHERE calendar_id = ?1 AND uid = ?2 AND move_source_calendar_id IS NOT NULL
+  AND (move_state IN ('open', 'local-picked')
+       OR (CAST(?3 AS INTEGER) = 1 AND move_state = 'cancel-failed'))
+`
+
+type CloseMoveConflictParams struct {
+	CalendarID        int64
+	Uid               string
+	AllowFailedCancel int64
+}
+
+// Close a move conflict whose moved copy is gone: the state becomes
+// abandoned. An open row takes the resolution server-auto in the same
+// statement. A resolved row (a local pick) keeps its resolution and
+// resolved_at. Both picks refuse an abandoned move. No move back ran, and
+// the trashed copy can still hold the UID. The update touches the states
+// open and local-picked. It touches a failed cancel only when
+// allow_failed_cancel is 1. The moot step closes a failed cancel whose item
+// the user deleted. Every other path leaves it for its replay. See issue
+// #841.
+func (q *Queries) CloseMoveConflict(ctx context.Context, arg CloseMoveConflictParams) error {
+	_, err := q.db.ExecContext(ctx, closeMoveConflict, arg.CalendarID, arg.Uid, arg.AllowFailedCancel)
+	return err
+}
+
+const closeOpenEditConflict = `-- name: CloseOpenEditConflict :exec
+UPDATE sync_conflicts
+SET resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    resolution = 'server-auto'
+WHERE calendar_id = ? AND uid = ? AND move_source_calendar_id IS NULL AND resolved_at IS NULL
+`
+
+type CloseOpenEditConflictParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Close the open edit conflict of one UID in one calendar as server-auto.
+// The delete of an unpushed item calls it: the conflict has no local side
+// any more. See issue #841.
+func (q *Queries) CloseOpenEditConflict(ctx context.Context, arg CloseOpenEditConflictParams) error {
+	_, err := q.db.ExecContext(ctx, closeOpenEditConflict, arg.CalendarID, arg.Uid)
+	return err
+}
+
+const closeSettledFailedCancel = `-- name: CloseSettledFailedCancel :exec
+UPDATE sync_conflicts
+SET move_state = 'cancelled',
+    resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    resolution = 'server-auto',
+    cancel_source_rev = ?1,
+    cancel_source_row_id = ?2
+WHERE calendar_id = ?3 AND uid = ?4 AND move_source_calendar_id IS NOT NULL
+  AND move_state = 'cancel-failed' AND resolved_at IS NULL
+`
+
+type CloseSettledFailedCancelParams struct {
+	CancelSourceRev   int64
+	CancelSourceRowID int64
+	CalendarID        int64
+	Uid               string
+}
+
+// Close a failed cancel whose source row carries the server side: the
+// state becomes cancelled, as after a cancel that succeeded. The rev of
+// the source row becomes the cancel rev, so a later local pick restores
+// only when the source does not change again. See issue #841.
+func (q *Queries) CloseSettledFailedCancel(ctx context.Context, arg CloseSettledFailedCancelParams) error {
+	_, err := q.db.ExecContext(ctx, closeSettledFailedCancel,
+		arg.CancelSourceRev,
+		arg.CancelSourceRowID,
+		arg.CalendarID,
+		arg.Uid,
+	)
+	return err
+}
+
+const countMoveRecordBlockers = `-- name: CountMoveRecordBlockers :one
+SELECT COUNT(*) FROM sync_conflicts
+WHERE calendar_id = ? AND uid = ? AND (move_source_calendar_id IS NOT NULL OR resolved_at IS NULL)
+`
+
+type CountMoveRecordBlockersParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Count the rows that keep a pass from a new move record of one UID on one
+// calendar. Such a row is a move conflict row (open, or resolved by the
+// user), or an open edit conflict. The read-only and the gated target paths
+// read it. See issue #841.
+func (q *Queries) CountMoveRecordBlockers(ctx context.Context, arg CountMoveRecordBlockersParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countMoveRecordBlockers, arg.CalendarID, arg.Uid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countOpenMoveConflictsInMoveScope = `-- name: CountOpenMoveConflictsInMoveScope :one
+SELECT COUNT(*) FROM sync_conflicts
+WHERE uid = ?1
+  AND move_source_calendar_id IS NOT NULL
+  AND resolved_at IS NULL
+  AND (
+    calendar_id IN (?2, ?3)
+    OR move_source_calendar_id IN (?2, ?3)
+    OR calendar_id IN (
+      SELECT c.id FROM calendars c
+      WHERE c.account_id != 0 AND c.account_id IN (
+        SELECT m.account_id FROM calendars m
+        WHERE m.id IN (?2, ?3)
+      )
+    )
+  )
+`
+
+type CountOpenMoveConflictsInMoveScopeParams struct {
+	Uid            string
+	FromCalendarID int64
+	ToCalendarID   int64
+}
+
+// Count the open move conflicts of one UID in the calendars of a new move:
+// the two calendars, and every calendar of their accounts. A failed cancel
+// is open too. A new move of the UID waits until the user resolves them.
+// See issue #841.
+func (q *Queries) CountOpenMoveConflictsInMoveScope(ctx context.Context, arg CountOpenMoveConflictsInMoveScopeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOpenMoveConflictsInMoveScope, arg.Uid, arg.FromCalendarID, arg.ToCalendarID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countOpenMoveConflictsTouchingCalendar = `-- name: CountOpenMoveConflictsTouchingCalendar :one
+SELECT COUNT(*) FROM sync_conflicts
+WHERE resolved_at IS NULL AND move_source_calendar_id IS NOT NULL
+  AND (calendar_id = ?1 OR move_source_calendar_id = ?1)
+`
+
+// Count the open move conflicts (a failed cancel included) whose target or
+// source is calendar_id. The moot step reads its views only when the count
+// is above zero, so a pass without a move conflict pays one cheap read.
+// See issue #841.
+func (q *Queries) CountOpenMoveConflictsTouchingCalendar(ctx context.Context, calendarID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOpenMoveConflictsTouchingCalendar, calendarID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countOpenSyncConflicts = `-- name: CountOpenSyncConflicts :one
 SELECT COUNT(*) FROM sync_conflicts WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL
 `
@@ -25,9 +180,13 @@ func (q *Queries) CountOpenSyncConflicts(ctx context.Context, arg CountOpenSyncC
 	return count, err
 }
 
-const createSyncConflict = `-- name: CreateSyncConflict :exec
-INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+const createMoveConflictReplacingEdit = `-- name: CreateMoveConflictReplacingEdit :execrows
+INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, move_source_calendar_id, move_state)
+VALUES (
+    ?1, ?2, ?3, ?4,
+    ?5, ?6, ?7, ?8,
+    CASE WHEN ?8 IS NULL THEN '' ELSE 'open' END
+)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET
     owner_type = excluded.owner_type,
     owner_id = excluded.owner_id,
@@ -36,21 +195,35 @@ ON CONFLICT(calendar_id, uid) DO UPDATE SET
     server_etag = excluded.server_etag,
     detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     resolved_at = NULL,
-    resolution = NULL
+    resolution = NULL,
+    move_source_calendar_id = excluded.move_source_calendar_id,
+    move_state = excluded.move_state,
+    warned_etag = '',
+    warned_hash = '',
+    cancel_source_rev = 0,
+    cancel_source_row_id = 0
+WHERE sync_conflicts.resolved_at IS NOT NULL
+   OR (sync_conflicts.move_source_calendar_id IS NULL) = (excluded.move_source_calendar_id IS NULL)
+   OR (sync_conflicts.move_source_calendar_id IS NULL AND excluded.move_source_calendar_id IS NOT NULL)
 `
 
-type CreateSyncConflictParams struct {
-	CalendarID int64
-	OwnerType  string
-	OwnerID    int64
-	Uid        string
-	LocalIcal  string
-	ServerIcal string
-	ServerEtag string
+type CreateMoveConflictReplacingEditParams struct {
+	CalendarID           int64
+	OwnerType            string
+	OwnerID              int64
+	Uid                  string
+	LocalIcal            string
+	ServerIcal           string
+	ServerEtag           string
+	MoveSourceCalendarID *int64
 }
 
-func (q *Queries) CreateSyncConflict(ctx context.Context, arg CreateSyncConflictParams) error {
-	_, err := q.db.ExecContext(ctx, createSyncConflict,
+// Record a move conflict as CreateSyncConflict does, and also replace an
+// open edit conflict of the row. The organizer gate of a server-wins pass
+// uses it. The close of the edit conflict and the move record commit in one
+// statement, so a failed record keeps the edit conflict. See issue #841.
+func (q *Queries) CreateMoveConflictReplacingEdit(ctx context.Context, arg CreateMoveConflictReplacingEditParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createMoveConflictReplacingEdit,
 		arg.CalendarID,
 		arg.OwnerType,
 		arg.OwnerID,
@@ -58,7 +231,111 @@ func (q *Queries) CreateSyncConflict(ctx context.Context, arg CreateSyncConflict
 		arg.LocalIcal,
 		arg.ServerIcal,
 		arg.ServerEtag,
+		arg.MoveSourceCalendarID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const createSyncConflict = `-- name: CreateSyncConflict :execrows
+INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, move_source_calendar_id, move_state)
+VALUES (
+    ?1, ?2, ?3, ?4,
+    ?5, ?6, ?7, ?8,
+    CASE WHEN ?8 IS NULL THEN '' ELSE 'open' END
+)
+ON CONFLICT(calendar_id, uid) DO UPDATE SET
+    owner_type = excluded.owner_type,
+    owner_id = excluded.owner_id,
+    local_ical = excluded.local_ical,
+    server_ical = excluded.server_ical,
+    server_etag = excluded.server_etag,
+    detected_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    resolved_at = NULL,
+    resolution = NULL,
+    move_source_calendar_id = excluded.move_source_calendar_id,
+    move_state = excluded.move_state,
+    warned_etag = '',
+    warned_hash = '',
+    cancel_source_rev = 0,
+    cancel_source_row_id = 0
+WHERE sync_conflicts.resolved_at IS NOT NULL
+   OR (sync_conflicts.move_source_calendar_id IS NULL) = (excluded.move_source_calendar_id IS NULL)
+`
+
+type CreateSyncConflictParams struct {
+	CalendarID           int64
+	OwnerType            string
+	OwnerID              int64
+	Uid                  string
+	LocalIcal            string
+	ServerIcal           string
+	ServerEtag           string
+	MoveSourceCalendarID *int64
+}
+
+// Record a conflict. A NULL move_source_calendar_id records an edit
+// conflict. A source calendar records a move conflict. The row lives on the
+// target calendar of a local move whose source object changed on the server
+// (issue #841). A record of one kind replaces an open row of the same kind
+// and a resolved row of either kind. An open row of the other kind stays as
+// it is. An open move conflict needs the choice of the user. An open edit
+// conflict of the moved copy holds the remote edit of the target object.
+// CreateMoveConflictReplacingEdit replaces an open edit conflict too. The
+// move tombstone waits for its resolution (the view move_wait_tombstones).
+// A resolved row of either kind, abandoned included, becomes the new
+// conflict: a new refusal is a new state. A trashed copy never reaches a
+// move record (its export fails), so an abandoned row comes back only for a
+// copy that lives again. A move conflict starts in the state 'open'.
+func (q *Queries) CreateSyncConflict(ctx context.Context, arg CreateSyncConflictParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createSyncConflict,
+		arg.CalendarID,
+		arg.OwnerType,
+		arg.OwnerID,
+		arg.Uid,
+		arg.LocalIcal,
+		arg.ServerIcal,
+		arg.ServerEtag,
+		arg.MoveSourceCalendarID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteResolvedMoveConflictsOfUID = `-- name: DeleteResolvedMoveConflictsOfUID :exec
+DELETE FROM sync_conflicts
+WHERE uid = ?1
+  AND move_source_calendar_id IS NOT NULL
+  AND resolved_at IS NOT NULL
+  AND (
+    calendar_id IN (?2, ?3)
+    OR calendar_id IN (
+      SELECT c.id FROM calendars c
+      WHERE c.account_id != 0 AND c.account_id IN (
+        SELECT m.account_id FROM calendars m
+        WHERE m.id IN (?2, ?3)
+      )
+    )
+  )
+`
+
+type DeleteResolvedMoveConflictsOfUIDParams struct {
+	Uid            string
+	FromCalendarID int64
+	ToCalendarID   int64
+}
+
+// Delete the resolved move conflict rows of one UID in the calendars of a
+// new move: the two calendars, and every calendar of their accounts. A new
+// move of the UID starts a new history there: a stale cancelled row must
+// not restore an old body beside the moved item. A copy of the UID in
+// another account keeps its rows. See issue #841.
+func (q *Queries) DeleteResolvedMoveConflictsOfUID(ctx context.Context, arg DeleteResolvedMoveConflictsOfUIDParams) error {
+	_, err := q.db.ExecContext(ctx, deleteResolvedMoveConflictsOfUID, arg.Uid, arg.FromCalendarID, arg.ToCalendarID)
 	return err
 }
 
@@ -72,16 +349,208 @@ func (q *Queries) DeleteSyncConflict(ctx context.Context, id int64) error {
 }
 
 const deleteSyncConflictsByCalendar = `-- name: DeleteSyncConflictsByCalendar :exec
-DELETE FROM sync_conflicts WHERE calendar_id = ?
+DELETE FROM sync_conflicts
+WHERE calendar_id = ?
+  AND NOT (move_state = 'cancel-failed' AND resolved_at IS NULL)
 `
 
+// Delete the conflicts of one calendar for a reset or an unlink. An open
+// failed cancel stays: its replay writes only the source calendar, and a
+// delete loses the recorded server body that the replay needs. See issue
+// #841.
 func (q *Queries) DeleteSyncConflictsByCalendar(ctx context.Context, calendarID int64) error {
 	_, err := q.db.ExecContext(ctx, deleteSyncConflictsByCalendar, calendarID)
 	return err
 }
 
+const detachMoveConflictsOfSource = `-- name: DetachMoveConflictsOfSource :exec
+UPDATE sync_conflicts
+SET move_state = 'detached',
+    resolved_at = COALESCE(resolved_at, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    resolution = COALESCE(resolution, 'server-auto')
+WHERE move_source_calendar_id = ?1
+  AND move_state IN ('open', 'local-picked', 'cancel-failed')
+`
+
+// End the live move conflicts whose source is one calendar as detached. An
+// unlink of the source deletes its tombstones, so the move can never
+// finish. A failed cancel ends too: its replay cannot reach a server any
+// more. A resolved row keeps its resolution and resolved_at. A reset does
+// not call it: the source stays linked, and the reset keeps the move
+// tombstones of live moves. See issue #841.
+func (q *Queries) DetachMoveConflictsOfSource(ctx context.Context, sourceCalendarID *int64) error {
+	_, err := q.db.ExecContext(ctx, detachMoveConflictsOfSource, sourceCalendarID)
+	return err
+}
+
+const finishMoveCancel = `-- name: FinishMoveCancel :execrows
+UPDATE sync_conflicts
+SET move_state = 'cancelled',
+    resolved_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    resolution = 'server',
+    cancel_source_rev = ?1,
+    cancel_source_row_id = ?2
+WHERE calendar_id = ?3 AND uid = ?4
+  AND move_source_calendar_id = ?5
+  AND move_state = 'cancel-failed' AND resolved_at IS NULL
+`
+
+type FinishMoveCancelParams struct {
+	CancelSourceRev      int64
+	CancelSourceRowID    int64
+	CalendarID           int64
+	Uid                  string
+	MoveSourceCalendarID *int64
+}
+
+// Mark a cancel complete after the import of the server body. The state
+// becomes cancelled, and the row takes the resolution 'server'. The row
+// also records the rev of the source row after the import. One statement
+// writes all of them, so no cancelled row exists without its rev. The
+// cancel transaction leaves the row open in the state 'cancel-failed'
+// until this statement runs. See issue #841.
+func (q *Queries) FinishMoveCancel(ctx context.Context, arg FinishMoveCancelParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, finishMoveCancel,
+		arg.CancelSourceRev,
+		arg.CancelSourceRowID,
+		arg.CalendarID,
+		arg.Uid,
+		arg.MoveSourceCalendarID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const finishMoveConflict = `-- name: FinishMoveConflict :exec
+UPDATE sync_conflicts
+SET move_state = 'finished',
+    resolved_at = COALESCE(resolved_at, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    resolution = COALESCE(resolution, 'local')
+WHERE calendar_id = ? AND uid = ? AND move_source_calendar_id = ?
+  AND move_state IN ('open', 'local-picked')
+`
+
+type FinishMoveConflictParams struct {
+	CalendarID           int64
+	Uid                  string
+	MoveSourceCalendarID *int64
+}
+
+// Mark the move of a move conflict finished: the source object is gone from
+// the server. calendar_id is the target of the move. An open row takes the
+// resolution 'local' too: only the create of the moved copy remains. The
+// push of the target must not wait for a pick. A row that the user
+// cancelled stays as it is. See issue #841.
+func (q *Queries) FinishMoveConflict(ctx context.Context, arg FinishMoveConflictParams) error {
+	_, err := q.db.ExecContext(ctx, finishMoveConflict, arg.CalendarID, arg.Uid, arg.MoveSourceCalendarID)
+	return err
+}
+
+const getMoveConflictOfUID = `-- name: GetMoveConflictOfUID :one
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution, move_source_calendar_id, move_state, warned_etag, warned_hash, cancel_source_rev, cancel_source_row_id FROM sync_conflicts
+WHERE calendar_id = ? AND uid = ? AND move_source_calendar_id IS NOT NULL
+`
+
+type GetMoveConflictOfUIDParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// The move conflict row of one UID on one calendar, open or resolved. See
+// issue #841.
+func (q *Queries) GetMoveConflictOfUID(ctx context.Context, arg GetMoveConflictOfUIDParams) (SyncConflict, error) {
+	row := q.db.QueryRowContext(ctx, getMoveConflictOfUID, arg.CalendarID, arg.Uid)
+	var i SyncConflict
+	err := row.Scan(
+		&i.ID,
+		&i.CalendarID,
+		&i.OwnerType,
+		&i.OwnerID,
+		&i.Uid,
+		&i.LocalIcal,
+		&i.ServerIcal,
+		&i.ServerEtag,
+		&i.DetectedAt,
+		&i.ResolvedAt,
+		&i.Resolution,
+		&i.MoveSourceCalendarID,
+		&i.MoveState,
+		&i.WarnedEtag,
+		&i.WarnedHash,
+		&i.CancelSourceRev,
+		&i.CancelSourceRowID,
+	)
+	return i, err
+}
+
+const getOpenConflictImportBlock = `-- name: GetOpenConflictImportBlock :one
+SELECT sc.move_source_calendar_id,
+       CAST(COALESCE(sr.dirty, 0) AS INTEGER) AS row_dirty
+FROM sync_conflicts sc
+LEFT JOIN sync_resources sr ON sr.calendar_id = sc.calendar_id AND sr.uid = sc.uid
+WHERE sc.calendar_id = ?1 AND sc.uid = ?2 AND sc.resolved_at IS NULL
+`
+
+type GetOpenConflictImportBlockParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+type GetOpenConflictImportBlockRow struct {
+	MoveSourceCalendarID *int64
+	RowDirty             int64
+}
+
+// The open conflict of one UID in one calendar, in a slim form. The row
+// holds the source calendar of a move conflict and the dirty flag of the
+// sync row of the calendar.
+// The pull reads it to decide whether the conflict blocks an import. See
+// issue #841.
+func (q *Queries) GetOpenConflictImportBlock(ctx context.Context, arg GetOpenConflictImportBlockParams) (GetOpenConflictImportBlockRow, error) {
+	row := q.db.QueryRowContext(ctx, getOpenConflictImportBlock, arg.CalendarID, arg.Uid)
+	var i GetOpenConflictImportBlockRow
+	err := row.Scan(&i.MoveSourceCalendarID, &i.RowDirty)
+	return i, err
+}
+
+const getOpenSyncConflict = `-- name: GetOpenSyncConflict :one
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution, move_source_calendar_id, move_state, warned_etag, warned_hash, cancel_source_rev, cancel_source_row_id FROM sync_conflicts WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL
+`
+
+type GetOpenSyncConflictParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+func (q *Queries) GetOpenSyncConflict(ctx context.Context, arg GetOpenSyncConflictParams) (SyncConflict, error) {
+	row := q.db.QueryRowContext(ctx, getOpenSyncConflict, arg.CalendarID, arg.Uid)
+	var i SyncConflict
+	err := row.Scan(
+		&i.ID,
+		&i.CalendarID,
+		&i.OwnerType,
+		&i.OwnerID,
+		&i.Uid,
+		&i.LocalIcal,
+		&i.ServerIcal,
+		&i.ServerEtag,
+		&i.DetectedAt,
+		&i.ResolvedAt,
+		&i.Resolution,
+		&i.MoveSourceCalendarID,
+		&i.MoveState,
+		&i.WarnedEtag,
+		&i.WarnedHash,
+		&i.CancelSourceRev,
+		&i.CancelSourceRowID,
+	)
+	return i, err
+}
+
 const getSyncConflict = `-- name: GetSyncConflict :one
-SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE id = ?
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution, move_source_calendar_id, move_state, warned_etag, warned_hash, cancel_source_rev, cancel_source_row_id FROM sync_conflicts WHERE id = ?
 `
 
 func (q *Queries) GetSyncConflict(ctx context.Context, id int64) (SyncConflict, error) {
@@ -99,12 +568,211 @@ func (q *Queries) GetSyncConflict(ctx context.Context, id int64) (SyncConflict, 
 		&i.DetectedAt,
 		&i.ResolvedAt,
 		&i.Resolution,
+		&i.MoveSourceCalendarID,
+		&i.MoveState,
+		&i.WarnedEtag,
+		&i.WarnedHash,
+		&i.CancelSourceRev,
+		&i.CancelSourceRowID,
 	)
 	return i, err
 }
 
+const listMootFailedCancels = `-- name: ListMootFailedCancels :many
+SELECT sc.id, sc.calendar_id, sc.owner_type, sc.owner_id, sc.uid, sc.local_ical, sc.server_ical, sc.server_etag, sc.detected_at, sc.resolved_at, sc.resolution, sc.move_source_calendar_id, sc.move_state, sc.warned_etag, sc.warned_hash, sc.cancel_source_rev, sc.cancel_source_row_id
+FROM sync_conflicts sc
+WHERE sc.resolved_at IS NULL
+  AND sc.move_source_calendar_id IS NOT NULL
+  AND sc.move_state = 'cancel-failed'
+  AND (sc.calendar_id = ?1 OR sc.move_source_calendar_id = ?1)
+  AND NOT EXISTS (
+    SELECT 1 FROM events e WHERE sc.owner_type = 'event' AND e.calendar_id = sc.move_source_calendar_id AND e.uid = sc.uid AND e.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM todos td WHERE sc.owner_type = 'todo' AND td.calendar_id = sc.move_source_calendar_id AND td.uid = sc.uid AND td.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM journals j WHERE sc.owner_type = 'journal' AND j.calendar_id = sc.move_source_calendar_id AND j.uid = sc.uid AND j.deleted_at IS NULL
+  )
+ORDER BY sc.id
+`
+
+type ListMootFailedCancelsRow struct {
+	SyncConflict SyncConflict
+}
+
+// The failed cancels whose target or source is calendar_id and whose source
+// calendar holds no live row of the UID any more. The user deleted or
+// purged the item after the cancel moved it back. See issue #841.
+func (q *Queries) ListMootFailedCancels(ctx context.Context, calendarID int64) ([]ListMootFailedCancelsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listMootFailedCancels, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMootFailedCancelsRow
+	for rows.Next() {
+		var i ListMootFailedCancelsRow
+		if err := rows.Scan(
+			&i.SyncConflict.ID,
+			&i.SyncConflict.CalendarID,
+			&i.SyncConflict.OwnerType,
+			&i.SyncConflict.OwnerID,
+			&i.SyncConflict.Uid,
+			&i.SyncConflict.LocalIcal,
+			&i.SyncConflict.ServerIcal,
+			&i.SyncConflict.ServerEtag,
+			&i.SyncConflict.DetectedAt,
+			&i.SyncConflict.ResolvedAt,
+			&i.SyncConflict.Resolution,
+			&i.SyncConflict.MoveSourceCalendarID,
+			&i.SyncConflict.MoveState,
+			&i.SyncConflict.WarnedEtag,
+			&i.SyncConflict.WarnedHash,
+			&i.SyncConflict.CancelSourceRev,
+			&i.SyncConflict.CancelSourceRowID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMootMoveConflicts = `-- name: ListMootMoveConflicts :many
+SELECT sc.id, sc.calendar_id, sc.owner_type, sc.owner_id, sc.uid, sc.local_ical, sc.server_ical, sc.server_etag, sc.detected_at, sc.resolved_at, sc.resolution, sc.move_source_calendar_id, sc.move_state, sc.warned_etag, sc.warned_hash, sc.cancel_source_rev, sc.cancel_source_row_id
+FROM sync_conflicts sc
+WHERE sc.resolved_at IS NULL
+  AND sc.move_source_calendar_id IS NOT NULL
+  AND sc.move_state != 'cancel-failed'
+  AND (sc.calendar_id = ?1 OR sc.move_source_calendar_id = ?1)
+  AND NOT EXISTS (
+    SELECT 1 FROM live_move_copies l
+    WHERE l.calendar_id = sc.calendar_id AND l.uid = sc.uid AND l.owner_type = sc.owner_type
+  )
+ORDER BY sc.id
+`
+
+type ListMootMoveConflictsRow struct {
+	SyncConflict SyncConflict
+}
+
+// The open move conflicts whose target or source is calendar_id and whose
+// moved copy is gone. The target calendar then holds no live copy of the
+// UID (the view live_move_copies). A cancel whose import failed waits for
+// its replay, so it is not moot. One read serves the moot step of each
+// pass. See issue #841.
+func (q *Queries) ListMootMoveConflicts(ctx context.Context, calendarID int64) ([]ListMootMoveConflictsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listMootMoveConflicts, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMootMoveConflictsRow
+	for rows.Next() {
+		var i ListMootMoveConflictsRow
+		if err := rows.Scan(
+			&i.SyncConflict.ID,
+			&i.SyncConflict.CalendarID,
+			&i.SyncConflict.OwnerType,
+			&i.SyncConflict.OwnerID,
+			&i.SyncConflict.Uid,
+			&i.SyncConflict.LocalIcal,
+			&i.SyncConflict.ServerIcal,
+			&i.SyncConflict.ServerEtag,
+			&i.SyncConflict.DetectedAt,
+			&i.SyncConflict.ResolvedAt,
+			&i.SyncConflict.Resolution,
+			&i.SyncConflict.MoveSourceCalendarID,
+			&i.SyncConflict.MoveState,
+			&i.SyncConflict.WarnedEtag,
+			&i.SyncConflict.WarnedHash,
+			&i.SyncConflict.CancelSourceRev,
+			&i.SyncConflict.CancelSourceRowID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMoveSourcesOfTarget = `-- name: ListMoveSourcesOfTarget :many
+SELECT DISTINCT move_source_calendar_id FROM sync_conflicts
+WHERE calendar_id = ?1 AND move_source_calendar_id IS NOT NULL
+ORDER BY move_source_calendar_id
+`
+
+// The source calendars of the move conflicts stored on one calendar, open
+// or resolved. A reset or an unlink of the calendar deletes those rows,
+// so it locks the sources. See issue #841.
+func (q *Queries) ListMoveSourcesOfTarget(ctx context.Context, calendarID int64) ([]*int64, error) {
+	rows, err := q.db.QueryContext(ctx, listMoveSourcesOfTarget, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*int64
+	for rows.Next() {
+		var move_source_calendar_id *int64
+		if err := rows.Scan(&move_source_calendar_id); err != nil {
+			return nil, err
+		}
+		items = append(items, move_source_calendar_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMoveTargetsOfSource = `-- name: ListMoveTargetsOfSource :many
+SELECT DISTINCT calendar_id FROM sync_conflicts
+WHERE move_source_calendar_id = ?1
+  AND move_state IN ('open', 'local-picked', 'cancel-failed')
+ORDER BY calendar_id
+`
+
+// The target calendars of the live move conflicts whose source is one
+// calendar. A reset of the source locks them. See issue #841.
+func (q *Queries) ListMoveTargetsOfSource(ctx context.Context, sourceCalendarID *int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listMoveTargetsOfSource, sourceCalendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var calendar_id int64
+		if err := rows.Scan(&calendar_id); err != nil {
+			return nil, err
+		}
+		items = append(items, calendar_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listResolvedSyncConflicts = `-- name: ListResolvedSyncConflicts :many
-SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE resolved_at IS NOT NULL ORDER BY resolved_at DESC
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution, move_source_calendar_id, move_state, warned_etag, warned_hash, cancel_source_rev, cancel_source_row_id FROM sync_conflicts WHERE resolved_at IS NOT NULL ORDER BY resolved_at DESC
 `
 
 func (q *Queries) ListResolvedSyncConflicts(ctx context.Context) ([]SyncConflict, error) {
@@ -128,6 +796,82 @@ func (q *Queries) ListResolvedSyncConflicts(ctx context.Context) ([]SyncConflict
 			&i.DetectedAt,
 			&i.ResolvedAt,
 			&i.Resolution,
+			&i.MoveSourceCalendarID,
+			&i.MoveState,
+			&i.WarnedEtag,
+			&i.WarnedHash,
+			&i.CancelSourceRev,
+			&i.CancelSourceRowID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSettledFailedCancels = `-- name: ListSettledFailedCancels :many
+SELECT sc.id, sc.calendar_id, sc.owner_type, sc.owner_id, sc.uid, sc.local_ical, sc.server_ical, sc.server_etag, sc.detected_at, sc.resolved_at, sc.resolution, sc.move_source_calendar_id, sc.move_state, sc.warned_etag, sc.warned_hash, sc.cancel_source_rev, sc.cancel_source_row_id, sr.rev AS source_rev, sr.id AS source_row_id
+FROM sync_conflicts sc
+JOIN sync_resources sr ON sr.calendar_id = sc.move_source_calendar_id AND sr.uid = sc.uid
+WHERE sc.resolved_at IS NULL
+  AND sc.move_source_calendar_id IS NOT NULL
+  AND sc.move_state = 'cancel-failed'
+  AND (sc.calendar_id = ?1 OR sc.move_source_calendar_id = ?1)
+  AND sr.dirty = 0 AND sr.remote_url != '' AND sr.etag != ''
+  AND (sr.rev != sc.cancel_source_rev
+       OR (sc.cancel_source_row_id != 0 AND sr.id != sc.cancel_source_row_id))
+ORDER BY sc.id
+`
+
+type ListSettledFailedCancelsRow struct {
+	SyncConflict SyncConflict
+	SourceRev    int64
+	SourceRowID  int64
+}
+
+// The failed cancels whose target or source is calendar_id and whose source
+// row already carries the server side. The row is clean, has a server
+// object, and has a rev other than the rev at the failure, or another row
+// id. A pull import changes the rev, and the failed cancel does not. A row
+// that a delete removed and an import created again has a new id. An etag that matches proves
+// nothing, because the cancel can write it before the import fails. The
+// replay has nothing to restore then. See issue #841.
+func (q *Queries) ListSettledFailedCancels(ctx context.Context, calendarID int64) ([]ListSettledFailedCancelsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSettledFailedCancels, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSettledFailedCancelsRow
+	for rows.Next() {
+		var i ListSettledFailedCancelsRow
+		if err := rows.Scan(
+			&i.SyncConflict.ID,
+			&i.SyncConflict.CalendarID,
+			&i.SyncConflict.OwnerType,
+			&i.SyncConflict.OwnerID,
+			&i.SyncConflict.Uid,
+			&i.SyncConflict.LocalIcal,
+			&i.SyncConflict.ServerIcal,
+			&i.SyncConflict.ServerEtag,
+			&i.SyncConflict.DetectedAt,
+			&i.SyncConflict.ResolvedAt,
+			&i.SyncConflict.Resolution,
+			&i.SyncConflict.MoveSourceCalendarID,
+			&i.SyncConflict.MoveState,
+			&i.SyncConflict.WarnedEtag,
+			&i.SyncConflict.WarnedHash,
+			&i.SyncConflict.CancelSourceRev,
+			&i.SyncConflict.CancelSourceRowID,
+			&i.SourceRev,
+			&i.SourceRowID,
 		); err != nil {
 			return nil, err
 		}
@@ -143,7 +887,7 @@ func (q *Queries) ListResolvedSyncConflicts(ctx context.Context) ([]SyncConflict
 }
 
 const listSyncConflicts = `-- name: ListSyncConflicts :many
-SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE resolved_at IS NULL ORDER BY detected_at DESC
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution, move_source_calendar_id, move_state, warned_etag, warned_hash, cancel_source_rev, cancel_source_row_id FROM sync_conflicts WHERE resolved_at IS NULL ORDER BY detected_at DESC
 `
 
 func (q *Queries) ListSyncConflicts(ctx context.Context) ([]SyncConflict, error) {
@@ -167,6 +911,12 @@ func (q *Queries) ListSyncConflicts(ctx context.Context) ([]SyncConflict, error)
 			&i.DetectedAt,
 			&i.ResolvedAt,
 			&i.Resolution,
+			&i.MoveSourceCalendarID,
+			&i.MoveState,
+			&i.WarnedEtag,
+			&i.WarnedHash,
+			&i.CancelSourceRev,
+			&i.CancelSourceRowID,
 		); err != nil {
 			return nil, err
 		}
@@ -182,7 +932,7 @@ func (q *Queries) ListSyncConflicts(ctx context.Context) ([]SyncConflict, error)
 }
 
 const listSyncConflictsByCalendar = `-- name: ListSyncConflictsByCalendar :many
-SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution FROM sync_conflicts WHERE calendar_id = ? AND resolved_at IS NULL ORDER BY detected_at DESC
+SELECT id, calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, detected_at, resolved_at, resolution, move_source_calendar_id, move_state, warned_etag, warned_hash, cancel_source_rev, cancel_source_row_id FROM sync_conflicts WHERE calendar_id = ? AND resolved_at IS NULL ORDER BY detected_at DESC
 `
 
 func (q *Queries) ListSyncConflictsByCalendar(ctx context.Context, calendarID int64) ([]SyncConflict, error) {
@@ -206,6 +956,12 @@ func (q *Queries) ListSyncConflictsByCalendar(ctx context.Context, calendarID in
 			&i.DetectedAt,
 			&i.ResolvedAt,
 			&i.Resolution,
+			&i.MoveSourceCalendarID,
+			&i.MoveState,
+			&i.WarnedEtag,
+			&i.WarnedHash,
+			&i.CancelSourceRev,
+			&i.CancelSourceRowID,
 		); err != nil {
 			return nil, err
 		}
@@ -218,6 +974,55 @@ func (q *Queries) ListSyncConflictsByCalendar(ctx context.Context, calendarID in
 		return nil, err
 	}
 	return items, nil
+}
+
+const markMoveConflictWarned = `-- name: MarkMoveConflictWarned :execrows
+UPDATE sync_conflicts SET warned_etag = ?1
+WHERE calendar_id = ?2 AND uid = ?3
+  AND resolved_at IS NULL AND move_source_calendar_id IS NOT NULL
+  AND warned_etag != ?1
+`
+
+type MarkMoveConflictWarnedParams struct {
+	Etag       string
+	CalendarID int64
+	Uid        string
+}
+
+// Record that the pull warned about the moved copy at etag. The update
+// changes nothing when the last warning named the same etag, so the pull
+// warns once per new etag of the copy. See issue #841.
+func (q *Queries) MarkMoveConflictWarned(ctx context.Context, arg MarkMoveConflictWarnedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markMoveConflictWarned, arg.Etag, arg.CalendarID, arg.Uid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markMoveConflictWarnedHash = `-- name: MarkMoveConflictWarnedHash :execrows
+UPDATE sync_conflicts SET warned_hash = ?1
+WHERE calendar_id = ?2 AND uid = ?3
+  AND resolved_at IS NULL AND move_source_calendar_id IS NOT NULL
+  AND warned_hash != ?1
+`
+
+type MarkMoveConflictWarnedHashParams struct {
+	Hash       string
+	CalendarID int64
+	Uid        string
+}
+
+// Record that the pull warned about the moved copy with the body hash. A
+// server that gives no etag uses it in place of MarkMoveConflictWarned:
+// the update changes nothing when the last warning named the same body.
+// See issue #841.
+func (q *Queries) MarkMoveConflictWarnedHash(ctx context.Context, arg MarkMoveConflictWarnedHashParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markMoveConflictWarnedHash, arg.Hash, arg.CalendarID, arg.Uid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const markSyncConflictResolved = `-- name: MarkSyncConflictResolved :exec
@@ -241,11 +1046,171 @@ func (q *Queries) MarkSyncConflictResolved(ctx context.Context, arg MarkSyncConf
 	return err
 }
 
+const movedCopyExists = `-- name: MovedCopyExists :one
+SELECT EXISTS (
+    SELECT 1 FROM live_move_copies
+    WHERE calendar_id = ?1 AND uid = ?2 AND owner_type = ?3
+) AS present
+`
+
+type MovedCopyExistsParams struct {
+	CalendarID int64
+	Uid        string
+	OwnerType  string
+}
+
+// Report whether calendar_id holds a live copy of the UID (the view
+// live_move_copies). See issue #841.
+func (q *Queries) MovedCopyExists(ctx context.Context, arg MovedCopyExistsParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, movedCopyExists, arg.CalendarID, arg.Uid, arg.OwnerType)
+	var present int64
+	err := row.Scan(&present)
+	return present, err
+}
+
+const reopenCancelledMoveConflict = `-- name: ReopenCancelledMoveConflict :execrows
+UPDATE sync_conflicts SET resolved_at = NULL, resolution = NULL, move_state = 'cancel-failed'
+WHERE calendar_id = ? AND uid = ? AND move_source_calendar_id = ?
+  AND move_state = 'cancel-failed'
+`
+
+type ReopenCancelledMoveConflictParams struct {
+	CalendarID           int64
+	Uid                  string
+	MoveSourceCalendarID *int64
+}
+
+// Open the row again as a failed cancel at the end of the cancel
+// transaction. The transaction resolved the row for the guard of the move
+// back, and the import of the server body comes after the commit. The row
+// waits in the state 'cancel-failed' until FinishMoveCancel. A failed
+// import keeps it there for the replay. The cancel stamps the state
+// 'cancel-failed' at its start, so the guard names that one state. See
+// issue #841.
+func (q *Queries) ReopenCancelledMoveConflict(ctx context.Context, arg ReopenCancelledMoveConflictParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reopenCancelledMoveConflict, arg.CalendarID, arg.Uid, arg.MoveSourceCalendarID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const seedMoveConflictWarned = `-- name: SeedMoveConflictWarned :exec
+UPDATE sync_conflicts SET warned_etag = ?1
+WHERE calendar_id = ?2 AND uid = ?3
+  AND resolved_at IS NULL AND move_source_calendar_id IS NOT NULL
+`
+
+type SeedMoveConflictWarnedParams struct {
+	Etag       string
+	CalendarID int64
+	Uid        string
+}
+
+// Seed the etag of the moved copy when a move conflict is recorded. The
+// copy at that etag is the state that the user moved, so the pull warns
+// only about a later change. See issue #841.
+func (q *Queries) SeedMoveConflictWarned(ctx context.Context, arg SeedMoveConflictWarnedParams) error {
+	_, err := q.db.ExecContext(ctx, seedMoveConflictWarned, arg.Etag, arg.CalendarID, arg.Uid)
+	return err
+}
+
+const setMoveConflictCancelRev = `-- name: SetMoveConflictCancelRev :exec
+UPDATE sync_conflicts SET cancel_source_rev = ?, cancel_source_row_id = ?
+WHERE calendar_id = ? AND uid = ? AND move_source_calendar_id = ?
+`
+
+type SetMoveConflictCancelRevParams struct {
+	CancelSourceRev      int64
+	CancelSourceRowID    int64
+	CalendarID           int64
+	Uid                  string
+	MoveSourceCalendarID *int64
+}
+
+// Record the rev and the id of the source sync row after a cancel of the
+// move. See the columns cancel_source_rev and cancel_source_row_id
+// (migration 058).
+func (q *Queries) SetMoveConflictCancelRev(ctx context.Context, arg SetMoveConflictCancelRevParams) error {
+	_, err := q.db.ExecContext(ctx, setMoveConflictCancelRev,
+		arg.CancelSourceRev,
+		arg.CancelSourceRowID,
+		arg.CalendarID,
+		arg.Uid,
+		arg.MoveSourceCalendarID,
+	)
+	return err
+}
+
+const setMoveConflictState = `-- name: SetMoveConflictState :execrows
+UPDATE sync_conflicts SET move_state = ?
+WHERE calendar_id = ? AND uid = ? AND move_source_calendar_id = ?
+`
+
+type SetMoveConflictStateParams struct {
+	MoveState            string
+	CalendarID           int64
+	Uid                  string
+	MoveSourceCalendarID *int64
+}
+
+// Write the state of the move of one move conflict with the expected
+// source calendar. Zero rows means that the conflict changed. See
+// migration 058.
+func (q *Queries) SetMoveConflictState(ctx context.Context, arg SetMoveConflictStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setMoveConflictState,
+		arg.MoveState,
+		arg.CalendarID,
+		arg.Uid,
+		arg.MoveSourceCalendarID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateSyncConflictCancelRecord = `-- name: UpdateSyncConflictCancelRecord :execrows
+UPDATE sync_conflicts
+SET local_ical = ?,
+    server_ical = ?,
+    server_etag = ?
+WHERE calendar_id = ? AND uid = ? AND move_source_calendar_id = ?
+`
+
+type UpdateSyncConflictCancelRecordParams struct {
+	LocalIcal            string
+	ServerIcal           string
+	ServerEtag           string
+	CalendarID           int64
+	Uid                  string
+	MoveSourceCalendarID *int64
+}
+
+// Record the state of a move at its cancel. The live body of the moved copy
+// becomes the local side, and the current source object becomes the server
+// side. A later local pick restores that body with that etag, so its push
+// matches the source object. See issue #841.
+func (q *Queries) UpdateSyncConflictCancelRecord(ctx context.Context, arg UpdateSyncConflictCancelRecordParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSyncConflictCancelRecord,
+		arg.LocalIcal,
+		arg.ServerIcal,
+		arg.ServerEtag,
+		arg.CalendarID,
+		arg.Uid,
+		arg.MoveSourceCalendarID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateSyncConflictServerBody = `-- name: UpdateSyncConflictServerBody :execrows
 UPDATE sync_conflicts
 SET server_ical = ?,
     server_etag = ?
-WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL
+WHERE calendar_id = ? AND uid = ? AND resolved_at IS NULL AND move_source_calendar_id IS NULL
 `
 
 type UpdateSyncConflictServerBodyParams struct {
@@ -256,7 +1221,9 @@ type UpdateSyncConflictServerBodyParams struct {
 }
 
 // The update leaves detected_at alone. A refresh records fresher server
-// data; it does not re-date how old the divergence is.
+// data; it does not re-date how old the divergence is. A move conflict
+// keeps its body. Its server side is the object of the source calendar, and
+// the pull of the target calendar fetches the target object (issue #841).
 func (q *Queries) UpdateSyncConflictServerBody(ctx context.Context, arg UpdateSyncConflictServerBodyParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateSyncConflictServerBody,
 		arg.ServerIcal,

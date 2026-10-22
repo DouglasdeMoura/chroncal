@@ -2,6 +2,7 @@ package tui
 
 import (
 	"github.com/douglasdemoura/chroncal/internal/config"
+	syncpkg "github.com/douglasdemoura/chroncal/internal/sync"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,5 +94,26 @@ func TestStateDirSyncLoggerWritesToLogFile(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "malformed DTEND") {
 		t.Errorf("state-dir log missing the import warning; log:\n%s", data)
+	}
+}
+
+// TestSyncSummaryNamesEditsThatWaitForAPendingDelete checks the status of a
+// push that held back an edit, because a pending delete of its UID waits.
+// The status must name it, and the opportunistic push must not drop the
+// result as quiet.
+func TestSyncSummaryNamesEditsThatWaitForAPendingDelete(t *testing.T) {
+	t.Parallel()
+
+	if got := syncSummary("Work", syncTotals{skippedPendingDeletes: 1}); !strings.Contains(got, "1 edit waits for a pending delete") {
+		t.Errorf("syncSummary with 1 held edit = %q", got)
+	}
+	if got := syncSummary("Work", syncTotals{skippedPendingDeletes: 2}); !strings.Contains(got, "2 edits wait for a pending delete") {
+		t.Errorf("syncSummary with 2 held edits = %q", got)
+	}
+	if quietPushResult(&syncpkg.SyncResult{SkippedPendingDeletes: 1}) {
+		t.Error("a push that held back an edit counts as quiet")
+	}
+	if !quietPushResult(&syncpkg.SyncResult{}) {
+		t.Error("an empty push does not count as quiet")
 	}
 }

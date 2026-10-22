@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"strconv"
 	"strings"
@@ -148,7 +149,7 @@ func TestSyncResolveServerPrintsImportWarnings(t *testing.T) {
 		"SUMMARY:Server event with unparseable DTEND\r\n" +
 		"END:VEVENT\r\n" +
 		"END:VCALENDAR\r\n"
-	if err := a.Queries.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := a.Queries.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: cals[0].ID,
 		OwnerType:  "event",
 		OwnerID:    1,
@@ -180,4 +181,100 @@ func TestSyncResolveServerPrintsImportWarnings(t *testing.T) {
 	if !strings.Contains(stderr, "resolve-warned-uid") {
 		t.Fatalf("sync resolve stderr = %q, want the warning labeled with the component UID", stderr)
 	}
+}
+
+// TestSyncResolveServerOfAGoneSourceExitsZero runs the server pick on a move
+// whose source object is gone (the source_gone mark). The target can create
+// the copy, so the pick finishes the move. The command must exit with 0 and
+// print the gone-source note as a warning on stderr.
+func TestSyncResolveServerOfAGoneSourceExitsZero(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	targetID, accountID := createLinkedCalendarForTest(t, dbPath)
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	ctx := context.Background()
+	source, err := a.Calendars.Create(ctx, "Home", "#7C3AED", "")
+	if err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	if err := a.Queries.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: source.ID, AccountID: &accountID, RemoteUrl: storage.StringToNullable("https://cal.example.com/dav/calendars/home/"),
+	}); err != nil {
+		t.Fatalf("link the source calendar: %v", err)
+	}
+	const uid = "gone-source-cli@example.com"
+	res, err := a.DB.ExecContext(ctx,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, status, transp, class)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		uid, targetID, "Moved", "2026-04-03T10:00:00Z", "2026-04-03T11:00:00Z", "CONFIRMED", "OPAQUE", "PUBLIC")
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	eventID, _ := res.LastInsertId()
+	for _, stmt := range []string{
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy) VALUES (` + strconv.FormatInt(targetID, 10) + `, '` + uid + `', 'event', '', '', 1, 'sync-token')`,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy) VALUES (` + strconv.FormatInt(source.ID, 10) + `, '` + uid + `', 'event', 'https://cal.example.com/dav/calendars/home/x.ics', 'e1', 0, 'sync-token')`,
+		`INSERT INTO tombstones (calendar_id, uid, remote_url, moved_to_calendar_id, source_gone) VALUES (` + strconv.FormatInt(source.ID, 10) + `, '` + uid + `', 'https://cal.example.com/dav/calendars/home/x.ics', ` + strconv.FormatInt(targetID, 10) + `, 1)`,
+	} {
+		if _, err := a.DB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	sourceID := source.ID
+	if _, err := a.Queries.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: targetID, OwnerType: "event", OwnerID: eventID, Uid: uid,
+		LocalIcal: "local", ServerIcal: "server", ServerEtag: "e1", MoveSourceCalendarID: &sourceID,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+	conflicts, err := a.Queries.ListSyncConflicts(ctx)
+	if err != nil || len(conflicts) != 1 {
+		t.Fatalf("ListSyncConflicts = %d, %v; want 1", len(conflicts), err)
+	}
+	conflictID := conflicts[0].ID
+	a.Close()
+
+	stdout, stderr, err := runChroncalCommand(t,
+		"--allow-plaintext", "sync", "resolve", strconv.FormatInt(conflictID, 10), "--pick", "server")
+	if err != nil {
+		t.Fatalf("sync resolve = %v, want exit 0 (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stdout, "the source is gone, so the move finished; the next sync creates the moved copy") || strings.Contains(stdout, "picked server") {
+		t.Fatalf("sync resolve stdout = %q, want the finished move and no picked side", stdout)
+	}
+	// The JSON output names the outcome.
+	if _, err := reopenMoveConflictForTest(t, dbPath, uid); err != nil {
+		t.Fatalf("reopen the move: %v", err)
+	}
+	stdout, stderr, err = runChroncalCommand(t,
+		"--allow-plaintext", "sync", "resolve", strconv.FormatInt(conflictID, 10), "--pick", "server", "--output", "json")
+	if err != nil {
+		t.Fatalf("sync resolve --output json = %v (stderr: %s)", err, stderr)
+	}
+	var item map[string]any
+	if err := json.Unmarshal([]byte(stdout), &item); err != nil {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	if item["outcome"] != "finished" || item["picked"] != "none" || item["resolved"] != true || item["note"] != "the source is gone, so the move finished; the next sync creates the moved copy" {
+		t.Fatalf("json = %v, want the finished outcome, picked none, and its note", item)
+	}
+}
+
+// reopenMoveConflictForTest opens the move conflict of uid again, so a second pick
+// runs on the same rows.
+func reopenMoveConflictForTest(t *testing.T, dbPath, uid string) (int64, error) {
+	t.Helper()
+	a, err := app.New(dbPath)
+	if err != nil {
+		return 0, err
+	}
+	defer a.Close()
+	res, err := a.DB.ExecContext(context.Background(), `UPDATE sync_conflicts SET move_state = 'open', resolved_at = NULL, resolution = NULL WHERE uid = ?`, uid)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

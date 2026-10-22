@@ -288,8 +288,9 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 			view.inventoryObserved(), view.absenceWithholdReason())
 	}
 
-	deleted, deleteFailures := deletions.apply(ctx, e, calendarID, tombstonedUIDs)
+	deleted, deleteFailures, deleteWarnings := deletions.apply(ctx, e, calendarID, tombstonedUIDs)
 	result.deleted += deleted
+	result.warnings = append(result.warnings, deleteWarnings...)
 
 	if syncResult.SyncToken != "" && view.localRowsSafe() && deleteFailures == 0 {
 		token := syncResult.SyncToken

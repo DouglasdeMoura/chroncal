@@ -196,3 +196,41 @@ SELECT
     CAST(COALESCE(MIN(calendar_id), 0) AS INTEGER) AS calendar_id
 FROM journals
 WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL;
+
+-- name: CountLiveJournalRowsInCalendar :one
+-- Count the live rows of one UID in one calendar. A local calendar has no
+-- sync row, so the sync engine reads the rows to tell whether a moved
+-- copy still exists there. See issue #841.
+SELECT COUNT(*) FROM journals WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
+
+-- name: CountLiveJournalRowsInMoveScope :one
+-- Count the live rows of one UID outside calendar_id, in the calendars of
+-- the account of calendar_id and in the local calendars. The restore of a
+-- cancelled move refuses when a later move took the item there. A copy of
+-- the UID in another account is another item. See issue #841.
+SELECT COUNT(*)
+FROM journals x
+JOIN calendars c ON c.id = x.calendar_id
+WHERE x.calendar_id != sqlc.arg(calendar_id)
+  AND x.uid = sqlc.arg(uid)
+  AND x.deleted_at IS NULL
+  AND (
+    c.account_id IS NULL OR c.account_id = 0
+    OR c.account_id = (SELECT own.account_id FROM calendars own WHERE own.id = sqlc.arg(calendar_id))
+  );
+
+-- name: ListJournalRowIDsOfUIDInCalendar :many
+-- The IDs of the rows of one UID (live and in the trash) in one calendar.
+-- The push reads them before the first PUT of a resource. A domain move
+-- keeps the row IDs, so a moved row names the target of a move. See issue
+-- #841.
+SELECT id FROM journals WHERE calendar_id = ? AND uid = ? ORDER BY id;
+
+-- name: GetJournalCalendarOfRow :one
+SELECT calendar_id FROM journals WHERE id = ?;
+
+-- name: GetJournalCalendarByUIDAndRecurrenceID :one
+-- The calendar of the row of one UID and recurrence ID, live or in the
+-- trash, and whether the row is in the trash. The key spans calendars.
+-- See issue #841.
+SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM journals WHERE uid = ? AND recurrence_id = ?;

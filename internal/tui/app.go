@@ -252,9 +252,12 @@ type syncTotals struct {
 	conflicts        int
 	autoResolved     int
 	skippedConflicts int
-	warnings         int
-	errCount         int
-	firstErr         error
+	// skippedPendingDeletes counts edits that wait for a pending delete
+	// of their UID (issue #841).
+	skippedPendingDeletes int
+	warnings              int
+	errCount              int
+	firstErr              error
 }
 
 // syncAllPlannedMsg is emitted by runSyncAllPlan after a list of the connected

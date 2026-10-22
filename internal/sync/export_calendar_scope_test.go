@@ -257,7 +257,8 @@ func TestPush_OwnedElsewhereKeepsServerObject(t *testing.T) {
 	if !kept {
 		t.Fatalf("the server object %s of B went, want it kept", path)
 	}
-	n, err := engine.q.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calB, Uid: master.UID})
+	var n int64
+	err := engine.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tombstones WHERE calendar_id = ? AND uid = ?`, calB, master.UID).Scan(&n)
 	if err != nil || n != 0 {
 		t.Fatalf("tombstones of B after the push = %d, %v; want 0", n, err)
 	}
@@ -351,7 +352,8 @@ func TestPush_MissingResourceLocalAnomalyClearsOnly(t *testing.T) {
 	if res, err := engine.PushLocalEdits(ctx, calB); err != nil || len(res.Errors) != 0 {
 		t.Fatalf("push B = %+v, %v", res, err)
 	}
-	n, err := engine.q.CountTombstonesByCalendarAndUID(ctx, storage.CountTombstonesByCalendarAndUIDParams{CalendarID: calB, Uid: uid})
+	var n int64
+	err := engine.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tombstones WHERE calendar_id = ? AND uid = ?`, calB, uid).Scan(&n)
 	if err != nil || n != 0 {
 		t.Fatalf("tombstones after the push = %d, %v; want 0", n, err)
 	}
@@ -619,7 +621,7 @@ func TestPullDeletes_WriteANewDeleteToken(t *testing.T) {
 	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE uid = ?`, master.UID); err != nil {
 		t.Fatalf("revive the rows: %v", err)
 	}
-	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID, true); err != nil {
+	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID); err != nil {
 		t.Fatalf("delete of the pull: %v", err)
 	}
 	if got := token(override.ID); got == 0 || got == pruned {
@@ -644,7 +646,7 @@ func TestPullDelete_OneTransactionWithTheSyncState(t *testing.T) {
 		`CREATE TRIGGER test_refuse_sync_drop BEFORE DELETE ON sync_resources BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
 		t.Fatalf("seed trigger: %v", err)
 	}
-	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID, true); err == nil {
+	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID); err == nil {
 		t.Fatal("deleteLocalResourceByUID = nil, want the error of the drop")
 	}
 	var deleted *string
@@ -676,7 +678,7 @@ func TestPullApply_ExplicitTombstoneFailureCountsAsFailed(t *testing.T) {
 	p := newPendingDeletions(engine.logger)
 	p.owner[uid] = ownerTypeEvent
 	p.explicit[uid] = true
-	if deleted, failed := p.apply(ctx, engine, calA, nil); deleted != 0 || failed != 1 {
+	if deleted, failed, _ := p.apply(ctx, engine, calA, nil); deleted != 0 || failed != 1 {
 		t.Fatalf("apply = %d deleted, %d failed; want 0 and 1", deleted, failed)
 	}
 	var n int

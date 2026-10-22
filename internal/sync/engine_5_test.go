@@ -712,7 +712,7 @@ func TestOwnerDispatchRejectsUnknownTypeUniformly(t *testing.T) {
 	engine, _, _ := newTestEngine(t)
 	ctx := context.Background()
 
-	if _, err := engine.deleteLocalResourceByUID(ctx, 1, "bogus", "uid", true); !errors.Is(err, errUnknownOwnerType) {
+	if _, err := engine.deleteLocalResourceByUID(ctx, 1, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
 		t.Fatalf("deleteLocalResourceByUID err = %v, want errUnknownOwnerType", err)
 	}
 	if _, err := engine.lookupOwnerID(ctx, 1, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {

@@ -402,8 +402,10 @@ func (s *Service) Delete(ctx context.Context, accountID int64, store auth.Creden
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 	// Keep hrefs, tombstones, and conflicts. Account remove is not a move to a
-	// new server: a later add of the same origin should re-link these rows
-	// instead of PUTting them as first-time creates. calendar connect still
+	// new server. A later add of the same origin should re-link these rows,
+	// so it does not PUT them as first-time creates. Move conflicts stay too,
+	// so a re-link resumes them. Until then, the wait view does not hold a
+	// source tombstone for them, and their picks refuse (issue #841). calendar connect still
 	// detaches when the collection actually changes.
 	// Persist an absolute remote_url so a different server with the same path
 	// cannot steal the unlinked row.

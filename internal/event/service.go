@@ -205,6 +205,11 @@ type UpsertParams struct {
 	Geo            string
 	DurationValue  string
 	DtStamp        string
+	// Import applies the import rules of issue #841 in the transaction of
+	// the upsert. The ical import sets it for every import calendar: one
+	// value for the whole import. nil marks an upsert that is not an
+	// import. See storage.PrepareImport and storage.ApplyImport.
+	Import *storage.Import
 }
 
 func applyEventDefaults(status, transp, class *string) {
@@ -512,6 +517,9 @@ func uidMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
 		UID:             uid,
 		ErrInstanceMove: ErrInstanceCalendarMove,
 		ErrTargetHasUID: ErrMoveTargetHasUID,
+		LiveRowsIn: func(ctx context.Context, calendarID int64) (int64, error) {
+			return qtx.CountLiveEventRowsInCalendar(ctx, storage.CountLiveEventRowsInCalendarParams{CalendarID: calendarID, Uid: uid})
+		},
 		Masters: func(ctx context.Context) ([]uidmove.Master, error) {
 			masters, err := qtx.ListEventMastersByUIDIncludingDeleted(ctx, uid)
 			if err != nil {
@@ -566,6 +574,14 @@ func findInstanceOverrideTx(ctx context.Context, qtx *storage.Queries, master st
 		ids[i] = r.ID
 	}
 	return storage.Event{}, &AmbiguousOverrideError{IDs: ids}
+}
+
+// UIDMoveRows binds the queries of qtx to the calendar-move rules of uid
+// (uidmove.Rows). The cancel of a move in the sync engine moves the rows
+// back through it (Rows.MoveBack), so the move rules stay in uidmove
+// (issue #841).
+func UIDMoveRows(qtx *storage.Queries, uid string) uidmove.Rows {
+	return uidMoveRows(qtx, uid)
 }
 
 // moveUIDRowsTx moves the event rows and the delete-log rows of one UID to
@@ -701,6 +717,16 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	}
 	defer rollback()
 
+	// The import rules that come before the upsert (issue #841). The key of
+	// an event is per calendar, so no prior lookup applies.
+	var guard storage.PreparedImport
+	if p.Import != nil {
+		guard, err = storage.PrepareImport(ctx, qtx, p.Import, p.CalendarID, p.UID, p.RecurrenceID, "event", nil)
+		if err != nil {
+			return Event{}, err
+		}
+	}
+
 	// The EXDATE list of the master before the write. A pull or an import
 	// that changes it takes the EXDATE ownership from the occurrence logs.
 	var prevExdates *string
@@ -761,6 +787,11 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	e := FromStorage(r)
 	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
+	}
+	if p.Import != nil {
+		if err := storage.ApplyImport(ctx, qtx, guard); err != nil {
+			return Event{}, err
+		}
 	}
 	if err := commit(); err != nil {
 		return Event{}, fmt.Errorf("commit upsert event: %w", err)

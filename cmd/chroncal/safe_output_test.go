@@ -264,3 +264,57 @@ func TestWriteSyncResult_SanitizesErrors(t *testing.T) {
 		t.Fatalf("sync result error output did not contain sanitized error: %q", errOut)
 	}
 }
+
+// TestWriteSyncConflictLine_NamesTheMoveSource guards issue #841: a move
+// conflict names the source calendar of the move, and an edit conflict
+// does not.
+func TestWriteSyncConflictLine_NamesTheMoveSource(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writeSyncConflictLine(&buf, syncPkg.Conflict{
+		ID:                   12,
+		OwnerType:            "event",
+		UID:                  "uid-1",
+		DetectedAt:           time.Date(2026, 4, 4, 9, 30, 0, 0, time.UTC),
+		MoveSourceCalendarID: 7,
+	})
+	if out := buf.String(); !strings.Contains(out, "moved-from-calendar=7") {
+		t.Fatalf("move conflict line = %q, want the source calendar", out)
+	}
+
+	buf.Reset()
+	writeSyncConflictLine(&buf, syncPkg.Conflict{
+		ID:         13,
+		OwnerType:  "event",
+		UID:        "uid-2",
+		DetectedAt: time.Date(2026, 4, 4, 9, 30, 0, 0, time.UTC),
+	})
+	if out := buf.String(); strings.Contains(out, "moved-from-calendar") {
+		t.Fatalf("edit conflict line = %q, want no move source", out)
+	}
+}
+
+// TestWriteSyncStatusLine_NamesWaitingRows checks the line of each row whose
+// push waits for another step (issue #841). The reason comes from the push
+// failure, so the line removes control sequences too.
+func TestWriteSyncStatusLine_NamesWaitingRows(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	writeSyncStatusLine(&buf, syncPkg.SyncStatus{
+		CalendarName: "Work",
+		Waiting: []syncPkg.WaitingResource{{
+			UID:    "wait-uid",
+			Reason: "the move conflict on calendar \"c\x1b[31m\"",
+		}},
+	})
+
+	out := buf.String()
+	if strings.Contains(out, "\x1b") {
+		t.Fatalf("waiting line contains escape sequence: %q", out)
+	}
+	if !strings.Contains(out, `waiting uid=wait-uid  on the move conflict on calendar "c`) {
+		t.Fatalf("sync status output %q misses the waiting line", out)
+	}
+}

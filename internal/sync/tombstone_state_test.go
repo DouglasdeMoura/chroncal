@@ -26,7 +26,7 @@ func TestApplyReadsTheTombstonesWhenItRuns(t *testing.T) {
 	deletions := newPendingDeletions(engine.logger)
 	deletions.markExplicit(sr)
 	// The calendar holds no tombstone of the UID when apply runs.
-	if _, failed := deletions.apply(ctx, engine, calA, nil); failed != 0 {
+	if _, failed, _ := deletions.apply(ctx, engine, calA, nil); failed != 0 {
 		t.Fatalf("apply failed = %d, want 0", failed)
 	}
 	if got, err := engine.events.Get(ctx, evt.ID); err == nil {
@@ -49,7 +49,7 @@ func TestApplyKeepsAnAbsentUIDThatThePullSkipped(t *testing.T) {
 	deletions.owner[evt.UID] = "event"
 	// The pull skipped the UID: the tombstone was there when it started.
 	skipped := map[string]bool{evt.UID: true}
-	if _, failed := deletions.apply(ctx, engine, calA, skipped); failed != 0 {
+	if _, failed, _ := deletions.apply(ctx, engine, calA, skipped); failed != 0 {
 		t.Fatalf("apply failed = %d, want 0", failed)
 	}
 	if _, err := engine.events.Get(ctx, evt.ID); err != nil {

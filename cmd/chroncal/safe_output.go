@@ -75,6 +75,11 @@ func writeSyncStatusLine(w io.Writer, status syncPkg.SyncStatus) {
 			safeText(h.GaveUpAt),
 		)
 	}
+	// A wait is no failure: the push of the row waits for another step
+	// (issue #841).
+	for _, wt := range status.Waiting {
+		fmt.Fprintf(w, "    waiting uid=%s  on %s\n", safeText(wt.UID), safeText(wt.Reason))
+	}
 	// An edit that no series owns stays local. This line is its signal.
 	for _, uid := range status.UnownedEdits {
 		fmt.Fprintf(w, "    edit not pushed uid=%s  reason=%s  (local copy kept)\n",
@@ -94,28 +99,39 @@ func writeSyncStatusLine(w io.Writer, status syncPkg.SyncStatus) {
 }
 
 func writeSyncConflictLine(w io.Writer, conflict syncPkg.Conflict) {
+	// A move conflict names the source calendar of the move, so the user
+	// can tell it from an edit conflict (issue #841).
+	moved := ""
+	if conflict.MoveSourceCalendarID != 0 {
+		moved = fmt.Sprintf("  moved-from-calendar=%d  move=%s", conflict.MoveSourceCalendarID, safeText(conflict.MoveState))
+	}
 	if conflict.Resolution != "" {
-		fmt.Fprintf(w, "  #%d  type=%s  uid=%s  detected=%s  resolved=%s  resolution=%s\n",
+		fmt.Fprintf(w, "  #%d  type=%s  uid=%s  detected=%s  resolved=%s  resolution=%s%s\n",
 			conflict.ID,
 			safeText(conflict.OwnerType),
 			safeText(conflict.UID),
 			conflict.DetectedAt.Format("2006-01-02 15:04"),
 			conflict.ResolvedAt.Format("2006-01-02 15:04"),
 			safeText(conflict.Resolution),
+			moved,
 		)
 		return
 	}
-	fmt.Fprintf(w, "  #%d  type=%s  uid=%s  detected=%s\n",
+	fmt.Fprintf(w, "  #%d  type=%s  uid=%s  detected=%s%s\n",
 		conflict.ID,
 		safeText(conflict.OwnerType),
 		safeText(conflict.UID),
 		conflict.DetectedAt.Format("2006-01-02 15:04"),
+		moved,
 	)
 }
 
 func writeSyncResult(outW, errW io.Writer, r *syncPkg.SyncResult) {
 	fmt.Fprintf(outW, "  Calendar %d: pushed=%d pulled=%d deleted=%d conflicts=%d auto-resolved=%d skipped-conflicts=%d errors=%d warnings=%d\n",
 		r.CalendarID, r.Pushed, r.Pulled, r.Deleted, r.Conflicts, r.AutoResolved, r.SkippedConflicts, len(r.Errors), len(r.Warnings))
+	if r.SkippedPendingDeletes > 0 {
+		fmt.Fprintf(outW, "    skipped-pending-deletes=%d\n", r.SkippedPendingDeletes)
+	}
 	for _, err := range r.Errors {
 		fmt.Fprintf(errW, "    error: %s\n", safeText(err.Error()))
 	}

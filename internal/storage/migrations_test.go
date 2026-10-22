@@ -640,6 +640,88 @@ func TestMigration051UpDown(t *testing.T) {
 	}
 }
 
+// TestMigration059KeepsOldTombstonesAsPlainDeletes upgrades a database
+// with a tombstone in a source calendar beside a sync row without a server
+// object in a sibling calendar. That state has no record of a move, so the
+// migration must leave the tombstone as a plain delete.
+func TestMigration059KeepsOldTombstonesAsPlainDeletes(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig059.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec, count := migHelpers(t, ctx, conn)
+	provider := migProvider(t, conn)
+	if _, err := provider.DownTo(ctx, 58); err != nil {
+		t.Fatalf("down to 58: %v", err)
+	}
+
+	mustExec(`INSERT INTO accounts (id, name, server_url, auth_type, username) VALUES (1, 'acct', 'https://example.com', 'basic', 'u')`)
+	mustExec(`INSERT INTO calendars (id, name, account_id, remote_url) VALUES (10, 'A', 1, '/cal/a/')`)
+	mustExec(`INSERT INTO calendars (id, name, account_id, remote_url) VALUES (11, 'B', 1, '/cal/b/')`)
+	mustExec(`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy)
+		VALUES (10, 'moved', 'event', '/cal/a/moved.ics', 'e1', 0, 'sync-token')`)
+	mustExec(`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy)
+		VALUES (11, 'moved', 'event', '', '', 1, 'sync-token')`)
+	mustExec(`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (10, 'moved', '/cal/a/moved.ics')`)
+
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	if n := count(`SELECT COUNT(*) FROM tombstones WHERE uid = 'moved' AND moved_to_calendar_id IS NULL`); n != 1 {
+		t.Errorf("old tombstone without a target = %d, want 1", n)
+	}
+}
+
+// TestMigration060WaitsForALegacyMoveTarget upgrades a database with a move
+// from before the upgrade. The source has a tombstone without a move target.
+// A sibling calendar of the same account has a sync row without a server
+// object. The view must hold that tombstone, so its source delete waits for
+// the create. A plain tombstone without such a sibling row must not wait.
+func TestMigration060WaitsForALegacyMoveTarget(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig060.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec, count := migHelpers(t, ctx, conn)
+	provider := migProvider(t, conn)
+	if _, err := provider.DownTo(ctx, 58); err != nil {
+		t.Fatalf("down to 58: %v", err)
+	}
+	mustExec(`INSERT INTO accounts (id, name, server_url, auth_type, username) VALUES (1, 'acct', 'https://example.com', 'basic', 'u')`)
+	mustExec(`INSERT INTO calendars (id, name, account_id, remote_url) VALUES (10, 'A', 1, '/cal/a/')`)
+	mustExec(`INSERT INTO calendars (id, name, account_id, remote_url) VALUES (11, 'B', 1, '/cal/b/')`)
+	mustExec(`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy)
+		VALUES (11, 'moved', 'event', '', '', 1, 'sync-token')`)
+	mustExec(`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (10, 'moved', '/cal/a/moved.ics')`)
+	mustExec(`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (10, 'plain', '/cal/a/plain.ics')`)
+
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	if n := count(`SELECT COUNT(*) FROM move_wait_tombstones WHERE uid = 'moved'`); n != 1 {
+		t.Errorf("legacy move tombstone in the wait view = %d, want 1", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM move_wait_tombstones WHERE uid = 'plain'`); n != 0 {
+		t.Errorf("plain tombstone in the wait view = %d, want 0", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM tombstones WHERE uid = 'moved' AND legacy_move = 1`); n != 1 {
+		t.Errorf("legacy tombstone after the upgrade = %d, want legacy_move 1", n)
+	}
+	// A new plain delete beside the same unpushed sibling row never waits.
+	mustExec(`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy)
+		VALUES (11, 'fresh', 'event', '', '', 1, 'sync-token')`)
+	mustExec(`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (10, 'fresh', '/cal/a/fresh.ics')`)
+	if n := count(`SELECT COUNT(*) FROM move_wait_tombstones WHERE uid = 'fresh'`); n != 0 {
+		t.Errorf("new plain tombstone in the wait view = %d, want 0", n)
+	}
+}
+
 // TestMigration057UpDown covers the per-calendar keys of the delete logs
 // (issue #842). After Up, two calendars keep their own row of one
 // occurrence and of one cutoff. Down keeps the first row of each key.
@@ -745,6 +827,26 @@ func seriesViewStatement(t *testing.T) string {
 	return string(src[start : start+end+1])
 }
 
+// moveCopiesViewStatement reads the CREATE VIEW statement of
+// live_move_copies from migration 060, for step 4 of the rebuild in the
+// migrations README.
+func moveCopiesViewStatement(t *testing.T) string {
+	t.Helper()
+	src, err := dbembed.Migrations.ReadFile("migrations/060_move_wait_tombstones.sql")
+	if err != nil {
+		t.Fatalf("read migration 060: %v", err)
+	}
+	start := strings.Index(string(src), "CREATE VIEW live_move_copies AS")
+	if start < 0 {
+		t.Fatal("migration 060 has no CREATE VIEW live_move_copies")
+	}
+	end := strings.Index(string(src[start:]), ";")
+	if end < 0 {
+		t.Fatal("the CREATE VIEW statement has no end")
+	}
+	return string(src[start : start+end+1])
+}
+
 // rebuildEvents runs the table-rebuild pattern of migration 050 on a
 // test database: drop the triggers on events, copy events into
 // events_new, drop events, rename.
@@ -788,14 +890,20 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 		mustExec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time)
 			VALUES (1, 'rebuild', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
 		mustExec(`DROP VIEW IF EXISTS event_series_rows`)
+		mustExec(`DROP VIEW IF EXISTS live_move_copies`)
 		if err := rebuildEvents(ctx, conn); err != nil {
 			t.Fatalf("rebuild with the view dropped: %v", err)
 		}
 		mustExec(seriesViewStatement(t))
+		// README step 4: the view of the moved copies of migration 060.
+		mustExec(moveCopiesViewStatement(t))
+		if n := count(`SELECT COUNT(*) FROM live_move_copies WHERE uid = 'rebuild'`); n != 1 {
+			t.Errorf("live_move_copies after the rebuild = %d, want 1", n)
+		}
 		if n := count(`SELECT COUNT(*) FROM event_series_rows WHERE uid = 'rebuild' AND owner_calendar_id = 1`); n != 1 {
 			t.Errorf("event_series_rows after the rebuild = %d, want 1", n)
 		}
-		// README step 4: the DROP TABLE of the rebuild drops the triggers.
+		// README step 5: the DROP TABLE of the rebuild drops the triggers.
 		triggers := []string{
 			"events_master_revive_drops_series_log", "events_master_insert_drops_stale_logs",
 			"events_override_revive_drops_stale_logs", "events_override_insert_drops_prune_marker",
@@ -805,11 +913,11 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 		for _, name := range triggers {
 			q := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = '` + name + `'`
 			if n := count(q); n != 0 {
-				t.Fatalf("trigger %s after the rebuild = %d, want 0 before step 4", name, n)
+				t.Fatalf("trigger %s after the rebuild = %d, want 0 before step 5", name, n)
 			}
 			mustExec(triggerStatement(t, name))
 			if n := count(q); n != 1 {
-				t.Fatalf("trigger %s after step 4 = %d, want 1", name, n)
+				t.Fatalf("trigger %s after step 5 = %d, want 1", name, n)
 			}
 		}
 		const logs = `SELECT COUNT(*) FROM event_series_deletes WHERE calendar_id = 1 AND uid = 'rebuild'`
@@ -834,7 +942,7 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 }
 
 // triggerStatement reads the CREATE TRIGGER statement of name from
-// migration 057, so the rebuild test runs step 4 of the migrations README.
+// migration 057, so the rebuild test runs step 5 of the migrations README.
 func triggerStatement(t *testing.T, name string) string {
 	t.Helper()
 	src, err := dbembed.Migrations.ReadFile("migrations/057_delete_logs_uid_unique_per_calendar.sql")

@@ -102,6 +102,54 @@ func (q *Queries) CountEventsByCalendar(ctx context.Context, calendarID int64) (
 	return count, err
 }
 
+const countLiveEventRowsInCalendar = `-- name: CountLiveEventRowsInCalendar :one
+SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
+`
+
+type CountLiveEventRowsInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Count the live rows of one UID in one calendar. A local calendar has no
+// sync row, so the sync engine reads the rows to tell whether a moved
+// copy still exists there. See issue #841.
+func (q *Queries) CountLiveEventRowsInCalendar(ctx context.Context, arg CountLiveEventRowsInCalendarParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveEventRowsInCalendar, arg.CalendarID, arg.Uid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countLiveEventRowsInMoveScope = `-- name: CountLiveEventRowsInMoveScope :one
+SELECT COUNT(*)
+FROM events x
+JOIN calendars c ON c.id = x.calendar_id
+WHERE x.calendar_id != ?1
+  AND x.uid = ?2
+  AND x.deleted_at IS NULL
+  AND (
+    c.account_id IS NULL OR c.account_id = 0
+    OR c.account_id = (SELECT own.account_id FROM calendars own WHERE own.id = ?1)
+  )
+`
+
+type CountLiveEventRowsInMoveScopeParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// Count the live rows of one UID outside calendar_id, in the calendars of
+// the account of calendar_id and in the local calendars. The restore of a
+// cancelled move refuses when a later move took the item there. A copy of
+// the UID in another account is another item. See issue #841.
+func (q *Queries) CountLiveEventRowsInMoveScope(ctx context.Context, arg CountLiveEventRowsInMoveScopeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveEventRowsInMoveScope, arg.CalendarID, arg.Uid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createEvent = `-- name: CreateEvent :one
 INSERT INTO events (
     uid, calendar_id, title, description, location,
@@ -523,6 +571,17 @@ func (q *Queries) GetEventByCalendarUIDIncludingDeleted(ctx context.Context, arg
 	return i, err
 }
 
+const getEventCalendarOfRow = `-- name: GetEventCalendarOfRow :one
+SELECT calendar_id FROM events WHERE id = ?
+`
+
+func (q *Queries) GetEventCalendarOfRow(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getEventCalendarOfRow, id)
+	var calendar_id int64
+	err := row.Scan(&calendar_id)
+	return calendar_id, err
+}
+
 const getEventIncludingDeleted = `-- name: GetEventIncludingDeleted :one
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned FROM events WHERE id = ?
 `
@@ -807,6 +866,42 @@ func (q *Queries) ListEventMastersByUIDIncludingDeleted(ctx context.Context, uid
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventRowIDsOfUIDInCalendar = `-- name: ListEventRowIDsOfUIDInCalendar :many
+SELECT id FROM events WHERE calendar_id = ? AND uid = ? ORDER BY id
+`
+
+type ListEventRowIDsOfUIDInCalendarParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// The IDs of the rows of one UID (live and in the trash) in one calendar.
+// The push reads them before the first PUT of a resource. A domain move
+// keeps the row IDs, so a moved row names the target of a move. See issue
+// #841.
+func (q *Queries) ListEventRowIDsOfUIDInCalendar(ctx context.Context, arg ListEventRowIDsOfUIDInCalendarParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listEventRowIDsOfUIDInCalendar, arg.CalendarID, arg.Uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

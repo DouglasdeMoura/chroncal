@@ -35,7 +35,7 @@ func seedSyncConflictForTest(t *testing.T, dbPath string, calendarID int64) int6
 		"DTSTART:20260403T120000Z\r\nDTEND:20260403T130000Z\r\n" +
 		"SUMMARY:Conflicted\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	ctx := context.Background()
-	if err := a.Queries.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+	if _, err := a.Queries.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calendarID,
 		OwnerType:  "event",
 		OwnerID:    1,
