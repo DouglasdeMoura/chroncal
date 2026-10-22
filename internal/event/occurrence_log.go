@@ -420,6 +420,43 @@ type deleteIdentity struct {
 	exdateLogID, seq int64
 	// seriesLogID names a series-delete log.
 	seriesLogID int64
+	// trashedAt is the deleted_at that the delete wrote (UndoMeta.DeletedAt),
+	// or empty when the caller has no time.
+	trashedAt string
+}
+
+// logless reports whether the delete of id wrote no log.
+func (id deleteIdentity) logless() bool {
+	return id.exdateLogID == 0 && id.seriesLogID == 0
+}
+
+// trashTimeTx reads the deleted_at that a delete wrote on the row rowID.
+func trashTimeTx(ctx context.Context, qtx *storage.Queries, rowID int64) (string, error) {
+	states, err := rowStatesTx(ctx, qtx, []int64{rowID})
+	if err != nil {
+		return "", err
+	}
+	if len(states) == 0 || states[0].DeletedAt == nil {
+		return "", nil
+	}
+	return *states[0].DeletedAt, nil
+}
+
+// undoTime returns the time of a delete for UndoMeta.DeletedAt: the
+// deleted_at that the delete wrote, or the time now with no row.
+func undoTime(trashedAt string) time.Time {
+	if t, err := time.Parse(timeutil.StorageTimeFormat, trashedAt); err == nil {
+		return t.UTC()
+	}
+	return time.Now().UTC()
+}
+
+// trashTimeOf is the inverse of undoTime: the deleted_at text of meta.
+func trashTimeOf(meta UndoMeta) string {
+	if meta.DeletedAt.IsZero() {
+		return ""
+	}
+	return meta.DeletedAt.UTC().Format(timeutil.StorageTimeFormat)
 }
 
 // owner names the record that holds a row in the trash for the undo.
@@ -438,10 +475,13 @@ const (
 //   - A row in the trash that a newer entry or log names: the undo refuses
 //     with ErrDeletedAgain.
 //   - A row in the trash that id names: the row comes back.
-//   - A row in the trash that no log names: a pull hid it, for example with
-//     a prune, or a trigger dropped the log. The undo refuses with
-//     ErrChangedSince. The trash still restores the row. The zero identity
-//     wrote no log, so for it such a row comes back.
+//   - A row in the trash that no log names: a trigger dropped the log, or a
+//     pull hid the row with no log. The deleted_at of the row tells the two
+//     apart. A trigger leaves the row as the delete left it, so a deleted_at
+//     equal to the time of the delete (trashedAt) brings the row back. A
+//     later pull or prune wrote a newer deleted_at, so the undo refuses with
+//     ErrChangedSince, and the trash still restores the row. With no time, a
+//     delete that wrote no log takes such a row.
 //
 // The undo is all or nothing: one refusal refuses the whole undo. It returns
 // the states of the rows to bring back. With none, it gives
@@ -503,7 +543,6 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 	if err != nil {
 		return nil, err
 	}
-	zero := id == deleteIdentity{}
 	var restore []storage.ListEventRowStatesByIDsRow
 	live := false
 	for _, st := range states {
@@ -517,7 +556,11 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 		case ownedBySelf:
 			restore = append(restore, st)
 		default:
-			if !zero {
+			sameDelete := id.logless()
+			if id.trashedAt != "" {
+				sameDelete = *st.DeletedAt == id.trashedAt
+			}
+			if !sameDelete {
 				return nil, ErrChangedSince
 			}
 			restore = append(restore, st)
@@ -530,26 +573,4 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 		return nil, ErrNotDeleted
 	}
 	return restore, nil
-}
-
-// writableCalendarsTx returns a cached check of the write policy of a
-// calendar. A calendar that refuses a write gives false. Another error of the
-// check is an error.
-func writableCalendarsTx(ctx context.Context, qtx *storage.Queries) func(calendarID int64) (bool, error) {
-	cache := make(map[int64]bool)
-	return func(calendarID int64) (bool, error) {
-		if ok, seen := cache[calendarID]; seen {
-			return ok, nil
-		}
-		err := calendaraccess.EnsureWritable(ctx, qtx, calendarID, "VEVENT")
-		switch {
-		case err == nil:
-			cache[calendarID] = true
-		case errors.Is(err, calendaraccess.ErrReadOnly) || errors.Is(err, calendaraccess.ErrUnsupportedComponent):
-			cache[calendarID] = false
-		default:
-			return false, err
-		}
-		return cache[calendarID], nil
-	}
 }

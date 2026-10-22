@@ -530,11 +530,8 @@ func (s *Service) purgeInstanceByLogID(ctx context.Context, logID int64) error {
 		return err
 	}
 	rows := parsed.AllRows()
-	// The purge writes the calendar of each row, the calendar of the master
-	// too: a legacy override lives in another calendar than its master.
-	if err := ensureRowsWritableTx(ctx, qtx, 0, rows); err != nil {
-		return err
-	}
+	// A purge of the local trash makes no server write, so it needs no
+	// write guard.
 	// The log goes first, so the settle of the purge finds no log.
 	if err := qtx.DeleteEventExdateDelete(ctx, logID); err != nil {
 		return fmt.Errorf("delete exdate log: %w", err)

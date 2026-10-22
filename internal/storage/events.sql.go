@@ -2043,8 +2043,10 @@ UPDATE events SET
 WHERE id IN (/*SLICE:ids*/?) AND deleted_at IS NULL
 `
 
-// Soft-delete a set of live rows by ID in one statement. The truncation of
-// a series reads its rows once and hides them with it.
+// Soft-delete a set of live rows by ID in one statement, so every row gets
+// the same deleted_at. The truncation of a series reads its rows once and
+// hides them with it. The occurrence delete uses it too: its undo compares
+// that time (UndoMeta.DeletedAt).
 func (q *Queries) SoftDeleteEventsByIDs(ctx context.Context, ids []int64) error {
 	query := softDeleteEventsByIDs
 	var queryParams []interface{}

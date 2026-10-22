@@ -228,13 +228,14 @@ func TestMigration057_BackfillTakesLegacyRowsAndSkipsLaterDeletes(t *testing.T) 
 // the rows that the old restore brought back by recurrence ID. That includes
 // the row of an earlier delete whose log time a later delete moved. It skips
 // a row of a series delete and a row of a truncation. It also skips a row
-// that went more than one second after the log. The last case has a fraction
-// of a second, which a compare of the text gets wrong.
+// that went more than one second after the log. The times compare as whole
+// seconds: a row exactly one second after the log counts.
 func TestMigration057_BackfillTakesTheRowsOfTheOldRestore(t *testing.T) {
 	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
 	x := start.Add(24 * time.Hour)
 	xs := x.Format(time.RFC3339)
-	const before, logTime, late = "2026-04-01T10:00:00Z", "2026-05-02T10:00:00Z", "2026-05-02T10:00:01.500Z"
+	const before, logTime = "2026-04-01T10:00:00Z", "2026-05-02T10:00:00Z"
+	const oneSecond, twoSeconds = "2026-05-02T10:00:01Z", "2026-05-02T10:00:02Z"
 	series := func(exec func(string, ...any), id int64, uid, masterDeleted string) {
 		var deleted any
 		if masterDeleted != "" {
@@ -257,8 +258,10 @@ func TestMigration057_BackfillTakesTheRowsOfTheOldRestore(t *testing.T) {
 		row(exec, 6, "truncated", before)
 		exec(`INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, deleted_at)
 		  VALUES (1, 'truncated', ?, 'FREQ=DAILY;COUNT=3', '', '', ?)`, start.Add(12*time.Hour).Format(time.RFC3339), before)
-		series(exec, 7, "fraction", "")
-		row(exec, 8, "fraction", late)
+		series(exec, 7, "one-second", "")
+		row(exec, 8, "one-second", oneSecond)
+		series(exec, 9, "two-seconds", "")
+		row(exec, 10, "two-seconds", twoSeconds)
 	})
 	for _, tc := range []struct {
 		uid  string
@@ -267,7 +270,8 @@ func TestMigration057_BackfillTakesTheRowsOfTheOldRestore(t *testing.T) {
 		{"refreshed", []int64{2}},
 		{"same-time", nil},
 		{"truncated", nil},
-		{"fraction", nil},
+		{"one-second", []int64{8}},
+		{"two-seconds", nil},
 	} {
 		ids, found := exdateLogRows(t, svc, tc.uid, x)
 		if !found || len(ids) != len(tc.want) || (len(ids) == 1 && ids[0] != tc.want[0]) {
