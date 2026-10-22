@@ -711,45 +711,6 @@ func (q *Queries) ListDeletedEventsByCalendar(ctx context.Context, calendarID in
 	return items, nil
 }
 
-const listEventCalendarIDsByIDs = `-- name: ListEventCalendarIDsByIDs :many
-SELECT DISTINCT calendar_id FROM events WHERE id IN (/*SLICE:ids*/?) ORDER BY calendar_id
-`
-
-// The calendars of a set of rows, live or in the trash. The access guard
-// of a log-driven restore reads it in one query.
-func (q *Queries) ListEventCalendarIDsByIDs(ctx context.Context, ids []int64) ([]int64, error) {
-	query := listEventCalendarIDsByIDs
-	var queryParams []interface{}
-	if len(ids) > 0 {
-		for _, v := range ids {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
-	}
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var calendar_id int64
-		if err := rows.Scan(&calendar_id); err != nil {
-			return nil, err
-		}
-		items = append(items, calendar_id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listEventCalendarIDsByUID = `-- name: ListEventCalendarIDsByUID :many
 SELECT DISTINCT calendar_id FROM events WHERE uid = ? ORDER BY calendar_id
 `
@@ -769,51 +730,6 @@ func (q *Queries) ListEventCalendarIDsByUID(ctx context.Context, uid string) ([]
 			return nil, err
 		}
 		items = append(items, calendar_id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listEventCalendarsOfIDs = `-- name: ListEventCalendarsOfIDs :many
-SELECT id, calendar_id FROM events WHERE id IN (/*SLICE:ids*/?) ORDER BY id
-`
-
-type ListEventCalendarsOfIDsRow struct {
-	ID         int64
-	CalendarID int64
-}
-
-// The calendar of each row of a set, live or in the trash. The restore of an
-// occurrence delete reads it once: for the access guard, and for the
-// occurrence logs of the restored rows.
-func (q *Queries) ListEventCalendarsOfIDs(ctx context.Context, ids []int64) ([]ListEventCalendarsOfIDsRow, error) {
-	query := listEventCalendarsOfIDs
-	var queryParams []interface{}
-	if len(ids) > 0 {
-		for _, v := range ids {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
-	}
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListEventCalendarsOfIDsRow
-	for rows.Next() {
-		var i ListEventCalendarsOfIDsRow
-		if err := rows.Scan(&i.ID, &i.CalendarID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -868,6 +784,52 @@ func (q *Queries) ListEventMastersByUIDIncludingDeleted(ctx context.Context, uid
 			&i.ConferenceUri,
 			&i.DeletedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventRowStatesByIDs = `-- name: ListEventRowStatesByIDs :many
+SELECT id, calendar_id, deleted_at FROM events WHERE id IN (/*SLICE:ids*/?) ORDER BY id
+`
+
+type ListEventRowStatesByIDsRow struct {
+	ID         int64
+	CalendarID int64
+	DeletedAt  *string
+}
+
+// The calendar and the trash state of each row of a set. A restore by IDs
+// reads it once: for the access guard of each calendar, and to tell a row
+// in the trash from a live row and a purged row.
+func (q *Queries) ListEventRowStatesByIDs(ctx context.Context, ids []int64) ([]ListEventRowStatesByIDsRow, error) {
+	query := listEventRowStatesByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListEventRowStatesByIDsRow
+	for rows.Next() {
+		var i ListEventRowStatesByIDsRow
+		if err := rows.Scan(&i.ID, &i.CalendarID, &i.DeletedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

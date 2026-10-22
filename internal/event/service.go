@@ -729,6 +729,12 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Event, error
 	if err != nil {
 		return Event{}, err
 	}
+	// A pull or an import can write a live override at an occurrence that a
+	// delete excluded. The occurrence log then gives up its EXDATE: the
+	// export must never carry an override and an EXDATE of one occurrence.
+	if err := settleLiveOverrideTx(ctx, qtx, r); err != nil {
+		return Event{}, err
+	}
 	e := FromStorage(r)
 	if err := replaceCategoriesTx(ctx, qtx, e.ID, ParseCategoryList(p.Categories)); err != nil {
 		return Event{}, fmt.Errorf("replace categories: %w", err)
@@ -980,25 +986,16 @@ func reviveOverrideTx(ctx context.Context, qtx *storage.Queries, master storage.
 	if !recurset.NewChecker(m.RecurrenceRule, m.Timezone, m.StartTime, m.ParseRDates()).OccursAt(row.RecurrenceID) {
 		return ErrOccurrenceOutsideSeries
 	}
-	masterCalendarID := master.CalendarID
-	// The revive trigger changes the list of the occurrence log, so the
-	// read of the log comes first.
-	log, logged, err := exdateLogTx(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID)
-	if err != nil {
-		return err
-	}
 	if err := qtx.RestoreEvent(ctx, row.ID); err != nil {
 		return fmt.Errorf("revive override: %w", err)
 	}
 	// The revive trigger of migration 057 removes the row from the delete
 	// logs, as for a restore by ID. A later restore of the series or of a
 	// truncation then does not reverse a delete of the row on its own. The
-	// release takes the row from the occurrence log. Other rows of the log
-	// keep the EXDATE.
-	if logged {
-		if err := releaseOccurrenceRowsTx(ctx, qtx, masterCalendarID, row.Uid, row.RecurrenceID, log, []int64{row.ID}); err != nil {
-			return err
-		}
+	// row is live at the occurrence again, so the occurrence log gives up
+	// its EXDATE (softdelete.SettleOccurrence).
+	if err := settleOccurrenceTx(ctx, qtx, master, row.RecurrenceID, withoutRows(row.ID)); err != nil {
+		return err
 	}
 	if err := replaceRelationsTx(ctx, qtx, row.ID, nil, nil); err != nil {
 		return err

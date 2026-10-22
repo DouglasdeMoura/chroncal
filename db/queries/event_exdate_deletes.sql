@@ -2,23 +2,25 @@
 -- Idempotent: a second delete of the same occurrence in one calendar keeps
 -- one log row. Each calendar keeps its own row (issue #842). A delete of
 -- the user turns a pruned marker of the occurrence into a delete log.
--- hidden_ids lists the override rows that the deletes hid. The caller
--- passes the union with the list of an earlier delete of the occurrence
--- (see recordExdateDeleteTx). It returns the ID of the log, which the undo
--- keeps (UndoMeta.ExdateLogID).
-INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_ids)
-VALUES (?, ?, ?, ?)
+-- The caller passes the entries of every delete of the occurrence, the
+-- EXDATE flag, and the seq of the last delete (see
+-- softdelete.RecordOccurrenceDelete). It returns the ID of the log, which
+-- the undo keeps (UndoMeta.ExdateLogID).
+INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_ids, owns_exdate, delete_seq)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     pruned = 0,
-    hidden_ids = excluded.hidden_ids
+    hidden_ids = excluded.hidden_ids,
+    owns_exdate = excluded.owns_exdate,
+    delete_seq = excluded.delete_seq
 RETURNING id;
 
 -- name: RecordEventExdatePrune :exec
 -- Write the pruned marker of an override row that a pull prune hid. A
 -- delete log of the same occurrence stays as it is.
-INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, pruned)
-VALUES (?, ?, ?, 1)
+INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, pruned, owns_exdate)
+VALUES (?, ?, ?, 1, 0)
 ON CONFLICT(calendar_id, uid, recurrence_id) DO NOTHING;
 
 -- name: ListEventExdateDeletesByCalendar :many
@@ -78,7 +80,7 @@ WHERE event_exdate_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_ex
 -- query, and leaves the rows they name in the trash.
 SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id;
 
--- name: UpdateEventExdateDeleteHiddenIds :exec
--- The undo of one occurrence delete removes its rows from the list. The
--- rows of an earlier delete of the occurrence stay in the log.
-UPDATE event_exdate_deletes SET hidden_ids = ? WHERE id = ?;
+-- name: UpdateEventExdateDeleteState :exec
+-- A restore at the occurrence writes the entries that stay and the EXDATE
+-- flag (see softdelete.SettleOccurrence). The time of the delete stays.
+UPDATE event_exdate_deletes SET hidden_ids = ?, owns_exdate = ? WHERE id = ?;

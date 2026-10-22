@@ -1049,14 +1049,24 @@ func TestUndo_OverrideDeletedWhileMasterInTrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteWithUndo(override): %v", err)
 	}
-	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterInTrash) {
-		t.Fatalf("RestoreUndo = %v, want ErrMasterInTrash", err)
+	if meta.ExdateLogID != 0 {
+		t.Fatalf("meta.ExdateLogID = %d, want 0: the delete beside a trashed master writes no log", meta.ExdateLogID)
 	}
-	if r, err := svc.GetIncludingDeleted(ctx, override.ID); err != nil || r.DeletedAt == nil {
-		t.Errorf("override after the refused undo = trashed %v, %v; want it in the trash", r.DeletedAt != nil, err)
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if r, err := svc.Get(ctx, override.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("override after the undo = %+v, %v; want it live", r, err)
 	}
 	if m, err := svc.GetIncludingDeleted(ctx, master.ID); err != nil || m.DeletedAt == nil {
 		t.Errorf("master after the undo = %+v, %v; want it still in the trash", m, err)
+	}
+	// The restore by ID follows the same rule: no log names the row.
+	if err := svc.Delete(ctx, override.ID); err != nil {
+		t.Fatalf("Delete again: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID of a row deleted beside the trashed master: %v", err)
 	}
 }
 
@@ -3263,8 +3273,8 @@ func TestUndoOverrideOfTrashedMaster_KeepsTombstone(t *testing.T) {
 	if _, err := storage.CreateTombstoneIfSynced(ctx, svc.db, 1, master.UID); err != nil {
 		t.Fatalf("tombstone: %v", err)
 	}
-	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterInTrash) {
-		t.Fatalf("RestoreUndo = %v, want ErrMasterInTrash", err)
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
 	}
 	// The master stays in the trash, so the tombstone of the series stays.
 	tombstones, err := svc.q.ListTombstonesByCalendar(ctx, 1)

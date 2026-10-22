@@ -7,6 +7,7 @@ package softdelete
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -51,100 +52,214 @@ func ClearMasterEXDATE(ctx context.Context, p ExdateProvenance, recurrenceID str
 		return nil
 	}
 
-	return stripAndDrop(ctx, p.GetMaster, p.UpdateExdates, p.DeleteDeleteLog, logID, recurrenceID)
+	return stripAndDrop(ctx, p, logID, recurrenceID)
 }
 
 // stripAndDrop removes one copy of the EXDATE of recurrenceID from the master
-// and drops the log logID. With no master, it drops the log only.
-func stripAndDrop(ctx context.Context,
-	getMaster func(ctx context.Context) (int64, string, bool, error),
-	updateExdates func(ctx context.Context, masterID int64, exdates string) error,
-	deleteLog func(ctx context.Context, logID int64) error,
-	logID int64, recurrenceID string,
-) error {
-	masterID, exdates, found, err := getMaster(ctx)
+// of p and drops the log logID. With no master, it drops the log only.
+func stripAndDrop(ctx context.Context, p ExdateProvenance, logID int64, recurrenceID string) error {
+	masterID, exdates, found, err := p.GetMaster(ctx)
 	if err != nil {
 		return fmt.Errorf("get master: %w", err)
 	}
 	if !found {
 		// Master gone; drop the now-orphaned provenance row.
-		return deleteLog(ctx, logID)
+		return p.DeleteDeleteLog(ctx, logID)
 	}
-	target, err := timeutil.ParseRecurrenceID(recurrenceID)
+	filtered, changed, err := removeExdate(exdates, recurrenceID)
 	if err != nil {
-		return fmt.Errorf("parse recurrence_id %q: %w", recurrenceID, err)
+		return err
 	}
-	existing := timeutil.ParseTimeList(exdates)
-	filtered := timeutil.RemoveTimeFromList(existing, target)
-	if len(filtered) != len(existing) {
-		if err := updateExdates(ctx, masterID, timeutil.SerializeTimeList(filtered)); err != nil {
+	if changed {
+		if err := p.UpdateExdates(ctx, masterID, filtered); err != nil {
 			return fmt.Errorf("update exdates: %w", err)
 		}
 	}
-	if err := deleteLog(ctx, logID); err != nil {
+	if err := p.DeleteDeleteLog(ctx, logID); err != nil {
 		return fmt.Errorf("delete exdate log: %w", err)
 	}
 	return nil
 }
 
-// OccurrenceLog is one occurrence log, as the caller read it before the
-// restore of its rows.
-type OccurrenceLog struct {
-	ID int64
-	// HiddenIDs lists the override rows that the deletes of the occurrence
-	// hid. The list can be empty: a delete of an occurrence with no stored
-	// override.
-	HiddenIDs []int64
+// removeExdate removes one copy of the EXDATE of recurrenceID from exdates.
+// changed is false when exdates holds no copy.
+func removeExdate(exdates, recurrenceID string) (filtered string, changed bool, err error) {
+	target, err := timeutil.ParseRecurrenceID(recurrenceID)
+	if err != nil {
+		return "", false, fmt.Errorf("parse recurrence_id %q: %w", recurrenceID, err)
+	}
+	existing := timeutil.ParseTimeList(exdates)
+	kept := timeutil.RemoveTimeFromList(existing, target)
+	return timeutil.SerializeTimeList(kept), len(kept) != len(existing), nil
 }
 
-// OccurrenceRelease adapts the queries of one domain to the operations of
-// ReleaseOccurrenceRows. The closures bind to the active transaction. The
-// fields of ExdateProvenance do the same jobs as there. GetDeleteLog is not
-// used: the caller passes the log.
-type OccurrenceRelease struct {
-	ExdateProvenance
-	// SetHiddenIDs writes the shorter row list of the log logID.
-	SetHiddenIDs func(ctx context.Context, logID int64, ids []int64) error
-}
-
-// ReleaseOccurrenceRows releases the rows of rowIDs from log, the occurrence
-// log of recurrenceID. Four restore paths call it. These are the undo, the
-// restore by ID of an override, the edit that revives an override, and the
-// trash restore. The rules:
-//  1. rowIDs that the log does not name give no change, when the log names
-//     rows. The log records another delete of the occurrence. A log with an
-//     empty list names no row: a delete with no stored override, or a log
-//     from before the list (migration 057). Its release goes on to rule 3.
-//  2. With rows of the log left, the log keeps them, and the EXDATE stays.
-//     The rows of another delete stay hidden.
-//  3. With no row left, the release removes one copy of the EXDATE that the
-//     log recorded, and it drops the log. An imported EXDATE has no log, so
-//     it stays (issue #86).
+// The occurrence rule of the event service follows. An occurrence log of
+// the event service records each delete of one occurrence X. The invariant:
 //
-// Empty rowIDs release a delete that hid no row. The caller then must know
-// that log is the log of that delete.
-func ReleaseOccurrenceRows(ctx context.Context, p OccurrenceRelease, log OccurrenceLog, rowIDs []int64, recurrenceID string) error {
-	release := make(map[int64]bool, len(rowIDs))
-	for _, id := range rowIDs {
-		release[id] = true
-	}
-	rest := make([]int64, 0, len(log.HiddenIDs))
-	named := false
-	for _, id := range log.HiddenIDs {
-		if release[id] {
-			named = true
-			continue
+//	An EXDATE that a delete recorded exists at X only while no live override
+//	of the series sits at X.
+//
+// Locally, an EXDATE never hides an override. But Google and iCloud drop an
+// override whose RECURRENCE-ID has an EXDATE, so the export must never
+// carry both. An imported EXDATE has no log, and the rule never touches it
+// (issue #86). Two operations hold the invariant:
+//   - RecordOccurrenceDelete: a delete adds the EXDATE only when no live
+//     override of the series remains at X.
+//   - SettleOccurrence: a path that makes an override live at X again strips
+//     the EXDATE that the log owns. The log keeps the rows that stay hidden.
+
+// OccurrenceEntry is the record of one delete in an occurrence log. Seq names
+// the delete in its log. Rows lists the override rows that the delete hid
+// and that stay hidden. A delete with no stored override has no row.
+type OccurrenceEntry struct {
+	Seq  int64
+	Rows []int64
+}
+
+// OccurrenceLog is one occurrence log, as the caller read it.
+type OccurrenceLog struct {
+	ID      int64
+	Entries []OccurrenceEntry
+	// OwnsExdate is true while the log owns a copy of the EXDATE of X.
+	OwnsExdate bool
+	// LastSeq is the Seq of the last delete in the log.
+	LastSeq int64
+}
+
+// HasRows reports whether an entry of the log names a hidden row.
+func (l OccurrenceLog) HasRows() bool {
+	for _, e := range l.Entries {
+		if len(e.Rows) > 0 {
+			return true
 		}
-		rest = append(rest, id)
 	}
-	if len(rowIDs) > 0 && len(log.HiddenIDs) > 0 && !named {
+	return false
+}
+
+// Entry returns the entry of the delete seq. found is false with no entry.
+func (l OccurrenceLog) Entry(seq int64) (entry OccurrenceEntry, found bool) {
+	for _, e := range l.Entries {
+		if e.Seq == seq {
+			return e, true
+		}
+	}
+	return OccurrenceEntry{}, false
+}
+
+// WithoutRows returns the log with the rows of ids removed from each entry.
+// The entries stay: each one still names its delete.
+func (l OccurrenceLog) WithoutRows(ids []int64) OccurrenceLog {
+	drop := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		drop[id] = true
+	}
+	out := l
+	out.Entries = make([]OccurrenceEntry, 0, len(l.Entries))
+	for _, e := range l.Entries {
+		rows := make([]int64, 0, len(e.Rows))
+		for _, r := range e.Rows {
+			if !drop[r] {
+				rows = append(rows, r)
+			}
+		}
+		out.Entries = append(out.Entries, OccurrenceEntry{Seq: e.Seq, Rows: rows})
+	}
+	return out
+}
+
+// WithoutEntry returns the log with the entry of the delete seq removed.
+func (l OccurrenceLog) WithoutEntry(seq int64) OccurrenceLog {
+	out := l
+	out.Entries = make([]OccurrenceEntry, 0, len(l.Entries))
+	for _, e := range l.Entries {
+		if e.Seq != seq {
+			out.Entries = append(out.Entries, e)
+		}
+	}
+	return out
+}
+
+// Occurrence is the state of one occurrence X of a series, as the caller
+// holds it in the transaction.
+type Occurrence struct {
+	RecurrenceID string
+	// Exdate is the EXDATE value of X that a delete adds. The caller tags it
+	// as date-only for an all-day master (timeutil.AsDateOnly).
+	Exdate time.Time
+	// MasterID and MasterExdates are the master of the series.
+	MasterID      int64
+	MasterExdates string
+	// LiveOverride is true when a live override of the series sits at X,
+	// after the write of the caller.
+	LiveOverride bool
+}
+
+// OccurrenceStore adapts the queries of the event service. The closures bind
+// to the active transaction.
+type OccurrenceStore struct {
+	// UpdateExdates writes the EXDATE list of the master.
+	UpdateExdates func(ctx context.Context, masterID int64, exdates string) error
+	// SaveLog writes the entries and the EXDATE flag of the log. A log with
+	// ID 0 is new: the delete writes it.
+	SaveLog func(ctx context.Context, log OccurrenceLog) (logID int64, err error)
+	// DeleteLog drops the log.
+	DeleteLog func(ctx context.Context, logID int64) error
+}
+
+// RecordOccurrenceDelete records a delete that hid rows at X. log is the log
+// of X, with ID 0 when X has no log. The delete adds a copy of the EXDATE
+// only when no live override of the series remains at X. The log must not own
+// a copy yet. It returns the log ID and the Seq of the delete.
+func RecordOccurrenceDelete(ctx context.Context, s OccurrenceStore, o Occurrence, log OccurrenceLog, rows []int64) (logID, seq int64, err error) {
+	if !o.LiveOverride && !log.OwnsExdate {
+		exdates := timeutil.SerializeTimeList(append(timeutil.ParseTimeList(o.MasterExdates), o.Exdate))
+		if err := s.UpdateExdates(ctx, o.MasterID, exdates); err != nil {
+			return 0, 0, fmt.Errorf("update exdates: %w", err)
+		}
+		log.OwnsExdate = true
+	}
+	log.LastSeq++
+	log.Entries = append(log.Entries, OccurrenceEntry{Seq: log.LastSeq, Rows: rows})
+	id, err := s.SaveLog(ctx, log)
+	if err != nil {
+		return 0, 0, fmt.Errorf("record exdate delete: %w", err)
+	}
+	return id, log.LastSeq, nil
+}
+
+// SettleOccurrence writes log after a restore at X. The caller removes the
+// restored rows or entries from log first (WithoutRows, WithoutEntry). The
+// rules:
+//  1. With a live override at X, the log gives up its copy of the EXDATE.
+//  2. With no entry left, the log gives up its copy of the EXDATE, and the
+//     log goes.
+//  3. With no hidden row left and no copy of the EXDATE, the log goes: it
+//     hides nothing.
+//  4. Else the log stays with its entries.
+//
+// An entry with no row keeps its EXDATE while no override is live at X: the
+// delete of an occurrence with no stored override.
+func SettleOccurrence(ctx context.Context, s OccurrenceStore, o Occurrence, log OccurrenceLog) error {
+	if log.OwnsExdate && (o.LiveOverride || len(log.Entries) == 0) {
+		filtered, changed, err := removeExdate(o.MasterExdates, o.RecurrenceID)
+		if err != nil {
+			return err
+		}
+		if changed {
+			if err := s.UpdateExdates(ctx, o.MasterID, filtered); err != nil {
+				return fmt.Errorf("update exdates: %w", err)
+			}
+		}
+		log.OwnsExdate = false
+	}
+	if len(log.Entries) == 0 || (!log.HasRows() && !log.OwnsExdate) {
+		if err := s.DeleteLog(ctx, log.ID); err != nil {
+			return fmt.Errorf("delete exdate log: %w", err)
+		}
 		return nil
 	}
-	if len(rest) > 0 {
-		if err := p.SetHiddenIDs(ctx, log.ID, rest); err != nil {
-			return fmt.Errorf("update exdate log: %w", err)
-		}
-		return nil
+	if _, err := s.SaveLog(ctx, log); err != nil {
+		return fmt.Errorf("update exdate log: %w", err)
 	}
-	return stripAndDrop(ctx, p.GetMaster, p.UpdateExdates, p.DeleteDeleteLog, log.ID, recurrenceID)
+	return nil
 }

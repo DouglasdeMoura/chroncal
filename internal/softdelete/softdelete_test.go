@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // fakeStore is an in-memory stand-in for one domain's *_exdate_deletes
@@ -122,69 +123,88 @@ func TestClearMasterEXDATE_GetDeleteLogError(t *testing.T) {
 	}
 }
 
-// release wires f into an OccurrenceRelease. setHidden receives the shorter
-// list of the log.
-func (f *fakeStore) release(setHidden *[]int64) OccurrenceRelease {
-	return OccurrenceRelease{
-		ExdateProvenance: f.provenance(),
-		SetHiddenIDs: func(ctx context.Context, logID int64, ids []int64) error {
-			*setHidden = ids
+// occStore records the writes of the occurrence rule.
+type occStore struct {
+	exdates *string
+	saved   *OccurrenceLog
+	deleted bool
+}
+
+func (o *occStore) store() OccurrenceStore {
+	return OccurrenceStore{
+		UpdateExdates: func(ctx context.Context, masterID int64, exdates string) error {
+			o.exdates = &exdates
+			return nil
+		},
+		SaveLog: func(ctx context.Context, log OccurrenceLog) (int64, error) {
+			o.saved = &log
+			if log.ID == 0 {
+				return 9, nil
+			}
+			return log.ID, nil
+		},
+		DeleteLog: func(ctx context.Context, logID int64) error {
+			o.deleted = true
 			return nil
 		},
 	}
 }
 
-// TestReleaseOccurrenceRows covers the three rules of the release.
-func TestReleaseOccurrenceRows(t *testing.T) {
-	log := OccurrenceLog{ID: 7, HiddenIDs: []int64{11, 12}}
-	t.Run("rows of another delete", func(t *testing.T) {
-		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
-		var hidden []int64
-		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), log, []int64{99}, testSlot); err != nil {
-			t.Fatal(err)
-		}
-		if hidden != nil || f.updatedExdates != nil || f.deletedLogID != nil {
-			t.Errorf("release of a row the log does not name wrote %v, %v, %v; want nothing", hidden, f.updatedExdates, f.deletedLogID)
-		}
-	})
-	t.Run("rows left", func(t *testing.T) {
-		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
-		var hidden []int64
-		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), log, []int64{11}, testSlot); err != nil {
-			t.Fatal(err)
-		}
-		if len(hidden) != 1 || hidden[0] != 12 || f.updatedExdates != nil || f.deletedLogID != nil {
-			t.Errorf("release of one of two rows = list %v, exdates %v, log %v; want [12] and the EXDATE kept", hidden, f.updatedExdates, f.deletedLogID)
-		}
-	})
-	t.Run("no row left", func(t *testing.T) {
-		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
-		var hidden []int64
-		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), log, []int64{11, 12}, testSlot); err != nil {
-			t.Fatal(err)
-		}
-		if f.updatedExdates == nil || *f.updatedExdates != "" || f.deletedLogID == nil || *f.deletedLogID != 7 {
-			t.Errorf("release of every row = exdates %v, log %v; want the EXDATE and the log gone", f.updatedExdates, f.deletedLogID)
-		}
-	})
-	t.Run("log with an empty list", func(t *testing.T) {
-		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
-		var hidden []int64
-		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), OccurrenceLog{ID: 7}, []int64{11}, testSlot); err != nil {
-			t.Fatal(err)
-		}
-		if f.updatedExdates == nil || *f.updatedExdates != "" || f.deletedLogID == nil {
-			t.Errorf("release of a row from a log with no list = exdates %v, log %v; want the EXDATE and the log gone", f.updatedExdates, f.deletedLogID)
-		}
-	})
-	t.Run("delete with no row", func(t *testing.T) {
-		f := &fakeStore{masterFound: true, masterID: 3, exdates: testSlot}
-		var hidden []int64
-		if err := ReleaseOccurrenceRows(context.Background(), f.release(&hidden), OccurrenceLog{ID: 7}, nil, testSlot); err != nil {
-			t.Fatal(err)
-		}
-		if f.deletedLogID == nil || *f.deletedLogID != 7 {
-			t.Errorf("release of an empty log = log %v; want it gone", f.deletedLogID)
-		}
-	})
+// TestRecordOccurrenceDelete: a delete adds the EXDATE only with no live
+// override at the occurrence, and only once.
+func TestRecordOccurrenceDelete(t *testing.T) {
+	at, _ := time.Parse(time.RFC3339, testSlot)
+	for _, tc := range []struct {
+		name     string
+		live     bool
+		owns     bool
+		wantAdd  bool
+		wantOwns bool
+	}{
+		{"no live override", false, false, true, true},
+		{"live override", true, false, false, false},
+		{"log owns a copy", false, true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &occStore{}
+			occ := Occurrence{RecurrenceID: testSlot, Exdate: at, MasterID: 3, LiveOverride: tc.live}
+			_, seq, err := RecordOccurrenceDelete(context.Background(), o.store(), occ, OccurrenceLog{OwnsExdate: tc.owns, LastSeq: 4}, []int64{11})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (o.exdates != nil) != tc.wantAdd || seq != 5 || o.saved.OwnsExdate != tc.wantOwns {
+				t.Errorf("add %v, seq %d, owns %v; want add %v, seq 5, owns %v", o.exdates != nil, seq, o.saved.OwnsExdate, tc.wantAdd, tc.wantOwns)
+			}
+		})
+	}
+}
+
+// TestSettleOccurrence covers the rules of the settle.
+func TestSettleOccurrence(t *testing.T) {
+	rows := OccurrenceLog{ID: 7, OwnsExdate: true, Entries: []OccurrenceEntry{{Seq: 1, Rows: []int64{11}}}}
+	noRow := OccurrenceLog{ID: 7, OwnsExdate: true, Entries: []OccurrenceEntry{{Seq: 1}}}
+	for _, tc := range []struct {
+		name        string
+		log         OccurrenceLog
+		live        bool
+		wantStrip   bool
+		wantDeleted bool
+	}{
+		{"live override strips and keeps the hidden rows", rows, true, true, false},
+		{"no live override keeps the EXDATE", rows, false, false, false},
+		{"an entry with no row keeps the EXDATE", noRow, false, false, false},
+		{"a live override beside an entry with no row strips and drops", noRow, true, true, true},
+		{"no entry strips and drops", OccurrenceLog{ID: 7, OwnsExdate: true}, false, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &occStore{}
+			occ := Occurrence{RecurrenceID: testSlot, MasterID: 3, MasterExdates: testSlot, LiveOverride: tc.live}
+			if err := SettleOccurrence(context.Background(), o.store(), occ, tc.log); err != nil {
+				t.Fatal(err)
+			}
+			if (o.exdates != nil) != tc.wantStrip || o.deleted != tc.wantDeleted {
+				t.Errorf("strip %v, deleted %v; want strip %v, deleted %v", o.exdates != nil, o.deleted, tc.wantStrip, tc.wantDeleted)
+			}
+		})
+	}
 }

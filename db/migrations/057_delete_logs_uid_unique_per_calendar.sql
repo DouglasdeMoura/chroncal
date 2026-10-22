@@ -10,10 +10,13 @@
 -- override, and the pull hid its row. A marker is no delete of the user.
 -- The trash and the EXDATE contract ignore it. The restore of a master
 -- with no series-delete log reads it, so the pruned row stays hidden.
--- hidden_ids is the comma list of the override rows that the occurrence
--- deletes hid. A legacy override of the occurrence is one of them. An empty
--- list names no row. The restore of the occurrence from the trash un-hides
--- each row of the list.
+-- hidden_ids holds one entry for each delete of the occurrence, in the form
+-- seq:row. seq names the delete in its log, and row is an override row that
+-- the delete hid. A delete with no stored override writes seq: with no row.
+-- delete_seq is the seq of the last delete. owns_exdate is 1 while the log
+-- owns a copy of the EXDATE of the occurrence. The invariant: that copy
+-- exists only while no live override of the series sits at the occurrence
+-- (see softdelete.SettleOccurrence).
 CREATE TABLE event_exdate_deletes_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
@@ -22,6 +25,8 @@ CREATE TABLE event_exdate_deletes_new (
     deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     pruned INTEGER NOT NULL DEFAULT 0,
     hidden_ids TEXT NOT NULL DEFAULT '',
+    owns_exdate INTEGER NOT NULL DEFAULT 1,
+    delete_seq INTEGER NOT NULL DEFAULT 0,
     UNIQUE (calendar_id, uid, recurrence_id)
 );
 INSERT INTO event_exdate_deletes_new (id, calendar_id, uid, recurrence_id, deleted_at)
@@ -196,8 +201,8 @@ BEGIN
     SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
     WHERE uid = NEW.uid AND hidden_ids IS NOT NULL AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
     UPDATE event_exdate_deletes
-    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
-    WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ':' || NEW.id || ',', ':,'), ',')
+    WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%:' || NEW.id || ',%';
 END;
 -- +goose StatementEnd
 
