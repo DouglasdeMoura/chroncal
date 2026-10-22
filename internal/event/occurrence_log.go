@@ -196,7 +196,7 @@ func settleLiveOverrideTx(ctx context.Context, qtx *storage.Queries, r storage.E
 func rowStatesTx(ctx context.Context, qtx *storage.Queries, ids []int64) ([]storage.ListEventRowStatesByIDsRow, error) {
 	// The IN list goes in chunks under the parameter limit of SQLite.
 	var rows []storage.ListEventRowStatesByIDsRow
-	for _, chunk := range chunkIDs(ids) {
+	for _, chunk := range storage.ChunkSlice(ids, idChunk) {
 		part, err := qtx.ListEventRowStatesByIDs(ctx, chunk)
 		if err != nil {
 			return nil, fmt.Errorf("list states of rows: %w", err)
@@ -238,13 +238,12 @@ func guardRowCalendarsTx(ctx context.Context, qtx *storage.Queries, calendarID i
 // restoreHiddenRowsTx un-hides the rows of ids in one statement, after the
 // guard of the calendar of each row. One read sorts the rows. A row in the
 // trash comes back. A live row is a restore that came first, and a purged row
-// is gone. It returns the IDs that came back. With no row back, notBack is
-// the error of that state: ErrAlreadyRestored when a row is live, else
-// ErrNotDeleted.
-func restoreHiddenRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, ids []int64) (restored []int64, notBack, err error) {
+// is gone. With no row back, notBack is the error of that state:
+// ErrAlreadyRestored when a row is live, else ErrNotDeleted.
+func restoreHiddenRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, ids []int64) (notBack, err error) {
 	rows, err := rowStatesTx(ctx, qtx, ids)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	notBack = ErrNotDeleted
 	trashed := make([]storage.ListEventRowStatesByIDsRow, 0, len(rows))
@@ -257,12 +256,12 @@ func restoreHiddenRowsTx(ctx context.Context, qtx *storage.Queries, calendarID i
 	}
 	if len(trashed) == 0 {
 		if len(ids) == 0 {
-			return nil, nil, nil
+			return nil, nil
 		}
-		return nil, notBack, nil
+		return notBack, nil
 	}
-	restored, err = restoreStatesTx(ctx, qtx, calendarID, trashed)
-	return restored, nil, err
+	_, err = restoreStatesTx(ctx, qtx, calendarID, trashed)
+	return nil, err
 }
 
 // restoreStatesTx un-hides the rows of states in one statement, after the
@@ -615,7 +614,7 @@ func tokenMatches(st storage.ListEventRowStatesByIDsRow, token int64) bool {
 // limit of SQLite. It returns the count of rows that came back.
 func restoreEventsByIDsTx(ctx context.Context, qtx *storage.Queries, ids []int64) (int64, error) {
 	var total int64
-	for _, chunk := range chunkIDs(ids) {
+	for _, chunk := range storage.ChunkSlice(ids, idChunk) {
 		n, err := qtx.RestoreEventsByIDs(ctx, chunk)
 		if err != nil {
 			return 0, fmt.Errorf("restore rows: %w", err)
@@ -629,7 +628,7 @@ func restoreEventsByIDsTx(ctx context.Context, qtx *storage.Queries, ids []int64
 // limit of SQLite. Every chunk writes the one delete token of the statement
 // of the caller.
 func softDeleteEventsByIDsTx(ctx context.Context, qtx *storage.Queries, ids []int64, token int64) error {
-	for _, chunk := range chunkIDs(ids) {
+	for _, chunk := range storage.ChunkSlice(ids, idChunk) {
 		if err := qtx.SoftDeleteEventsByIDs(ctx, storage.SoftDeleteEventsByIDsParams{Ids: chunk, DeleteToken: token}); err != nil {
 			return err
 		}

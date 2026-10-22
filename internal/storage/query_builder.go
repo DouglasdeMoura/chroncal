@@ -82,7 +82,7 @@ func dedupeInt64s(ids []int64) []int64 {
 // load is small enough for a single `IN (...)` query.
 func loadByIDChunks[T any](ctx context.Context, ids []int64, load func(context.Context, []int64) ([]T, error)) ([]T, error) {
 	var out []T
-	for _, chunk := range chunkSlice(dedupeInt64s(ids), sqliteINBatch) {
+	for _, chunk := range ChunkSlice(dedupeInt64s(ids), sqliteINBatch) {
 		rows, err := load(ctx, chunk)
 		if err != nil {
 			return nil, err

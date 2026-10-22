@@ -71,15 +71,16 @@ type DeleteEventTruncateDeletesCollidingWithMoveParams struct {
 	ToCalendarID   int64
 }
 
-// Drop the log rows of the source calendar whose key the target calendar
-// already holds (see DeleteEventExdateDeletesCollidingWithMove).
+// Drop the log rows of the source calendar whose cutoff the target calendar
+// already holds (see DeleteEventExdateDeletesCollidingWithMove). The cutoff
+// alone is the key here: a row of the other calendar at that cutoff is stale.
 func (q *Queries) DeleteEventTruncateDeletesCollidingWithMove(ctx context.Context, arg DeleteEventTruncateDeletesCollidingWithMoveParams) error {
 	_, err := q.db.ExecContext(ctx, deleteEventTruncateDeletesCollidingWithMove, arg.FromCalendarID, arg.Uid, arg.ToCalendarID)
 	return err
 }
 
 const getEventTruncateDelete = `-- name: GetEventTruncateDelete :one
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes WHERE id = ?
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids, delete_token FROM event_truncate_deletes WHERE id = ?
 `
 
 func (q *Queries) GetEventTruncateDelete(ctx context.Context, id int64) (EventTruncateDelete, error) {
@@ -95,24 +96,32 @@ func (q *Queries) GetEventTruncateDelete(ctx context.Context, id int64) (EventTr
 		&i.HiddenOverrides,
 		&i.RemovedRdates,
 		&i.HiddenIds,
+		&i.DeleteToken,
 	)
 	return i, err
 }
 
-const getEventTruncateDeleteByCalendarUIDAndCutoff = `-- name: GetEventTruncateDeleteByCalendarUIDAndCutoff :one
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? AND cutoff_time = ?
+const getEventTruncateDeleteByCalendarUIDCutoffToken = `-- name: GetEventTruncateDeleteByCalendarUIDCutoffToken :one
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids, delete_token FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? AND cutoff_time = ? AND delete_token = ?
 `
 
-type GetEventTruncateDeleteByCalendarUIDAndCutoffParams struct {
-	CalendarID int64
-	Uid        string
-	CutoffTime string
+type GetEventTruncateDeleteByCalendarUIDCutoffTokenParams struct {
+	CalendarID  int64
+	Uid         string
+	CutoffTime  string
+	DeleteToken int64
 }
 
-// The truncation log row of one cutoff of the series in one calendar. Two
-// calendars can hold the same UID (issue #842).
-func (q *Queries) GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx context.Context, arg GetEventTruncateDeleteByCalendarUIDAndCutoffParams) (EventTruncateDelete, error) {
-	row := q.db.QueryRowContext(ctx, getEventTruncateDeleteByCalendarUIDAndCutoff, arg.CalendarID, arg.Uid, arg.CutoffTime)
+// The truncation log row of one truncation of the series in one calendar: the
+// cutoff and the delete token name it. Two calendars can hold the same UID
+// (issue #842).
+func (q *Queries) GetEventTruncateDeleteByCalendarUIDCutoffToken(ctx context.Context, arg GetEventTruncateDeleteByCalendarUIDCutoffTokenParams) (EventTruncateDelete, error) {
+	row := q.db.QueryRowContext(ctx, getEventTruncateDeleteByCalendarUIDCutoffToken,
+		arg.CalendarID,
+		arg.Uid,
+		arg.CutoffTime,
+		arg.DeleteToken,
+	)
 	var i EventTruncateDelete
 	err := row.Scan(
 		&i.ID,
@@ -124,12 +133,13 @@ func (q *Queries) GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx context.Conte
 		&i.HiddenOverrides,
 		&i.RemovedRdates,
 		&i.HiddenIds,
+		&i.DeleteToken,
 	)
 	return i, err
 }
 
 const listEventTruncateDeletesByCalendar = `-- name: ListEventTruncateDeletesByCalendar :many
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids, delete_token FROM event_truncate_deletes
 WHERE calendar_id = ?
 ORDER BY deleted_at DESC
 `
@@ -153,6 +163,7 @@ func (q *Queries) ListEventTruncateDeletesByCalendar(ctx context.Context, calend
 			&i.HiddenOverrides,
 			&i.RemovedRdates,
 			&i.HiddenIds,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +179,7 @@ func (q *Queries) ListEventTruncateDeletesByCalendar(ctx context.Context, calend
 }
 
 const listEventTruncateDeletesByCalendarUID = `-- name: ListEventTruncateDeletesByCalendarUID :many
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY cutoff_time
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids, delete_token FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY cutoff_time, id
 `
 
 type ListEventTruncateDeletesByCalendarUIDParams struct {
@@ -195,6 +206,7 @@ func (q *Queries) ListEventTruncateDeletesByCalendarUID(ctx context.Context, arg
 			&i.HiddenOverrides,
 			&i.RemovedRdates,
 			&i.HiddenIds,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -210,7 +222,7 @@ func (q *Queries) ListEventTruncateDeletesByCalendarUID(ctx context.Context, arg
 }
 
 const listEventTruncateDeletesByUID = `-- name: ListEventTruncateDeletesByUID :many
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids FROM event_truncate_deletes WHERE uid = ? ORDER BY calendar_id, cutoff_time
+SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids, delete_token FROM event_truncate_deletes WHERE uid = ? ORDER BY calendar_id, cutoff_time
 `
 
 func (q *Queries) ListEventTruncateDeletesByUID(ctx context.Context, uid string) ([]EventTruncateDelete, error) {
@@ -232,6 +244,7 @@ func (q *Queries) ListEventTruncateDeletesByUID(ctx context.Context, uid string)
 			&i.HiddenOverrides,
 			&i.RemovedRdates,
 			&i.HiddenIds,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -300,12 +313,8 @@ func (q *Queries) MoveEventTruncateDeletesUIDToCalendar(ctx context.Context, arg
 }
 
 const recordEventTruncateDelete = `-- name: RecordEventTruncateDelete :exec
-INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, hidden_ids)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(calendar_id, uid, cutoff_time) DO UPDATE SET
-    hidden_overrides = excluded.hidden_overrides,
-    hidden_ids = excluded.hidden_ids,
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, hidden_ids, delete_token)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type RecordEventTruncateDeleteParams struct {
@@ -316,15 +325,14 @@ type RecordEventTruncateDeleteParams struct {
 	HiddenOverrides *string
 	RemovedRdates   *string
 	HiddenIds       *string
+	DeleteToken     int64
 }
 
-// Idempotent: a second truncation at the same cutoff in one calendar keeps
-// one log row. Each calendar keeps its own row (issue #842). The row keeps
-// the FIRST previous_rrule and removed_rdates, so a second truncation does
-// not overwrite the state before the first truncation. The caller merges
-// hidden_overrides and hidden_ids with the earlier row, and the update
-// writes the merged lists. A restore then brings back the rows of both
-// truncations.
+// Write the log row of one truncation. Each truncation gets its own row with
+// its own delete token, also a second truncation at the same cutoff. Each
+// calendar keeps its own rows (issue #842). The row keeps the rule before its
+// own truncation (previous_rrule), so the undo of each truncation restores
+// its own state and its own rows.
 func (q *Queries) RecordEventTruncateDelete(ctx context.Context, arg RecordEventTruncateDeleteParams) error {
 	_, err := q.db.ExecContext(ctx, recordEventTruncateDelete,
 		arg.CalendarID,
@@ -334,6 +342,7 @@ func (q *Queries) RecordEventTruncateDelete(ctx context.Context, arg RecordEvent
 		arg.HiddenOverrides,
 		arg.RemovedRdates,
 		arg.HiddenIds,
+		arg.DeleteToken,
 	)
 	return err
 }
@@ -351,5 +360,21 @@ type UpdateEventTruncateDeleteHiddenIdsParams struct {
 // UpdateEventSeriesDeleteHiddenIds).
 func (q *Queries) UpdateEventTruncateDeleteHiddenIds(ctx context.Context, arg UpdateEventTruncateDeleteHiddenIdsParams) error {
 	_, err := q.db.ExecContext(ctx, updateEventTruncateDeleteHiddenIds, arg.HiddenIds, arg.ID)
+	return err
+}
+
+const updateEventTruncateDeletePreviousRrule = `-- name: UpdateEventTruncateDeletePreviousRrule :exec
+UPDATE event_truncate_deletes SET previous_rrule = ? WHERE id = ?
+`
+
+type UpdateEventTruncateDeletePreviousRruleParams struct {
+	PreviousRrule string
+	ID            int64
+}
+
+// Rewrite the rule before the truncation of one log row. The restore of an
+// older truncation at the same cutoff hands its rule to the newer rows.
+func (q *Queries) UpdateEventTruncateDeletePreviousRrule(ctx context.Context, arg UpdateEventTruncateDeletePreviousRruleParams) error {
+	_, err := q.db.ExecContext(ctx, updateEventTruncateDeletePreviousRrule, arg.PreviousRrule, arg.ID)
 	return err
 }

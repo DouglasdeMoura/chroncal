@@ -1,17 +1,11 @@
 -- name: RecordEventTruncateDelete :exec
--- Idempotent: a second truncation at the same cutoff in one calendar keeps
--- one log row. Each calendar keeps its own row (issue #842). The row keeps
--- the FIRST previous_rrule and removed_rdates, so a second truncation does
--- not overwrite the state before the first truncation. The caller merges
--- hidden_overrides and hidden_ids with the earlier row, and the update
--- writes the merged lists. A restore then brings back the rows of both
--- truncations.
-INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, hidden_ids)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(calendar_id, uid, cutoff_time) DO UPDATE SET
-    hidden_overrides = excluded.hidden_overrides,
-    hidden_ids = excluded.hidden_ids,
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
+-- Write the log row of one truncation. Each truncation gets its own row with
+-- its own delete token, also a second truncation at the same cutoff. Each
+-- calendar keeps its own rows (issue #842). The row keeps the rule before its
+-- own truncation (previous_rrule), so the undo of each truncation restores
+-- its own state and its own rows.
+INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, hidden_ids, delete_token)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListEventTruncateDeletesByCalendar :many
 SELECT * FROM event_truncate_deletes
@@ -39,13 +33,19 @@ DELETE FROM event_truncate_deletes WHERE id IN (sqlc.slice(ids));
 UPDATE event_truncate_deletes SET calendar_id = sqlc.arg(to_calendar_id)
 WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
 
--- name: GetEventTruncateDeleteByCalendarUIDAndCutoff :one
--- The truncation log row of one cutoff of the series in one calendar. Two
--- calendars can hold the same UID (issue #842).
-SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? AND cutoff_time = ?;
+-- name: GetEventTruncateDeleteByCalendarUIDCutoffToken :one
+-- The truncation log row of one truncation of the series in one calendar: the
+-- cutoff and the delete token name it. Two calendars can hold the same UID
+-- (issue #842).
+SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? AND cutoff_time = ? AND delete_token = ?;
+
+-- name: UpdateEventTruncateDeletePreviousRrule :exec
+-- Rewrite the rule before the truncation of one log row. The restore of an
+-- older truncation at the same cutoff hands its rule to the newer rows.
+UPDATE event_truncate_deletes SET previous_rrule = ? WHERE id = ?;
 
 -- name: ListEventTruncateDeletesByCalendarUID :many
-SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY cutoff_time;
+SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY cutoff_time, id;
 
 -- name: DeleteEventTruncateDeletesByCalendarUID :exec
 -- Drop the log rows of one series in one calendar (see
@@ -53,8 +53,9 @@ SELECT * FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY 
 DELETE FROM event_truncate_deletes WHERE calendar_id = ? AND uid = ?;
 
 -- name: DeleteEventTruncateDeletesCollidingWithMove :exec
--- Drop the log rows of the source calendar whose key the target calendar
--- already holds (see DeleteEventExdateDeletesCollidingWithMove).
+-- Drop the log rows of the source calendar whose cutoff the target calendar
+-- already holds (see DeleteEventExdateDeletesCollidingWithMove). The cutoff
+-- alone is the key here: a row of the other calendar at that cutoff is stale.
 DELETE FROM event_truncate_deletes
 WHERE event_truncate_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_truncate_deletes.uid = sqlc.arg(uid)
   AND event_truncate_deletes.cutoff_time IN (

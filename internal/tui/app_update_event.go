@@ -559,13 +559,18 @@ func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 		m.undoStack.Remove(msg.meta)
 		return m, tea.Batch(m.loadEvents(), m.toast.Failed("the master is purged; nothing to restore"))
 	}
+	if errors.Is(msg.err, event.ErrUndoNotPossible) {
+		// Any other permanent refusal: a read-only calendar, an ambiguous
+		// UID, or a master that changed. A retry gives the same refusal,
+		// so the entry leaves the stack and never hides the older entries.
+		m.undoStack.Remove(msg.meta)
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed(msg.err.Error()))
+	}
 	if msg.err != nil {
-		// Route the dismiss tick — previously dropped, so failed toasts
-		// never auto-cleared in the live app.
-		cmd := m.toast.Failed(msg.err.Error())
-		// Leave the entry on the stack so the user can retry with
-		// different context (e.g. restoring the calendar first).
-		return m, cmd
+		// A transient error, for example a busy database or a canceled
+		// context. The entry stays on the stack, so the user can retry.
+		// The toast schedules its own dismiss tick.
+		return m, m.toast.Failed(msg.err.Error())
 	}
 	// Remove the entry that was actually restored, by identity, not the
 	// current top. A delete that lands while the restore is in flight may

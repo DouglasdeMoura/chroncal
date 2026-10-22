@@ -254,7 +254,7 @@ func purgeOldLogsTx[R ~oldLogRow](ctx context.Context, cutoff string, keep []Ski
 		}
 	}
 	var total int64
-	for _, chunk := range chunkIDs(ids) {
+	for _, chunk := range storage.ChunkSlice(ids, idChunk) {
 		n, err := del(ctx, chunk)
 		if err != nil {
 			return 0, err
@@ -337,7 +337,7 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	hidden := olog.AllRows()
 	// A row that a purge or an earlier restore took is no error: the
 	// EXDATE still goes.
-	if _, _, err := restoreHiddenRowsTx(ctx, qtx, log.CalendarID, hidden); err != nil {
+	if _, err := restoreHiddenRowsTx(ctx, qtx, log.CalendarID, hidden); err != nil {
 		return err
 	}
 	// Every entry goes, so the log gives up its EXDATE and goes too
@@ -354,25 +354,60 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	return tx.Commit()
 }
 
-// restoreTruncationByLogID rewrites the master's RRULE back to the
-// pre-truncation value. It re-adds the RDATEs the truncation trimmed. It
-// un-hides every override soft-deleted at or after the cutoff. It then
-// drops the log row. The master is marked dirty so the next push
-// propagates the restored series.
+// restoreTruncationByLogID is restoreTruncation for the log row logID. The
+// trash view names the row by ID.
 func (s *Service) restoreTruncationByLogID(ctx context.Context, logID, token int64) error {
-	log, err := s.q.GetEventTruncateDelete(ctx, logID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotDeleted
-		}
-		return fmt.Errorf("get truncate log: %w", err)
+	return s.restoreTruncation(ctx, truncationKey{logID: logID, token: token})
+}
+
+// truncationKey names one truncation log row. The trash view names the row by
+// ID (logID). The undo names it by its series, its cutoff, and its delete
+// token: each truncation has its own row. token is the delete token of an
+// undo, and 0 for a restore from the trash.
+type truncationKey struct {
+	logID      int64
+	calendarID int64
+	uid        string
+	cutoff     string
+	token      int64
+}
+
+// readTx reads the log row of k in the transaction of the restore.
+func (k truncationKey) readTx(ctx context.Context, qtx *storage.Queries) (storage.EventTruncateDelete, error) {
+	if k.logID != 0 {
+		return qtx.GetEventTruncateDelete(ctx, k.logID)
 	}
+	return qtx.GetEventTruncateDeleteByCalendarUIDCutoffToken(ctx, storage.GetEventTruncateDeleteByCalendarUIDCutoffTokenParams{
+		CalendarID: k.calendarID, Uid: k.uid, CutoffTime: k.cutoff, DeleteToken: k.token,
+	})
+}
+
+// restoreTruncation rewrites the master's RRULE back to the rule before the
+// truncation. It re-adds the RDATEs the truncation trimmed. It un-hides the
+// overrides that the truncation hid. It then drops the log row. It marks the
+// master dirty, so the next push sends the restored series. The log row
+// is read in the transaction, so a concurrent restore cannot consume it
+// between the read and the writes.
+//
+// Each truncation has its own log row. A newer truncation at the same cutoff
+// recorded the rule that this truncation wrote. The restore of this row hands
+// its own rule to those newer rows, so their later restore does not truncate
+// the series again.
+func (s *Service) restoreTruncation(ctx context.Context, key truncationKey) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+	log, err := key.readTx(ctx, qtx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotDeleted
+		}
+		return fmt.Errorf("get truncate log: %w", err)
+	}
+	logID, token := log.ID, key.token
 	// The restore writes the master in the calendar of the log. A log
 	// with row IDs guards the calendars of its rows in restoreLoggedIDsTx.
 	// An older log restores by recurrence ID through the series, so the
@@ -431,6 +466,9 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID, token int
 	if err := restoreTruncatedRDates(ctx, qtx, master, log); err != nil {
 		return fmt.Errorf("restore rdates: %w", err)
 	}
+	if err := handOnPreviousRuleTx(ctx, qtx, log); err != nil {
+		return err
+	}
 	// The restore consumes the log row first. The drop of the restored rows
 	// from the other logs then does not rewrite this row.
 	if err := qtx.DeleteEventTruncateDelete(ctx, logID); err != nil {
@@ -443,6 +481,30 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID, token int
 		return fmt.Errorf("mark resource dirty: %w", err)
 	}
 	return tx.Commit()
+}
+
+// handOnPreviousRuleTx gives the rule before the truncation of log to each
+// newer log row at the same cutoff of the series. A newer row recorded the
+// rule that the truncation of log wrote. After the restore of log, the rule
+// of log is the state before both truncations.
+func handOnPreviousRuleTx(ctx context.Context, qtx *storage.Queries, log storage.EventTruncateDelete) error {
+	logs, err := qtx.ListEventTruncateDeletesByCalendarUID(ctx, storage.ListEventTruncateDeletesByCalendarUIDParams{
+		CalendarID: log.CalendarID, Uid: log.Uid,
+	})
+	if err != nil {
+		return fmt.Errorf("list truncate logs: %w", err)
+	}
+	for _, l := range logs {
+		if l.ID <= log.ID || l.CutoffTime != log.CutoffTime {
+			continue
+		}
+		if err := qtx.UpdateEventTruncateDeletePreviousRrule(ctx, storage.UpdateEventTruncateDeletePreviousRruleParams{
+			PreviousRrule: log.PreviousRrule, ID: l.ID,
+		}); err != nil {
+			return fmt.Errorf("update truncate log rule: %w", err)
+		}
+	}
+	return nil
 }
 
 // restoreTruncatedRDates re-adds to the master the RDATEs a truncation trimmed.

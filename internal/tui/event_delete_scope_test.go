@@ -2,12 +2,14 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/event"
 )
 
@@ -237,4 +239,54 @@ func TestDeletedMsgOf_PushesEveryCalendar(t *testing.T) {
 	msg := deletedMsgOf(event.Event{CalendarID: 9}, event.UndoMeta{CalendarID: 1, PushCalendars: []int64{1, 4}}, nil)
 	require.Equal(t, int64(1), msg.calendarID)
 	require.Equal(t, []int64{4}, msg.extraCalendarIDs)
+}
+
+// TestUndo_ReadOnlyRefusalLeavesTheStack: the undo of a delete in a calendar
+// that became read-only is a permanent refusal (event.ErrUndoNotPossible).
+// The entry leaves the stack with the message of the refusal, so the older
+// entry below it is the next undo.
+func TestUndo_ReadOnlyRefusalLeavesTheStack(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+	cals, err := a.Calendars.List(ctx)
+	require.NoError(t, err)
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	ev, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "tui-read-only", CalendarID: cals[0].ID, Title: "Meeting",
+		StartTime: start, EndTime: start.Add(time.Hour),
+	})
+	require.NoError(t, err)
+	meta, err := a.Events.DeleteWithUndo(ctx, ev.ID)
+	require.NoError(t, err)
+	older := event.UndoMeta{Kind: event.UndoKindSingle, UID: "older", CalendarID: cals[0].ID}
+	m.undoStack.Push(UndoEntry{Meta: older, DeletedAt: time.Now()})
+	m.undoStack.Push(UndoEntry{Meta: meta, DeletedAt: time.Now()})
+	_, err = a.DB.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read', remote_components = 'VEVENT' WHERE id = ?`, cals[0].ID)
+	require.NoError(t, err)
+
+	m.focus = focusCalendar
+	next, cmd, handled := m.interceptGlobalKeys(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	require.True(t, handled)
+	msg, ok := cmd().(eventRestoredMsg)
+	require.True(t, ok)
+	require.ErrorIs(t, msg.err, event.ErrUndoNotPossible)
+	require.ErrorIs(t, msg.err, calendaraccess.ErrReadOnly)
+	updated, _ := next.Update(msg)
+	m = updated.(Model)
+	require.Equal(t, 1, m.undoStack.Len())
+	top, ok := m.undoStack.Peek()
+	require.True(t, ok)
+	require.Equal(t, "older", top.Meta.UID)
+	require.Equal(t, msg.err.Error(), m.toast.reason)
+}
+
+// TestUndo_TransientErrorKeepsTheEntry: a transient error, for example a
+// canceled context, is no refusal. The entry stays on the stack for a retry.
+func TestUndo_TransientErrorKeepsTheEntry(t *testing.T) {
+	m := Model{undoStack: NewUndoStack()}
+	e := entry("A")
+	m.undoStack.Push(e)
+	updated, _ := m.Update(eventRestoredMsg{meta: e.Meta, err: fmt.Errorf("restore: %w", context.Canceled)})
+	m = updated.(Model)
+	require.Equal(t, 1, m.undoStack.Len())
 }

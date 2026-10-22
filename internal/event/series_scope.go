@@ -82,13 +82,9 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 			return storage.Event{}, sql.ErrNoRows
 		}
 	}
-	masters := uidMasters(rows)
-	if !includeDeleted {
-		// A live edit sees the live masters only: two masters in the
-		// trash make no ambiguity for a live legacy override.
-		masters = liveMasters(masters)
-	}
-	if _, _, ambiguous := uidmove.LegacyOwner(masters); !ambiguous {
+	// A live edit sees the live masters only (uidmove.LiveOwner): two
+	// masters in the trash make no ambiguity for a live legacy override.
+	if _, _, ambiguous := ownerRule(includeDeleted)(uidMasters(rows)); !ambiguous {
 		return storage.Event{}, sql.ErrNoRows
 	}
 	// A live edit counts the live rows of the calendar only. A calendar
@@ -115,13 +111,9 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 	if err != nil {
 		return storage.Event{}, err
 	}
-	masters := uidMasters(rows)
-	if !includeDeleted {
-		// A live lookup wants a live master. With none, the UID is not
-		// found, also when two calendars hold it in the trash.
-		masters = liveMasters(masters)
-	}
-	owner, ok, ambiguous := uidmove.LegacyOwner(masters)
+	// A live lookup wants a live master (uidmove.LiveOwner). With none, the
+	// UID is not found, also when two calendars hold it in the trash.
+	owner, ok, ambiguous := ownerRule(includeDeleted)(uidMasters(rows))
 	if ambiguous {
 		return storage.Event{}, ErrAmbiguousUID
 	}
@@ -136,15 +128,14 @@ func seriesMasterOfUID(ctx context.Context, qtx *storage.Queries, uid string, in
 	return storage.Event{}, sql.ErrNoRows
 }
 
-// liveMasters returns the live masters of masters.
-func liveMasters(masters []uidmove.Master) []uidmove.Master {
-	out := make([]uidmove.Master, 0, len(masters))
-	for _, m := range masters {
-		if !m.Trashed {
-			out = append(out, m)
-		}
+// ownerRule returns the owner rule of a lookup: uidmove.LegacyOwner for a
+// restore, which counts a master in the trash, and uidmove.LiveOwner for a
+// live edit.
+func ownerRule(includeDeleted bool) func([]uidmove.Master) (int64, bool, bool) {
+	if includeDeleted {
+		return uidmove.LegacyOwner
 	}
-	return out
+	return uidmove.LiveOwner
 }
 
 // wrapLookup keeps ErrAmbiguousUID and ErrAmbiguousOverride bare, so a

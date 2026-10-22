@@ -53,6 +53,47 @@ var ErrMasterInTrash = errors.New("event: the master of the series is in the tra
 // from the database. The CLI collapses this with ErrNotFound.
 var ErrNotDeleted = errors.New("event: row not soft-deleted (may have been purged)")
 
+// ErrUndoNotPossible reports a permanent refusal of RestoreUndo. The undo
+// data can never succeed: the rows are gone, live, or owned by a newer
+// delete, the calendar is read-only, or the series changed. RestoreUndo wraps
+// each such error, and the original error stays in the chain. A caller drops
+// the undo entry for it. Any other error is transient, for example a busy
+// database or a canceled context, and a retry can succeed.
+var ErrUndoNotPossible = errors.New("event: the undo is not possible")
+
+// ErrMasterAdvanced reports an undo of a truncation whose master changed after
+// the truncation. The undo would overwrite that change.
+var ErrMasterAdvanced = errors.New("event: the master changed after the delete")
+
+// undoRefusals are the permanent refusals of an undo (ErrUndoNotPossible).
+var undoRefusals = []error{
+	ErrNotDeleted, ErrMasterInTrash, ErrMasterPurged, ErrMasterAdvanced,
+	ErrSeriesInTrash, ErrAmbiguousUID, ErrAmbiguousOverride, ErrOccurrenceOutsideSeries,
+	calendaraccess.ErrReadOnly, calendaraccess.ErrUnsupportedComponent,
+}
+
+// undoRefusal is a permanent refusal of an undo. Its text is the text of the
+// cause, and it matches ErrUndoNotPossible and the cause.
+type undoRefusal struct{ cause error }
+
+func (e undoRefusal) Error() string        { return e.cause.Error() }
+func (e undoRefusal) Unwrap() error        { return e.cause }
+func (e undoRefusal) Is(target error) bool { return target == ErrUndoNotPossible }
+
+// classifyUndo wraps a permanent refusal of an undo with ErrUndoNotPossible.
+// It returns a transient error and nil as they are.
+func classifyUndo(err error) error {
+	if err == nil || errors.Is(err, ErrUndoNotPossible) {
+		return err
+	}
+	for _, refusal := range undoRefusals {
+		if errors.Is(err, refusal) {
+			return undoRefusal{cause: err}
+		}
+	}
+	return err
+}
+
 // ErrSeriesInTrash reports a series delete in a calendar whose master of
 // the UID is in the trash, while another calendar holds a live master.
 // The rows of that calendar include no live series, so the delete has no
@@ -293,8 +334,14 @@ func (m UndoMeta) PushCalendarIDs(fallback int64) []int64 {
 
 // RestoreUndo reverses a soft-delete operation recorded in UndoMeta. It
 // dispatches by Kind. For FromInstance kinds, it also rewrites the master's
-// RRULE back to the pre-truncation value in the same transaction.
+// RRULE back to the pre-truncation value in the same transaction. A
+// permanent refusal matches ErrUndoNotPossible (classifyUndo). Any other
+// error is transient.
 func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
+	return classifyUndo(s.restoreUndo(ctx, meta))
+}
+
+func (s *Service) restoreUndo(ctx context.Context, meta UndoMeta) error {
 	// The guard covers the calendars of the series only. A calendar
 	// without a row of the series, for example a read-only copy of the
 	// UID, does not block the restore (issue #842).
@@ -309,7 +356,7 @@ func (s *Service) RestoreUndo(ctx context.Context, meta UndoMeta) error {
 	case UndoKindFromInstance:
 		return s.restoreFromInstance(ctx, meta)
 	default:
-		return fmt.Errorf("unknown undo kind %d", meta.Kind)
+		return undoRefusal{cause: fmt.Errorf("unknown undo kind %d", meta.Kind)}
 	}
 }
 
@@ -745,13 +792,18 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 	// that drops the log of its calendar (migration 057). The log row
 	// goes before the restore, so the drop of the restored rows from the
 	// other logs does not rewrite it either.
-	// An undo names its log (logID). A user restore takes the newest log of
+	// An undo names its log (logID). A user restore of a master in the
+	// trash takes the log of the delete that hid the master
+	// (masterSeriesLogTx). Any other user restore takes the newest log of
 	// the calendar.
 	var log storage.EventSeriesDelete
 	var err error
-	if logID != 0 {
+	switch {
+	case logID != 0:
 		log, err = qtx.GetEventSeriesDeleteByID(ctx, logID)
-	} else {
+	case requireMaster && master.DeletedAt != nil:
+		log, err = masterSeriesLogTx(ctx, qtx, master)
+	default:
 		log, err = qtx.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{
 			CalendarID: calendarID, Uid: uid,
 		})
@@ -789,7 +841,15 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 				return 0, nil, err
 			}
 			ids = split.matchIDs()
-			rest = slices.DeleteFunc(slices.Clone(all), func(id int64) bool { return slices.Contains(ids, id) })
+			own := make(map[int64]struct{}, len(ids))
+			for _, id := range ids {
+				own[id] = struct{}{}
+			}
+			for _, id := range all {
+				if _, ok := own[id]; !ok {
+					rest = append(rest, id)
+				}
+			}
 		}
 		if len(rest) > 0 {
 			if err := qtx.UpdateEventSeriesDeleteAsOrphanLog(ctx, storage.UpdateEventSeriesDeleteAsOrphanLogParams{HiddenIds: formatRowIDs(rest), ID: log.ID}); err != nil {
@@ -836,6 +896,27 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 		return 0, nil, err
 	}
 	return n + k, ids, nil
+}
+
+// masterSeriesLogTx returns the series-delete log of the delete that hid
+// master. That log carries the delete token of the master. A master from
+// before the token (token 0) takes the newest log with a master. An orphan
+// log of another delete never matches, so the restore of the master does not
+// bring back its rows. With no match, it returns sql.ErrNoRows, and the
+// caller pairs the rows of the master statement (sameDeleteRowsTx).
+func masterSeriesLogTx(ctx context.Context, qtx *storage.Queries, master storage.Event) (storage.EventSeriesDelete, error) {
+	logs, err := qtx.ListEventSeriesDeletesByCalendarUID(ctx, storage.ListEventSeriesDeletesByCalendarUIDParams{
+		CalendarID: master.CalendarID, Uid: master.Uid,
+	})
+	if err != nil {
+		return storage.EventSeriesDelete{}, err
+	}
+	for _, l := range slices.Backward(logs) {
+		if l.DeleteToken == master.DeleteToken && (master.DeleteToken != 0 || l.HadMaster == 1) {
+			return l, nil
+		}
+	}
+	return storage.EventSeriesDelete{}, sql.ErrNoRows
 }
 
 // ListDeleted returns soft-deleted events for a calendar, newest first.
@@ -1022,7 +1103,7 @@ func seriesPurgeSetTx(ctx context.Context, qtx *storage.Queries, masterIDs []int
 	// Each IN list goes in chunks under the parameter limit of SQLite.
 	var owned []storage.ListTrashedRowsOwnedByMastersRow
 	var logs []storage.ListSeriesLogsOfMastersRow
-	for _, chunk := range chunkIDs(masterIDs) {
+	for _, chunk := range storage.ChunkSlice(masterIDs, idChunk) {
 		rows, err := qtx.ListTrashedRowsOwnedByMasters(ctx, chunk)
 		if err != nil {
 			return nil, fmt.Errorf("list owned rows: %w", err)
@@ -1055,7 +1136,7 @@ func seriesPurgeSetTx(ctx context.Context, qtx *storage.Queries, masterIDs []int
 			}
 		}
 	}
-	for _, chunk := range chunkIDs(named) {
+	for _, chunk := range storage.ChunkSlice(named, idChunk) {
 		trashed, err := qtx.ListTrashedEventsByIDs(ctx, chunk)
 		if err != nil {
 			return nil, fmt.Errorf("list logged rows: %w", err)
@@ -1073,7 +1154,7 @@ func dropMasterLogsTx(ctx context.Context, qtx *storage.Queries, masterIDs []int
 	if len(masterIDs) == 0 {
 		return nil
 	}
-	for _, chunk := range chunkIDs(masterIDs) {
+	for _, chunk := range storage.ChunkSlice(masterIDs, idChunk) {
 		for _, drop := range []func(context.Context, []int64) error{
 			qtx.DeleteExdateLogsOfMasters, qtx.DeleteTruncateLogsOfMasters, qtx.DeleteSeriesLogsOfMasters,
 		} {
@@ -1099,7 +1180,7 @@ func purgeIDsTx(ctx context.Context, qtx *storage.Queries, ids []int64) (int64, 
 		}
 	}
 	var total int64
-	for _, chunk := range chunkIDs(unique) {
+	for _, chunk := range storage.ChunkSlice(unique, idChunk) {
 		// The occurrences of the rows, read before the purge, so their
 		// logs settle after it.
 		rows, err := rowStatesTx(ctx, qtx, chunk)
@@ -1125,20 +1206,6 @@ func purgeIDsTx(ctx context.Context, qtx *storage.Queries, ids []int64) (int64, 
 // idChunk is the size of one IN list of row IDs, under the parameter limit
 // of SQLite.
 const idChunk = 500
-
-// chunkIDs splits ids into slices of at most idChunk IDs.
-func chunkIDs(ids []int64) [][]int64 {
-	size := idChunk
-	var out [][]int64
-	for len(ids) > size {
-		out = append(out, ids[:size])
-		ids = ids[size:]
-	}
-	if len(ids) > 0 {
-		out = append(out, ids)
-	}
-	return out
-}
 
 // ErrSeriesHasLiveOverrides reports the purge of a master whose series
 // still owns a live override. After the purge, the view would hand the live
@@ -1493,24 +1560,16 @@ func (s *Service) restoreOverrideRow(ctx context.Context, calendarID int64, uid,
 	return tx.Commit()
 }
 
-// restoreRowByIDTx un-hides one row by ID. The revive trigger drops it from
-// the delete logs of its UID. No row, or a live row, gives ErrNotDeleted.
-func restoreRowByIDTx(ctx context.Context, qtx *storage.Queries, rowID int64) error {
-	n, err := qtx.RestoreEventsByIDs(ctx, []int64{rowID})
+// restoreRowByIDTx un-hides one row by ID: restoreHiddenRowsTx with one ID.
+// The caller guards the calendar of the row. The revive trigger drops the
+// row from the delete logs of its UID. A live row gives ErrAlreadyRestored,
+// and no row gives ErrNotDeleted.
+func restoreRowByIDTx(ctx context.Context, qtx *storage.Queries, r storage.Event) error {
+	notBack, err := restoreHiddenRowsTx(ctx, qtx, r.CalendarID, []int64{r.ID})
 	if err != nil {
-		return fmt.Errorf("restore row %d: %w", rowID, err)
+		return err
 	}
-	if n == 0 {
-		// A live row is a restore that came first. An absent row is a
-		// purge: nothing to restore.
-		if _, err := qtx.GetEvent(ctx, rowID); err == nil {
-			return ErrAlreadyRestored
-		}
-		return ErrNotDeleted
-	}
-	// The revive trigger of migration 057 removes the row from the delete
-	// logs of its UID.
-	return nil
+	return notBack
 }
 
 // undoMaster reads the master row that meta.MasterID names, live or in the
@@ -1651,7 +1710,7 @@ func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) erro
 			}
 			return err
 		}
-		if err := restoreRowByIDTx(ctx, qtx, r.ID); err != nil {
+		if err := restoreRowByIDTx(ctx, qtx, r); err != nil {
 			return err
 		}
 		if err := dropOrphanDeleteLogTx(ctx, qtx, r.CalendarID, r.Uid, r.RecurrenceID, master.CalendarID == r.CalendarID); err != nil {
@@ -1667,7 +1726,7 @@ func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) erro
 			return err
 		}
 	}
-	if err := restoreRowByIDTx(ctx, qtx, r.ID); err != nil {
+	if err := restoreRowByIDTx(ctx, qtx, r); err != nil {
 		return err
 	}
 	// With no master, the row is an orphan instance of its own calendar.
@@ -1897,22 +1956,18 @@ func (s *Service) restoreFromInstance(ctx context.Context, meta UndoMeta) error 
 	}
 	prevUpdated := parseStorageTime(master.UpdatedAt)
 	if prevUpdated.After(meta.MasterUpdatedBefore.Add(time.Second)) {
-		return fmt.Errorf("master advanced since delete (expected updated_at <= %s, got %s)",
+		return fmt.Errorf("%w (expected updated_at <= %s, got %s)", ErrMasterAdvanced,
 			meta.MasterUpdatedBefore.Format(time.RFC3339), prevUpdated.Format(time.RFC3339))
 	}
 
-	log, err := s.q.GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx, storage.GetEventTruncateDeleteByCalendarUIDAndCutoffParams{
-		CalendarID: master.CalendarID,
-		Uid:        meta.UID,
-		CutoffTime: meta.CutoffTime.UTC().Format(time.RFC3339),
+	// The cutoff and the token name the log row of this truncation. A
+	// second truncation at the same cutoff has its own row.
+	return s.restoreTruncation(ctx, truncationKey{
+		calendarID: master.CalendarID,
+		uid:        meta.UID,
+		cutoff:     meta.CutoffTime.UTC().Format(time.RFC3339),
+		token:      meta.DeleteToken,
 	})
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotDeleted
-		}
-		return fmt.Errorf("get truncate log: %w", err)
-	}
-	return s.restoreTruncationByLogID(ctx, log.ID, meta.DeleteToken)
 }
 
 // reconcileTx mirrors the 3-case state machine from
@@ -2362,40 +2417,16 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 	if err := ensureRowsWritableTx(ctx, qtx, master.CalendarID, rowIDs); err != nil {
 		return 0, err
 	}
-	var token int64
+	// Each truncation gets a token, also with no row to hide. The token
+	// names the log row of the truncation: one row per truncation. A second
+	// truncation at the same cutoff then keeps its own rule and its rows.
+	token, err := qtx.NextEventDeleteToken(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("delete token: %w", err)
+	}
 	if len(rowIDs) > 0 {
-		var err error
-		if token, err = qtx.NextEventDeleteToken(ctx); err != nil {
-			return 0, fmt.Errorf("delete token: %w", err)
-		}
 		if err := softDeleteEventsByIDsTx(ctx, qtx, rowIDs, token); err != nil {
 			return 0, fmt.Errorf("soft-delete future overrides: %w", err)
-		}
-	}
-	// A second truncation at the same cutoff extends the log of the first.
-	// The log then names the rows of both truncations.
-	earlier, err := qtx.GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx, storage.GetEventTruncateDeleteByCalendarUIDAndCutoffParams{
-		CalendarID: master.CalendarID, Uid: uid, CutoffTime: cutoff,
-	})
-	found, err := storage.Found(err)
-	if err != nil {
-		return 0, fmt.Errorf("get truncation log: %w", err)
-	}
-	if found {
-		earlierIDs := storage.NullableToString(earlier.HiddenIds)
-		if earlier.HiddenIds == nil {
-			// A log from before migration 057 names its rows by recurrence
-			// ID only. Its rows are the trashed rows of the series at those
-			// recurrence IDs.
-			if earlierIDs, err = trashedRowsAtTx(ctx, qtx, master, storage.NullableToString(earlier.HiddenOverrides)); err != nil {
-				return 0, err
-			}
-		}
-		if recIDs, err = unionCommaList(recIDs, storage.NullableToString(earlier.HiddenOverrides), parseRecurrenceID); err != nil {
-			return 0, err
-		}
-		if rowIDs, err = unionCommaList(rowIDs, earlierIDs, parseRowID); err != nil {
-			return 0, err
 		}
 	}
 	hiddenList := strings.Join(recIDs, ",")
@@ -2409,35 +2440,11 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 		HiddenOverrides: &hiddenList,
 		RemovedRdates:   &removedRDates,
 		HiddenIds:       &hiddenIDs,
+		DeleteToken:     token,
 	}); err != nil {
 		return 0, fmt.Errorf("record truncate: %w", err)
 	}
 	return token, nil
-}
-
-// trashedRowsAtTx returns a list of the IDs of the trashed rows of the series
-// of master. The rows are at the recurrence IDs of the comma-separated list
-// recIDs.
-func trashedRowsAtTx(ctx context.Context, qtx *storage.Queries, master storage.Event, recIDs string) (string, error) {
-	want, err := parseCommaList(recIDs, parseRecurrenceID)
-	if err != nil || len(want) == 0 {
-		return "", err
-	}
-	at := make(map[string]bool, len(want))
-	for _, r := range want {
-		at[r] = true
-	}
-	rows, err := qtx.ListTrashedSeriesRowsInCalendar(ctx, storage.ListTrashedSeriesRowsInCalendarParams{CalendarID: master.CalendarID, Uid: master.Uid})
-	if err != nil {
-		return "", fmt.Errorf("list trashed series rows: %w", err)
-	}
-	ids := make([]int64, 0, len(rows))
-	for _, r := range rows {
-		if r.RecurrenceID != "" && at[r.RecurrenceID] {
-			ids = append(ids, r.ID)
-		}
-	}
-	return formatRowIDs(ids), nil
 }
 
 // trimMasterRDatesAtOrAfter rewrites the master's rdates column to keep only the
