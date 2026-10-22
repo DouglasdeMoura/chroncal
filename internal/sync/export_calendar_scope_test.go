@@ -619,10 +619,36 @@ func TestPullDeletes_WriteANewDeleteToken(t *testing.T) {
 	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE uid = ?`, master.UID); err != nil {
 		t.Fatalf("revive the rows: %v", err)
 	}
-	if err := ownerOpsByType[ownerTypeEvent].softDeleteByUID(ctx, engine, calA, master.UID); err != nil {
+	if err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID); err != nil {
 		t.Fatalf("delete of the pull: %v", err)
 	}
 	if got := token(override.ID); got == 0 || got == pruned {
 		t.Errorf("token after the delete of the pull = %d, want a new token beside %d", got, pruned)
+	}
+}
+
+// TestPullDelete_OneTransactionWithTheSyncState: the delete of a pull and the
+// drop of the sync_resource share one transaction. A failure of the drop
+// rolls back the delete, so the rows stay live.
+func TestPullDelete_OneTransactionWithTheSyncState(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	master := createSeries(t, engine, calA)
+	if _, err := engine.db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, remote_url) VALUES (?, ?, 'event', 0, 'sync-token', 'x')
+		 ON CONFLICT DO NOTHING`, calA, master.UID); err != nil {
+		t.Fatalf("seed sync row: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx,
+		`CREATE TRIGGER test_refuse_sync_drop BEFORE DELETE ON sync_resources BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+		t.Fatalf("seed trigger: %v", err)
+	}
+	if err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID); err == nil {
+		t.Fatal("deleteLocalResourceByUID = nil, want the error of the drop")
+	}
+	var deleted *string
+	if err := engine.db.QueryRowContext(ctx, `SELECT deleted_at FROM events WHERE id = ?`, master.ID).Scan(&deleted); err != nil || deleted != nil {
+		t.Errorf("master after the failed delete = deleted_at %v, %v; want it live", deleted, err)
 	}
 }

@@ -191,15 +191,17 @@ func settleLiveOverrideTx(ctx context.Context, qtx *storage.Queries, r storage.E
 	return settleOccurrenceTx(ctx, qtx, master, r.RecurrenceID, withoutRows(r.ID))
 }
 
-// rowStatesTx reads the calendar and the trash state of each row of ids in
-// one query. A purged row is not in the result.
+// rowStatesTx reads the calendar and the trash state of each row of ids. A
+// purged row is not in the result.
 func rowStatesTx(ctx context.Context, qtx *storage.Queries, ids []int64) ([]storage.ListEventRowStatesByIDsRow, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	rows, err := qtx.ListEventRowStatesByIDs(ctx, ids)
-	if err != nil {
-		return nil, fmt.Errorf("list states of rows: %w", err)
+	// The IN list goes in chunks under the parameter limit of SQLite.
+	var rows []storage.ListEventRowStatesByIDsRow
+	for _, chunk := range chunkIDs(ids) {
+		part, err := qtx.ListEventRowStatesByIDs(ctx, chunk)
+		if err != nil {
+			return nil, fmt.Errorf("list states of rows: %w", err)
+		}
+		rows = append(rows, part...)
 	}
 	return rows, nil
 }
@@ -579,4 +581,21 @@ func tokenCheckTx(ctx context.Context, qtx *storage.Queries, ids []int64, token 
 // token of the undo. token 0 matches each row.
 func tokenMatches(st storage.ListEventRowStatesByIDsRow, token int64) bool {
 	return token == 0 || st.DeleteToken == token
+}
+
+// rowsWithTokenTx keeps the rows of ids that carry the delete token token. It
+// reads the rows in the transaction of the restore. The undo of a delete
+// brings back those rows only.
+func rowsWithTokenTx(ctx context.Context, qtx *storage.Queries, ids []int64, token int64) ([]int64, error) {
+	states, err := rowStatesTx(ctx, qtx, ids)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]int64, 0, len(states))
+	for _, st := range states {
+		if st.DeleteToken == token {
+			kept = append(kept, st.ID)
+		}
+	}
+	return kept, nil
 }

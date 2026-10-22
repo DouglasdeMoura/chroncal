@@ -264,7 +264,7 @@ When the last live override of the occurrence goes later, the delete adds the EX
 Every event undo carries the identity of its delete and reverses only the rows that this identity still names:
 
 - An occurrence delete and a delete by ID of an orphan row keep the log ID and the seq of the entry (`UndoMeta.ExdateLogID`, `UndoMeta.ExdateDeleteSeq`).
-- A series delete of orphan rows keeps the ID of its series-delete log (`UndoMeta.SeriesLogID`).
+- A series delete keeps the ID of its series-delete log (`UndoMeta.SeriesLogID`). The undo of a series delete of a master restores that log only, and only the rows with its delete token. Rows that a delete of orphan rows merged into the log keep their own token, and their own undo restores them. A restore by UID or by ID restores the whole log.
 - A delete by ID beside a trashed master writes no log. A delete log that names its row now belongs to a newer delete.
 
 One helper, `identityRefusalTx` in `internal/event/occurrence_log.go`, holds the rule. The undo is all or nothing: one refusal refuses the whole undo. For each row of the delete:

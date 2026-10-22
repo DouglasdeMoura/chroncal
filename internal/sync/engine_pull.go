@@ -422,16 +422,12 @@ func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int6
 			}
 			continue
 		}
+		// One transaction holds the delete of the rows and the drop of the
+		// sync_resource (deleteLocalResourceByUID).
 		if err := e.deleteLocalResourceByUID(ctx, calendarID, ownerType, uid); err != nil {
 			e.logger.Error("delete local resource", "uid", uid, "owner_type", ownerType, "error", err)
 			failed++
 			continue
-		}
-		if err := e.q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{
-			CalendarID: calendarID,
-			Uid:        uid,
-		}); err != nil {
-			e.logger.Error("delete sync resource", "uid", uid, "error", err)
 		}
 		deleted++
 	}

@@ -123,13 +123,6 @@ UPDATE events SET
     delete_token = sqlc.arg(delete_token)
 WHERE calendar_id = sqlc.arg(calendar_id) AND uid = sqlc.arg(uid) AND deleted_at IS NULL;
 
--- name: SoftDeleteEventsByUID :exec
-UPDATE events SET
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    delete_token = sqlc.arg(delete_token)
-WHERE uid = sqlc.arg(uid) AND deleted_at IS NULL;
-
 -- name: RestoreEvent :exec
 UPDATE events SET
     deleted_at = NULL,

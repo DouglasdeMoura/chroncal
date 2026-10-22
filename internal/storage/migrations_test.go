@@ -883,3 +883,20 @@ func TestMigrationsReadmeMatches057(t *testing.T) {
 		}
 	}
 }
+
+// TestMigration057_UIDIndexesOfTheLogs: the triggers and the identity check
+// of an undo read the three delete logs by UID, so each log has an index on
+// uid.
+func TestMigration057_UIDIndexesOfTheLogs(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/uid-index.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+	_, count := migHelpers(t, context.Background(), conn)
+	for _, name := range []string{"idx_event_exdate_deletes_uid", "idx_event_truncate_deletes_uid", "idx_event_series_deletes_uid"} {
+		if n := count(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '` + name + `'`); n != 1 {
+			t.Errorf("index %s = %d, want 1", name, n)
+		}
+	}
+}

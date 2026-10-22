@@ -51,6 +51,9 @@ DROP TABLE event_exdate_deletes;
 ALTER TABLE event_exdate_deletes_new RENAME TO event_exdate_deletes;
 CREATE INDEX idx_event_exdate_deletes_calendar ON event_exdate_deletes(calendar_id);
 CREATE INDEX idx_event_exdate_deletes_deleted_at ON event_exdate_deletes(deleted_at);
+-- The triggers and the identity check of an undo read the logs of one UID in
+-- every calendar.
+CREATE INDEX idx_event_exdate_deletes_uid ON event_exdate_deletes(uid);
 
 CREATE TABLE event_truncate_deletes_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +80,7 @@ DROP TABLE event_truncate_deletes;
 ALTER TABLE event_truncate_deletes_new RENAME TO event_truncate_deletes;
 CREATE INDEX idx_event_truncate_deletes_calendar ON event_truncate_deletes(calendar_id);
 CREATE INDEX idx_event_truncate_deletes_deleted_at ON event_truncate_deletes(deleted_at);
+CREATE INDEX idx_event_truncate_deletes_uid ON event_truncate_deletes(uid);
 
 -- The log of a series delete. The row lists the override rows that the series
 -- delete hid (hidden_ids, comma-separated event row IDs). A restore of the
@@ -102,6 +106,7 @@ CREATE TABLE event_series_deletes (
 -- one, and the other one stays restorable.
 CREATE INDEX idx_event_series_deletes_calendar ON event_series_deletes(calendar_id, uid);
 CREATE INDEX idx_event_series_deletes_deleted_at ON event_series_deletes(deleted_at);
+CREATE INDEX idx_event_series_deletes_uid ON event_series_deletes(uid);
 
 -- The rows of each event series. One row of the view pairs an event row
 -- (id, live or in the trash) with the calendar whose series owns it
@@ -309,6 +314,9 @@ END;
 
 -- +goose Down
 DROP TABLE IF EXISTS event_delete_token;
+DROP INDEX IF EXISTS idx_event_exdate_deletes_uid;
+DROP INDEX IF EXISTS idx_event_truncate_deletes_uid;
+DROP INDEX IF EXISTS idx_event_series_deletes_uid;
 DROP TRIGGER IF EXISTS events_purge_drops_row_from_logs;
 DROP TRIGGER IF EXISTS events_override_insert_drops_prune_marker;
 DROP TRIGGER IF EXISTS events_override_revive_drops_stale_logs;
