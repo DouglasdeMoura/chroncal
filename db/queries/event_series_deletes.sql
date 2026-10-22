@@ -37,6 +37,10 @@ WHERE calendar_id = sqlc.arg(from_calendar_id) AND uid = sqlc.arg(uid);
 -- name: ListEventSeriesDeletesByUID :many
 SELECT * FROM event_series_deletes WHERE uid = ? ORDER BY calendar_id;
 
+-- name: ListEventSeriesDeletesByCalendarUID :many
+-- The series-delete logs of one UID in one calendar, one row per delete.
+SELECT * FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id;
+
 -- name: UpdateEventSeriesDeleteHiddenIds :exec
 -- Rewrite the hidden rows of one log row. A restore of one logged row by ID
 -- or by undo drops the row from the list. A later series restore then does

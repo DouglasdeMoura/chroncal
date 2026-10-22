@@ -207,12 +207,16 @@ type OccurrenceStore struct {
 }
 
 // RecordOccurrenceDelete records a delete that hid rows at X. log is the log
-// of X, with ID 0 when X has no log. The delete adds a copy of the EXDATE
-// only when no live override of the series remains at X. The log must not own
-// a copy yet. It returns the log ID and the Seq of the delete.
+// of X, with ID 0 when X has no log. The delete appends the EXDATE only when
+// no live override of the series remains at X. The list of the master must
+// not hold X yet. The log owns the EXDATE only when this delete appends it.
+// An EXDATE that is in the list already stays the EXDATE of its source: an
+// import, the server, or an earlier delete. It returns the log ID and the Seq
+// of the delete.
 func RecordOccurrenceDelete(ctx context.Context, s OccurrenceStore, o Occurrence, log OccurrenceLog, rows []int64) (logID, seq int64, err error) {
-	if !o.LiveOverride && !log.OwnsExdate {
-		exdates := timeutil.SerializeTimeList(append(timeutil.ParseTimeList(o.MasterExdates), o.Exdate))
+	existing := timeutil.ParseTimeList(o.MasterExdates)
+	if !o.LiveOverride && !timeutil.TimeListHas(existing, o.Exdate) {
+		exdates := timeutil.SerializeTimeList(append(existing, o.Exdate))
 		if err := s.UpdateExdates(ctx, o.MasterID, exdates); err != nil {
 			return 0, 0, fmt.Errorf("update exdates: %w", err)
 		}
@@ -240,6 +244,9 @@ func RecordOccurrenceDelete(ctx context.Context, s OccurrenceStore, o Occurrence
 // An entry with no row keeps its EXDATE while no override is live at X: the
 // delete of an occurrence with no stored override.
 func SettleOccurrence(ctx context.Context, s OccurrenceStore, o Occurrence, log OccurrenceLog) error {
+	// The strip removes one copy of X only while the list still holds X
+	// (removeExdate). A pull that rewrites the list of the master clears
+	// the flag of each log of that master, so a server EXDATE never goes.
 	if log.OwnsExdate && (o.LiveOverride || len(log.Entries) == 0) {
 		filtered, changed, err := removeExdate(o.MasterExdates, o.RecurrenceID)
 		if err != nil {

@@ -150,25 +150,26 @@ func (o *occStore) store() OccurrenceStore {
 	}
 }
 
-// TestRecordOccurrenceDelete: a delete adds the EXDATE only with no live
-// override at the occurrence, and only once.
+// TestRecordOccurrenceDelete: a delete appends the EXDATE only with no live
+// override at the occurrence and with no copy of it in the list. The log
+// owns the EXDATE only when the delete appends it.
 func TestRecordOccurrenceDelete(t *testing.T) {
 	at, _ := time.Parse(time.RFC3339, testSlot)
 	for _, tc := range []struct {
 		name     string
 		live     bool
-		owns     bool
+		exdates  string
 		wantAdd  bool
 		wantOwns bool
 	}{
-		{"no live override", false, false, true, true},
-		{"live override", true, false, false, false},
-		{"log owns a copy", false, true, false, true},
+		{"no live override", false, "", true, true},
+		{"live override", true, "", false, false},
+		{"list holds the occurrence", false, testSlot, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o := &occStore{}
-			occ := Occurrence{RecurrenceID: testSlot, Exdate: at, MasterID: 3, LiveOverride: tc.live}
-			_, seq, err := RecordOccurrenceDelete(context.Background(), o.store(), occ, OccurrenceLog{OwnsExdate: tc.owns, LastSeq: 4}, []int64{11})
+			occ := Occurrence{RecurrenceID: testSlot, Exdate: at, MasterID: 3, MasterExdates: tc.exdates, LiveOverride: tc.live}
+			_, seq, err := RecordOccurrenceDelete(context.Background(), o.store(), occ, OccurrenceLog{LastSeq: 4}, []int64{11})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -183,22 +184,25 @@ func TestRecordOccurrenceDelete(t *testing.T) {
 func TestSettleOccurrence(t *testing.T) {
 	rows := OccurrenceLog{ID: 7, OwnsExdate: true, Entries: []OccurrenceEntry{{Seq: 1, Rows: []int64{11}}}}
 	noRow := OccurrenceLog{ID: 7, OwnsExdate: true, Entries: []OccurrenceEntry{{Seq: 1}}}
+	noEntry := OccurrenceLog{ID: 7, OwnsExdate: true}
 	for _, tc := range []struct {
 		name        string
 		log         OccurrenceLog
 		live        bool
+		exdates     string
 		wantStrip   bool
 		wantDeleted bool
 	}{
-		{"live override strips and keeps the hidden rows", rows, true, true, false},
-		{"no live override keeps the EXDATE", rows, false, false, false},
-		{"an entry with no row keeps the EXDATE", noRow, false, false, false},
-		{"a live override beside an entry with no row strips and drops", noRow, true, true, true},
-		{"no entry strips and drops", OccurrenceLog{ID: 7, OwnsExdate: true}, false, true, true},
+		{"live override strips and keeps the hidden rows", rows, true, testSlot, true, false},
+		{"no live override keeps the EXDATE", rows, false, testSlot, false, false},
+		{"an entry with no row keeps the EXDATE", noRow, false, testSlot, false, false},
+		{"a live override beside an entry with no row strips and drops", noRow, true, testSlot, true, true},
+		{"no entry strips and drops", noEntry, false, testSlot, true, true},
+		{"an owned flag with no copy in the list writes no EXDATE", noEntry, false, "", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o := &occStore{}
-			occ := Occurrence{RecurrenceID: testSlot, MasterID: 3, MasterExdates: testSlot, LiveOverride: tc.live}
+			occ := Occurrence{RecurrenceID: testSlot, MasterID: 3, MasterExdates: tc.exdates, LiveOverride: tc.live}
 			if err := SettleOccurrence(context.Background(), o.store(), occ, tc.log); err != nil {
 				t.Fatal(err)
 			}

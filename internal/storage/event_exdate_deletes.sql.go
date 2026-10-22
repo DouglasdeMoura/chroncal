@@ -10,6 +10,23 @@ import (
 	"strings"
 )
 
+const clearEventExdateDeleteOwnership = `-- name: ClearEventExdateDeleteOwnership :exec
+UPDATE event_exdate_deletes SET owns_exdate = 0 WHERE calendar_id = ? AND uid = ?
+`
+
+type ClearEventExdateDeleteOwnershipParams struct {
+	CalendarID int64
+	Uid        string
+}
+
+// A pull or an import rewrites the EXDATE list of the master of one UID in
+// one calendar. The logs of that master then own no EXDATE: the copy in the
+// list now comes from the server or the import (issue #86).
+func (q *Queries) ClearEventExdateDeleteOwnership(ctx context.Context, arg ClearEventExdateDeleteOwnershipParams) error {
+	_, err := q.db.ExecContext(ctx, clearEventExdateDeleteOwnership, arg.CalendarID, arg.Uid)
+	return err
+}
+
 const deleteEventExdateDelete = `-- name: DeleteEventExdateDelete :exec
 DELETE FROM event_exdate_deletes WHERE id = ?
 `

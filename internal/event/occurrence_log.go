@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/softdelete"
@@ -266,4 +267,79 @@ func restoreHiddenRowsTx(ctx context.Context, qtx *storage.Queries, calendarID i
 		return nil, nil, fmt.Errorf("restore rows: %w", err)
 	}
 	return restored, nil, nil
+}
+
+// sameExdateSet reports whether the EXDATE lists a and b hold the same
+// instants, with the same count of each. The order and the text form do not
+// count.
+func sameExdateSet(a, b string) bool {
+	count := make(map[string]int)
+	for _, t := range timeutil.ParseTimeList(a) {
+		count[t.UTC().Format(time.RFC3339)]++
+	}
+	for _, t := range timeutil.ParseTimeList(b) {
+		count[t.UTC().Format(time.RFC3339)]--
+	}
+	for _, n := range count {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// purgedOccurrence is an occurrence of a live series that a purge touches.
+type purgedOccurrence struct {
+	master storage.Event
+	recID  string
+}
+
+// purgedOccurrencesTx resolves the live master of each override of rows,
+// before the purge. After the purge, the calendar of a legacy row can hold
+// no row of its UID, and the series rule then finds no master. A series with
+// no live master keeps its logs: the restore of the series reads them.
+func purgedOccurrencesTx(ctx context.Context, qtx *storage.Queries, rows []storage.ListEventRowStatesByIDsRow) ([]purgedOccurrence, error) {
+	type key struct {
+		calendarID int64
+		uid, recID string
+	}
+	done := make(map[key]bool)
+	var out []purgedOccurrence
+	for _, r := range rows {
+		if r.RecurrenceID == "" {
+			continue
+		}
+		// The row is in the trash, so the lookup reads the rows of the
+		// trash too. Only a live master settles.
+		master, err := findSeriesMasterIncludingDeletedTx(ctx, qtx, r.CalendarID, r.Uid)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrAmbiguousUID) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get master: %w", err)
+		}
+		if master.DeletedAt != nil {
+			continue
+		}
+		k := key{master.CalendarID, master.Uid, r.RecurrenceID}
+		if done[k] {
+			continue
+		}
+		done[k] = true
+		out = append(out, purgedOccurrence{master: master, recID: r.RecurrenceID})
+	}
+	return out, nil
+}
+
+// settlePurgedTx settles the occurrence log of each occurrence of list after
+// the purge. The purge trigger of migration 057 removed the rows from the
+// logs. A log that then hides nothing goes (softdelete.SettleOccurrence).
+func settlePurgedTx(ctx context.Context, qtx *storage.Queries, list []purgedOccurrence) error {
+	keep := func(l softdelete.OccurrenceLog) softdelete.OccurrenceLog { return l }
+	for _, o := range list {
+		if err := settleOccurrenceTx(ctx, qtx, o.master, o.recID, keep); err != nil {
+			return err
+		}
+	}
+	return nil
 }

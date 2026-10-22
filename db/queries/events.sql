@@ -326,10 +326,11 @@ WHERE events.recurrence_id != '' AND events.recurrence_id >= sqlc.arg(recurrence
 ORDER BY events.recurrence_id;
 
 -- name: ListEventRowStatesByIDs :many
--- The calendar and the trash state of each row of a set. A restore by IDs
+-- The calendar, the occurrence, and the trash state of each row of a set. A
+-- purge reads the occurrences to settle their logs. A restore by IDs
 -- reads it once. The access guard reads the calendars, and the restore tells
 -- a row in the trash from a live row.
-SELECT id, calendar_id, deleted_at FROM events WHERE id IN (sqlc.slice(ids)) ORDER BY id;
+SELECT id, calendar_id, uid, recurrence_id, deleted_at FROM events WHERE id IN (sqlc.slice(ids)) ORDER BY id;
 
 -- name: RestoreEventsByIDs :execrows
 -- Un-hide a set of soft-deleted rows by ID in one statement. The count
