@@ -12,7 +12,8 @@ import (
 )
 
 // syncDoctorCmd lists wedged sync resources and offers the confirmed escape
-// push. A wedged resource fails export on a deterministic hydration error.
+// push. The list also shows the rows that wait, the rows with a failed push,
+// and the edits that no series owns (issue #862). A wedged resource fails export on a deterministic hydration error.
 // Every sync then retries it and no edit under its UID reaches the server
 // (issue #568). The push mode omits the unreadable relations from the PUT.
 // The user accepts that loss with an explicit confirmation.
@@ -22,6 +23,10 @@ func syncDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Find and recover wedged sync resources",
 		Long: `List local resources whose unreadable data wedges the sync.
+
+The list also shows each resource whose push waits for another step, each
+resource whose last push failed, and each edit that stays local because no
+series owns the edited row.
 
 A wedged resource stays dirty forever. Every sync retries it and fails on
 the same unreadable relation, and no edit under its UID reaches the server.
@@ -96,6 +101,59 @@ func waitingAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calend
 	return entries, nil
 }
 
+// noteEntry is one resource that the doctor lists but cannot push: a push
+// failure that is no wedge, or an edit that no series owns.
+type noteEntry struct {
+	state        string // "push_failure" or "unowned"
+	calendarID   int64
+	calendarName string
+	uid          string
+	ownerType    string
+	count        int64  // push_failure only
+	reason       string // the last push error, or storage.NoSeriesOwnerMsg
+}
+
+// notesAll collects the push failures and the unowned edits of the
+// calendars cals. A push failure of a wedged resource stays out: the wedged
+// line names its count already.
+func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar, wedged []doctorEntry) ([]noteEntry, error) {
+	type key struct {
+		calendarID int64
+		uid        string
+	}
+	isWedged := make(map[key]bool, len(wedged))
+	for _, en := range wedged {
+		isWedged[key{en.wedged.CalendarID, en.wedged.UID}] = true
+	}
+	var notes []noteEntry
+	for _, cal := range cals {
+		failures, err := svc.PushFailures(ctx, cal.ID)
+		if err != nil {
+			return nil, fmt.Errorf("calendar %q: %w", cal.Name, err)
+		}
+		for _, f := range failures {
+			if isWedged[key{cal.ID, f.UID}] {
+				continue
+			}
+			notes = append(notes, noteEntry{
+				state: "push_failure", calendarID: cal.ID, calendarName: cal.Name,
+				uid: f.UID, ownerType: f.OwnerType, count: f.Count, reason: f.Error,
+			})
+		}
+		unowned, err := svc.UnownedEdits(ctx, cal.ID)
+		if err != nil {
+			return nil, fmt.Errorf("calendar %q: %w", cal.Name, err)
+		}
+		for _, uid := range unowned {
+			notes = append(notes, noteEntry{
+				state: "unowned", calendarID: cal.ID, calendarName: cal.Name,
+				uid: uid, ownerType: "event", reason: storage.NoSeriesOwnerMsg,
+			})
+		}
+	}
+	return notes, nil
+}
+
 // diagnoseAll collects the wedged resources of every calendar.
 func diagnoseAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar) ([]doctorEntry, error) {
 	var entries []doctorEntry
@@ -111,10 +169,11 @@ func diagnoseAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calen
 	return entries, nil
 }
 
-// runDoctorList prints one line per wedged resource across all calendars,
-// then one line per resource that waits. JSON and YAML return an array, [] when
-// no calendar holds a wedge or a wait, like every sibling read command. The
-// state key of each item is "wedged" or "waiting".
+// runDoctorList prints one line per resource that waits, per push failure,
+// and per unowned edit, then one line per wedged resource across all
+// calendars. JSON and YAML return an array, [] when no calendar holds any of
+// them, like every sibling read command. The state key of each item is
+// "wedged", "waiting", "push_failure", or "unowned".
 func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Calendar) error {
 	entries, err := diagnoseAll(context.Background(), svc, cals)
 	if err != nil {
@@ -124,10 +183,14 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 	if err != nil {
 		return err
 	}
+	notes, err := notesAll(context.Background(), svc, cals, entries)
+	if err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 
 	if outputFmt != "text" {
-		items := make([]map[string]any, 0, len(entries)+len(waits))
+		items := make([]map[string]any, 0, len(entries)+len(waits)+len(notes))
 		for _, en := range entries {
 			items = append(items, map[string]any{
 				"state":           "wedged",
@@ -149,12 +212,35 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 				"reason":        wt.waiting.Reason,
 			})
 		}
+		for _, n := range notes {
+			item := map[string]any{
+				"state":         n.state,
+				"calendar_id":   n.calendarID,
+				"calendar_name": n.calendarName,
+				"uid":           n.uid,
+				"owner_type":    n.ownerType,
+				"reason":        n.reason,
+			}
+			if n.state == "push_failure" {
+				item["push_fail_count"] = n.count
+			}
+			items = append(items, item)
+		}
 		return printOutput(out, items)
 	}
 
 	for _, wt := range waits {
 		fmt.Fprintf(out, "calendar %q uid %s (%s): waiting on %s\n",
 			safeText(wt.calendarName), safeText(wt.waiting.UID), safeText(wt.waiting.OwnerType), safeText(wt.waiting.Reason))
+	}
+	for _, n := range notes {
+		if n.state == "push_failure" {
+			fmt.Fprintf(out, "calendar %q uid %s (%s): %d failed push attempt(s); last error: %s\n",
+				safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), n.count, safeText(n.reason))
+			continue
+		}
+		fmt.Fprintf(out, "calendar %q uid %s (%s): the edit stays local: %s\n",
+			safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), safeText(n.reason))
 	}
 	if len(entries) == 0 {
 		fmt.Fprintln(out, "No wedged resources.")

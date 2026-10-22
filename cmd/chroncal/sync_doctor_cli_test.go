@@ -137,6 +137,10 @@ func TestSyncDoctorListsWedgedResource(t *testing.T) {
 	if !strings.Contains(stdout, "3 failed push attempt(s)") {
 		t.Errorf("output %q misses the recorded push-failure count", stdout)
 	}
+	// The wedged line names the count, so no push-failure line repeats it.
+	if strings.Contains(stdout, "last error:") {
+		t.Errorf("output %q lists the wedged resource as a push failure too", stdout)
+	}
 }
 
 // TestSyncDoctorSanitizesRemoteDerivedStrings guards the doctor output.
@@ -294,5 +298,76 @@ func TestSyncDoctorListsAWaitingResource(t *testing.T) {
 	}
 	if len(items) != 1 || items[0]["state"] != "waiting" || items[0]["reason"] != "the source delete of the UID in another calendar" {
 		t.Fatalf("items = %v, want one waiting item with its reason", items)
+	}
+}
+
+// seedNoteCLIResources seeds one sync row with a failed push and one legacy
+// override with an edit that no series owns.
+func seedNoteCLIResources(t *testing.T, dbPath string) {
+	t.Helper()
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	ctx := context.Background()
+	cals, err := a.Queries.ListCalendars(ctx)
+	if err != nil {
+		t.Fatalf("ListCalendars: %v", err)
+	}
+	if _, err := a.DB.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, push_fail_count, last_push_error)
+		 VALUES (?, 'fail-cli@example.com', 'event', '/c/fail.ics', 2, 'HTTP 500')`, cals[0].ID); err != nil {
+		t.Fatalf("seed a push failure: %v", err)
+	}
+	if _, err := a.DB.ExecContext(ctx,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, edit_unowned)
+		 VALUES ('unowned-cli@example.com', ?, 't', '2026-05-18T09:00:00Z', '2026-05-18T10:00:00Z', '2026-05-18T09:00:00Z', 1)`,
+		cals[0].ID); err != nil {
+		t.Fatalf("seed an unowned edit: %v", err)
+	}
+}
+
+// TestSyncDoctorListsPushFailuresAndUnownedEdits checks that the doctor
+// shows a push failure and an edit that no series owns, as the sync status
+// does (issue #862).
+func TestSyncDoctorListsPushFailuresAndUnownedEdits(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	seedNoteCLIResources(t, dbPath)
+
+	stdout, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
+	if err != nil {
+		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
+	}
+	for _, want := range []string{
+		"uid fail-cli@example.com (event): 2 failed push attempt(s); last error: HTTP 500",
+		"uid unowned-cli@example.com (event): the edit stays local: " + storage.NoSeriesOwnerMsg,
+		"No wedged resources.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("output %q misses %q", stdout, want)
+		}
+	}
+
+	stdout, _, err = runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--output", "json")
+	if err != nil {
+		t.Fatalf("sync doctor --output json: %v", err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &items); err != nil {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	states := map[string]map[string]any{}
+	for _, it := range items {
+		states[it["state"].(string)] = it
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %v, want one push failure and one unowned edit", items)
+	}
+	if f := states["push_failure"]; f == nil || f["uid"] != "fail-cli@example.com" || f["push_fail_count"] != float64(2) || f["reason"] != "HTTP 500" {
+		t.Errorf("push_failure item = %v", f)
+	}
+	if u := states["unowned"]; u == nil || u["uid"] != "unowned-cli@example.com" || u["reason"] != storage.NoSeriesOwnerMsg {
+		t.Errorf("unowned item = %v", u)
 	}
 }

@@ -535,9 +535,12 @@ func (s *Service) restoreTruncation(ctx context.Context, key truncationKey) erro
 	}
 	// The stale-master guard of the undo: an edit of the master after the
 	// truncation refuses the undo, so the undo does not overwrite the edit.
-	// The check reads the master in this transaction.
+	// The check reads the master in this transaction. The baseline is the
+	// updated_at that the truncation read back from the row, so the check
+	// allows no drift. An edit in the same second as the truncation keeps
+	// the same updated_at, and the guard cannot see it.
 	if !key.masterUpdatedBefore.IsZero() {
-		if updated := parseStorageTime(master.UpdatedAt); updated.After(key.masterUpdatedBefore.Add(time.Second)) {
+		if updated := parseStorageTime(master.UpdatedAt); updated.After(key.masterUpdatedBefore) {
 			return fmt.Errorf("%w (expected updated_at <= %s, got %s)", ErrMasterAdvanced,
 				key.masterUpdatedBefore.Format(time.RFC3339), updated.Format(time.RFC3339))
 		}

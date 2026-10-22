@@ -27,6 +27,8 @@ the dropped table. A rebuild of `events` must follow these steps:
    `events_master_change_settles_unowned_edits`, and
    `events_master_purge_settles_unowned_edits`. The drop of `events` drops
    them. Copy their statements from migration 057.
+6. Create the trigger `events_master_insert_settles_unowned_edits` again.
+   Copy its statement from migration 061.
 
 The triggers drop the stale delete logs of a calendar. The revive
 trigger of a master drops the series-delete log of its delete when the
@@ -41,8 +43,8 @@ EXDATE. The purge trigger removes a purged override row from the delete
 logs, so a log never names a row that is gone. An orphan series-delete
 log that names only the purged row goes too. The revive trigger of a
 master keeps the rows that a delete of orphan rows merged into its log.
-The log then becomes an orphan log with only those rows. The two settle
-triggers of a master run when a master changes or goes. An edit of a row
+The log then becomes an orphan log with only those rows. The three settle
+triggers of a master run when a master arrives, changes, or goes. An edit of a row
 that no series owned (`edit_unowned`) then reaches the owner of the row
 again. The calendar of a live owner master gets a dirty mark, and the mark
 of the row clears.

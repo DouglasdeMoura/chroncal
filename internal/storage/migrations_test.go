@@ -920,6 +920,12 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 				t.Fatalf("trigger %s after step 5 = %d, want 1", name, n)
 			}
 		}
+		// README step 6: the settle trigger of a master insert, migration 061.
+		const insertSettle = "events_master_insert_settles_unowned_edits"
+		mustExec(triggerStatementOf(t, "061_master_insert_settles_unowned_edits.sql", insertSettle))
+		if n := count(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = '` + insertSettle + `'`); n != 1 {
+			t.Fatalf("trigger %s after step 6 = %d, want 1", insertSettle, n)
+		}
 		const logs = `SELECT COUNT(*) FROM event_series_deletes WHERE calendar_id = 1 AND uid = 'rebuild'`
 		mustExec(`UPDATE events SET deleted_at = '2026-01-02T00:00:00Z' WHERE id = 1`)
 		// The log of the master: a master from before the token consumes a
@@ -945,13 +951,20 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 // migration 057, so the rebuild test runs step 5 of the migrations README.
 func triggerStatement(t *testing.T, name string) string {
 	t.Helper()
-	src, err := dbembed.Migrations.ReadFile("migrations/057_delete_logs_uid_unique_per_calendar.sql")
+	return triggerStatementOf(t, "057_delete_logs_uid_unique_per_calendar.sql", name)
+}
+
+// triggerStatementOf reads the CREATE TRIGGER statement of name from the
+// migration file.
+func triggerStatementOf(t *testing.T, file, name string) string {
+	t.Helper()
+	src, err := dbembed.Migrations.ReadFile("migrations/" + file)
 	if err != nil {
-		t.Fatalf("read migration 057: %v", err)
+		t.Fatalf("read migration %s: %v", file, err)
 	}
 	start := strings.Index(string(src), "CREATE TRIGGER "+name)
 	if start < 0 {
-		t.Fatalf("migration 057 has no CREATE TRIGGER %s", name)
+		t.Fatalf("migration %s has no CREATE TRIGGER %s", file, name)
 	}
 	end := strings.Index(string(src[start:]), "END;")
 	if end < 0 {

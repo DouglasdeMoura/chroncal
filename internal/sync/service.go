@@ -131,6 +131,31 @@ type PushFailure struct {
 	Error     string
 }
 
+// PushFailures lists the sync rows of calendarID whose last push attempt
+// failed. The sync status and the sync doctor show them.
+func (s *Service) PushFailures(ctx context.Context, calendarID int64) ([]PushFailure, error) {
+	rows, err := s.q.ListSyncResourcePushFailures(ctx, calendarID)
+	if err != nil {
+		return nil, fmt.Errorf("list push failures: %w", err)
+	}
+	var out []PushFailure
+	for _, r := range rows {
+		out = append(out, PushFailure{UID: r.Uid, OwnerType: r.OwnerType, Count: r.PushFailCount, Error: r.LastPushError})
+	}
+	return out, nil
+}
+
+// UnownedEdits lists the UIDs of calendarID whose edit stays local, because
+// no series owns the edited row (storage.NoSeriesOwnerMsg). The sync status
+// and the sync doctor show them.
+func (s *Service) UnownedEdits(ctx context.Context, calendarID int64) ([]string, error) {
+	uids, err := s.q.ListUnownedEditUIDs(ctx, calendarID)
+	if err != nil {
+		return nil, fmt.Errorf("list unowned edits: %w", err)
+	}
+	return uids, nil
+}
+
 // WaitingResource is a sync row whose push waits for another step, for
 // example the resolution of a move conflict. A wait is no failure. Reason
 // names the step. The list derives it from the kind of the wait and the
@@ -222,18 +247,10 @@ func (s *Service) Status(ctx context.Context) ([]SyncStatus, error) {
 			conflicts = nil
 		}
 
-		// Like the other counts, a read failure shows no unowned edits.
-		var unowned []string
-		if rows, err := s.q.ListUnownedEditUIDs(ctx, cal.ID); err == nil {
-			unowned = rows
-		}
-		// Like the other counts, a read failure shows no push failures.
-		var failures []PushFailure
-		if rows, err := s.q.ListSyncResourcePushFailures(ctx, cal.ID); err == nil {
-			for _, r := range rows {
-				failures = append(failures, PushFailure{UID: r.Uid, OwnerType: r.OwnerType, Count: r.PushFailCount, Error: r.LastPushError})
-			}
-		}
+		// Like the other counts, a read failure shows no unowned edits and
+		// no push failures.
+		unowned, _ := s.UnownedEdits(ctx, cal.ID)
+		failures, _ := s.PushFailures(ctx, cal.ID)
 		statuses = append(statuses, SyncStatus{
 			CalendarID:          cal.ID,
 			CalendarName:        cal.Name,
