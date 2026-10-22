@@ -1731,8 +1731,9 @@ func TestUndo_OrphanOverride(t *testing.T) {
 }
 
 // TestDeleteInstance_TwoLegacyOverridesAtOneOccurrence: two legacy rows
-// of one occurrence, both owned by the one master, give a delete error
-// that names the rows. A lookup of the occurrence takes the lowest ID.
+// of one occurrence, both owned by the one master, go with the delete of
+// the occurrence. The occurrence goes as a whole, so the user chooses no
+// row. A lookup of the occurrence before the delete takes the lowest ID.
 func TestDeleteInstance_TwoLegacyOverridesAtOneOccurrence(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1757,17 +1758,16 @@ func TestDeleteInstance_TwoLegacyOverridesAtOneOccurrence(t *testing.T) {
 		}
 		ids = append(ids, row.ID)
 	}
-	err = svc.DeleteInstance(ctx, 1, master.UID, second)
-	if !errors.Is(err, ErrAmbiguousOverride) {
-		t.Fatalf("DeleteInstance err = %v, want ErrAmbiguousOverride", err)
-	}
-	for _, id := range ids {
-		if !strings.Contains(err.Error(), strconv.FormatInt(id, 10)) {
-			t.Errorf("error %q does not name row %d", err, id)
-		}
-	}
 	if got, err := svc.SeriesOverride(ctx, 1, master.UID, second.Format(time.RFC3339)); err != nil || got.ID != ids[0] {
 		t.Errorf("SeriesOverride = %d, %v; want the lowest ID %d", got.ID, err, ids[0])
+	}
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	for _, id := range ids {
+		if r, err := svc.GetIncludingDeleted(ctx, id); err != nil || r.DeletedAt == nil {
+			t.Errorf("legacy row %d after the delete = trashed %v, %v; want it in the trash", id, r.DeletedAt != nil, err)
+		}
 	}
 }
 

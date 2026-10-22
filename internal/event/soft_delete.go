@@ -99,7 +99,9 @@ type UndoMeta struct {
 	// RowIDs lists the rows that a series delete of orphan rows hid
 	// (UndoKindSeries with MasterID 0). The undo un-hides exactly those rows and
 	// drops them from the series-delete log. The rest of the log stays for the
-	// restore of the master.
+	// restore of the master. For an occurrence delete (UndoKindSingle), it
+	// lists every override row of the occurrence that the delete hid. RowID is
+	// the first of them.
 	RowIDs []int64
 
 	// UndoKindFromInstance only. CutoffTime is the truncation cutoff. It finds
@@ -152,9 +154,13 @@ func (s *Service) DeleteWithUndo(ctx context.Context, id int64) (UndoMeta, error
 // and remove the EXDATE we added. calendarID names the calendar of the
 // series (see findSeriesMasterTx).
 func (s *Service) DeleteInstanceWithUndo(ctx context.Context, calendarID int64, uid string, instanceTime time.Time) (UndoMeta, error) {
-	master, rowID, err := s.deleteInstance(ctx, calendarID, uid, instanceTime)
+	master, rowIDs, err := s.deleteInstance(ctx, calendarID, uid, instanceTime)
 	if err != nil {
 		return UndoMeta{}, err
+	}
+	var rowID int64
+	if len(rowIDs) > 0 {
+		rowID = rowIDs[0]
 	}
 	return UndoMeta{
 		Kind:         UndoKindSingle,
@@ -165,6 +171,7 @@ func (s *Service) DeleteInstanceWithUndo(ctx context.Context, calendarID int64, 
 		RecurrenceID: instanceTime.UTC().Format(time.RFC3339),
 		RowID:        rowID,
 		MasterID:     master.ID,
+		RowIDs:       rowIDs,
 	}, nil
 }
 
@@ -1104,6 +1111,13 @@ func (s *Service) PurgeByID(ctx context.Context, id int64) error {
 // ErrNotDeleted.
 func (s *Service) restoreSingle(ctx context.Context, meta UndoMeta) error {
 	calendarID, uid, recurrenceID, rowID := meta.CalendarID, meta.UID, meta.RecurrenceID, meta.RowID
+	// An occurrence delete can hide more than one row: the row beside the
+	// master and the legacy overrides of the occurrence. Older undo data
+	// names one row in RowID.
+	rowIDs := meta.RowIDs
+	if len(rowIDs) == 0 && rowID != 0 {
+		rowIDs = []int64{rowID}
+	}
 	r, err := s.undoMaster(ctx, meta)
 	if errors.Is(err, ErrNotDeleted) {
 		// No master: an orphan row, or a master that a purge took. The
@@ -1135,11 +1149,11 @@ func (s *Service) restoreSingle(ctx context.Context, meta UndoMeta) error {
 		// master.
 		// The row stays local until the master comes back, as a restore
 		// by ID beside a trashed master does: no sync reconcile.
-		return s.restoreOverrideOfTrashedMaster(ctx, r, recurrenceID, rowID)
+		return s.restoreOverrideOfTrashedMaster(ctx, r, recurrenceID, rowIDs)
 	}
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		if recurrenceID != "" {
-			return s.restoreEXDATEOnly(ctx, r.CalendarID, uid, recurrenceID, rowID)
+			return s.restoreEXDATEOnly(ctx, r.CalendarID, uid, recurrenceID, rowIDs)
 		}
 		// The undo reverses a delete of the master row, and the master
 		// is live: a restore from the trash came first. The undo has
@@ -1306,6 +1320,22 @@ func (s *Service) restoreOverrideRow(ctx context.Context, calendarID int64, uid,
 	return tx.Commit()
 }
 
+// restoreHiddenRowsTx un-hides the override rows that an occurrence delete
+// hid, after the guard of the calendar of each row (ensureRowsWritableTx).
+// calendarID is the calendar of the series, which the caller guards. A row
+// that a purge or an earlier restore took is no error: the EXDATE still goes.
+func restoreHiddenRowsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, ids []int64) error {
+	if err := ensureRowsWritableTx(ctx, qtx, calendarID, ids); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := restoreRowByIDTx(ctx, qtx, id); err != nil && !errors.Is(err, ErrNotDeleted) {
+			return err
+		}
+	}
+	return nil
+}
+
 // restoreRowByIDTx un-hides one row by ID. The revive trigger drops it from
 // the delete logs of its UID. No row, or a live row, gives ErrNotDeleted.
 func restoreRowByIDTx(ctx context.Context, qtx *storage.Queries, rowID int64) error {
@@ -1341,20 +1371,33 @@ func (s *Service) undoMaster(ctx context.Context, meta UndoMeta) (storage.Event,
 }
 
 // restoreOverrideOfTrashedMaster reverses an occurrence delete of the
-// series of master, which is in the trash. It un-hides the override row
-// that the delete hid (rowID, 0 with no stored override). It clears the
-// EXDATE of the occurrence on the trashed master.
-func (s *Service) restoreOverrideOfTrashedMaster(ctx context.Context, master storage.Event, recurrenceID string, rowID int64) error {
+// series of master, which is in the trash. It un-hides the override rows
+// that the delete hid (rowIDs, empty with no stored override). It clears
+// the EXDATE of the occurrence on the trashed master.
+func (s *Service) restoreOverrideOfTrashedMaster(ctx context.Context, master storage.Event, recurrenceID string, rowIDs []int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
-	if rowID != 0 {
-		if err := restoreRowByIDTx(ctx, qtx, rowID); err != nil {
+	if err := ensureRowsWritableTx(ctx, qtx, master.CalendarID, rowIDs); err != nil {
+		return err
+	}
+	// The undo names the rows of one delete. No row back gives
+	// ErrNotDeleted: a restore from the trash came first.
+	restored := 0
+	for _, id := range rowIDs {
+		err := restoreRowByIDTx(ctx, qtx, id)
+		if err != nil && !errors.Is(err, ErrNotDeleted) {
 			return err
 		}
+		if err == nil {
+			restored++
+		}
+	}
+	if len(rowIDs) > 0 && restored == 0 {
+		return restoreRowByIDTx(ctx, qtx, rowIDs[0])
 	}
 	if err := clearMasterEXDATEIncludingDeleted(ctx, qtx, master.CalendarID, master.Uid, recurrenceID); err != nil {
 		return err
@@ -1496,10 +1539,10 @@ func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) (ser
 }
 
 // restoreEXDATEOnly reverses an occurrence delete of the series in
-// calendarID. It un-hides the override row that the delete hid (rowID) and
-// clears the EXDATE that the delete recorded. rowID 0 says the delete hid no
+// calendarID. It un-hides the override rows that the delete hid (rowIDs) and
+// clears the EXDATE that the delete recorded. No row says the delete hid no
 // override row, so the restore clears the EXDATE only.
-func (s *Service) restoreEXDATEOnly(ctx context.Context, calendarID int64, uid, recurrenceID string, rowID int64) error {
+func (s *Service) restoreEXDATEOnly(ctx context.Context, calendarID int64, uid, recurrenceID string, rowIDs []int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -1509,13 +1552,11 @@ func (s *Service) restoreEXDATEOnly(ctx context.Context, calendarID int64, uid, 
 
 	// DeleteInstance soft-deletes the override at this recurrence_id (if one
 	// existed) and adds the EXDATE. Un-hide it so undo restores the
-	// customized occurrence, not just the base instance. rowID 0 says the
+	// customized occurrence, not just the base instance. No row says the
 	// delete hid no override. A row of the occurrence that an earlier
 	// delete hid on its own stays in the trash.
-	if rowID != 0 {
-		if err := restoreRowByIDTx(ctx, qtx, rowID); err != nil && !errors.Is(err, ErrNotDeleted) {
-			return err
-		}
+	if err := restoreHiddenRowsTx(ctx, qtx, calendarID, rowIDs); err != nil {
+		return err
 	}
 	if err := clearMasterEXDATE(ctx, qtx, calendarID, uid, recurrenceID); err != nil {
 		return err
@@ -1847,22 +1888,25 @@ func (s *Service) deleteRow(ctx context.Context, id int64, out *deletedRow) erro
 			if master.AllDay == 1 {
 				recIDTime = timeutil.AsDateOnly(recIDTime)
 			}
-			existing = append(existing, recIDTime)
-			if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
-				Exdates: storage.StringToNullable(SerializeTimeList(existing)),
-				ID:      master.ID,
-			}); err != nil {
-				return fmt.Errorf("update exdates: %w", err)
+			// An EXDATE of an earlier delete of the occurrence stays the
+			// one copy (see deleteInstance).
+			again, err := exdateOfEarlierDeleteTx(ctx, qtx, master.CalendarID, evt.UID, evt.RecurrenceID, existing, recIDTime)
+			if err != nil {
+				return err
+			}
+			if !again {
+				existing = append(existing, recIDTime)
+				if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
+					Exdates: storage.StringToNullable(SerializeTimeList(existing)),
+					ID:      master.ID,
+				}); err != nil {
+					return fmt.Errorf("update exdates: %w", err)
+				}
 			}
 			// Record provenance so restore knows this EXDATE was
 			// delete-added (and may be stripped) rather than imported.
-			if err := qtx.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{
-				CalendarID:   master.CalendarID,
-				Uid:          evt.UID,
-				RecurrenceID: evt.RecurrenceID,
-				HiddenID:     &evt.ID,
-			}); err != nil {
-				return fmt.Errorf("record exdate delete: %w", err)
+			if err := recordExdateDeleteTx(ctx, qtx, master.CalendarID, evt.UID, evt.RecurrenceID, []int64{evt.ID}); err != nil {
+				return err
 			}
 		}
 
@@ -1925,9 +1969,7 @@ func calendarHoldsMasterTx(ctx context.Context, qtx *storage.Queries, calendarID
 // orphan row. The caller knows that the UID has no master row, live or in
 // the trash: a master holds the record of an occurrence delete.
 func recordOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string) error {
-	if err := qtx.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{
-		CalendarID: calendarID, Uid: uid, RecurrenceID: recurrenceID,
-	}); err != nil {
+	if err := recordExdateDeleteTx(ctx, qtx, calendarID, uid, recurrenceID, nil); err != nil {
 		return fmt.Errorf("record orphan delete: %w", err)
 	}
 	return nil
@@ -1964,12 +2006,13 @@ func (s *Service) DeleteInstance(ctx context.Context, calendarID int64, uid stri
 }
 
 // deleteInstance is DeleteInstance. It returns the master it read in the
-// transaction. It also returns the ID of the override row that the delete
-// hid, or 0 with no stored override.
-func (s *Service) deleteInstance(ctx context.Context, calendarID int64, uid string, instanceTime time.Time) (storage.Event, int64, error) {
+// transaction. It also returns the IDs of the override rows that the delete
+// hid. These are the row beside the master and each legacy override of the
+// occurrence that the series owns. No stored override gives none.
+func (s *Service) deleteInstance(ctx context.Context, calendarID int64, uid string, instanceTime time.Time) (storage.Event, []int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return storage.Event{}, 0, fmt.Errorf("begin tx: %w", err)
+		return storage.Event{}, nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
@@ -1979,10 +2022,10 @@ func (s *Service) deleteInstance(ctx context.Context, calendarID int64, uid stri
 	// tx let a second instance-delete clobber the first one's EXDATE.
 	master, err := findSeriesMasterTx(ctx, qtx, calendarID, uid)
 	if err != nil {
-		return storage.Event{}, 0, wrapMasterLookup(err)
+		return storage.Event{}, nil, wrapMasterLookup(err)
 	}
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
-		return storage.Event{}, 0, err
+		return storage.Event{}, nil, err
 	}
 
 	existing := ParseTimeList(storage.NullableToString(master.Exdates))
@@ -1994,67 +2037,107 @@ func (s *Service) deleteInstance(ctx context.Context, calendarID int64, uid stri
 	if master.AllDay == 1 {
 		exdate = timeutil.AsDateOnly(exdate)
 	}
-	existing = append(existing, exdate)
-	if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
-		Exdates: storage.StringToNullable(SerializeTimeList(existing)),
-		ID:      master.ID,
-	}); err != nil {
-		return storage.Event{}, 0, fmt.Errorf("update exdates: %w", err)
+	// A second delete of the occurrence adds no second EXDATE. A restore
+	// removes one copy only, so a copy that stays hides the occurrence.
+	recID := instanceTime.UTC().Format(time.RFC3339)
+	again, err := exdateOfEarlierDeleteTx(ctx, qtx, master.CalendarID, uid, recID, existing, exdate)
+	if err != nil {
+		return storage.Event{}, nil, err
+	}
+	if !again {
+		existing = append(existing, exdate)
+		if err := qtx.UpdateEventExdates(ctx, storage.UpdateEventExdatesParams{
+			Exdates: storage.StringToNullable(SerializeTimeList(existing)),
+			ID:      master.ID,
+		}); err != nil {
+			return storage.Event{}, nil, fmt.Errorf("update exdates: %w", err)
+		}
 	}
 
-	recID := instanceTime.UTC().Format(time.RFC3339)
-	override, oErr := findInstanceOverrideTx(ctx, qtx, master, recID, true)
-	// Only ErrNoRows means "this occurrence has no override row". A genuine
-	// lookup error must abort. Otherwise the EXDATE and its provenance commit
-	// while the live override row stays. The deleted occurrence then stays
-	// visible through the override. This mirrors the master-lookup guard the
-	// Delete override path carries (issue #412).
-	if oErr != nil && !errors.Is(oErr, sql.ErrNoRows) {
-		return storage.Event{}, 0, wrapLookup("get override", oErr)
+	// The occurrence goes as a whole: the delete hides the row beside the
+	// master and each legacy override of the occurrence that the series
+	// owns. A row that stays live would show the occurrence again.
+	rows, err := qtx.ListSeriesOverridesAtRecurrenceID(ctx, storage.ListSeriesOverridesAtRecurrenceIDParams{
+		CalendarID: master.CalendarID, Uid: master.Uid, RecurrenceID: recID,
+	})
+	if err != nil {
+		return storage.Event{}, nil, fmt.Errorf("list overrides: %w", err)
 	}
-	var hiddenID int64
-	if oErr == nil {
+	hidden := make([]int64, 0, len(rows))
+	for _, o := range rows {
 		// A legacy override lives in another calendar than its master,
 		// and the delete writes that calendar too.
-		if override.CalendarID != master.CalendarID {
-			if err := calendaraccess.EnsureWritable(ctx, qtx, override.CalendarID, "VEVENT"); err != nil {
-				return storage.Event{}, 0, err
+		if o.CalendarID != master.CalendarID {
+			if err := calendaraccess.EnsureWritable(ctx, qtx, o.CalendarID, "VEVENT"); err != nil {
+				return storage.Event{}, nil, err
 			}
 		}
-		if err := qtx.SoftDeleteEvent(ctx, override.ID); err != nil {
-			return storage.Event{}, 0, fmt.Errorf("soft-delete override: %w", err)
+		if err := qtx.SoftDeleteEvent(ctx, o.ID); err != nil {
+			return storage.Event{}, nil, fmt.Errorf("soft-delete override: %w", err)
 		}
-		hiddenID = override.ID
+		hidden = append(hidden, o.ID)
 	}
 
-	// Log the EXDATE-based delete so the trash view can surface it.
-	// ON CONFLICT upserts deleted_at, so deleting the same instance twice
-	// keeps exactly one log row with the latest timestamp.
-	// The log names the hidden override row, so a restore of the
-	// occurrence from the trash un-hides it.
-	var hidden *int64
-	if hiddenID != 0 {
-		hidden = &hiddenID
-	}
-	if err := qtx.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{
-		CalendarID:   master.CalendarID,
-		Uid:          uid,
-		RecurrenceID: recID,
-		HiddenID:     hidden,
-	}); err != nil {
-		return storage.Event{}, 0, fmt.Errorf("record exdate delete: %w", err)
+	// The log makes the delete visible in the trash. It names the hidden
+	// rows, so a restore of the occurrence from the trash un-hides them.
+	if err := recordExdateDeleteTx(ctx, qtx, master.CalendarID, uid, recID, hidden); err != nil {
+		return storage.Event{}, nil, err
 	}
 
 	// Mark the master dirty — its EXDATE was modified — inside the same
 	// transaction so a failed mark rolls the EXDATE change back rather than
 	// committing a change that is never pushed (issue #107).
 	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, uid, "event"); err != nil {
-		return storage.Event{}, 0, fmt.Errorf("mark resource dirty: %w", err)
+		return storage.Event{}, nil, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return storage.Event{}, 0, err
+		return storage.Event{}, nil, err
 	}
-	return master, hiddenID, nil
+	return master, hidden, nil
+}
+
+// exdateOfEarlierDeleteTx reports whether exdates holds exdate from an
+// earlier delete of the occurrence recID. The EXDATE is then in the list, and
+// an occurrence log exists. The delete then adds no second copy. An EXDATE
+// with no log is an import. The delete adds its own copy beside it, so a
+// restore removes that copy and keeps the import (issue #86).
+func exdateOfEarlierDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recID string, exdates []time.Time, exdate time.Time) (bool, error) {
+	if !timeutil.TimeListHas(exdates, exdate) {
+		return false, nil
+	}
+	_, err := qtx.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
+		CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
+	})
+	found, err := storage.Found(err)
+	if err != nil {
+		return false, fmt.Errorf("get exdate log: %w", err)
+	}
+	return found, nil
+}
+
+// recordExdateDeleteTx writes the occurrence log of recID in calendarID.
+// One log row holds each occurrence. A second delete of the occurrence keeps
+// the rows of the first delete in the list, so a restore un-hides all of
+// them.
+func recordExdateDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recID string, hidden []int64) error {
+	log, err := qtx.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
+		CalendarID: calendarID, Uid: uid, RecurrenceID: recID,
+	})
+	found, err := storage.Found(err)
+	if err != nil {
+		return fmt.Errorf("get exdate log: %w", err)
+	}
+	if found {
+		if hidden, err = unionCommaList(hidden, log.HiddenIds, parseRowID); err != nil {
+			return err
+		}
+	}
+	if err := qtx.RecordEventExdateDelete(ctx, storage.RecordEventExdateDeleteParams{
+		CalendarID: calendarID, Uid: uid, RecurrenceID: recID, HiddenIds: formatRowIDs(hidden),
+	}); err != nil {
+		return fmt.Errorf("record exdate delete: %w", err)
+	}
+	return nil
 }
 
 // DeleteFromInstance truncates a recurring series so that instances at or

@@ -173,3 +173,14 @@ func TestStorable_UsesTheUTCYear(t *testing.T) {
 		t.Error("a local 4-digit year whose UTC form is 5-digit must not be storable")
 	}
 }
+
+func TestTimeListHas(t *testing.T) {
+	at := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
+	list := []time.Time{at.Add(-24 * time.Hour), at.In(time.FixedZone("X", 3600))}
+	if !TimeListHas(list, at) {
+		t.Error("TimeListHas = false for the same instant in another zone, want true")
+	}
+	if TimeListHas(list, at.Add(time.Hour)) {
+		t.Error("TimeListHas = true for an absent time, want false")
+	}
+}

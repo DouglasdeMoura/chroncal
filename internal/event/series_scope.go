@@ -46,8 +46,20 @@ func findSeriesMaster(ctx context.Context, qtx *storage.Queries, calendarID int6
 	if calendarID == 0 {
 		return seriesMasterOfUID(ctx, qtx, uid, includeDeleted)
 	}
-	// The view event_series_rows answers the rule for a calendar in one
-	// query: the master whose series owns the rows of the calendar.
+	// A calendar with its own master owns its rows, so a lookup on the
+	// unique key answers most calls with no read of the view.
+	var own storage.Event
+	var err error
+	if includeDeleted {
+		own, err = qtx.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: calendarID, Uid: uid})
+	} else {
+		own, err = qtx.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return own, err
+	}
+	// Else the view event_series_rows answers the rule for a calendar in
+	// one query: the master whose series owns the rows of the calendar.
 	master, err := qtx.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{
 		Uid: uid, CalendarID: calendarID, IncludeDeleted: includeDeleted,
 	})

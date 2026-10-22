@@ -242,3 +242,183 @@ func TestOrphanDeletes_BesideUnloggedMasterSeedItsLog(t *testing.T) {
 		}
 	}
 }
+
+// legacyAt stores a legacy override of uid at the occurrence at in calendarID.
+func legacyAt(t *testing.T, svc *Service, uid string, calendarID int64, at time.Time) storage.Event {
+	t.Helper()
+	e, err := svc.UpsertByUID(context.Background(), UpsertParams{
+		UID: uid, CalendarID: calendarID, Title: "Legacy",
+		StartTime: at.Add(30 * time.Minute), EndTime: at.Add(90 * time.Minute), RecurrenceID: at.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy override: %v", err)
+	}
+	return storage.Event{ID: e.ID, CalendarID: calendarID, Uid: uid, RecurrenceID: at.Format(time.RFC3339)}
+}
+
+// wantTrashed fails unless each row of ids has the trash state want.
+func wantTrashed(t *testing.T, svc *Service, want bool, ids ...int64) {
+	t.Helper()
+	for _, id := range ids {
+		r, err := svc.GetIncludingDeleted(context.Background(), id)
+		if err != nil || (r.DeletedAt != nil) != want {
+			t.Errorf("row %d: trashed %v, %v; want trashed %v", id, r.DeletedAt != nil, err, want)
+		}
+	}
+}
+
+// exdateCount returns the count of the EXDATEs of master at at.
+func exdateCount(t *testing.T, svc *Service, masterID int64, at time.Time) int {
+	t.Helper()
+	m, err := svc.q.GetEventIncludingDeleted(context.Background(), masterID)
+	if err != nil {
+		t.Fatalf("get master: %v", err)
+	}
+	n := 0
+	for _, x := range ParseTimeList(storage.NullableToString(m.Exdates)) {
+		if x.Equal(at) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestDeleteInstance_HidesTheLegacyRowBesideTheOwnRow: an occurrence with a
+// row beside the master and a legacy override goes as a whole. The delete
+// hides both rows, and the undo brings both back.
+func TestDeleteInstance_HidesTheLegacyRowBesideTheOwnRow(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	own, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get own override: %v", err)
+	}
+	legacy := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "Legacy"), second)
+	meta, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithUndo: %v", err)
+	}
+	wantTrashed(t, svc, true, own.ID, legacy.ID)
+	if _, err := svc.SeriesOverride(ctx, 1, master.UID, second.Format(time.RFC3339)); err == nil {
+		t.Error("SeriesOverride after the delete found a row, want none")
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	wantTrashed(t, svc, false, own.ID, legacy.ID)
+}
+
+// TestDeleteInstance_SecondDeleteKeepsTheRowsOfTheFirst is the L1/L2
+// sequence. A delete hides legacy row L1. A later import stores legacy row L2
+// of the same occurrence, and a second delete hides it. The log names both
+// rows, and the master holds one EXDATE of the occurrence. The restore from
+// the trash brings back both rows and the occurrence.
+func TestDeleteInstance_SecondDeleteKeepsTheRowsOfTheFirst(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "l1-l2", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	l1 := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "L1"), second)
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("first DeleteInstance: %v", err)
+	}
+	l2 := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "L2"), second)
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("second DeleteInstance: %v", err)
+	}
+	if n := exdateCount(t, svc, master.ID, second); n != 1 {
+		t.Errorf("EXDATEs of the occurrence = %d, want 1", n)
+	}
+	log, err := svc.q.GetEventExdateDeleteByCalendarUIDRecurrence(ctx, storage.GetEventExdateDeleteByCalendarUIDRecurrenceParams{
+		CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("get exdate log: %v", err)
+	}
+	ids, err := parseRowIDs(log.HiddenIds)
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("hidden rows of the log = %q, %v; want L1 and L2", log.HiddenIds, err)
+	}
+	entries, err := svc.ListTrash(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	for _, e := range entries {
+		if e.Kind == TrashKindInstance {
+			if err := svc.RestoreTrash(ctx, e); err != nil {
+				t.Fatalf("RestoreTrash(occurrence): %v", err)
+			}
+		}
+	}
+	wantTrashed(t, svc, false, l1.ID, l2.ID)
+	if n := exdateCount(t, svc, master.ID, second); n != 0 {
+		t.Errorf("EXDATEs of the occurrence after the restore = %d, want 0", n)
+	}
+}
+
+// TestRestoreOccurrence_GuardsTheCalendarOfEachRow: each restore of an
+// occurrence delete guards the calendar of each row that it un-hides. The
+// paths are the restore from the trash, the undo beside a live master, and
+// the undo beside a master in the trash. A master of the UID in another
+// calendar comes after the delete. The series of calendar 1 then no longer
+// owns the legacy row, so the guard of the series does not cover its
+// calendar.
+func TestRestoreOccurrence_GuardsTheCalendarOfEachRow(t *testing.T) {
+	for _, path := range []string{"trash", "undo live master", "undo trashed master"} {
+		t.Run(path, func(t *testing.T) {
+			svc := newTestService(t)
+			ctx := context.Background()
+			master, second, _ := singleSeriesWithOverrides(t, svc)
+			calL := insertCalendar(t, svc, "Legacy")
+			legacy := legacyAt(t, svc, master.UID, calL, second)
+			meta, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+			if err != nil {
+				t.Fatalf("DeleteInstanceWithUndo: %v", err)
+			}
+			if path == "undo trashed master" {
+				if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+					t.Fatalf("DeleteSeries: %v", err)
+				}
+			}
+			if _, err := svc.UpsertByUID(ctx, UpsertParams{
+				UID: master.UID, CalendarID: insertCalendar(t, svc, "B"), Title: "Other series",
+				StartTime: master.StartTime, EndTime: master.EndTime, RecurrenceRule: master.RecurrenceRule,
+			}); err != nil {
+				t.Fatalf("upsert master B: %v", err)
+			}
+			if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read', remote_components = 'VEVENT' WHERE id = ?`, calL); err != nil {
+				t.Fatalf("make the legacy calendar read-only: %v", err)
+			}
+			switch path {
+			case "trash":
+				entries, err := svc.ListTrash(ctx, 1)
+				if err != nil {
+					t.Fatalf("ListTrash: %v", err)
+				}
+				for _, e := range entries {
+					if e.Kind == TrashKindInstance {
+						err = svc.RestoreTrash(ctx, e)
+					}
+				}
+				if !errors.Is(err, calendaraccess.ErrReadOnly) {
+					t.Fatalf("RestoreTrash(occurrence) = %v, want ErrReadOnly", err)
+				}
+			default:
+				if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, calendaraccess.ErrReadOnly) {
+					t.Fatalf("RestoreUndo = %v, want ErrReadOnly", err)
+				}
+			}
+			wantTrashed(t, svc, true, legacy.ID)
+		})
+	}
+}

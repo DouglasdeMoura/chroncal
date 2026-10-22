@@ -10,9 +10,10 @@
 -- override, and the pull hid its row. A marker is no delete of the user.
 -- The trash and the EXDATE contract ignore it. The restore of a master
 -- with no series-delete log reads it, so the pruned row stays hidden.
--- hidden_id names the override row that the occurrence delete hid. NULL
--- names no row: the occurrence had no stored override. The restore of the
--- occurrence from the trash un-hides that row.
+-- hidden_ids is the comma list of the override rows that the occurrence
+-- deletes hid. A legacy override of the occurrence is one of them. An empty
+-- list names no row. The restore of the occurrence from the trash un-hides
+-- each row of the list.
 CREATE TABLE event_exdate_deletes_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
@@ -20,7 +21,7 @@ CREATE TABLE event_exdate_deletes_new (
     recurrence_id TEXT NOT NULL,
     deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     pruned INTEGER NOT NULL DEFAULT 0,
-    hidden_id INTEGER,
+    hidden_ids TEXT NOT NULL DEFAULT '',
     UNIQUE (calendar_id, uid, recurrence_id)
 );
 INSERT INTO event_exdate_deletes_new (id, calendar_id, uid, recurrence_id, deleted_at)
@@ -169,12 +170,12 @@ END;
 -- An override row that comes back, by any path, leaves the delete logs of its
 -- UID. A restore by ID, an undo, an edit that revives the row, and a pull
 -- import all clear deleted_at. The trigger drops the pruned marker of its
--- occurrence, and removes its ID from each series-delete log and each
--- truncation log. A log then names a row only while the row stays in the
--- trash from that delete. A series-delete log that names only this row goes.
--- A master of its calendar in the trash keeps that log, because the log still
--- records the series delete. A log that names no row stays, because the row
--- does not belong to that delete.
+-- occurrence, and removes its ID from each series-delete log, each truncation
+-- log, and each occurrence log. A log then names a row only while the row
+-- stays in the trash from that delete. A series-delete log that names only
+-- this row goes. A master of its calendar in the trash keeps that log,
+-- because the log still records the series delete. A log that names no row
+-- stays, because the row does not belong to that delete.
 -- +goose StatementBegin
 CREATE TRIGGER events_override_revive_drops_stale_logs
 AFTER UPDATE OF deleted_at ON events
@@ -194,6 +195,9 @@ BEGIN
     UPDATE event_truncate_deletes
     SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
     WHERE uid = NEW.uid AND hidden_ids IS NOT NULL AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
+    UPDATE event_exdate_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
+    WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
 END;
 -- +goose StatementEnd
 
