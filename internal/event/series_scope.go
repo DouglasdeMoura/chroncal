@@ -248,6 +248,50 @@ func (s *Service) IsSeriesRowOf(ctx context.Context, calendarID, id int64) (bool
 	return s.q.IsSeriesRowOfCalendar(ctx, storage.IsSeriesRowOfCalendarParams{ID: id, CalendarID: calendarID})
 }
 
+// ErrNotExportedHere reports a UID whose rows in a calendar belong to a
+// series that the export of the calendar does not carry: a live series of
+// another calendar, a series with its master in the trash, or no series.
+var ErrNotExportedHere = errors.New("event: the calendar exports no series of the UID")
+
+// ExportMaster returns the live master of uid that the export of
+// calendarID carries, with its categories. It applies the owner rule of
+// findSeriesMaster:
+//   - The live master of the calendar is the result.
+//   - A series of another calendar, a master in the trash, or rows that
+//     belong to no series give ErrNotExportedHere. A PUT of the rows alone
+//     would store a body with no master.
+//   - A UID with no master row anywhere gives sql.ErrNoRows: the rows of
+//     the calendar are orphan instances, and they export on their own.
+func (s *Service) ExportMaster(ctx context.Context, calendarID int64, uid string) (Event, error) {
+	// The common case: one lookup on the UNIQUE(calendar_id, uid,
+	// recurrence_id) key, with no view.
+	own, err := s.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+	if err == nil {
+		return s.FromStorageWithCategories(ctx, own), nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Event{}, fmt.Errorf("get master: %w", err)
+	}
+	_, err = findSeriesMasterIncludingDeletedTx(ctx, s.q, calendarID, uid)
+	switch {
+	case err == nil, errors.Is(err, ErrAmbiguousUID):
+		return Event{}, ErrNotExportedHere
+	case !errors.Is(err, sql.ErrNoRows):
+		return Event{}, err
+	}
+	// No owner. A calendar with no row of a UID that has masters elsewhere
+	// exports nothing. Only a UID with no master row anywhere leaves
+	// orphan instances.
+	masters, err := s.q.ListEventMastersByUIDIncludingDeleted(ctx, uid)
+	if err != nil {
+		return Event{}, fmt.Errorf("list masters: %w", err)
+	}
+	if len(masters) > 0 {
+		return Event{}, ErrNotExportedHere
+	}
+	return Event{}, sql.ErrNoRows
+}
+
 // MasterInTrash reports whether calendarID holds its own master of uid in
 // the trash.
 func (s *Service) MasterInTrash(ctx context.Context, calendarID int64, uid string) (bool, error) {

@@ -2,10 +2,11 @@
 -- One log row per series in one calendar. The service writes the merged
 -- list of an earlier unconsumed row and the new rows (see
 -- recordSeriesDeleteTx), so the upsert replaces the column with it.
-INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids)
-VALUES (?, ?, ?)
+INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master)
+VALUES (?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid) DO UPDATE SET
     hidden_ids = excluded.hidden_ids,
+    had_master = excluded.had_master,
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now');
 
 -- name: GetEventSeriesDeleteByCalendarUID :one

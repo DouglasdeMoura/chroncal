@@ -1407,6 +1407,41 @@ func (q *Queries) ListTrashedEventsByUID(ctx context.Context, uid string) ([]Eve
 	return items, nil
 }
 
+const listTrashedMastersBefore = `-- name: ListTrashedMastersBefore :many
+SELECT calendar_id, uid FROM events
+WHERE recurrence_id = '' AND deleted_at IS NOT NULL AND deleted_at < ?
+`
+
+type ListTrashedMastersBeforeRow struct {
+	CalendarID int64
+	Uid        string
+}
+
+// The master rows in the trash with deleted_at before the cutoff. The purge
+// by age applies the rule of the purge of one master to each of them.
+func (q *Queries) ListTrashedMastersBefore(ctx context.Context, deletedAt *string) ([]ListTrashedMastersBeforeRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTrashedMastersBefore, deletedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTrashedMastersBeforeRow
+	for rows.Next() {
+		var i ListTrashedMastersBeforeRow
+		if err := rows.Scan(&i.CalendarID, &i.Uid); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTrashedSeriesRowsInCalendar = `-- name: ListTrashedSeriesRowsInCalendar :many
 SELECT id, uid, calendar_id, title, description, location, start_time, end_time, all_day, recurrence_rule, timezone, status, transp, sequence, priority, class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at, duration, dtstamp, conference_uri, deleted_at FROM events
 WHERE events.deleted_at IS NOT NULL
@@ -1543,7 +1578,7 @@ func (q *Queries) PurgeSoftDeletedEvents(ctx context.Context, deletedAt *string)
 	return result.RowsAffected()
 }
 
-const purgeTrashedOverridesInCalendar = `-- name: PurgeTrashedOverridesInCalendar :exec
+const purgeTrashedOverridesInCalendar = `-- name: PurgeTrashedOverridesInCalendar :execrows
 DELETE FROM events
 WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL
 `
@@ -1555,9 +1590,12 @@ type PurgeTrashedOverridesInCalendarParams struct {
 
 // Hard-delete the override rows of one UID in one calendar that are in the
 // trash. The purge of a master takes them along, and the live rows stay.
-func (q *Queries) PurgeTrashedOverridesInCalendar(ctx context.Context, arg PurgeTrashedOverridesInCalendarParams) error {
-	_, err := q.db.ExecContext(ctx, purgeTrashedOverridesInCalendar, arg.CalendarID, arg.Uid)
-	return err
+func (q *Queries) PurgeTrashedOverridesInCalendar(ctx context.Context, arg PurgeTrashedOverridesInCalendarParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, purgeTrashedOverridesInCalendar, arg.CalendarID, arg.Uid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const reassignEventsCalendar = `-- name: ReassignEventsCalendar :execrows

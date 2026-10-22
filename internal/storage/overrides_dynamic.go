@@ -38,6 +38,44 @@ func FirstPerRecurrenceID(rows []Event) []Event {
 	return kept
 }
 
+// MasterKey names one master row of a UID in a calendar.
+type MasterKey struct {
+	CalendarID int64
+	Uid        string
+}
+
+// ListMasterKeysByUIDs returns the calendar and the UID of each master row
+// of the UIDs, live or in the trash. The expansion reads which override
+// calendars hold a master row with it. The UIDs go in chunks, as in
+// ListOverridesByUIDs.
+func (q *Queries) ListMasterKeysByUIDs(ctx context.Context, uids []string) ([]MasterKey, error) {
+	var out []MasterKey
+	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
+		placeholders, args := expandStringPlaceholders(chunk)
+		query := "SELECT calendar_id, uid FROM events WHERE uid IN (" + placeholders +
+			") AND recurrence_id = '' /* ListMasterKeysByUIDs */"
+		rows, err := q.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var k MasterKey
+			if err := rows.Scan(&k.CalendarID, &k.Uid); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out = append(out, k)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // SeriesOwner names the owner calendar of one override row.
 type SeriesOwner struct {
 	ID              int64

@@ -1313,8 +1313,8 @@ func TestMoveSeries_StaleLogRowInTarget(t *testing.T) {
 }
 
 // TestPurgeByID_MasterDropsLogRows: a purge of a master drops the
-// occurrence logs of its series in that calendar. The series-delete log
-// stays, so the undo of the series delete still reverses it.
+// occurrence logs and the series-delete log of its series in that
+// calendar. The trashed rows that the logs name go with the master.
 func TestPurgeByID_MasterDropsLogRows(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1328,7 +1328,7 @@ func TestPurgeByID_MasterDropsLogRows(t *testing.T) {
 	if err := svc.PurgeByID(ctx, master.ID); err != nil {
 		t.Fatalf("PurgeByID(master): %v", err)
 	}
-	for table, want := range map[string]int{"event_exdate_deletes": 0, "event_series_deletes": 1} {
+	for table, want := range map[string]int{"event_exdate_deletes": 0, "event_series_deletes": 0} {
 		var n int
 		if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE uid = ?`, master.UID).Scan(&n); err != nil {
 			t.Fatalf("count %s: %v", table, err)
@@ -4569,5 +4569,124 @@ func TestReconcileAfterRestore_LegacyKeepsItsTombstone(t *testing.T) {
 	}
 	if n := countTombstones(t, svc, calL, master.UID); n != 1 {
 		t.Errorf("tombstones of the legacy calendar = %d, want 1 (the mark went to the master calendar)", n)
+	}
+}
+
+// linkCalendarToAccount links calendar 1 to an account, so a restore writes
+// a dirty mark.
+func linkCalendarToAccount(t *testing.T, svc *Service) {
+	t.Helper()
+	ctx := context.Background()
+	account, err := svc.q.CreateAccount(ctx, storage.CreateAccountParams{Name: "acct", ServerUrl: "https://example.com", AuthType: "basic", Username: "u"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET account_id = ? WHERE id = 1`, account.ID); err != nil {
+		t.Fatalf("link calendar: %v", err)
+	}
+}
+
+// TestRestore_FailedDirtyMarkRollsBack: the restore, the tombstone delete,
+// and the dirty mark commit together. A failed dirty mark leaves the series
+// in the trash, and the tombstone stays.
+func TestRestore_FailedDirtyMarkRollsBack(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	linkCalendarToAccount(t, svc)
+	master, _, _ := singleSeriesWithOverrides(t, svc)
+	seedTombstone(t, svc, 1, master.UID)
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TRIGGER test_fail_mark_insert BEFORE INSERT ON sync_resources BEGIN SELECT RAISE(ABORT, 'injected'); END`,
+		`CREATE TRIGGER test_fail_mark_update BEFORE UPDATE ON sync_resources BEGIN SELECT RAISE(ABORT, 'injected'); END`,
+	} {
+		if _, err := svc.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("inject the failure: %v", err)
+		}
+	}
+	for name, restore := range map[string]func() error{
+		"RestoreByID":  func() error { return svc.RestoreByID(ctx, master.ID) },
+		"RestoreByUID": func() error { return svc.RestoreByUID(ctx, master.UID) },
+	} {
+		if err := restore(); err == nil || !strings.Contains(err.Error(), "injected") {
+			t.Fatalf("%s err = %v, want the injected failure", name, err)
+		}
+		if m, err := svc.GetIncludingDeleted(ctx, master.ID); err != nil || m.DeletedAt == nil {
+			t.Errorf("master after the failed %s = trashed %v, %v; want it in the trash", name, m.DeletedAt != nil, err)
+		}
+		if n := countTombstones(t, svc, 1, master.UID); n != 1 {
+			t.Errorf("tombstones after the failed %s = %d, want 1", name, n)
+		}
+	}
+}
+
+// TestPurgeDeleted_MasterTakesItsRowsAndLogs: the purge by age applies the
+// rule of the purge of one master. Its trashed overrides go, whatever their
+// deleted_at, and so do its delete logs. A live override stays.
+func TestPurgeDeleted_MasterTakesItsRowsAndLogs(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	get := func(at time.Time) storage.Event {
+		t.Helper()
+		r, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: at.Format(time.RFC3339)})
+		if err != nil {
+			t.Fatalf("get override: %v", err)
+		}
+		return r
+	}
+	trashed, live := get(second), get(third)
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, live.ID); err != nil {
+		t.Fatalf("RestoreByID(live override): %v", err)
+	}
+	// The master is old. The trashed override is new, so the cutoff alone
+	// would keep it.
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE id = ?`, master.ID); err != nil {
+		t.Fatalf("age the master: %v", err)
+	}
+	if _, err := svc.PurgeDeleted(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("PurgeDeleted: %v", err)
+	}
+	for id, wantGone := range map[int64]bool{master.ID: true, trashed.ID: true, live.ID: false} {
+		_, err := svc.GetIncludingDeleted(ctx, id)
+		if gone := errors.Is(err, sql.ErrNoRows); gone != wantGone {
+			t.Errorf("row %d gone = %v, want %v", id, gone, wantGone)
+		}
+	}
+	var logs int
+	if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_series_deletes WHERE uid = ?`, master.UID).Scan(&logs); err != nil || logs != 0 {
+		t.Errorf("series logs after the purge = %d, %v; want 0", logs, err)
+	}
+}
+
+// TestRestoreOrphanDeleteLog_BesideLaterLiveMaster: the log of a delete of
+// orphan rows has no master (had_master 0). Its restore brings the rows back
+// also when a live master of the UID arrived in another calendar later.
+func TestRestoreOrphanDeleteLog_BesideLaterLiveMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	const uid = "orphan-before-master"
+	rows := orphanRows(t, svc, uid, 1)
+	if err := svc.DeleteSeries(ctx, 1, uid); err != nil {
+		t.Fatalf("DeleteSeries(orphan rows): %v", err)
+	}
+	calB := insertCalendar(t, svc, "B")
+	start := rows[0].StartTime.Add(-24 * time.Hour)
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: uid, CalendarID: calB, Title: "Later series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=4",
+	}); err != nil {
+		t.Fatalf("upsert master B: %v", err)
+	}
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, rows[0].ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("orphan row after the restore = trashed %v, %v; want it live", r.DeletedAt != nil, err)
 	}
 }

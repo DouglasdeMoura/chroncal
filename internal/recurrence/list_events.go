@@ -30,7 +30,7 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 	if err != nil {
 		return nil, err
 	}
-	ownerOf, err := s.legacyOwners(ctx, masters, rows)
+	ownerOf, holdsMaster, err := s.overrideOwners(ctx, masters, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -45,14 +45,16 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 	}
 	// One row per occurrence and series, with the tie rule of the series
 	// queries: the row beside the master of the series comes first, then
-	// the lowest ID. The rows of a key beside its master hold the calendar
-	// of the key. The common case reads no view, so the order is set here.
+	// the lowest ID. A row is beside the master when its calendar holds a
+	// master row of its UID, as the view column beside_master says. An
+	// orphan row is not. The common case reads no view, so the order is
+	// set here.
 	for key, group := range byUID {
 		if len(group) < 2 {
 			continue
 		}
 		tie := func(r storage.Event) uidmove.OverrideTie {
-			return uidmove.OverrideTie{RecurrenceID: r.RecurrenceID, BesideMaster: seriesKey(r.CalendarID, r.Uid) == key, ID: r.ID}
+			return uidmove.OverrideTie{RecurrenceID: r.RecurrenceID, BesideMaster: holdsMaster(r), ID: r.ID}
 		}
 		sort.SliceStable(group, func(i, j int) bool { return uidmove.TieBefore(tie(group[i]), tie(group[j])) })
 		byUID[key] = storage.FirstPerRecurrenceID(group)
@@ -60,12 +62,14 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 	return byUID, nil
 }
 
-// legacyOwners gives the owner calendar of each override row that does not
-// sit beside a loaded master. An override beside its own master belongs to
-// that series, so the common case reads no view. Only the UIDs with a row
-// in a calendar with no loaded master read the view event_series_rows. A
-// row with no owner is not in the result.
-func (s *Service) legacyOwners(ctx context.Context, masters, rows []storage.Event) (map[int64]int64, error) {
+// overrideOwners gives the owner calendar of each legacy override of rows,
+// and the rule that tells whether the calendar of a row holds a master row
+// of its UID. A row beside a loaded master holds one, so the common case
+// reads nothing. For the other rows, one batched query reads the master
+// rows of their UIDs. Only a row in a calendar with no master row at all is
+// a legacy override, and only those UIDs read the view event_series_rows. A
+// row with no owner is not in ownerOf.
+func (s *Service) overrideOwners(ctx context.Context, masters, rows []storage.Event) (ownerOf map[int64]int64, holdsMaster func(storage.Event) bool, err error) {
 	loaded := make(map[string]bool, len(masters))
 	for _, m := range masters {
 		loaded[seriesKey(m.CalendarID, m.Uid)] = true
@@ -78,18 +82,42 @@ func (s *Service) legacyOwners(ctx context.Context, masters, rows []storage.Even
 			uids = append(uids, r.Uid)
 		}
 	}
+	holds := loaded
+	holdsMaster = func(r storage.Event) bool { return holds[seriesKey(r.CalendarID, r.Uid)] }
 	if len(uids) == 0 {
-		return nil, nil
+		return nil, holdsMaster, nil
 	}
-	owners, err := s.q.ListSeriesOwnersByUIDs(ctx, uids)
+	keys, err := s.q.ListMasterKeysByUIDs(ctx, uids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	ownerOf := make(map[int64]int64, len(owners))
+	holds = make(map[string]bool, len(loaded)+len(keys))
+	for k := range loaded {
+		holds[k] = true
+	}
+	for _, k := range keys {
+		holds[seriesKey(k.CalendarID, k.Uid)] = true
+	}
+	var legacy []string
+	seen := make(map[string]bool)
+	for _, r := range rows {
+		if !holdsMaster(r) && !seen[r.Uid] {
+			seen[r.Uid] = true
+			legacy = append(legacy, r.Uid)
+		}
+	}
+	if len(legacy) == 0 {
+		return nil, holdsMaster, nil
+	}
+	owners, err := s.q.ListSeriesOwnersByUIDs(ctx, legacy)
+	if err != nil {
+		return nil, nil, err
+	}
+	ownerOf = make(map[int64]int64, len(owners))
 	for _, o := range owners {
 		ownerOf[o.ID] = o.OwnerCalendarID
 	}
-	return ownerOf, nil
+	return ownerOf, holdsMaster, nil
 }
 
 // newEventRRuleSet parses evt's RRULE into a reusable recurset.Set for
