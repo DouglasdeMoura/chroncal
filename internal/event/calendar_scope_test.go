@@ -2118,8 +2118,9 @@ func TestUndo_PurgedMasterReportsNotDeleted(t *testing.T) {
 }
 
 // TestRestoreInstance_MasterInTrash: the restore of an occurrence delete
-// while the master is in the trash clears the EXDATE on the trashed master.
-// The restore of the master then shows the occurrence.
+// while the master is in the trash refuses with ErrMasterInTrash and writes
+// nothing. The restore of the master keeps the occurrence deleted (issue
+// #287). The entry then restores the occurrence.
 func TestRestoreInstance_MasterInTrash(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2134,33 +2135,36 @@ func TestRestoreInstance_MasterInTrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTrash: %v", err)
 	}
-	var checked bool
-	for _, e := range entries {
-		if e.Kind == TrashKindInstance {
-			if err := svc.RestoreTrash(ctx, e); err != nil {
-				t.Errorf("RestoreTrash(instance) with the master in the trash: %v", err)
-			}
-			checked = true
+	var entry *TrashEntry
+	for i := range entries {
+		if entries[i].Kind == TrashKindInstance {
+			entry = &entries[i]
 		}
 	}
-	if !checked {
+	if entry == nil {
 		t.Fatal("no instance entry in the trash")
+	}
+	if err := svc.RestoreTrash(ctx, *entry); !errors.Is(err, ErrMasterInTrash) {
+		t.Fatalf("RestoreTrash(instance) with the master in the trash = %v, want ErrMasterInTrash", err)
 	}
 	m, err := svc.GetIncludingDeleted(ctx, master.ID)
 	if err != nil {
 		t.Fatalf("get master: %v", err)
 	}
-	if m.DeletedAt == nil {
-		t.Errorf("the master came back with the instance restore, want it still in the trash")
-	}
-	if strings.Contains(m.ExDates, second.Format(time.RFC3339)) {
-		t.Errorf("exdates of the trashed master = %q, want the occurrence cleared", m.ExDates)
+	if m.DeletedAt == nil || !strings.Contains(m.ExDates, second.Format(time.RFC3339)) {
+		t.Errorf("master after the refusal = trashed %v, exdates %q; want it in the trash with the EXDATE", m.DeletedAt != nil, m.ExDates)
 	}
 	if err := svc.RestoreByID(ctx, master.ID); err != nil {
 		t.Fatalf("RestoreByID(master): %v", err)
 	}
+	if m, err := svc.Get(ctx, master.ID); err != nil || !strings.Contains(m.ExDates, second.Format(time.RFC3339)) {
+		t.Errorf("master after the series restore = exdates %q, %v; want the occurrence still deleted", m.ExDates, err)
+	}
+	if err := svc.RestoreTrash(ctx, *entry); err != nil {
+		t.Fatalf("RestoreTrash(instance) after the series restore: %v", err)
+	}
 	if m, err := svc.Get(ctx, master.ID); err != nil || strings.Contains(m.ExDates, second.Format(time.RFC3339)) {
-		t.Errorf("master after the series restore = exdates %q, %v; want the occurrence visible", m.ExDates, err)
+		t.Errorf("master after the occurrence restore = exdates %q, %v; want the occurrence visible", m.ExDates, err)
 	}
 }
 

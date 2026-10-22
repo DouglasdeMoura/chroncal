@@ -313,3 +313,19 @@ func (q *Queries) RecordEventExdatePrune(ctx context.Context, arg RecordEventExd
 	_, err := q.db.ExecContext(ctx, recordEventExdatePrune, arg.CalendarID, arg.Uid, arg.RecurrenceID)
 	return err
 }
+
+const updateEventExdateDeleteHiddenIds = `-- name: UpdateEventExdateDeleteHiddenIds :exec
+UPDATE event_exdate_deletes SET hidden_ids = ? WHERE id = ?
+`
+
+type UpdateEventExdateDeleteHiddenIdsParams struct {
+	HiddenIds string
+	ID        int64
+}
+
+// The undo of one occurrence delete removes its rows from the list. The
+// rows of an earlier delete of the occurrence stay in the log.
+func (q *Queries) UpdateEventExdateDeleteHiddenIds(ctx context.Context, arg UpdateEventExdateDeleteHiddenIdsParams) error {
+	_, err := q.db.ExecContext(ctx, updateEventExdateDeleteHiddenIds, arg.HiddenIds, arg.ID)
+	return err
+}
