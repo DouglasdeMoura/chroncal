@@ -3,7 +3,6 @@ package event
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -147,47 +146,26 @@ func occurrenceDeletedBeforeSeries(t *testing.T, svc *Service) (Event, storage.E
 	return Event{}, storage.Event{}, TrashEntry{}
 }
 
-// TestRestoreInstance_TrashedMasterUnhidesTheOverride: the restore of an
-// occurrence delete from the trash un-hides the override row that the
-// delete hid. That holds when the master is in the trash too.
-func TestRestoreInstance_TrashedMasterUnhidesTheOverride(t *testing.T) {
+// TestRestoreInstance_TrashedMasterRefuses: the restore of an occurrence
+// delete from the trash refuses while the master is in the trash. The hidden
+// override stays in the trash, so it cannot block the purge of the master.
+// After the series restore, the entry brings back the override.
+func TestRestoreInstance_TrashedMasterRefuses(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	master, override, entry := occurrenceDeletedBeforeSeries(t, svc)
+	if err := svc.RestoreTrash(ctx, entry); !errors.Is(err, ErrMasterInTrash) {
+		t.Fatalf("RestoreTrash(occurrence) = %v, want ErrMasterInTrash", err)
+	}
+	wantTrashed(t, svc, true, override.ID, master.ID)
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	wantTrashed(t, svc, true, override.ID)
 	if err := svc.RestoreTrash(ctx, entry); err != nil {
-		t.Fatalf("RestoreTrash(occurrence): %v", err)
+		t.Fatalf("RestoreTrash(occurrence) after the series restore: %v", err)
 	}
-	if o, err := svc.GetIncludingDeleted(ctx, override.ID); err != nil || o.DeletedAt != nil {
-		t.Errorf("override after the restore = trashed %v, %v; want it live", o.DeletedAt != nil, err)
-	}
-	m, err := svc.q.GetEventIncludingDeleted(ctx, master.ID)
-	if err != nil {
-		t.Fatalf("get master: %v", err)
-	}
-	if m.DeletedAt == nil {
-		t.Error("master after the restore of the occurrence is live, want it in the trash")
-	}
-	if got := storage.NullableToString(m.Exdates); strings.Contains(got, override.RecurrenceID) {
-		t.Errorf("exdates of the master = %q, want the occurrence back", got)
-	}
-}
-
-// TestRestoreInstance_TrashedMasterGuardsTheCalendar: the restore of an
-// occurrence delete writes the master. A read-only calendar refuses it, also
-// when the master is in the trash.
-func TestRestoreInstance_TrashedMasterGuardsTheCalendar(t *testing.T) {
-	svc := newTestService(t)
-	ctx := context.Background()
-	_, override, entry := occurrenceDeletedBeforeSeries(t, svc)
-	if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read', remote_components = 'VEVENT' WHERE id = 1`); err != nil {
-		t.Fatalf("make the calendar read-only: %v", err)
-	}
-	if err := svc.RestoreTrash(ctx, entry); !errors.Is(err, calendaraccess.ErrReadOnly) {
-		t.Fatalf("RestoreTrash(occurrence) = %v, want ErrReadOnly", err)
-	}
-	if o, err := svc.GetIncludingDeleted(ctx, override.ID); err != nil || o.DeletedAt == nil {
-		t.Errorf("override after the refused restore = trashed %v, %v; want it in the trash", o.DeletedAt != nil, err)
-	}
+	wantTrashed(t, svc, false, override.ID)
 }
 
 // TestOrphanDeletes_BesideUnloggedMasterSeedItsLog: a pull hides a master and
@@ -419,6 +397,158 @@ func TestRestoreOccurrence_GuardsTheCalendarOfEachRow(t *testing.T) {
 				}
 			}
 			wantTrashed(t, svc, true, legacy.ID)
+		})
+	}
+}
+
+// exdateLogRows returns the hidden rows of the occurrence log of uid at at in
+// calendar 1. found is false with no log.
+func exdateLogRows(t *testing.T, svc *Service, uid string, at time.Time) (ids []int64, found bool) {
+	t.Helper()
+	log, ok, err := exdateLogTx(context.Background(), svc.q, 1, uid, at.Format(time.RFC3339))
+	if err != nil {
+		t.Fatalf("get exdate log: %v", err)
+	}
+	if !ok {
+		return nil, false
+	}
+	ids, err = parseRowIDs(log.HiddenIds)
+	if err != nil {
+		t.Fatalf("parse hidden rows: %v", err)
+	}
+	return ids, true
+}
+
+// TestUndoOccurrence_AfterRedeleteWithLiveRowsWritesNothing is the TUI undo
+// after a CLI redelete. The TUI deletes the occurrence. The CLI restores the
+// row and deletes the occurrence again, and a pull brings the row back. The
+// TUI undo then finds its row live. It gives ErrAlreadyRestored and keeps the
+// EXDATE and the log of the CLI delete.
+func TestUndoOccurrence_AfterRedeleteWithLiveRowsWritesNothing(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil || len(meta.RowIDs) != 1 {
+		t.Fatalf("DeleteInstanceWithUndo = %+v, %v; want one hidden row", meta, err)
+	}
+	row := meta.RowIDs[0]
+	if err := svc.RestoreByID(ctx, row); err != nil {
+		t.Fatalf("RestoreByID: %v", err)
+	}
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("second DeleteInstance: %v", err)
+	}
+	// A pull import clears deleted_at of the row.
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE id = ?`, row); err != nil {
+		t.Fatalf("revive the row: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrAlreadyRestored) {
+		t.Fatalf("RestoreUndo = %v, want ErrAlreadyRestored", err)
+	}
+	if n := exdateCount(t, svc, master.ID, second); n != 1 {
+		t.Errorf("EXDATEs of the occurrence after the undo = %d, want the 1 of the CLI delete", n)
+	}
+	if _, found := exdateLogRows(t, svc, master.UID, second); !found {
+		t.Error("log of the CLI delete after the undo is gone, want it kept")
+	}
+}
+
+// TestUndoOccurrence_SecondDeleteLeavesTheFirst: the undo of the second
+// delete of an occurrence brings back the rows of that delete only. The
+// first delete keeps its rows in the log, and the EXDATE stays. The undo of
+// the first delete then clears the EXDATE and the log.
+func TestUndoOccurrence_SecondDeleteLeavesTheFirst(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	second := start.Add(24 * time.Hour)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "undo-l1-l2", CalendarID: 1, Title: "Series",
+		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("upsert master: %v", err)
+	}
+	l1 := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "L1"), second)
+	meta1, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("first delete: %v", err)
+	}
+	l2 := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "L2"), second)
+	meta2, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("second delete: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta2); err != nil {
+		t.Fatalf("RestoreUndo(second): %v", err)
+	}
+	wantTrashed(t, svc, false, l2.ID)
+	wantTrashed(t, svc, true, l1.ID)
+	if n := exdateCount(t, svc, master.ID, second); n != 1 {
+		t.Errorf("EXDATEs after the undo of the second delete = %d, want 1", n)
+	}
+	if ids, found := exdateLogRows(t, svc, master.UID, second); !found || len(ids) != 1 || ids[0] != l1.ID {
+		t.Errorf("log rows after the undo of the second delete = %v, %v; want L1 %d", ids, found, l1.ID)
+	}
+	if err := svc.RestoreUndo(ctx, meta1); err != nil {
+		t.Fatalf("RestoreUndo(first): %v", err)
+	}
+	wantTrashed(t, svc, false, l1.ID)
+	if n := exdateCount(t, svc, master.ID, second); n != 0 {
+		t.Errorf("EXDATEs after both undos = %d, want 0", n)
+	}
+	if _, found := exdateLogRows(t, svc, master.UID, second); found {
+		t.Error("log after both undos exists, want it gone")
+	}
+}
+
+// TestDeleteByID_LegacyRowBesideAnotherLiveRow: a delete by ID of one of two
+// legacy rows of an occurrence hides that row alone. The other row still
+// shows the occurrence, so the master gets no EXDATE and no occurrence log.
+// The restore by ID and the undo bring the row back.
+func TestDeleteByID_LegacyRowBesideAnotherLiveRow(t *testing.T) {
+	for _, path := range []string{"restore by ID", "undo"} {
+		t.Run(path, func(t *testing.T) {
+			svc := newTestService(t)
+			ctx := context.Background()
+			start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+			second := start.Add(24 * time.Hour)
+			master, err := svc.UpsertByUID(ctx, UpsertParams{
+				UID: "two-legacy", CalendarID: 1, Title: "Series",
+				StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
+			})
+			if err != nil {
+				t.Fatalf("upsert master: %v", err)
+			}
+			calA := insertCalendar(t, svc, "A")
+			l1 := legacyAt(t, svc, master.UID, calA, second)
+			l2 := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "B"), second)
+			meta, err := svc.DeleteWithUndo(ctx, l1.ID)
+			if err != nil {
+				t.Fatalf("DeleteWithUndo(L1): %v", err)
+			}
+			wantTrashed(t, svc, true, l1.ID)
+			wantTrashed(t, svc, false, l2.ID)
+			if n := exdateCount(t, svc, master.ID, second); n != 0 {
+				t.Errorf("EXDATEs after the delete of L1 = %d, want 0", n)
+			}
+			if _, found := exdateLogRows(t, svc, master.UID, second); found {
+				t.Error("occurrence log of the master after the delete of L1 exists, want none")
+			}
+			if path == "undo" {
+				err = svc.RestoreUndo(ctx, meta)
+			} else {
+				err = svc.RestoreByID(ctx, l1.ID)
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", path, err)
+			}
+			wantTrashed(t, svc, false, l1.ID, l2.ID)
+			var logs int
+			if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_exdate_deletes WHERE calendar_id = ?`, calA).Scan(&logs); err != nil || logs != 0 {
+				t.Errorf("occurrence logs of A after the %s = %d, %v; want 0", path, logs, err)
+			}
 		})
 	}
 }

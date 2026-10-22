@@ -283,24 +283,27 @@ func (s *Service) PurgeTrashEntry(ctx context.Context, entry TrashEntry) error {
 }
 
 // restoreInstanceByLogID removes the EXDATE for (uid, recurrence_id) from the
-// master and deletes the log row. It un-hides the override row that the
-// occurrence delete hid (the hidden_id of the log). The write guard covers
-// each calendar of the series, also when the master is in the trash. The
-// restore marks the master dirty, so the next push sends the EXDATE removal.
+// master and deletes the log row. It un-hides the override rows that the
+// occurrence deletes hid (the hidden_ids of the log). The write guard covers
+// each calendar of the series and the calendar of each row. A master in the
+// trash gives ErrMasterInTrash and writes nothing. Live rows beside a
+// trashed master would block its purge, and the series restore brings back
+// the rows. The restore marks the master dirty, so the next push sends the
+// EXDATE removal.
 func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error {
-	log, err := s.q.GetEventExdateDelete(ctx, logID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotDeleted
-		}
-		return fmt.Errorf("get exdate log: %w", err)
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+	log, err := qtx.GetEventExdateDelete(ctx, logID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotDeleted
+		}
+		return fmt.Errorf("get exdate log: %w", err)
+	}
 
 	// Read the master inside the transaction so the EXDATE list we rewrite
 	// reflects a concurrent writer's changes rather than a pre-transaction
@@ -315,6 +318,9 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 		}
 		return fmt.Errorf("get master: %w", err)
 	}
+	if master.DeletedAt != nil {
+		return ErrMasterInTrash
+	}
 	if err := ensureSeriesWritableIn(ctx, qtx, log.CalendarID, log.Uid); err != nil {
 		return err
 	}
@@ -322,7 +328,7 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	if err != nil {
 		return err
 	}
-	if err := restoreHiddenRowsTx(ctx, qtx, log.CalendarID, hidden); err != nil {
+	if _, err := restoreHiddenRowsTx(ctx, qtx, log.CalendarID, hidden); err != nil {
 		return err
 	}
 
@@ -341,12 +347,8 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	if err := qtx.DeleteEventExdateDelete(ctx, logID); err != nil {
 		return fmt.Errorf("delete log row: %w", err)
 	}
-	// A master in the trash takes the EXDATE change as it is: its own
-	// restore shows the occurrence and marks the series dirty.
-	if master.DeletedAt == nil {
-		if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, log.Uid, "event"); err != nil {
-			return fmt.Errorf("mark resource dirty: %w", err)
-		}
+	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, log.Uid, "event"); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
 	}
 	return tx.Commit()
 }

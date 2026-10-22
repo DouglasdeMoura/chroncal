@@ -75,3 +75,8 @@ WHERE event_exdate_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_ex
 -- too. The restore of a master with no series-delete log reads them in one
 -- query, and leaves the rows they name in the trash.
 SELECT * FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id;
+
+-- name: UpdateEventExdateDeleteHiddenIds :exec
+-- The undo of one occurrence delete removes its rows from the list. The
+-- rows of an earlier delete of the occurrence stay in the log.
+UPDATE event_exdate_deletes SET hidden_ids = ? WHERE id = ?;
