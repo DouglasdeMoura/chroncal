@@ -57,9 +57,6 @@ WHERE event_truncate_deletes.calendar_id = sqlc.arg(from_calendar_id) AND event_
     SELECT t.cutoff_time FROM event_truncate_deletes AS t
     WHERE t.calendar_id = sqlc.arg(to_calendar_id) AND t.uid = sqlc.arg(uid));
 
--- name: ListEventTruncateDeletesByUID :many
-SELECT * FROM event_truncate_deletes WHERE uid = ? ORDER BY calendar_id, cutoff_time;
-
 -- name: UpdateEventTruncateDeleteHiddenIds :exec
 -- Rewrite the hidden rows of one log row (see
 -- UpdateEventSeriesDeleteHiddenIds).

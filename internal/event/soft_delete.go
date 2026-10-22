@@ -455,14 +455,14 @@ func restoreByUIDTx(ctx context.Context, qtx *storage.Queries, uid string) (int6
 	if len(masters) == 0 && len(logs) == 0 {
 		return restoreOrphanDeleteTx(ctx, qtx, uid, trashed)
 	}
-	calendarID, holdsMaster, err := restoreCandidate(masters, logs)
+	calendarID, holdsMaster, logID, err := restoreCandidate(masters, logs)
 	if err != nil {
 		return 0, err
 	}
 	if err := ensureSeriesWritableIn(ctx, qtx, calendarID, uid); err != nil {
 		return 0, err
 	}
-	n, ids, err := restoreSeriesLogTx(ctx, qtx, calendarID, uid, holdsMaster, 0, 0)
+	n, ids, err := restoreSeriesLogTx(ctx, qtx, calendarID, uid, holdsMaster, 0, logID)
 	if err != nil {
 		return 0, err
 	}
@@ -606,8 +606,15 @@ func liveSeriesLogs(masters []storage.Event, logs []storage.EventSeriesDelete, r
 // One candidate is the result. Two or more give ErrAmbiguousUID: the UID
 // alone does not name one series, and the ID of a master does. No candidate
 // gives ErrNotDeleted.
-func restoreCandidate(masters []storage.Event, logs []storage.EventSeriesDelete) (calendarID int64, holdsMaster bool, err error) {
+//
+// logID names the log that the restore reverses. A calendar with a master in
+// the trash gives 0: the restore takes the log of that master
+// (masterSeriesLogTx). Else it is the newest of the logs that a restore can
+// still reverse. An empty log never shadows an older one.
+func restoreCandidate(masters []storage.Event, logs []storage.EventSeriesDelete) (calendarID int64, holdsMaster bool, logID int64, err error) {
 	holds := make(map[int64]bool, len(masters))
+	trashedMaster := make(map[int64]bool, len(masters))
+	newestLog := make(map[int64]int64, len(logs))
 	seen := make(map[int64]bool, len(masters)+len(logs))
 	var candidates []int64
 	add := func(cal int64) {
@@ -619,20 +626,28 @@ func restoreCandidate(masters []storage.Event, logs []storage.EventSeriesDelete)
 	}
 	for _, l := range logs {
 		add(l.CalendarID)
+		if l.ID > newestLog[l.CalendarID] {
+			newestLog[l.CalendarID] = l.ID
+		}
 	}
 	for _, m := range masters {
 		holds[m.CalendarID] = true
 		if m.DeletedAt != nil {
+			trashedMaster[m.CalendarID] = true
 			add(m.CalendarID)
 		}
 	}
 	switch len(candidates) {
 	case 0:
-		return 0, false, ErrNotDeleted
+		return 0, false, 0, ErrNotDeleted
 	case 1:
-		return candidates[0], holds[candidates[0]], nil
+		cal := candidates[0]
+		if trashedMaster[cal] {
+			return cal, holds[cal], 0, nil
+		}
+		return cal, holds[cal], newestLog[cal], nil
 	}
-	return 0, false, ErrAmbiguousUID
+	return 0, false, 0, ErrAmbiguousUID
 }
 
 // RestoreByID un-hides a soft-deleted row. Used by the CLI `events restore
@@ -827,10 +842,12 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 	// that drops the log of its calendar (migration 057). The log row
 	// goes before the restore, so the drop of the restored rows from the
 	// other logs does not rewrite it either.
-	// An undo names its log (logID). A user restore of a master in the
+	// An undo names its log (logID), and so does RestoreByUID: the log of
+	// its candidate choice (restoreCandidate). A restore of a master in the
 	// trash takes the log of the delete that hid the master
-	// (masterSeriesLogTx). Any other user restore takes the newest log of
-	// the calendar.
+	// (masterSeriesLogTx). With neither, no log applies: the restore never
+	// takes the newest log of the calendar, which can belong to another
+	// delete.
 	var log storage.EventSeriesDelete
 	var err error
 	switch {
@@ -839,9 +856,7 @@ func restoreSeriesLogTx(ctx context.Context, qtx *storage.Queries, calendarID in
 	case requireMaster && master.DeletedAt != nil:
 		log, err = masterSeriesLogTx(ctx, qtx, master)
 	default:
-		log, err = qtx.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{
-			CalendarID: calendarID, Uid: uid,
-		})
+		err = sql.ErrNoRows
 	}
 	logged, err := storage.Found(err)
 	if err != nil {
@@ -1110,6 +1125,18 @@ func purgeDeletedTx(ctx context.Context, qtx *storage.Queries, cutoff string) (P
 			keep[id] = true
 		}
 	}
+	// A delete of orphan rows can merge its rows into the log of a purged
+	// master. Such a row keeps the time of its own delete. A row younger
+	// than the cutoff stays in the trash, and an orphan log keeps it.
+	young, err := youngLoggedRowsTx(ctx, qtx, purge, cutoff)
+	if err != nil {
+		return PurgeReport{}, err
+	}
+	for _, rows := range young {
+		for _, id := range rows {
+			keep[id] = true
+		}
+	}
 	aged, err := qtx.ListTrashedEventIDsBefore(ctx, &cutoff)
 	if err != nil {
 		return PurgeReport{}, fmt.Errorf("list aged rows: %w", err)
@@ -1125,8 +1152,71 @@ func purgeDeletedTx(ctx context.Context, qtx *storage.Queries, cutoff string) (P
 	if err != nil {
 		return PurgeReport{}, err
 	}
+	// The young rows of each purged master get an orphan log: no master,
+	// and no token of a master. A restore by UID then brings them back.
+	for _, m := range purge {
+		rows := young[m.ID]
+		if len(rows) == 0 {
+			continue
+		}
+		if _, err := qtx.RecordEventSeriesDelete(ctx, storage.RecordEventSeriesDeleteParams{
+			CalendarID: m.CalendarID, Uid: m.UID, HiddenIds: formatRowIDs(rows), HadMaster: 0, DeleteToken: 0,
+		}); err != nil {
+			return PurgeReport{}, fmt.Errorf("keep the young rows in an orphan log: %w", err)
+		}
+	}
 	report.Purged = int(n)
 	return report, nil
+}
+
+// youngLoggedRowsTx returns the young merged rows of each master of masters,
+// by the ID of the master. Such a row is in the trash, and a series-delete
+// log of the master names it. It went to the trash at or after cutoff. A
+// delete of orphan rows added it to the log, so its delete token differs
+// from the token of the master. The rows of the series delete itself go with the master, whatever
+// their time. The age purge keeps a young merged row.
+func youngLoggedRowsTx(ctx context.Context, qtx *storage.Queries, masters []seriesRef, cutoff string) (map[int64][]int64, error) {
+	named := make(map[int64][]int64)
+	var all []int64
+	for _, chunk := range storage.ChunkSlice(refIDs(masters), idChunk) {
+		logs, err := qtx.ListSeriesLogsOfMasters(ctx, chunk)
+		if err != nil {
+			return nil, fmt.Errorf("list series logs: %w", err)
+		}
+		for _, l := range logs {
+			rows, err := parseRowIDs(l.HiddenIds)
+			if err != nil {
+				return nil, err
+			}
+			named[l.MasterID] = append(named[l.MasterID], rows...)
+			all = append(all, rows...)
+		}
+	}
+	if len(all) == 0 {
+		return nil, nil
+	}
+	states, err := rowStatesTx(ctx, qtx, append(all, refIDs(masters)...))
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]storage.ListEventRowStatesByIDsRow, len(states))
+	for _, st := range states {
+		byID[st.ID] = st
+	}
+	out := make(map[int64][]int64)
+	for master, rows := range named {
+		token := byID[master].DeleteToken
+		seen := make(map[int64]bool)
+		for _, id := range rows {
+			st, ok := byID[id]
+			young := ok && st.DeletedAt != nil && *st.DeletedAt >= cutoff && st.DeleteToken != token
+			if young && !seen[id] {
+				seen[id] = true
+				out[master] = append(out[master], id)
+			}
+		}
+	}
+	return out, nil
 }
 
 // seriesRef names the master row of one series.

@@ -17,7 +17,7 @@ var eventColumns = []string{
 	"sequence", "priority", "class", "url", "exdates",
 	"rdates", "recurrence_id", "geo", "created_at",
 	"updated_at", "duration", "dtstamp", "conference_uri",
-	"deleted_at", "delete_token",
+	"deleted_at", "delete_token", "edit_unowned",
 }
 
 // todoColumns lists the todos table columns in migration order. See
@@ -63,7 +63,7 @@ func checkScanColumns(rows *sql.Rows, table string, want []string) error {
 // id, uid, calendar_id, title, description, location, start_time, end_time,
 // all_day, recurrence_rule, timezone, status, transp, sequence, priority,
 // class, url, exdates, rdates, recurrence_id, geo, created_at, updated_at,
-// duration, dtstamp, conference_uri, deleted_at, delete_token.
+// duration, dtstamp, conference_uri, deleted_at, delete_token, edit_unowned.
 func scanEvents(rows *sql.Rows) ([]Event, error) {
 	defer rows.Close()
 	items := make([]Event, 0, 64)
@@ -76,7 +76,7 @@ func scanEvents(rows *sql.Rows) ([]Event, error) {
 			&i.Sequence, &i.Priority, &i.Class, &i.Url, &i.Exdates,
 			&i.Rdates, &i.RecurrenceID, &i.Geo, &i.CreatedAt,
 			&i.UpdatedAt, &i.Duration, &i.Dtstamp, &i.ConferenceUri,
-			&i.DeletedAt, &i.DeleteToken,
+			&i.DeletedAt, &i.DeleteToken, &i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}

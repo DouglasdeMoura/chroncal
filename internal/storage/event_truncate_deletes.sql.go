@@ -221,44 +221,6 @@ func (q *Queries) ListEventTruncateDeletesByCalendarUID(ctx context.Context, arg
 	return items, nil
 }
 
-const listEventTruncateDeletesByUID = `-- name: ListEventTruncateDeletesByUID :many
-SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates, hidden_ids, delete_token FROM event_truncate_deletes WHERE uid = ? ORDER BY calendar_id, cutoff_time
-`
-
-func (q *Queries) ListEventTruncateDeletesByUID(ctx context.Context, uid string) ([]EventTruncateDelete, error) {
-	rows, err := q.db.QueryContext(ctx, listEventTruncateDeletesByUID, uid)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []EventTruncateDelete
-	for rows.Next() {
-		var i EventTruncateDelete
-		if err := rows.Scan(
-			&i.ID,
-			&i.CalendarID,
-			&i.Uid,
-			&i.CutoffTime,
-			&i.PreviousRrule,
-			&i.DeletedAt,
-			&i.HiddenOverrides,
-			&i.RemovedRdates,
-			&i.HiddenIds,
-			&i.DeleteToken,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listOldEventTruncateDeletes = `-- name: ListOldEventTruncateDeletes :many
 SELECT id, calendar_id, uid FROM event_truncate_deletes WHERE deleted_at < ?
 `

@@ -78,10 +78,11 @@ func TestMarkResourceDirtyKeepsTrashedSeriesInItsCalendar(t *testing.T) {
 // TestMarkResourceDirtyRecordsAnUnownedEdit: A and B hold a live master of one
 // UID, and C holds a legacy override of it. No series owns the override, so
 // no export holds it. A mark of C marks no calendar dirty. It sets
-// edit_unowned on the sync row of C. The edit stays local, and the sync
-// status lists it. The mark has its own column: the real push failures of
-// the row survive the mark and its clear. After the delete of the master of
-// B, A owns the override: the mark goes to A, and edit_unowned of C clears.
+// edit_unowned on the override row. It makes no sync row: C has none before
+// the mark, and none after it. The sync status lists the UID. A real push
+// failure of another sync row of C survives the mark and its clear. After the
+// delete of the master of B, A owns the override: the mark goes to A, and the
+// row mark clears.
 func TestMarkResourceDirtyRecordsAnUnownedEdit(t *testing.T) {
 	t.Parallel()
 	db, q := testutil.NewTestDB(t)
@@ -114,38 +115,49 @@ func TestMarkResourceDirtyRecordsAnUnownedEdit(t *testing.T) {
 			t.Fatalf("insert row: %v", err)
 		}
 	}
-	// A real push failure of the sync row of C, from before the edit.
+	// A real push failure of another resource of C.
 	if _, err := db.ExecContext(ctx,
 		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, push_fail_count, last_push_error)
-		 VALUES (?, 'u1', 'event', '/c/u1.ics', 3, 'HTTP 500')`, calC); err != nil {
+		 VALUES (?, 'u2', 'event', '/c/u2.ics', 3, 'HTTP 500')`, calC); err != nil {
 		t.Fatalf("seed a push failure: %v", err)
 	}
-	state := func(calendarID int64) storage.SyncResource {
+	syncRow := func(calendarID int64, uid string) (storage.SyncResource, bool) {
 		t.Helper()
-		sr, _ := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: "u1"})
-		return sr
+		sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
+		return sr, err == nil
+	}
+	rowMark := func() int64 {
+		t.Helper()
+		var mark int64
+		if err := db.QueryRowContext(ctx, `SELECT edit_unowned FROM events WHERE calendar_id = ? AND uid = 'u1'`, calC).Scan(&mark); err != nil {
+			t.Fatalf("read the row mark: %v", err)
+		}
+		return mark
 	}
 	wantFailure := func(when string) {
 		t.Helper()
-		if sr := state(calC); sr.PushFailCount != 3 || sr.LastPushError != "HTTP 500" {
-			t.Errorf("push failure of C %s = %d, %q; want 3, %q", when, sr.PushFailCount, sr.LastPushError, "HTTP 500")
+		if sr, ok := syncRow(calC, "u2"); !ok || sr.PushFailCount != 3 || sr.LastPushError != "HTTP 500" {
+			t.Errorf("push failure of u2 %s = %d, %q; want 3, %q", when, sr.PushFailCount, sr.LastPushError, "HTTP 500")
 		}
 	}
 	if err := storage.MarkResourceDirty(ctx, db, calC, "u1", "event"); err != nil {
 		t.Fatalf("MarkResourceDirty C: %v", err)
 	}
 	for _, c := range []int64{calA, calB, calC} {
-		if state(c).Dirty == 1 {
+		if sr, ok := syncRow(c, "u1"); ok && sr.Dirty == 1 {
 			t.Errorf("calendar %d dirty after the mark of the unowned row; want no mark", c)
 		}
 	}
-	if sr := state(calC); sr.EditUnowned != 1 {
-		t.Fatalf("edit_unowned of C = %d, want 1", sr.EditUnowned)
+	if _, ok := syncRow(calC, "u1"); ok {
+		t.Errorf("the mark made a sync row of u1 in C; want none")
+	}
+	if got := rowMark(); got != 1 {
+		t.Fatalf("edit_unowned of the row = %d, want 1", got)
 	}
 	wantFailure("after the mark")
-	unowned, err := q.ListUnownedEditSyncResources(ctx, calC)
-	if err != nil || len(unowned) != 1 || unowned[0].Uid != "u1" {
-		t.Fatalf("ListUnownedEditSyncResources(C) = %+v, %v; want the row of u1", unowned, err)
+	uids, err := q.ListUnownedEditUIDs(ctx, calC)
+	if err != nil || len(uids) != 1 || uids[0] != "u1" {
+		t.Fatalf("ListUnownedEditUIDs(C) = %v, %v; want u1", uids, err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE calendar_id = ?`, calB); err != nil {
 		t.Fatalf("delete the master of B: %v", err)
@@ -153,11 +165,11 @@ func TestMarkResourceDirtyRecordsAnUnownedEdit(t *testing.T) {
 	if err := storage.MarkResourceDirty(ctx, db, calC, "u1", "event"); err != nil {
 		t.Fatalf("MarkResourceDirty C again: %v", err)
 	}
-	if state(calA).Dirty != 1 {
+	if sr, ok := syncRow(calA, "u1"); !ok || sr.Dirty != 1 {
 		t.Errorf("A not dirty after the mark with one live master; want the mark")
 	}
-	if sr := state(calC); sr.EditUnowned != 0 {
-		t.Errorf("edit_unowned of C after the owner came back = %d, want 0", sr.EditUnowned)
+	if got := rowMark(); got != 0 {
+		t.Errorf("edit_unowned of the row after the owner came back = %d, want 0", got)
 	}
 	wantFailure("after the clear")
 }

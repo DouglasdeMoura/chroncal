@@ -49,6 +49,7 @@ Hand-written files in `internal/storage/`:
 - `scan_helpers.go` (row scanners)
 - `events_dynamic.go` and `todos_dynamic.go` (filtered query methods)
 - `xprop_helpers.go` (alarm X-property attach and replace for event and todo services)
+- `delete_logs_dynamic.go` (the delete logs of a UID that name a set of row IDs; sqlc cannot bind an argument inside `json_each`)
 
 sqlc generates every other file in that directory. `make generate` overwrites those files.
 

@@ -220,7 +220,7 @@ func (q *Queries) FinalizePushedResource(ctx context.Context, arg FinalizePushed
 }
 
 const getSyncResource = `-- name: GetSyncResource :one
-SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error, edit_unowned FROM sync_resources WHERE calendar_id = ? AND uid = ?
+SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error FROM sync_resources WHERE calendar_id = ? AND uid = ?
 `
 
 type GetSyncResourceParams struct {
@@ -243,13 +243,12 @@ func (q *Queries) GetSyncResource(ctx context.Context, arg GetSyncResourceParams
 		&i.Rev,
 		&i.PushFailCount,
 		&i.LastPushError,
-		&i.EditUnowned,
 	)
 	return i, err
 }
 
 const listDirtySyncResources = `-- name: ListDirtySyncResources :many
-SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error, edit_unowned FROM sync_resources WHERE calendar_id = ? AND dirty = 1 ORDER BY id
+SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error FROM sync_resources WHERE calendar_id = ? AND dirty = 1 ORDER BY id
 `
 
 func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) ([]SyncResource, error) {
@@ -273,7 +272,6 @@ func (q *Queries) ListDirtySyncResources(ctx context.Context, calendarID int64) 
 			&i.Rev,
 			&i.PushFailCount,
 			&i.LastPushError,
-			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -398,7 +396,7 @@ func (q *Queries) ListSyncResourcePushFailures(ctx context.Context, calendarID i
 }
 
 const listSyncResourcesByCalendar = `-- name: ListSyncResourcesByCalendar :many
-SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error, edit_unowned FROM sync_resources WHERE calendar_id = ? ORDER BY id
+SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error FROM sync_resources WHERE calendar_id = ? ORDER BY id
 `
 
 func (q *Queries) ListSyncResourcesByCalendar(ctx context.Context, calendarID int64) ([]SyncResource, error) {
@@ -422,7 +420,6 @@ func (q *Queries) ListSyncResourcesByCalendar(ctx context.Context, calendarID in
 			&i.Rev,
 			&i.PushFailCount,
 			&i.LastPushError,
-			&i.EditUnowned,
 		); err != nil {
 			return nil, err
 		}
@@ -457,42 +454,6 @@ func (q *Queries) ListTombstonesByCalendar(ctx context.Context, calendarID int64
 			&i.RemoteUrl,
 			&i.DeletedAt,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUnownedEditSyncResources = `-- name: ListUnownedEditSyncResources :many
-SELECT uid, owner_type FROM sync_resources
-WHERE calendar_id = ? AND edit_unowned = 1
-ORDER BY uid
-`
-
-type ListUnownedEditSyncResourcesRow struct {
-	Uid       string
-	OwnerType string
-}
-
-// The sync rows of one calendar with an edit that no series owns
-// (edit_unowned). The sync status lists them: the edit stays local.
-func (q *Queries) ListUnownedEditSyncResources(ctx context.Context, calendarID int64) ([]ListUnownedEditSyncResourcesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listUnownedEditSyncResources, calendarID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListUnownedEditSyncResourcesRow
-	for rows.Next() {
-		var i ListUnownedEditSyncResourcesRow
-		if err := rows.Scan(&i.Uid, &i.OwnerType); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
