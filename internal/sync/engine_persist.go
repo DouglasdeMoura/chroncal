@@ -292,7 +292,13 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 // writes the pruned marker of the occurrence, so the restore of a master
 // with no series-delete log leaves the row in the trash.
 func pruneEventOverride(q *storage.Queries, ctx context.Context, v storage.Event) error {
-	if err := q.SoftDeleteEvent(ctx, v.ID); err != nil {
+	// The prune is a delete of its own: it takes a fresh delete token, so
+	// the undo of an earlier delete of the row refuses.
+	token, err := q.NextEventDeleteToken(ctx)
+	if err != nil {
+		return fmt.Errorf("delete token: %w", err)
+	}
+	if err := q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: v.ID, DeleteToken: token}); err != nil {
 		return err
 	}
 	return q.RecordEventExdatePrune(ctx, storage.RecordEventExdatePruneParams{

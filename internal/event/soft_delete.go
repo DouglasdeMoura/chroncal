@@ -87,11 +87,11 @@ type UndoMeta struct {
 	Kind  UndoKind
 	UID   string
 	Label string
-	// DeletedAt is the time of the delete. For a delete that hid rows, it is
-	// the deleted_at that the delete wrote. The undo compares it: a row in
-	// the trash that no log names is still this delete's while its
-	// deleted_at matches (see identityRefusalTx).
-	DeletedAt time.Time
+	// DeleteToken is the delete token that the delete wrote on its rows
+	// (events.delete_token, migration 057). A row in the trash that no log
+	// names is still this delete's while its token matches. A later delete,
+	// a pull included, writes a newer token (see identityRefusalTx).
+	DeleteToken int64
 
 	// PushCalendars lists every calendar that the delete wrote, when the
 	// delete wrote more than one: a series delete that hid legacy overrides
@@ -178,7 +178,7 @@ func (s *Service) DeleteWithUndo(ctx context.Context, id int64) (UndoMeta, error
 		Kind:            UndoKindSingle,
 		UID:             evt.UID,
 		Label:           evt.Title,
-		DeletedAt:       undoTime(deleted.TrashedAt),
+		DeleteToken:     deleted.DeleteToken,
 		CalendarID:      calendarID,
 		RecurrenceID:    evt.RecurrenceID,
 		RowID:           rowID,
@@ -205,7 +205,7 @@ func (s *Service) DeleteInstanceWithUndo(ctx context.Context, calendarID int64, 
 		Kind:            UndoKindSingle,
 		UID:             uid,
 		Label:           master.Title,
-		DeletedAt:       undoTime(d.TrashedAt),
+		DeleteToken:     d.Token,
 		CalendarID:      master.CalendarID,
 		RecurrenceID:    instanceTime.UTC().Format(time.RFC3339),
 		RowID:           rowID,
@@ -232,7 +232,7 @@ func (s *Service) DeleteFromInstanceWithUndo(ctx context.Context, calendarID int
 	// concurrent external edit that lands between commit and read is not
 	// mistaken for the baseline. Only edits that advance updated_at *past*
 	// this point trip the guard.
-	master, postUpdated, err := s.deleteFromInstance(ctx, calendarID, uid, instanceTime)
+	master, postUpdated, token, err := s.deleteFromInstance(ctx, calendarID, uid, instanceTime)
 	if err != nil {
 		return UndoMeta{}, err
 	}
@@ -241,7 +241,7 @@ func (s *Service) DeleteFromInstanceWithUndo(ctx context.Context, calendarID int
 		Kind:                UndoKindFromInstance,
 		UID:                 uid,
 		Label:               master.Title,
-		DeletedAt:           time.Now().UTC(),
+		DeleteToken:         token,
 		CalendarID:          master.CalendarID,
 		CutoffTime:          instanceTime.UTC(),
 		MasterUpdatedBefore: parseStorageTime(postUpdated),
@@ -260,7 +260,7 @@ func (s *Service) DeleteSeriesWithUndo(ctx context.Context, calendarID int64, ui
 		Kind:          UndoKindSeries,
 		UID:           uid,
 		Label:         d.Label,
-		DeletedAt:     undoTime(d.TrashedAt),
+		DeleteToken:   d.Token,
 		CalendarID:    d.CalendarID,
 		MasterID:      d.Master.ID,
 		RowIDs:        d.Hidden,
@@ -1215,7 +1215,7 @@ func (s *Service) restoreSingle(ctx context.Context, meta UndoMeta) error {
 		if meta.MasterID != 0 {
 			return fmt.Errorf("%w: the master of the series is purged", ErrNotDeleted)
 		}
-		return s.restoreOverrideRow(ctx, calendarID, uid, recurrenceID, rowID, deleteIdentity{exdateLogID: meta.ExdateLogID, seq: meta.ExdateDeleteSeq, trashedAt: trashTimeOf(meta)})
+		return s.restoreOverrideRow(ctx, calendarID, uid, recurrenceID, rowID, deleteIdentity{exdateLogID: meta.ExdateLogID, seq: meta.ExdateDeleteSeq, token: meta.DeleteToken})
 	}
 	if err != nil {
 		return err
@@ -1232,7 +1232,7 @@ func (s *Service) restoreSingle(ctx context.Context, meta UndoMeta) error {
 		// trashed master wrote no log (ExdateLogID 0). The row was live a
 		// moment before, so the undo brings back exactly that row.
 		if meta.ExdateLogID == 0 {
-			return s.restoreRowsBesideTrashedMaster(ctx, r, rowIDs, trashTimeOf(meta))
+			return s.restoreRowsBesideTrashedMaster(ctx, r, rowIDs, meta.DeleteToken)
 		}
 		// An occurrence delete of the live series came before the series
 		// delete. Live rows beside a trashed master would block its purge.
@@ -1241,7 +1241,7 @@ func (s *Service) restoreSingle(ctx context.Context, meta UndoMeta) error {
 	}
 	if r.DeletedAt == nil || *r.DeletedAt == "" {
 		if recurrenceID != "" {
-			return s.restoreEXDATEOnly(ctx, r.ID, uid, recurrenceID, rowIDs, deleteIdentity{exdateLogID: meta.ExdateLogID, seq: meta.ExdateDeleteSeq, trashedAt: trashTimeOf(meta)})
+			return s.restoreEXDATEOnly(ctx, r.ID, uid, recurrenceID, rowIDs, deleteIdentity{exdateLogID: meta.ExdateLogID, seq: meta.ExdateDeleteSeq, token: meta.DeleteToken})
 		}
 		// The undo reverses a delete of the master row, and the master
 		// is live: a restore from the trash came first. The undo has
@@ -1496,7 +1496,7 @@ func (s *Service) restoreSeries(ctx context.Context, meta UndoMeta) error {
 		_, err = s.restoreSeriesLog(ctx, master.CalendarID, uid, true)
 		return err
 	case len(meta.RowIDs) != 0:
-		n, err := s.restoreRows(ctx, meta.CalendarID, uid, meta.RowIDs, deleteIdentity{seriesLogID: meta.SeriesLogID, trashedAt: trashTimeOf(meta)})
+		n, err := s.restoreRows(ctx, meta.CalendarID, uid, meta.RowIDs, deleteIdentity{seriesLogID: meta.SeriesLogID, token: meta.DeleteToken})
 		if err != nil {
 			return err
 		}
@@ -1626,14 +1626,14 @@ func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) erro
 // identityRefusalTx decides with the zero identity. The undo writes no
 // EXDATE, no log, and no sync state: the rows stay local until the master
 // comes back.
-func (s *Service) restoreRowsBesideTrashedMaster(ctx context.Context, master storage.Event, rowIDs []int64, trashedAt string) error {
+func (s *Service) restoreRowsBesideTrashedMaster(ctx context.Context, master storage.Event, rowIDs []int64, token int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
-	restore, err := identityRefusalTx(ctx, qtx, master.Uid, rowIDs, deleteIdentity{trashedAt: trashedAt})
+	restore, err := identityRefusalTx(ctx, qtx, master.Uid, rowIDs, deleteIdentity{token: token})
 	if err != nil {
 		return err
 	}
@@ -1885,8 +1885,8 @@ type deletedRow struct {
 	// ExdateLogID and ExdateDeleteSeq name the delete in the occurrence log
 	// of the master. 0 means no log (see UndoMeta.ExdateLogID).
 	ExdateLogID, ExdateDeleteSeq int64
-	// TrashedAt is the deleted_at of an override row after the delete.
-	TrashedAt string
+	// DeleteToken is the delete token that the delete wrote on the row.
+	DeleteToken int64
 }
 
 // deleteRow is Delete. One transaction reads the row, checks it, and
@@ -1935,8 +1935,15 @@ func (s *Service) deleteRow(ctx context.Context, id int64, out *deletedRow) erro
 		if _, err := storage.CreateTombstoneIfSynced(ctx, tx, evt.CalendarID, evt.UID); err != nil {
 			return fmt.Errorf("create tombstone: %w", err)
 		}
-		if err := qtx.SoftDeleteEvent(ctx, id); err != nil {
+		token, err := qtx.NextEventDeleteToken(ctx)
+		if err != nil {
+			return fmt.Errorf("delete token: %w", err)
+		}
+		if err := qtx.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: id, DeleteToken: token}); err != nil {
 			return fmt.Errorf("soft-delete event: %w", err)
+		}
+		if out != nil {
+			out.DeleteToken = token
 		}
 		return tx.Commit()
 	}
@@ -1998,15 +2005,15 @@ func (s *Service) deleteRow(ctx context.Context, id int64, out *deletedRow) erro
 				out.ExdateLogID, out.ExdateDeleteSeq = logID, seq
 			}
 		}
-		if err := qtx.SoftDeleteEvent(ctx, id); err != nil {
+		token, tErr := qtx.NextEventDeleteToken(ctx)
+		if tErr != nil {
+			return fmt.Errorf("delete token: %w", tErr)
+		}
+		if err := qtx.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: id, DeleteToken: token}); err != nil {
 			return fmt.Errorf("soft-delete event: %w", err)
 		}
 		if out != nil {
-			trashedAt, tErr := trashTimeTx(ctx, qtx, id)
-			if tErr != nil {
-				return tErr
-			}
-			out.TrashedAt = trashedAt
+			out.DeleteToken = token
 		}
 		if err == nil {
 			// The log of the master records the delete. It adds the EXDATE
@@ -2111,8 +2118,8 @@ type occurrenceDeletion struct {
 	Rows []int64
 	// LogID and Seq name the delete in its occurrence log.
 	LogID, Seq int64
-	// TrashedAt is the deleted_at of the rows, or empty with no row.
-	TrashedAt string
+	// Token is the delete token of the rows, or 0 with no row.
+	Token int64
 }
 
 // deleteInstance is DeleteInstance. It returns the master it read in the
@@ -2160,15 +2167,14 @@ func (s *Service) deleteInstance(ctx context.Context, calendarID int64, uid stri
 		}
 		hidden = append(hidden, o.ID)
 	}
-	// One statement hides the rows, so every row gets the same deleted_at.
-	// The undo compares that time (UndoMeta.DeletedAt).
-	var trashedAt string
+	// One statement hides the rows with one delete token. The undo keeps it.
+	var token int64
 	if len(hidden) > 0 {
-		if err := qtx.SoftDeleteEventsByIDs(ctx, hidden); err != nil {
-			return storage.Event{}, occurrenceDeletion{}, fmt.Errorf("soft-delete overrides: %w", err)
+		if token, err = qtx.NextEventDeleteToken(ctx); err != nil {
+			return storage.Event{}, occurrenceDeletion{}, fmt.Errorf("delete token: %w", err)
 		}
-		if trashedAt, err = trashTimeTx(ctx, qtx, hidden[0]); err != nil {
-			return storage.Event{}, occurrenceDeletion{}, err
+		if err := qtx.SoftDeleteEventsByIDs(ctx, storage.SoftDeleteEventsByIDsParams{Ids: hidden, DeleteToken: token}); err != nil {
+			return storage.Event{}, occurrenceDeletion{}, fmt.Errorf("soft-delete overrides: %w", err)
 		}
 	}
 
@@ -2176,7 +2182,7 @@ func (s *Service) deleteInstance(ctx context.Context, calendarID int64, uid stri
 	// rows, so a restore of the occurrence from the trash un-hides them. No
 	// live override remains, so the delete adds the EXDATE, unless the log
 	// owns one already (softdelete.RecordOccurrenceDelete).
-	d := occurrenceDeletion{Rows: hidden, TrashedAt: trashedAt}
+	d := occurrenceDeletion{Rows: hidden, Token: token}
 	if d.LogID, d.Seq, err = recordOccurrenceDeleteTx(ctx, qtx, master, recID, hidden); err != nil {
 		return storage.Event{}, occurrenceDeletion{}, err
 	}
@@ -2212,7 +2218,7 @@ func exdateLogTx(ctx context.Context, qtx *storage.Queries, calendarID int64, ui
 // RRULE in event_truncate_deletes so the trash view can restore it atomically.
 // calendarID names the calendar of the series (see DeleteInstance).
 func (s *Service) DeleteFromInstance(ctx context.Context, calendarID int64, uid string, instanceTime time.Time) error {
-	_, _, err := s.deleteFromInstance(ctx, calendarID, uid, instanceTime)
+	_, _, _, err := s.deleteFromInstance(ctx, calendarID, uid, instanceTime)
 	return err
 }
 
@@ -2244,13 +2250,13 @@ func (s *Service) HasLiveOverrideFrom(ctx context.Context, calendarID int64, uid
 //
 // prevRRule is the master's pre-truncation RRULE. The caller passes it because
 // it overwrote the master's recurrence_rule in the DB before this runs.
-func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time, prevRRule string) error {
+func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Queries, master storage.Event, instanceTime time.Time, prevRRule string) (int64, error) {
 	uid := master.Uid
 	cutoff := instanceTime.UTC().Format(time.RFC3339)
 
 	removedRDates, err := trimMasterRDatesAtOrAfter(ctx, qtx, master, instanceTime)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// The overrides of the series in the calendar of the master. The rows
@@ -2261,7 +2267,7 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 		RecurrenceID: cutoff,
 	})
 	if err != nil {
-		return fmt.Errorf("list future overrides: %w", err)
+		return 0, fmt.Errorf("list future overrides: %w", err)
 	}
 	// The log keeps the recurrence IDs for the trash view and the row IDs for
 	// the restore (see restoreTruncatedOverrides). A legacy override lives in
@@ -2274,11 +2280,16 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 		rowIDs = append(rowIDs, o.ID)
 	}
 	if err := ensureRowsWritableTx(ctx, qtx, master.CalendarID, rowIDs); err != nil {
-		return err
+		return 0, err
 	}
+	var token int64
 	if len(rowIDs) > 0 {
-		if err := qtx.SoftDeleteEventsByIDs(ctx, rowIDs); err != nil {
-			return fmt.Errorf("soft-delete future overrides: %w", err)
+		var err error
+		if token, err = qtx.NextEventDeleteToken(ctx); err != nil {
+			return 0, fmt.Errorf("delete token: %w", err)
+		}
+		if err := qtx.SoftDeleteEventsByIDs(ctx, storage.SoftDeleteEventsByIDsParams{Ids: rowIDs, DeleteToken: token}); err != nil {
+			return 0, fmt.Errorf("soft-delete future overrides: %w", err)
 		}
 	}
 	// A second truncation at the same cutoff extends the log of the first.
@@ -2288,7 +2299,7 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 	})
 	found, err := storage.Found(err)
 	if err != nil {
-		return fmt.Errorf("get truncation log: %w", err)
+		return 0, fmt.Errorf("get truncation log: %w", err)
 	}
 	if found {
 		earlierIDs := storage.NullableToString(earlier.HiddenIds)
@@ -2297,14 +2308,14 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 			// ID only. Its rows are the trashed rows of the series at those
 			// recurrence IDs.
 			if earlierIDs, err = trashedRowsAtTx(ctx, qtx, master, storage.NullableToString(earlier.HiddenOverrides)); err != nil {
-				return err
+				return 0, err
 			}
 		}
 		if recIDs, err = unionCommaList(recIDs, storage.NullableToString(earlier.HiddenOverrides), parseRecurrenceID); err != nil {
-			return err
+			return 0, err
 		}
 		if rowIDs, err = unionCommaList(rowIDs, earlierIDs, parseRowID); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	hiddenList := strings.Join(recIDs, ",")
@@ -2319,9 +2330,9 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 		RemovedRdates:   &removedRDates,
 		HiddenIds:       &hiddenIDs,
 	}); err != nil {
-		return fmt.Errorf("record truncate: %w", err)
+		return 0, fmt.Errorf("record truncate: %w", err)
 	}
-	return nil
+	return token, nil
 }
 
 // trashedRowsAtTx returns a list of the IDs of the trashed rows of the series
@@ -2385,10 +2396,10 @@ func trimMasterRDatesAtOrAfter(ctx context.Context, qtx *storage.Queries, master
 // TOCTOU window. A concurrent writer that edits the master after our commit
 // but before a separate read would otherwise have its updated_at captured as
 // the undo baseline. RestoreUndo would then clobber that edit.
-func (s *Service) deleteFromInstance(ctx context.Context, calendarID int64, uid string, instanceTime time.Time) (storage.Event, string, error) {
+func (s *Service) deleteFromInstance(ctx context.Context, calendarID int64, uid string, instanceTime time.Time) (storage.Event, string, int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return storage.Event{}, "", fmt.Errorf("begin tx: %w", err)
+		return storage.Event{}, "", 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
@@ -2398,10 +2409,10 @@ func (s *Service) deleteFromInstance(ctx context.Context, calendarID int64, uid 
 	// (issue #116).
 	master, err := findSeriesMasterTx(ctx, qtx, calendarID, uid)
 	if err != nil {
-		return storage.Event{}, "", wrapMasterLookup(err)
+		return storage.Event{}, "", 0, wrapMasterLookup(err)
 	}
 	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, "VEVENT"); err != nil {
-		return storage.Event{}, "", err
+		return storage.Event{}, "", 0, err
 	}
 
 	// An RDATE-only master (no RRULE) has no recurrence rule to truncate.
@@ -2417,12 +2428,13 @@ func (s *Service) deleteFromInstance(ctx context.Context, calendarID int64, uid 
 			RecurrenceRule: storage.StringToNullable(rule),
 			ID:             master.ID,
 		}); err != nil {
-			return storage.Event{}, "", fmt.Errorf("update rrule: %w", err)
+			return storage.Event{}, "", 0, fmt.Errorf("update rrule: %w", err)
 		}
 	}
 
-	if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master, instanceTime, prevRRule); err != nil {
-		return storage.Event{}, "", err
+	token, err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master, instanceTime, prevRRule)
+	if err != nil {
+		return storage.Event{}, "", 0, err
 	}
 
 	// Read the master's updated_at back inside the transaction so the value we
@@ -2430,7 +2442,7 @@ func (s *Service) deleteFromInstance(ctx context.Context, calendarID int64, uid 
 	// interleaved external edit in between.
 	truncated, err := qtx.GetEvent(ctx, master.ID)
 	if err != nil {
-		return storage.Event{}, "", fmt.Errorf("read back master: %w", err)
+		return storage.Event{}, "", 0, fmt.Errorf("read back master: %w", err)
 	}
 	postUpdated := truncated.UpdatedAt
 
@@ -2438,12 +2450,12 @@ func (s *Service) deleteFromInstance(ctx context.Context, calendarID int64, uid 
 	// the same transaction so a failed mark rolls the truncation back rather
 	// than committing a change that is never pushed (issue #107).
 	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, uid, "event"); err != nil {
-		return storage.Event{}, "", fmt.Errorf("mark resource dirty: %w", err)
+		return storage.Event{}, "", 0, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return storage.Event{}, "", err
+		return storage.Event{}, "", 0, err
 	}
-	return master, postUpdated, nil
+	return master, postUpdated, token, nil
 }
 
 // DeleteSeries deletes a recurring master event and all its overrides.
@@ -2471,8 +2483,8 @@ type seriesDeletion struct {
 	Hidden []int64
 	// LogID is the series-delete log of a delete of orphan rows.
 	LogID int64
-	// TrashedAt is the deleted_at of the orphan rows.
-	TrashedAt string
+	// Token is the delete token that the delete wrote on its rows.
+	Token int64
 	// Tombstoned lists every calendar that got a tombstone, the calendar
 	// of the delete first.
 	Tombstoned []int64
@@ -2523,20 +2535,19 @@ func (s *Service) deleteSeries(ctx context.Context, calendarID int64, uid string
 		if tombstoned {
 			calendars = []int64{t.calendarID}
 		}
+		token, err := qtx.NextEventDeleteToken(ctx)
+		if err != nil {
+			return seriesDeletion{}, fmt.Errorf("delete token: %w", err)
+		}
 		if err := qtx.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{
-			CalendarID: t.calendarID, Uid: uid,
+			CalendarID: t.calendarID, Uid: uid, DeleteToken: token,
 		}); err != nil {
 			return seriesDeletion{}, fmt.Errorf("soft-delete orphan rows: %w", err)
-		}
-		// One statement hid the rows: they share one deleted_at.
-		trashedAt, err := trashTimeTx(ctx, qtx, ids[0])
-		if err != nil {
-			return seriesDeletion{}, err
 		}
 		if err := tx.Commit(); err != nil {
 			return seriesDeletion{}, err
 		}
-		return seriesDeletion{Label: t.label(), CalendarID: t.calendarID, Hidden: ids, LogID: logID, TrashedAt: trashedAt, Tombstoned: calendars}, nil
+		return seriesDeletion{Label: t.label(), CalendarID: t.calendarID, Hidden: ids, LogID: logID, Token: token, Tombstoned: calendars}, nil
 	}
 	if _, err := storage.CreateTombstoneIfSynced(ctx, tx, t.master.CalendarID, uid); err != nil {
 		return seriesDeletion{}, fmt.Errorf("create tombstone: %w", err)
@@ -2567,15 +2578,19 @@ func (s *Service) deleteSeries(ctx context.Context, calendarID int64, uid string
 	if _, err := recordSeriesDeleteTx(ctx, qtx, t.master.CalendarID, uid, hidden, nil, true); err != nil {
 		return seriesDeletion{}, err
 	}
+	token, err := qtx.NextEventDeleteToken(ctx)
+	if err != nil {
+		return seriesDeletion{}, fmt.Errorf("delete token: %w", err)
+	}
 	if err := qtx.SoftDeleteSeriesRowsInCalendar(ctx, storage.SoftDeleteSeriesRowsInCalendarParams{
-		CalendarID: t.calendarID, Uid: uid,
+		CalendarID: t.calendarID, Uid: uid, DeleteToken: token,
 	}); err != nil {
 		return seriesDeletion{}, fmt.Errorf("soft-delete series: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return seriesDeletion{}, err
 	}
-	return seriesDeletion{Master: t.master, Label: t.label(), CalendarID: t.master.CalendarID, Tombstoned: calendars}, nil
+	return seriesDeletion{Master: t.master, Label: t.label(), CalendarID: t.master.CalendarID, Token: token, Tombstoned: calendars}, nil
 }
 
 // seriesDeleteTarget is what a series delete of a UID in a calendar takes.

@@ -1274,7 +1274,7 @@ func updateFromInstanceTx(ctx context.Context, qtx *storage.Queries, calendarID 
 		}
 	}
 
-	if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master, instanceTime, prevRRule); err != nil {
+	if _, err := softDeleteOverridesAndRecordTruncation(ctx, qtx, master, instanceTime, prevRRule); err != nil {
 		return Event{}, 0, err
 	}
 

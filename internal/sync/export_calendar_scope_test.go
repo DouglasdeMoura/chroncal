@@ -585,3 +585,44 @@ func TestPush_EditBesideTrashedMasterGoesOutWithTheSeriesRestore(t *testing.T) {
 	}
 	t.Errorf("no server object of %s carries the edit after the series restore", master.UID)
 }
+
+// TestPullDeletes_WriteANewDeleteToken: the delete of a pull and the prune of
+// an override each write a new delete token. The undo of an earlier delete
+// of the user then sees a newer delete on the row and refuses.
+func TestPullDeletes_WriteANewDeleteToken(t *testing.T) {
+	t.Parallel()
+	engine, _, _, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	master, override, _ := createSeriesWithOverride(t, engine, calA)
+	token := func(id int64) int64 {
+		t.Helper()
+		var n int64
+		if err := engine.db.QueryRowContext(ctx, `SELECT delete_token FROM events WHERE id = ?`, id).Scan(&n); err != nil {
+			t.Fatalf("read token: %v", err)
+		}
+		return n
+	}
+	meta, err := engine.events.DeleteWithUndo(ctx, override.ID)
+	if err != nil {
+		t.Fatalf("DeleteWithUndo: %v", err)
+	}
+	if err := engine.events.RestoreByID(ctx, override.ID); err != nil {
+		t.Fatalf("RestoreByID: %v", err)
+	}
+	if err := pruneEventOverride(engine.q, ctx, storage.Event{ID: override.ID, CalendarID: calA, Uid: master.UID, RecurrenceID: override.RecurrenceID}); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	pruned := token(override.ID)
+	if pruned == 0 || pruned == meta.DeleteToken {
+		t.Errorf("token after the prune = %d, want a new token beside %d", pruned, meta.DeleteToken)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE uid = ?`, master.UID); err != nil {
+		t.Fatalf("revive the rows: %v", err)
+	}
+	if err := ownerOpsByType[ownerTypeEvent].softDeleteByUID(ctx, engine, calA, master.UID); err != nil {
+		t.Fatalf("delete of the pull: %v", err)
+	}
+	if got := token(override.ID); got == 0 || got == pruned {
+		t.Errorf("token after the delete of the pull = %d, want a new token beside %d", got, pruned)
+	}
+}

@@ -1211,7 +1211,7 @@ func TestSeriesOwnerView_MatchesLegacyOwner(t *testing.T) {
 					t.Fatalf("upsert master %s: %v", m.calendar, err)
 				}
 				if m.trashed {
-					if err := svc.q.SoftDeleteEvent(ctx, master.ID); err != nil {
+					if err := svc.q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: master.ID, DeleteToken: nextToken(t, svc)}); err != nil {
 						t.Fatalf("trash master %s: %v", m.calendar, err)
 					}
 				}
@@ -1375,7 +1375,7 @@ func TestRestoreSeries_KeepsPrunedOverride(t *testing.T) {
 		t.Fatalf("get override: %v", err)
 	}
 	// A sync prune soft-deletes the row with no log.
-	if err := svc.q.SoftDeleteEvent(ctx, pruned.ID); err != nil {
+	if err := svc.q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: pruned.ID, DeleteToken: nextToken(t, svc)}); err != nil {
 		t.Fatalf("prune override: %v", err)
 	}
 	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
@@ -1613,7 +1613,7 @@ func TestRestoreByID_MasterWithoutLogComesBackAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert override: %v", err)
 	}
-	if err := svc.q.SoftDeleteEvent(ctx, override.ID); err != nil {
+	if err := svc.q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: override.ID, DeleteToken: nextToken(t, svc)}); err != nil {
 		t.Fatalf("prune override: %v", err)
 	}
 	// The prune is a separate, earlier delete.
@@ -2328,7 +2328,7 @@ func TestUndoSeries_OrphanRowsBesideMasterHiddenByPull(t *testing.T) {
 				t.Fatalf("upsert legacy override: %v", err)
 			}
 			// A pull hides the master with no log.
-			if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: "pull-uid"}); err != nil {
+			if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: "pull-uid", DeleteToken: nextToken(t, svc)}); err != nil {
 				t.Fatalf("hide the master: %v", err)
 			}
 			target := calL
@@ -2543,7 +2543,7 @@ func TestUndoOrphanDelete_LeavesMasterInTrash(t *testing.T) {
 		t.Fatalf("get o1: %v", err)
 	}
 	// A pull hid the series with no log.
-	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); err != nil {
+	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID, DeleteToken: nextToken(t, svc)}); err != nil {
 		t.Fatalf("hide the series: %v", err)
 	}
 	if err := reviveRow(svc, o1.ID); err != nil {
@@ -2605,7 +2605,7 @@ func TestMoveSeries_TargetWithTrashedLegacyRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert legacy row in the target: %v", err)
 	}
-	if err := svc.q.SoftDeleteEvent(ctx, legacy.ID); err != nil {
+	if err := svc.q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: legacy.ID, DeleteToken: nextToken(t, svc)}); err != nil {
 		t.Fatalf("trash the legacy row: %v", err)
 	}
 	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
@@ -2985,7 +2985,7 @@ func TestRestoreByID_StaleLogAfterRevival(t *testing.T) {
 		t.Fatalf("Delete(o1): %v", err)
 	}
 	// 4. A pull hides the series with no log.
-	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID}); err != nil {
+	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID, DeleteToken: nextToken(t, svc)}); err != nil {
 		t.Fatalf("hide the series: %v", err)
 	}
 	// 5. The restore by ID of the master replays no stale log. It brings
@@ -3098,7 +3098,7 @@ func TestSeriesMaster_OwnTrashedMasterBesideTwoLiveMasters(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert override C: %v", err)
 	}
-	if err := svc.q.SoftDeleteEvent(ctx, masterC.ID); err != nil {
+	if err := svc.q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: masterC.ID, DeleteToken: nextToken(t, svc)}); err != nil {
 		t.Fatalf("trash master C: %v", err)
 	}
 	if _, err := svc.SeriesMaster(ctx, calC, masterA.UID); !errors.Is(err, sql.ErrNoRows) {
@@ -3166,7 +3166,7 @@ func TestRestoreMaster_NoLogBringsSameDeleteRows(t *testing.T) {
 			}
 		},
 		"pull": func(t *testing.T, svc *Service, uid string) {
-			if err := svc.q.SoftDeleteEventsByCalendarUID(context.Background(), storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: uid}); err != nil {
+			if err := svc.q.SoftDeleteEventsByCalendarUID(context.Background(), storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: uid, DeleteToken: nextToken(t, svc)}); err != nil {
 				t.Fatalf("hide the series: %v", err)
 			}
 		},
@@ -3666,7 +3666,7 @@ func TestTruncation_SecondAtSameCutoffMergesLog(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get master: %v", err)
 		}
-		if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, m, second, master.RecurrenceRule); err != nil {
+		if _, err := softDeleteOverridesAndRecordTruncation(ctx, qtx, m, second, master.RecurrenceRule); err != nil {
 			t.Fatalf("truncate: %v", err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -3952,7 +3952,7 @@ func TestTruncation_SecondOverLogWithoutRowIDs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get master: %v", err)
 		}
-		if err := softDeleteOverridesAndRecordTruncation(ctx, qtx, m, second, master.RecurrenceRule); err != nil {
+		if _, err := softDeleteOverridesAndRecordTruncation(ctx, qtx, m, second, master.RecurrenceRule); err != nil {
 			t.Fatalf("truncate: %v", err)
 		}
 		if err := tx.Commit(); err != nil {

@@ -65,7 +65,13 @@ var ownerOpsByType = map[string]ownerOps{
 		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
 			// A pull writes the rows of the pulled calendar only. A legacy
 			// override in another calendar keeps its row (see AGENTS.md).
-			return e.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+			// The delete of the pull takes a fresh delete token, so the undo
+			// of an earlier delete of these rows refuses.
+			token, err := e.q.NextEventDeleteToken(ctx)
+			if err != nil {
+				return fmt.Errorf("delete token: %w", err)
+			}
+			return e.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: calendarID, Uid: uid, DeleteToken: token})
 		},
 		lookupID: func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error) {
 			row, err := e.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})

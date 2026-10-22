@@ -420,43 +420,14 @@ type deleteIdentity struct {
 	exdateLogID, seq int64
 	// seriesLogID names a series-delete log.
 	seriesLogID int64
-	// trashedAt is the deleted_at that the delete wrote (UndoMeta.DeletedAt),
-	// or empty when the caller has no time.
-	trashedAt string
+	// token is the delete token that the delete wrote (UndoMeta.DeleteToken),
+	// or 0 when the caller has none.
+	token int64
 }
 
 // logless reports whether the delete of id wrote no log.
 func (id deleteIdentity) logless() bool {
 	return id.exdateLogID == 0 && id.seriesLogID == 0
-}
-
-// trashTimeTx reads the deleted_at that a delete wrote on the row rowID.
-func trashTimeTx(ctx context.Context, qtx *storage.Queries, rowID int64) (string, error) {
-	states, err := rowStatesTx(ctx, qtx, []int64{rowID})
-	if err != nil {
-		return "", err
-	}
-	if len(states) == 0 || states[0].DeletedAt == nil {
-		return "", nil
-	}
-	return *states[0].DeletedAt, nil
-}
-
-// undoTime returns the time of a delete for UndoMeta.DeletedAt: the
-// deleted_at that the delete wrote, or the time now with no row.
-func undoTime(trashedAt string) time.Time {
-	if t, err := time.Parse(timeutil.StorageTimeFormat, trashedAt); err == nil {
-		return t.UTC()
-	}
-	return time.Now().UTC()
-}
-
-// trashTimeOf is the inverse of undoTime: the deleted_at text of meta.
-func trashTimeOf(meta UndoMeta) string {
-	if meta.DeletedAt.IsZero() {
-		return ""
-	}
-	return meta.DeletedAt.UTC().Format(timeutil.StorageTimeFormat)
 }
 
 // owner names the record that holds a row in the trash for the undo.
@@ -476,12 +447,12 @@ const (
 //     with ErrDeletedAgain.
 //   - A row in the trash that id names: the row comes back.
 //   - A row in the trash that no log names: a trigger dropped the log, or a
-//     pull hid the row with no log. The deleted_at of the row tells the two
-//     apart. A trigger leaves the row as the delete left it, so a deleted_at
-//     equal to the time of the delete (trashedAt) brings the row back. A
-//     later pull or prune wrote a newer deleted_at, so the undo refuses with
-//     ErrChangedSince, and the trash still restores the row. With no time, a
-//     delete that wrote no log takes such a row.
+//     pull hid the row with no log. The delete token of the row tells the
+//     two apart. A trigger leaves the row as the delete left it, so a token
+//     equal to the token of the delete brings the row back. A later delete,
+//     a pull or a prune included, wrote a newer token. The undo then refuses
+//     with ErrChangedSince, and the trash still restores the row. With no
+//     token, a delete that wrote no log takes such a row.
 //
 // The undo is all or nothing: one refusal refuses the whole undo. It returns
 // the states of the rows to bring back. With none, it gives
@@ -557,8 +528,8 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 			restore = append(restore, st)
 		default:
 			sameDelete := id.logless()
-			if id.trashedAt != "" {
-				sameDelete = *st.DeletedAt == id.trashedAt
+			if id.token != 0 {
+				sameDelete = st.DeleteToken == id.token
 			}
 			if !sameDelete {
 				return nil, ErrChangedSince
