@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
+	"github.com/douglasdemoura/chroncal/internal/softdelete"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -323,18 +324,25 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	if err := ensureSeriesWritableIn(ctx, qtx, log.CalendarID, log.Uid); err != nil {
 		return err
 	}
-	hidden, err := parseRowIDs(log.HiddenIds)
+	olog, err := parseOccurrenceLog(log)
 	if err != nil {
 		return err
+	}
+	var hidden []int64
+	for _, e := range olog.Entries {
+		hidden = append(hidden, e.Rows...)
 	}
 	// A row that a purge or an earlier restore took is no error: the
 	// EXDATE still goes.
 	if _, _, err := restoreHiddenRowsTx(ctx, qtx, log.CalendarID, hidden); err != nil {
 		return err
 	}
-	// The release of every row of the log strips the EXDATE that it
-	// recorded, and it drops the log (softdelete.ReleaseOccurrenceRows).
-	if err := releaseOccurrenceRowsTx(ctx, qtx, log.CalendarID, log.Uid, log.RecurrenceID, log, hidden); err != nil {
+	// Every entry goes, so the log gives up its EXDATE and goes too
+	// (softdelete.SettleOccurrence).
+	if err := settleOccurrenceTx(ctx, qtx, master, log.RecurrenceID, func(l softdelete.OccurrenceLog) softdelete.OccurrenceLog {
+		l.Entries = nil
+		return l
+	}); err != nil {
 		return err
 	}
 	if err := storage.MarkResourceDirty(ctx, tx, master.CalendarID, log.Uid, "event"); err != nil {

@@ -181,6 +181,8 @@ type EventExdateDelete struct {
 	DeletedAt    string
 	Pruned       int64
 	HiddenIds    string
+	OwnsExdate   int64
+	DeleteSeq    int64
 }
 
 type EventRelation struct {

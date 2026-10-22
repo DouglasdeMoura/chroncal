@@ -323,9 +323,9 @@ func TestDeleteInstance_SecondDeleteKeepsTheRowsOfTheFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get exdate log: %v", err)
 	}
-	ids, err := parseRowIDs(log.HiddenIds)
-	if err != nil || len(ids) != 2 {
-		t.Fatalf("hidden rows of the log = %q, %v; want L1 and L2", log.HiddenIds, err)
+	parsed, err := parseOccurrenceLog(log)
+	if err != nil || len(parsed.Entries) != 2 || !parsed.HasRows() {
+		t.Fatalf("entries of the log = %q, %v; want the entries of L1 and L2", log.HiddenIds, err)
 	}
 	entries, err := svc.ListTrash(ctx, 1)
 	if err != nil {
@@ -407,9 +407,12 @@ func exdateLogRows(t *testing.T, svc *Service, uid string, at time.Time) (ids []
 	if !ok {
 		return nil, false
 	}
-	ids, err = parseRowIDs(log.HiddenIds)
+	parsed, err := parseOccurrenceLog(log)
 	if err != nil {
 		t.Fatalf("parse hidden rows: %v", err)
+	}
+	for _, e := range parsed.Entries {
+		ids = append(ids, e.Rows...)
 	}
 	return ids, true
 }
@@ -451,8 +454,8 @@ func TestUndoOccurrence_AfterRedeleteWithLiveRowsWritesNothing(t *testing.T) {
 
 // TestUndoOccurrence_SecondDeleteLeavesTheFirst: the undo of the second
 // delete of an occurrence brings back the rows of that delete only. The
-// first delete keeps its rows in the log, and the EXDATE stays. The undo of
-// the first delete then clears the EXDATE and the log.
+// first delete keeps its rows in the log. L2 is live again, so the log gives
+// up the EXDATE. The undo of the first delete then drops the log.
 func TestUndoOccurrence_SecondDeleteLeavesTheFirst(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -480,8 +483,8 @@ func TestUndoOccurrence_SecondDeleteLeavesTheFirst(t *testing.T) {
 	}
 	wantTrashed(t, svc, false, l2.ID)
 	wantTrashed(t, svc, true, l1.ID)
-	if n := exdateCount(t, svc, master.ID, second); n != 1 {
-		t.Errorf("EXDATEs after the undo of the second delete = %d, want 1", n)
+	if n := exdateCount(t, svc, master.ID, second); n != 0 {
+		t.Errorf("EXDATEs after the undo of the second delete = %d, want 0: L2 is live", n)
 	}
 	if ids, found := exdateLogRows(t, svc, master.UID, second); !found || len(ids) != 1 || ids[0] != l1.ID {
 		t.Errorf("log rows after the undo of the second delete = %v, %v; want L1 %d", ids, found, l1.ID)
@@ -499,9 +502,9 @@ func TestUndoOccurrence_SecondDeleteLeavesTheFirst(t *testing.T) {
 }
 
 // TestDeleteByID_LegacyRowBesideAnotherLiveRow: a delete by ID of one of two
-// legacy rows of an occurrence hides that row alone. The other row still
-// shows the occurrence, so the master gets no EXDATE and no occurrence log.
-// The restore by ID and the undo bring the row back.
+// legacy rows of an occurrence hides that row. The other row stays live, so
+// the master gets no EXDATE. The log of the master records the delete. The
+// restore by ID and the undo bring the row back, and the log goes.
 func TestDeleteByID_LegacyRowBesideAnotherLiveRow(t *testing.T) {
 	for _, path := range []string{"restore by ID", "undo"} {
 		t.Run(path, func(t *testing.T) {
@@ -528,8 +531,8 @@ func TestDeleteByID_LegacyRowBesideAnotherLiveRow(t *testing.T) {
 			if n := exdateCount(t, svc, master.ID, second); n != 0 {
 				t.Errorf("EXDATEs after the delete of L1 = %d, want 0", n)
 			}
-			if _, found := exdateLogRows(t, svc, master.UID, second); found {
-				t.Error("occurrence log of the master after the delete of L1 exists, want none")
+			if ids, found := exdateLogRows(t, svc, master.UID, second); !found || len(ids) != 1 || ids[0] != l1.ID {
+				t.Errorf("log rows of the master after the delete of L1 = %v, %v; want L1 with no EXDATE", ids, found)
 			}
 			if path == "undo" {
 				err = svc.RestoreUndo(ctx, meta)
@@ -540,9 +543,8 @@ func TestDeleteByID_LegacyRowBesideAnotherLiveRow(t *testing.T) {
 				t.Fatalf("%s: %v", path, err)
 			}
 			wantTrashed(t, svc, false, l1.ID, l2.ID)
-			var logs int
-			if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_exdate_deletes WHERE calendar_id = ?`, calA).Scan(&logs); err != nil || logs != 0 {
-				t.Errorf("occurrence logs of A after the %s = %d, %v; want 0", path, logs, err)
+			if _, found := exdateLogRows(t, svc, master.UID, second); found {
+				t.Errorf("log of the master after the %s exists, want it gone", path)
 			}
 		})
 	}
@@ -576,10 +578,11 @@ func seriesWithTwoLegacyRows(t *testing.T, svc *Service, uid string) (Event, tim
 	return master, second, l1, l2
 }
 
-// TestDeleteByID_RowBesideMasterTakesTheEXDATE: a delete by ID of the row
-// beside the master adds the EXDATE and the log. A live legacy row of the
-// occurrence does not change that. The master owns that occurrence.
-func TestDeleteByID_RowBesideMasterTakesTheEXDATE(t *testing.T) {
+// TestDeleteByID_RowBesideMasterKeepsNoEXDATE: a delete by ID of the row A
+// beside the master, with a live legacy row B of the occurrence, adds no
+// EXDATE. The log records the delete of A. An EXDATE beside the live B would
+// make Google and iCloud drop B.
+func TestDeleteByID_RowBesideMasterKeepsNoEXDATE(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	master, second, _ := singleSeriesWithOverrides(t, svc)
@@ -594,8 +597,8 @@ func TestDeleteByID_RowBesideMasterTakesTheEXDATE(t *testing.T) {
 		t.Fatalf("Delete(own row): %v", err)
 	}
 	wantTrashed(t, svc, false, legacy.ID)
-	if n := exdateCount(t, svc, master.ID, second); n != 1 {
-		t.Errorf("EXDATEs after the delete of the own row = %d, want 1", n)
+	if n := exdateCount(t, svc, master.ID, second); n != 0 {
+		t.Errorf("EXDATEs after the delete of the own row = %d, want 0: B is live", n)
 	}
 	if ids, found := exdateLogRows(t, svc, master.UID, second); !found || len(ids) != 1 || ids[0] != own.ID {
 		t.Errorf("log rows after the delete = %v, %v; want the own row %d", ids, found, own.ID)
@@ -647,47 +650,91 @@ func TestUndoOccurrence_WithNoRowKeepsTheLogOfALaterDelete(t *testing.T) {
 	}
 }
 
-// TestUndoOccurrence_AloneDeleteKeepsTheLogOfTheMaster: a delete by ID of a
-// legacy row beside another live row writes no log of the master. Its undo
-// un-hides the row and keeps the log of the master: here the log of an
-// earlier delete with no row.
-func TestUndoOccurrence_AloneDeleteKeepsTheLogOfTheMaster(t *testing.T) {
+// TestUndoOccurrence_TwoDeletesWithNoRowInOneLog: two deletes of an
+// occurrence with no stored override share one log. Each has its own entry.
+// The undo of the second removes its entry only, and the first delete keeps
+// the EXDATE. The undo of the first then strips it.
+func TestUndoOccurrence_TwoDeletesWithNoRowInOneLog(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
 	second := start.Add(24 * time.Hour)
 	master, err := svc.UpsertByUID(ctx, UpsertParams{
-		UID: "alone-undo", CalendarID: 1, Title: "Series",
+		UID: "two-empty", CalendarID: 1, Title: "Series",
 		StartTime: start, EndTime: start.Add(time.Hour), RecurrenceRule: "FREQ=DAILY;COUNT=3",
 	})
 	if err != nil {
 		t.Fatalf("upsert master: %v", err)
 	}
-	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
-		t.Fatalf("DeleteInstance: %v", err)
+	meta1, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("first delete: %v", err)
 	}
-	// A pull then imports two legacy rows of the occurrence.
-	l1 := legacyAt(t, svc, master.UID, insertCalendar(t, svc, "L1"), second)
-	legacyAt(t, svc, master.UID, insertCalendar(t, svc, "L2"), second)
-	meta, err := svc.DeleteWithUndo(ctx, l1.ID)
-	if err != nil || meta.ExdateLogID != 0 {
-		t.Fatalf("DeleteWithUndo(L1) = %+v, %v; want no log of the master", meta, err)
+	meta2, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("second delete: %v", err)
 	}
-	if err := svc.RestoreUndo(ctx, meta); err != nil {
-		t.Fatalf("RestoreUndo: %v", err)
+	if meta1.ExdateLogID != meta2.ExdateLogID || meta1.ExdateDeleteSeq == meta2.ExdateDeleteSeq {
+		t.Fatalf("metas = %+v and %+v; want one log and two seqs", meta1, meta2)
 	}
-	wantTrashed(t, svc, false, l1.ID)
 	if n := exdateCount(t, svc, master.ID, second); n != 1 {
-		t.Errorf("EXDATEs after the undo = %d, want the 1 of the earlier delete", n)
+		t.Fatalf("EXDATEs after two deletes = %d, want 1", n)
 	}
-	if _, found := exdateLogRows(t, svc, master.UID, second); !found {
-		t.Error("log of the earlier delete after the undo is gone, want it kept")
+	if err := svc.RestoreUndo(ctx, meta2); err != nil {
+		t.Fatalf("RestoreUndo(second): %v", err)
+	}
+	if n := exdateCount(t, svc, master.ID, second); n != 1 {
+		t.Errorf("EXDATEs after the undo of the second delete = %d, want the 1 of the first", n)
+	}
+	if err := svc.RestoreUndo(ctx, meta2); !errors.Is(err, ErrAlreadyRestored) {
+		t.Errorf("second RestoreUndo(second) = %v, want ErrAlreadyRestored", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta1); err != nil {
+		t.Fatalf("RestoreUndo(first): %v", err)
+	}
+	if n := exdateCount(t, svc, master.ID, second); n != 0 {
+		t.Errorf("EXDATEs after both undos = %d, want 0", n)
 	}
 }
 
-// TestRestoreByID_ReleasesOnlyItsRow: a restore by ID of one of two rows of
-// an occurrence delete releases that row only. The EXDATE and the log stay
-// for the other row. The restore of the other row then clears them.
+// TestUndoOccurrence_PullEmptiedLogStripsNothing: a delete hides R. A pull
+// brings R back, so the log gives up its EXDATE, and the revive trigger
+// takes R out of the log. A new delete hides R again and adds the EXDATE.
+// The undo of the first delete then strips nothing: it refuses with
+// ErrAlreadyRestored, and the EXDATE of the new delete stays.
+func TestUndoOccurrence_PullEmptiedLogStripsNothing(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithUndo: %v", err)
+	}
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Pulled",
+		StartTime: second.Add(time.Hour), EndTime: second.Add(2 * time.Hour), RecurrenceID: second.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("pull upsert: %v", err)
+	}
+	if n := exdateCount(t, svc, master.ID, second); n != 0 {
+		t.Errorf("EXDATEs after the pull = %d, want 0: the override is live", n)
+	}
+	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
+		t.Fatalf("second DeleteInstance: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrAlreadyRestored) {
+		t.Fatalf("RestoreUndo = %v, want ErrAlreadyRestored", err)
+	}
+	if n := exdateCount(t, svc, master.ID, second); n != 1 {
+		t.Errorf("EXDATEs after the undo = %d, want the 1 of the new delete", n)
+	}
+	wantTrashed(t, svc, true, meta.RowIDs...)
+}
+
+// TestRestoreByID_ReleasesOnlyItsRow: a restore by ID of A, one of two rows
+// of an occurrence delete, makes A live at the occurrence. The log gives up
+// the EXDATE and keeps the entry of B, which stays hidden. The restore of B
+// then drops the log.
 func TestRestoreByID_ReleasesOnlyItsRow(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -699,8 +746,8 @@ func TestRestoreByID_ReleasesOnlyItsRow(t *testing.T) {
 		t.Fatalf("RestoreByID(L1): %v", err)
 	}
 	wantTrashed(t, svc, true, l2.ID)
-	if n := exdateCount(t, svc, master.ID, second); n != 1 {
-		t.Errorf("EXDATEs after the restore of L1 = %d, want 1", n)
+	if n := exdateCount(t, svc, master.ID, second); n != 0 {
+		t.Errorf("EXDATEs after the restore of L1 = %d, want 0: L1 is live", n)
 	}
 	if ids, found := exdateLogRows(t, svc, master.UID, second); !found || len(ids) != 1 || ids[0] != l2.ID {
 		t.Errorf("log rows after the restore of L1 = %v, %v; want L2 %d", ids, found, l2.ID)

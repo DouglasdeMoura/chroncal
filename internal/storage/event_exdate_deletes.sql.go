@@ -82,7 +82,7 @@ func (q *Queries) DeleteEventExdateDeletesCollidingWithMove(ctx context.Context,
 }
 
 const getEventExdateDelete = `-- name: GetEventExdateDelete :one
-SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids FROM event_exdate_deletes WHERE id = ?
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids, owns_exdate, delete_seq FROM event_exdate_deletes WHERE id = ?
 `
 
 func (q *Queries) GetEventExdateDelete(ctx context.Context, id int64) (EventExdateDelete, error) {
@@ -96,12 +96,14 @@ func (q *Queries) GetEventExdateDelete(ctx context.Context, id int64) (EventExda
 		&i.DeletedAt,
 		&i.Pruned,
 		&i.HiddenIds,
+		&i.OwnsExdate,
+		&i.DeleteSeq,
 	)
 	return i, err
 }
 
 const getEventExdateDeleteByCalendarUIDRecurrence = `-- name: GetEventExdateDeleteByCalendarUIDRecurrence :one
-SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND pruned = 0
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids, owns_exdate, delete_seq FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? AND recurrence_id = ? AND pruned = 0
 `
 
 type GetEventExdateDeleteByCalendarUIDRecurrenceParams struct {
@@ -124,12 +126,14 @@ func (q *Queries) GetEventExdateDeleteByCalendarUIDRecurrence(ctx context.Contex
 		&i.DeletedAt,
 		&i.Pruned,
 		&i.HiddenIds,
+		&i.OwnsExdate,
+		&i.DeleteSeq,
 	)
 	return i, err
 }
 
 const listEventExdateDeletesByCalendar = `-- name: ListEventExdateDeletesByCalendar :many
-SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids FROM event_exdate_deletes
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids, owns_exdate, delete_seq FROM event_exdate_deletes
 WHERE calendar_id = ? AND pruned = 0
 ORDER BY deleted_at DESC
 `
@@ -153,6 +157,8 @@ func (q *Queries) ListEventExdateDeletesByCalendar(ctx context.Context, calendar
 			&i.DeletedAt,
 			&i.Pruned,
 			&i.HiddenIds,
+			&i.OwnsExdate,
+			&i.DeleteSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +174,7 @@ func (q *Queries) ListEventExdateDeletesByCalendar(ctx context.Context, calendar
 }
 
 const listEventExdateDeletesByCalendarUID = `-- name: ListEventExdateDeletesByCalendarUID :many
-SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids, owns_exdate, delete_seq FROM event_exdate_deletes WHERE calendar_id = ? AND uid = ? ORDER BY recurrence_id
 `
 
 type ListEventExdateDeletesByCalendarUIDParams struct {
@@ -196,6 +202,8 @@ func (q *Queries) ListEventExdateDeletesByCalendarUID(ctx context.Context, arg L
 			&i.DeletedAt,
 			&i.Pruned,
 			&i.HiddenIds,
+			&i.OwnsExdate,
+			&i.DeleteSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -264,12 +272,14 @@ func (q *Queries) MoveEventExdateDeletesUIDToCalendar(ctx context.Context, arg M
 }
 
 const recordEventExdateDelete = `-- name: RecordEventExdateDelete :one
-INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_ids)
-VALUES (?, ?, ?, ?)
+INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_ids, owns_exdate, delete_seq)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     pruned = 0,
-    hidden_ids = excluded.hidden_ids
+    hidden_ids = excluded.hidden_ids,
+    owns_exdate = excluded.owns_exdate,
+    delete_seq = excluded.delete_seq
 RETURNING id
 `
 
@@ -278,21 +288,25 @@ type RecordEventExdateDeleteParams struct {
 	Uid          string
 	RecurrenceID string
 	HiddenIds    string
+	OwnsExdate   int64
+	DeleteSeq    int64
 }
 
 // Idempotent: a second delete of the same occurrence in one calendar keeps
 // one log row. Each calendar keeps its own row (issue #842). A delete of
 // the user turns a pruned marker of the occurrence into a delete log.
-// hidden_ids lists the override rows that the deletes hid. The caller
-// passes the union with the list of an earlier delete of the occurrence
-// (see recordExdateDeleteTx). It returns the ID of the log, which the undo
-// keeps (UndoMeta.ExdateLogID).
+// The caller passes the entries of every delete of the occurrence, the
+// EXDATE flag, and the seq of the last delete (see
+// softdelete.RecordOccurrenceDelete). It returns the ID of the log, which
+// the undo keeps (UndoMeta.ExdateLogID).
 func (q *Queries) RecordEventExdateDelete(ctx context.Context, arg RecordEventExdateDeleteParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, recordEventExdateDelete,
 		arg.CalendarID,
 		arg.Uid,
 		arg.RecurrenceID,
 		arg.HiddenIds,
+		arg.OwnsExdate,
+		arg.DeleteSeq,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -300,8 +314,8 @@ func (q *Queries) RecordEventExdateDelete(ctx context.Context, arg RecordEventEx
 }
 
 const recordEventExdatePrune = `-- name: RecordEventExdatePrune :exec
-INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, pruned)
-VALUES (?, ?, ?, 1)
+INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, pruned, owns_exdate)
+VALUES (?, ?, ?, 1, 0)
 ON CONFLICT(calendar_id, uid, recurrence_id) DO NOTHING
 `
 
@@ -318,18 +332,19 @@ func (q *Queries) RecordEventExdatePrune(ctx context.Context, arg RecordEventExd
 	return err
 }
 
-const updateEventExdateDeleteHiddenIds = `-- name: UpdateEventExdateDeleteHiddenIds :exec
-UPDATE event_exdate_deletes SET hidden_ids = ? WHERE id = ?
+const updateEventExdateDeleteState = `-- name: UpdateEventExdateDeleteState :exec
+UPDATE event_exdate_deletes SET hidden_ids = ?, owns_exdate = ? WHERE id = ?
 `
 
-type UpdateEventExdateDeleteHiddenIdsParams struct {
-	HiddenIds string
-	ID        int64
+type UpdateEventExdateDeleteStateParams struct {
+	HiddenIds  string
+	OwnsExdate int64
+	ID         int64
 }
 
-// The undo of one occurrence delete removes its rows from the list. The
-// rows of an earlier delete of the occurrence stay in the log.
-func (q *Queries) UpdateEventExdateDeleteHiddenIds(ctx context.Context, arg UpdateEventExdateDeleteHiddenIdsParams) error {
-	_, err := q.db.ExecContext(ctx, updateEventExdateDeleteHiddenIds, arg.HiddenIds, arg.ID)
+// A restore at the occurrence writes the entries that stay and the EXDATE
+// flag (see softdelete.SettleOccurrence). The time of the delete stays.
+func (q *Queries) UpdateEventExdateDeleteState(ctx context.Context, arg UpdateEventExdateDeleteStateParams) error {
+	_, err := q.db.ExecContext(ctx, updateEventExdateDeleteState, arg.HiddenIds, arg.OwnsExdate, arg.ID)
 	return err
 }
