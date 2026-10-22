@@ -61,8 +61,8 @@ func (q *Queries) ReconcileAfterRestore(ctx context.Context, calendarID int64, u
 	return ReconcileAfterRestore(ctx, q.db, calendarID, uid, ownerType)
 }
 
-// markCalendarDirty marks uid dirty in calendarID when the calendar is linked
-// to an account. A local calendar gets no sync row.
+// markCalendarDirty marks uid dirty in calendarID when the calendar has an
+// account. A local calendar gets no sync row.
 func markCalendarDirty(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
 	// Only act if the calendar is linked to an account.
 	var accountID *int64

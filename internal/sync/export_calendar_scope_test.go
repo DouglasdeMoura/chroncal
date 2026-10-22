@@ -144,9 +144,9 @@ func TestExportResource_LegacyOverrideCalendarHasNoResource(t *testing.T) {
 	}
 }
 
-// TestExportResource_LegacyRowsOfTrashedOwnerRefused: a calendar whose rows
-// of a UID are live legacy overrides, while the one master of the UID is
-// in the trash of another calendar, exports nothing. The series in the
+// TestExportResource_LegacyRowsOfTrashedOwnerRefused: a calendar holds live
+// legacy overrides of a UID, and the one master of the UID is in the trash of
+// another calendar. The calendar then exports nothing. The series in the
 // trash owns the rows, so an orphan export would put the occurrence on the
 // server twice after the restore. An edit of the row marks no calendar.
 func TestExportResource_LegacyRowsOfTrashedOwnerRefused(t *testing.T) {
@@ -216,11 +216,11 @@ func TestExportResource_LegacyRowsOfTrashedOwnerRefused(t *testing.T) {
 	}
 }
 
-// TestPush_OwnedElsewhereKeepsServerObject: a calendar that owns nothing
-// of a UID, because the series lives in another calendar, keeps its
-// server object. The push clears the dirty flag only. A copy that an old
-// whole-series upload made stays as a known leftover for sync doctor: a
-// delete could also hit a real single-instance object of that calendar.
+// TestPush_OwnedElsewhereKeepsServerObject: a calendar that owns nothing of a
+// UID, because the series lives in another calendar, keeps its server object.
+// The push clears the dirty flag only. A copy that an old whole-series upload
+// made stays as a known leftover for sync doctor. A delete could also hit a
+// real single-instance object of that calendar.
 func TestPush_OwnedElsewhereKeepsServerObject(t *testing.T) {
 	t.Parallel()
 	engine, _, srv, calA, calB := newICloudPairEngine(t)
@@ -267,10 +267,10 @@ func TestPush_OwnedElsewhereKeepsServerObject(t *testing.T) {
 	}
 }
 
-// TestExportResource_LiveRowBesideTrashedMaster: a calendar whose master
-// is in the trash, while another calendar holds a live master, exports a
-// live override beside the trashed master (a restore by ID) as an orphan
-// instance, so the row reaches the server.
+// TestExportResource_LiveRowBesideTrashedMaster_Refused: a calendar has its
+// master in the trash and a live override beside it, while another calendar
+// holds a live master. The export of the calendar refuses the UID. A body
+// with no master never reaches the server.
 func TestExportResource_LiveRowBesideTrashedMaster_Refused(t *testing.T) {
 	t.Parallel()
 	engine, _, _, calA, calB := newICloudPairEngine(t)
@@ -421,10 +421,10 @@ func TestPush_LegacyRowsBesideTwoLiveMastersKeepServerObject(t *testing.T) {
 	}
 }
 
-// TestPush_OwnedElsewhereInAnotherAccountKeepsServerObject: calendar B of
-// a second account holds a legacy row of a series that lives in A. The
-// server object of B is a real resource of that account, not a copy of an
-// old whole-series upload, so the push of B writes no tombstone.
+// TestPush_OwnedElsewhereInAnotherAccountKeepsServerObject: calendar B of a
+// second account holds a legacy row of a series that lives in A. The server
+// object of B is a real resource of that account, not a copy of an old
+// whole-series upload. The push of B then writes no tombstone.
 func TestPush_OwnedElsewhereInAnotherAccountKeepsServerObject(t *testing.T) {
 	t.Parallel()
 	engine, q, srv, calA, calB := newICloudPairEngine(t)
@@ -470,9 +470,9 @@ func TestPush_OwnedElsewhereInAnotherAccountKeepsServerObject(t *testing.T) {
 	}
 }
 
-// TestExportResource_OneVEVENTPerRecurrenceID: the export of a series
-// with its own override and a legacy override of the same occurrence
-// holds one VEVENT for that RECURRENCE-ID, the own row.
+// TestExportResource_OneVEVENTPerRecurrenceID: the export of a series with
+// its own override and a legacy override of the same occurrence holds one
+// VEVENT for that RECURRENCE-ID. That VEVENT is the own row.
 func TestExportResource_OneVEVENTPerRecurrenceID(t *testing.T) {
 	t.Parallel()
 	engine, _, _, calA, calB := newICloudPairEngine(t)

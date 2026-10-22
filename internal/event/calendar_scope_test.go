@@ -400,8 +400,8 @@ func TestUndoRestore_ScopedToCalendar(t *testing.T) {
 }
 
 // TestUndo_SameOccurrenceDeletedInBothCalendars is the delete-log rule of
-// migration 057: each calendar keeps its own log row, so the undo of the
-// delete in B does not look up the row of A and does nothing.
+// migration 057. Each calendar keeps its own log row. The undo of the delete
+// in B does not look up the row of A, and it does nothing.
 func TestUndo_SameOccurrenceDeletedInBothCalendars(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -461,8 +461,8 @@ func TestUndo_SameOccurrenceDeletedInBothCalendars(t *testing.T) {
 }
 
 // TestDeleteSeries_ReadOnlyCopyDoesNotBlock is the access rule: the guard
-// covers the calendars of the series only, so a read-only copy of the UID
-// in another calendar does not block the delete or the restore.
+// covers the calendars of the series only. A read-only copy of the UID in
+// another calendar does not block the delete or the restore.
 func TestDeleteSeries_ReadOnlyCopyDoesNotBlock(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -489,9 +489,9 @@ func TestDeleteSeries_ReadOnlyCopyDoesNotBlock(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, 1, "guarded-uid"); err != nil {
 		t.Fatalf("DeleteSeries(1): %v", err)
 	}
-	// The live series in the read-only calendar has nothing in the
-	// trash, so the restore by UID targets the trashed series of
-	// calendar 1 and guards that calendar only.
+	// The live series in the read-only calendar has nothing in the trash. The
+	// restore by UID targets the trashed series of calendar 1 and guards that
+	// calendar only.
 	if err := svc.RestoreByUID(ctx, "guarded-uid"); err != nil {
 		t.Fatalf("RestoreByUID with a live read-only copy: %v", err)
 	}
@@ -675,8 +675,8 @@ func TestUndo_LegacyOverrideWithTwoMasters(t *testing.T) {
 }
 
 // TestRestoreByID_MasterRestoresSeries: with the UID in the trash of two
-// calendars, the ID of a master names one series, and its restore brings
-// the overrides of that calendar back with it.
+// calendars, the ID of a master names one series. Its restore brings the
+// overrides of that calendar back with it.
 func TestRestoreByID_MasterRestoresSeries(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -898,8 +898,8 @@ func TestRestoreByUID_OwnDeletedOccurrenceIsNoCandidate(t *testing.T) {
 }
 
 // TestRestoreOverrideByID_ThenMaster: the restore of an override while its
-// master is in the trash clears the EXDATE on the trashed master, so the
-// restore of the master shows the occurrence.
+// master is in the trash clears the EXDATE on the trashed master. The restore
+// of the master then shows the occurrence.
 func TestRestoreOverrideByID_ThenMaster(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -948,8 +948,8 @@ func TestRestoreOverrideByID_ThenMaster(t *testing.T) {
 }
 
 // TestRestoreLegacyOverride_GuardsMasterCalendar: the restore of a legacy
-// override rewrites the EXDATE of its master, so a read-only master
-// calendar refuses the undo and the restore by ID.
+// override rewrites the EXDATE of its master. A read-only master calendar
+// then refuses the undo and the restore by ID.
 func TestRestoreLegacyOverride_GuardsMasterCalendar(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1047,10 +1047,10 @@ func TestUndo_OverrideDeletedWhileMasterInTrash(t *testing.T) {
 	}
 }
 
-// TestRestoreSeries_KeepsOwnDeletedOccurrence is the issue #287 rule on
-// the series restore: an occurrence that the user deleted on its own
-// before the series delete stays deleted, with its EXDATE and its log
-// row. The restore by master ID and the undo both follow it.
+// TestRestoreSeries_KeepsOwnDeletedOccurrence is the issue #287 rule on the
+// series restore. An occurrence that the user deleted on its own before the
+// series delete stays deleted. It keeps its EXDATE and its log row. The
+// restore by master ID and the undo both follow it.
 func TestRestoreSeries_KeepsOwnDeletedOccurrence(t *testing.T) {
 	for name, restore := range map[string]func(t *testing.T, svc *Service, master Event){
 		"by master ID": func(t *testing.T, svc *Service, master Event) {
@@ -1116,9 +1116,9 @@ func TestRestoreSeries_KeepsOwnDeletedOccurrence(t *testing.T) {
 	}
 }
 
-// TestRestoreByUID_FallsBackToTrashedSeries: with a live series that has
-// nothing in the trash, the restore by UID targets the one trashed master
-// of the UID in another calendar. Two trashed masters need the master ID.
+// TestRestoreByUID_FallsBackToTrashedSeries: a live series has nothing in the
+// trash. The restore by UID then targets the one trashed master of the UID in
+// another calendar. Two trashed masters need the master ID.
 func TestRestoreByUID_FallsBackToTrashedSeries(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1224,10 +1224,9 @@ func TestSeriesOwnerView_MatchesLegacyOwner(t *testing.T) {
 	}
 }
 
-// TestMoveSeries_StaleLogRowInTarget: a log row of the UID left in the
-// target calendar (a purge of the master keeps no log, but an older
-// version did) does not block the calendar move. The moved log row takes
-// its key.
+// TestMoveSeries_StaleLogRowInTarget: a log row of the UID in the target
+// calendar does not block the calendar move. A purge of the master keeps no
+// log, but an older version did. The moved log row takes its key.
 func TestMoveSeries_StaleLogRowInTarget(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1399,9 +1398,9 @@ func TestRestoreSeries_KeepsPrunedOverride(t *testing.T) {
 	}
 }
 
-// TestUndo_LegacyOccurrenceAfterSeriesDelete: the undo of an occurrence
-// delete whose override is a legacy row in another calendar finds that
-// row through the series, after the master went to the trash.
+// TestUndo_LegacyOccurrenceAfterSeriesDelete: an occurrence delete hid a
+// legacy row in another calendar, and then the master went to the trash. The
+// undo of the occurrence delete finds that row through the series.
 func TestUndo_LegacyOccurrenceAfterSeriesDelete(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1451,8 +1450,8 @@ func TestUndo_LegacyOccurrenceAfterSeriesDelete(t *testing.T) {
 }
 
 // TestUpdateInstance_SeriesOfTheRowCalendar: the occurrence edit takes the
-// series of the calendar of the row, so with two live masters the edit of
-// an occurrence of B acts on B. With no calendar, the UID is ambiguous.
+// series of the calendar of the row. With two live masters, the edit of an
+// occurrence of B acts on B. With no calendar, the UID is ambiguous.
 func TestUpdateInstance_SeriesOfTheRowCalendar(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1477,7 +1476,7 @@ func TestUpdateInstance_SeriesOfTheRowCalendar(t *testing.T) {
 }
 
 // TestRestoreSeries_LoggedRowAfterOwnerChange: the series delete logs the
-// rows it hid by ID, so a legacy override comes back with the series even
+// rows it hid by ID. A legacy override then comes back with the series, also
 // when another master took the ownership after the delete.
 func TestRestoreSeries_LoggedRowAfterOwnerChange(t *testing.T) {
 	svc := newTestService(t)
@@ -1521,10 +1520,10 @@ func TestRestoreSeries_LoggedRowAfterOwnerChange(t *testing.T) {
 	}
 }
 
-// TestUndo_MasterDeleteAfterTrashRestore is the issue #287 rule on the
-// undo of a master delete: delete one occurrence, delete the master with
-// undo, restore the master from the trash, then undo. The undo has
-// nothing to do, and the occurrence stays deleted.
+// TestUndo_MasterDeleteAfterTrashRestore is the issue #287 rule on the undo
+// of a master delete. The test deletes one occurrence, deletes the master
+// with undo, restores the master from the trash, and then undoes. The undo
+// has nothing to do, and the occurrence stays deleted.
 func TestUndo_MasterDeleteAfterTrashRestore(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1634,10 +1633,10 @@ func TestUndoSeries_AfterTrashRestore(t *testing.T) {
 	}
 }
 
-// TestDeleteSeries_TrashedCalendarBesideTwoLiveMasters: a calendar whose
-// rows of the UID are all in the trash holds no live series, so a series
-// delete there reports ErrSeriesInTrash, not an ambiguity, also when two
-// other calendars hold live masters.
+// TestDeleteSeries_TrashedCalendarBesideTwoLiveMasters: a calendar whose rows
+// of the UID are all in the trash holds no live series. A series delete there
+// reports ErrSeriesInTrash, not an ambiguity, also when two other calendars
+// hold live masters.
 func TestDeleteSeries_TrashedCalendarBesideTwoLiveMasters(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1874,8 +1873,8 @@ func TestSeriesMaster_LiveLegacyBesideTwoTrashedMasters(t *testing.T) {
 }
 
 // TestUndoOccurrence_RestoresTheHiddenRowOnly: the undo of an occurrence
-// delete un-hides the row that the delete hid, not a row of the same
-// occurrence that an earlier delete hid on its own.
+// delete un-hides the row that the delete hid. A row of the same occurrence
+// that an earlier delete hid on its own stays.
 func TestUndoOccurrence_RestoresTheHiddenRowOnly(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1915,10 +1914,10 @@ func TestUndoOccurrence_RestoresTheHiddenRowOnly(t *testing.T) {
 	}
 }
 
-// TestDeleteSeries_OrphanRowsBesideTrashedMaster: with the one master of
-// the UID in the trash of another calendar, a series delete from the
-// calendar of a live legacy override hides that calendar's own rows. A
-// second delete finds nothing.
+// TestDeleteSeries_OrphanRowsBesideTrashedMaster: the one master of the UID
+// is in the trash of another calendar. A series delete from the calendar of a
+// live legacy override hides the rows of that calendar. A second delete finds
+// nothing.
 func TestDeleteSeries_OrphanRowsBesideTrashedMaster(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -1960,9 +1959,9 @@ func TestDeleteSeries_OrphanRowsBesideTrashedMaster(t *testing.T) {
 	}
 }
 
-// TestRestoreTruncation_LoggedRowAfterOwnerChange: the truncation log
-// names the hidden rows by ID, so a legacy override comes back with the
-// truncation restore even when another master took its ownership.
+// TestRestoreTruncation_LoggedRowAfterOwnerChange: the truncation log names
+// the hidden rows by ID. A legacy override then comes back with the
+// truncation restore, also when another master took its ownership.
 func TestRestoreTruncation_LoggedRowAfterOwnerChange(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2112,8 +2111,8 @@ func TestUndo_PurgedMasterReportsNotDeleted(t *testing.T) {
 }
 
 // TestRestoreInstance_MasterInTrash: the restore of an occurrence delete
-// while the master is in the trash clears the EXDATE on the trashed
-// master, so the restore of the master shows the occurrence.
+// while the master is in the trash clears the EXDATE on the trashed master.
+// The restore of the master then shows the occurrence.
 func TestRestoreInstance_MasterInTrash(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2201,8 +2200,8 @@ func TestUndoSeries_OrphanRows(t *testing.T) {
 	if r, err := svc.Get(ctx, legacy.ID); err != nil || r.DeletedAt != nil {
 		t.Errorf("legacy row after the undo = %+v, %v; want it live", r, err)
 	}
-	// The undo reversed its own delete only: the master of calendar 1
-	// stays in the trash, and the log of the legacy calendar is consumed.
+	// The undo reversed its own delete only. The master of calendar 1 stays in
+	// the trash, and the undo consumed the log of the legacy calendar.
 	m, err := svc.q.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{CalendarID: 1, Uid: "orphan-uid"})
 	if err != nil || m.DeletedAt == nil {
 		t.Errorf("master of calendar 1 after the undo = trashed %v, %v; want it still in the trash", m.DeletedAt != nil, err)
@@ -2272,12 +2271,12 @@ func TestGetByUIDAndRecurrenceID_TwoLegacyRowsNameThem(t *testing.T) {
 	}
 }
 
-// TestUndoSeries_OrphanRowsBesideMasterHiddenByPull is the reviewer's
-// state: a pull hid the master of calendar 1 with no log, a legacy
-// override lives in L. The undo of the series delete of L restores the
-// legacy row from the log of L, leaves the master in the trash, and
-// consumes the log. A delete that names no calendar refuses: the legacy
-// row belongs to the series in the trash, so that series comes back first.
+// TestUndoSeries_OrphanRowsBesideMasterHiddenByPull is the reviewer's state:
+// a pull hid the master of calendar 1 with no log, a legacy override lives in
+// L. The undo of the series delete of L restores the legacy row from the log
+// of L. It leaves the master in the trash and consumes the log. A delete that
+// names no calendar refuses: the legacy row belongs to the series in the
+// trash, so that series comes back first.
 func TestUndoSeries_OrphanRowsBesideMasterHiddenByPull(t *testing.T) {
 	for name, calendar := range map[string]bool{"named calendar": true, "calendar 0": false} {
 		t.Run(name, func(t *testing.T) {
@@ -2340,10 +2339,10 @@ func TestUndoSeries_OrphanRowsBesideMasterHiddenByPull(t *testing.T) {
 	}
 }
 
-// TestRestoreByID_DropsRowFromLogs: a restore of one logged row by ID
-// drops it from the series-delete log and from the truncation log, so a
-// later independent delete of that row is not reversed by the restore
-// of the series or of the truncation.
+// TestRestoreByID_DropsRowFromLogs: a restore of one logged row by ID drops
+// it from the series-delete log and from the truncation log. The restore of
+// the series or of the truncation then does not reverse a later independent
+// delete of that row.
 func TestRestoreByID_DropsRowFromLogs(t *testing.T) {
 	t.Run("series", func(t *testing.T) {
 		svc := newTestService(t)
@@ -2414,8 +2413,8 @@ func TestRestoreByID_DropsRowFromLogs(t *testing.T) {
 	})
 }
 
-// TestUndo_PurgedMasterBesideTrashedCopy: the undo of a master delete
-// after a purge of the row has nothing to reverse, also when another
+// TestUndo_PurgedMasterBesideTrashedCopy: the undo of a master delete after a
+// purge of the row has nothing to reverse. That holds also when another
 // calendar holds a copy of the UID in the trash.
 func TestUndo_PurgedMasterBesideTrashedCopy(t *testing.T) {
 	svc := newTestService(t)
@@ -2453,9 +2452,9 @@ func mustListSeriesOverrides(t *testing.T, svc *Service, calendarID int64, uid s
 	return overrides
 }
 
-// TestOrphanDelete_MergesIntoSeriesLog: a delete of orphan rows beside
-// the trashed master of the calendar joins the log of the earlier series
-// delete, so the restore of the master brings every hidden row back.
+// TestOrphanDelete_MergesIntoSeriesLog: a delete of orphan rows beside the
+// trashed master of the calendar joins the log of the earlier series delete.
+// The restore of the master then brings every hidden row back.
 func TestOrphanDelete_MergesIntoSeriesLog(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2563,10 +2562,10 @@ func TestGetByUIDAndRecurrenceID_NoFallbackWithLiveMaster(t *testing.T) {
 	}
 }
 
-// TestMoveSeries_TargetWithTrashedLegacyRow: a series move into a
-// calendar that holds no master of the UID, only a trashed legacy row at
-// another occurrence, lets the logs of the moved series win over the
-// stale logs of the target.
+// TestMoveSeries_TargetWithTrashedLegacyRow: the target calendar holds no
+// master of the UID, only a trashed legacy row at another occurrence. A
+// series move into it lets the logs of the moved series win over the stale
+// logs of the target.
 func TestMoveSeries_TargetWithTrashedLegacyRow(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2613,10 +2612,10 @@ func TestMoveSeries_TargetWithTrashedLegacyRow(t *testing.T) {
 	}
 }
 
-// TestDeleteFromInstance_GuardsLegacyOverrideCalendar: a truncation hides
-// the legacy overrides of the series after the cutoff, so the calendar
-// of such a row takes the write, and a read-only calendar refuses the
-// truncation before any change.
+// TestDeleteFromInstance_GuardsLegacyOverrideCalendar: a truncation hides the
+// legacy overrides of the series after the cutoff, so the calendar of such a
+// row takes the write. A read-only calendar refuses the truncation before any
+// change.
 func TestDeleteFromInstance_GuardsLegacyOverrideCalendar(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2649,9 +2648,9 @@ func TestDeleteFromInstance_GuardsLegacyOverrideCalendar(t *testing.T) {
 	}
 }
 
-// TestUndoOrphanDelete_Exact: the undo of a delete of orphan rows
-// un-hides only the rows that delete hid, and leaves the rest of the
-// series-delete log for the restore of the master.
+// TestUndoOrphanDelete_Exact: the undo of a delete of orphan rows un-hides
+// only the rows that delete hid. The rest of the series-delete log stays for
+// the restore of the master.
 func TestUndoOrphanDelete_Exact(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2786,10 +2785,10 @@ func TestRestoreByUID_LeavesTruncatedRowsToTheirLog(t *testing.T) {
 }
 
 // TestDeleteSeries_FreshLogAfterRevivalByUpsert covers issue #287 on the
-// series log. A pull or a re-import revives a trashed series by upsert,
-// and the upsert keeps the old log. The next series delete with a live
-// master writes a fresh log, so an override that the user deleted on its
-// own after the revival stays deleted after the next restore.
+// series log. A pull or a re-import revives a trashed series by upsert, and
+// the upsert keeps the old log. The next series delete with a live master
+// writes a fresh log. An override that the user deleted on its own after the
+// revival then stays deleted after the next restore.
 func TestDeleteSeries_FreshLogAfterRevivalByUpsert(t *testing.T) {
 	for name, revive := range map[string]func(t *testing.T, svc *Service, master Event, o1, o2 storage.Event){
 		"pull upsert": func(t *testing.T, svc *Service, master Event, o1, o2 storage.Event) {
@@ -2921,11 +2920,11 @@ func TestRestoreByUID_CandidatesAreSeriesDeletes(t *testing.T) {
 	}
 }
 
-// TestRestoreByID_StaleLogAfterRevival is the five-step sequence of the
-// stale series log: a series delete logs its rows, a pull revives the
-// master (the trigger drops the log), the user deletes an override on its
-// own, a pull hides the series with no log, and the restore by ID of the
-// master brings the master back alone.
+// TestRestoreByID_StaleLogAfterRevival is the five-step sequence of the stale
+// series log. A series delete logs its rows. A pull revives the master, and
+// the trigger drops the log. The user deletes an override on its own. A pull
+// hides the series with no log. The restore by ID of the master then brings
+// the master back alone.
 func TestRestoreByID_StaleLogAfterRevival(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -3085,8 +3084,8 @@ func TestSeriesMaster_OwnTrashedMasterBesideTwoLiveMasters(t *testing.T) {
 }
 
 // TestUndoKey_LegacyOverrideSameForRowAndOccurrenceDelete: the delete of a
-// legacy override by its row and the delete of its occurrence record the
-// same undo calendar, the calendar of the master.
+// legacy override by its row and the delete of its occurrence record the same
+// undo calendar. That calendar is the calendar of the master.
 func TestUndoKey_LegacyOverrideSameForRowAndOccurrenceDelete(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -3259,8 +3258,8 @@ func TestUndoOverrideOfTrashedMaster_KeepsTombstone(t *testing.T) {
 }
 
 // TestMoveLegacyBack_DropsSourceSeriesLog: a legacy row that goes home
-// carries no series delete, so the series-delete log of its calendar does
-// not move into the calendar of the master.
+// carries no series delete. The series-delete log of its calendar does not
+// move into the calendar of the master.
 func TestMoveLegacyBack_DropsSourceSeriesLog(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -3306,9 +3305,9 @@ func TestRestoreUndo_SingleWithoutRecord(t *testing.T) {
 	}
 }
 
-// TestRestoreOverrideByID_TrashedOwnMasterKeepsTombstone: a restore by ID
-// of an override beside its own master in the trash keeps the series
-// tombstone and gives the UID no dirty mark.
+// TestRestoreOverrideByID_TrashedOwnMasterKeepsTombstone: a restore by ID of
+// an override beside its own master in the trash keeps the series tombstone.
+// It gives the UID no dirty mark.
 func TestRestoreOverrideByID_TrashedOwnMasterKeepsTombstone(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -3494,7 +3493,7 @@ func TestInsertMaster_DropsOrphanSeriesLog(t *testing.T) {
 }
 
 // TestRestoreByUID_LogBeatsTrashedCopy: a calendar with a series-delete log
-// wins over a calendar with a master in the trash and no log, for example
+// wins over a calendar with a master in the trash and no log. An example is
 // an old copy whose log the purge dropped.
 func TestRestoreByUID_LogBeatsTrashedCopy(t *testing.T) {
 	svc := newTestService(t)
@@ -3760,9 +3759,9 @@ func TestReviveOverride_LeavesTheTruncationLog(t *testing.T) {
 	}
 }
 
-// TestDeleteOverrideBesideTrashedMaster_NoDirtyMark: a delete of an
-// override beside its own master in the trash marks no calendar dirty, as
-// the restore by ID of that row does.
+// TestDeleteOverrideBesideTrashedMaster_NoDirtyMark: a delete of an override
+// beside its own master in the trash marks no calendar dirty. The restore by
+// ID of that row does the same.
 func TestDeleteOverrideBesideTrashedMaster_NoDirtyMark(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -3896,10 +3895,10 @@ func TestSeriesView_BesideMaster(t *testing.T) {
 	}
 }
 
-// TestTruncation_SecondOverLogWithoutRowIDs: a second truncation at the
-// cutoff of a log from before migration 057, with no hidden_ids, resolves
-// the recurrence IDs of that log to its trashed rows. The merged log then
-// names the rows of both truncations.
+// TestTruncation_SecondOverLogWithoutRowIDs: a log from before migration 057
+// has no hidden_ids. A second truncation at its cutoff resolves the
+// recurrence IDs of that log to its trashed rows. The merged log then names
+// the rows of both truncations.
 func TestTruncation_SecondOverLogWithoutRowIDs(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -3998,9 +3997,9 @@ func TestUndoLegacyOverrideDelete_ClearsMasterEXDATE(t *testing.T) {
 
 // TestRestoreByUID_OrphanFallbackTakesNewestDelete: with no master and no
 // series-delete log, the restore by UID takes the one calendar with rows in
-// the trash, and brings back its rows of the newest delete. An older delete
-// and a row that an occurrence log names stay in the trash. Two calendars
-// give ErrAmbiguousUID.
+// the trash. It brings back the rows of the newest delete there. An older
+// delete and a row that an occurrence log names stay in the trash. Two
+// calendars give ErrAmbiguousUID.
 func TestRestoreByUID_OrphanFallbackTakesNewestDelete(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -4258,8 +4257,8 @@ func TestRestoreTruncation_MasterInTrash(t *testing.T) {
 
 // TestOrphanLog_RestoreWithMasterElsewhereDropsIt: the orphan log of a row
 // lives in the calendar of the row. When a master of the UID arrives in
-// another calendar, the restore of the row still drops that log, and the
-// trash of the row's calendar lists nothing.
+// another calendar, the restore of the row still drops that log. The trash of
+// the calendar of the row then lists nothing.
 func TestOrphanLog_RestoreWithMasterElsewhereDropsIt(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -4327,9 +4326,9 @@ func TestOrphanDelete_NoMasterWritesFreshLog(t *testing.T) {
 	}
 }
 
-// TestEmptiedSeriesLog_StaysBesideTrashedMaster: a restore by ID of the
-// last row of a series-delete log keeps the log, with an empty list, while
-// the master of its calendar is in the trash. RestoreByUID then still
+// TestEmptiedSeriesLog_StaysBesideTrashedMaster: a restore by ID of the last
+// row of a series-delete log keeps the log with an empty list. That holds
+// while the master of its calendar is in the trash. RestoreByUID then still
 // ranks that calendar above a trashed copy with no log.
 func TestEmptiedSeriesLog_StaysBesideTrashedMaster(t *testing.T) {
 	svc := newTestService(t)
@@ -4513,8 +4512,8 @@ func TestPurgeMaster_RefusesLiveOverridesThenTakesItsRows(t *testing.T) {
 }
 
 // TestPurgeMaster_TakesLegacyRowsOfItsLog: the purge of a master takes the
-// trashed legacy overrides that its series delete hid in another calendar,
-// also when a live master elsewhere owns them in the view now.
+// trashed legacy overrides that its series delete hid in another calendar.
+// That holds also when a live master elsewhere owns them in the view now.
 func TestPurgeMaster_TakesLegacyRowsOfItsLog(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -5007,8 +5006,8 @@ func TestOrphanDeletes_EachKeepsItsLog(t *testing.T) {
 	}
 }
 
-// TestPurgeDeleted_KeptMasterKeepsItsLoggedRows: a kept master keeps the
-// rows that its series-delete log names, also a legacy override that a
+// TestPurgeDeleted_KeptMasterKeepsItsLoggedRows: a kept master keeps the rows
+// that its series-delete log names. This includes a legacy override that a
 // live master in another calendar owns in the view now.
 func TestPurgeDeleted_KeptMasterKeepsItsLoggedRows(t *testing.T) {
 	svc := newTestService(t)

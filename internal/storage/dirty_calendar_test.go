@@ -8,13 +8,13 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
-// TestMarkResourceDirtyKeepsTrashedSeriesInItsCalendar holds one UID in A
-// and B. A holds a master and an override, both in the trash, as a delete
-// of the series leaves them. B holds a live master. A mark of A goes to no
-// calendar: a master in the trash still owns its calendar, so the override
-// of A is not a legacy override (see uidmove), and the rows of A stay local
-// until the master comes back. A legacy override in C, a calendar with no
-// master row, sends its mark to B.
+// TestMarkResourceDirtyKeepsTrashedSeriesInItsCalendar holds one UID in A and
+// B. A holds a master and an override, both in the trash, as a delete of the
+// series leaves them. B holds a live master. A mark of A goes to no calendar.
+// A master in the trash still owns its calendar, so the override of A is not
+// a legacy override (see uidmove). The rows of A stay local until the master
+// comes back. A legacy override in C, a calendar with no master row, sends
+// its mark to B.
 func TestMarkResourceDirtyKeepsTrashedSeriesInItsCalendar(t *testing.T) {
 	t.Parallel()
 	db, q := testutil.NewTestDB(t)

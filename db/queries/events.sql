@@ -423,8 +423,8 @@ WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
 ORDER BY s.id;
 
 -- name: ListTrashedRowsOwnedByMasters :many
--- The override rows in the trash that the series of each master owns, in
--- its calendar and in other calendars, with the ID of the master.
+-- The override rows in the trash that the series of each master owns, in its
+-- calendar and in other calendars. Each row comes with the ID of its master.
 SELECT s.id, m.id AS master_id FROM event_series_rows AS s
 JOIN events AS m ON m.uid = s.uid AND m.calendar_id = s.owner_calendar_id AND m.recurrence_id = ''
 WHERE m.id IN (sqlc.slice(master_ids)) AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL;

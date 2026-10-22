@@ -250,11 +250,11 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 		}
 	}
 
-	// Prune overrides the server dropped (e.g. a deleted instance that became
-	// an EXDATE on the master); see pruneStaleOverrides for the safety gates.
-	// A pull writes the rows of the pulled calendar only. A legacy override
-	// in another calendar keeps its row: the pull has no view of the sync
-	// state and the access policy of that calendar (see AGENTS.md).
+	// Prune overrides the server dropped (e.g. a deleted instance that became an
+	// EXDATE on the master); see pruneStaleOverrides for the safety gates. A
+	// pull writes the rows of the pulled calendar only. A legacy override in
+	// another calendar keeps its row. The pull has no view of the sync state and
+	// the access policy of that calendar (see AGENTS.md).
 	if err := pruneStaleOverrides(ctx, e, calendarID, eventKeep, dirtyBefore, revs,
 		func(ctx context.Context, uid string) ([]storage.Event, error) {
 			return e.q.ListLiveOverridesInCalendarByUID(ctx, storage.ListLiveOverridesInCalendarByUIDParams{

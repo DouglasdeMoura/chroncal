@@ -331,11 +331,11 @@ type OverrideTie struct {
 	ID           int64
 }
 
-// TieBefore reports whether a comes before b in the order of the tie rule:
-// the recurrence ID, then the row beside the master, then the lowest ID. The
-// first row of an occurrence wins. The view column beside_master of
-// migration 057 is the SQL form, and the series override queries order by
-// it. The expansion sorts in Go with this function.
+// TieBefore reports whether a comes before b in the order of the tie rule.
+// The order is the recurrence ID, then the row beside the master, then the
+// lowest ID. The first row of an occurrence wins. The view column
+// beside_master of migration 057 is the SQL form, and the series override
+// queries order by it. The expansion sorts in Go with this function.
 func TieBefore(a, b OverrideTie) bool {
 	if a.RecurrenceID != b.RecurrenceID {
 		return a.RecurrenceID < b.RecurrenceID

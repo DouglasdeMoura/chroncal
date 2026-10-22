@@ -36,8 +36,8 @@ func findSeriesMasterTx(ctx context.Context, qtx *storage.Queries, calendarID in
 // master of its calendar. With calendarID 0, or for a legacy override, the
 // owner rule (uidmove.LegacyOwner) applies in full. One live master is the
 // choice. With no live master, one master in the trash is the choice. A copy
-// of the UID in the trash of another calendar, for example an old copy that
-// the purge did not drop yet, then never blocks a restore.
+// of the UID in the trash of another calendar then never blocks a restore. An
+// example is an old copy that the purge did not drop yet.
 func findSeriesMasterIncludingDeletedTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (storage.Event, error) {
 	return findSeriesMaster(ctx, qtx, calendarID, uid, true)
 }
@@ -249,8 +249,9 @@ func (s *Service) IsSeriesRowOf(ctx context.Context, calendarID, id int64) (bool
 }
 
 // ErrNotExportedHere reports a UID whose rows in a calendar belong to a
-// series that the export of the calendar does not carry: a live series of
-// another calendar, a series with its master in the trash, or no series.
+// series that the export of the calendar does not carry. That is a live
+// series of another calendar, a series with its master in the trash, or no
+// series.
 var ErrNotExportedHere = errors.New("event: the calendar exports no series of the UID")
 
 // ExportMaster returns the live master of uid that the export of
@@ -327,12 +328,12 @@ func (s *Service) ListLiveOverridesInCalendar(ctx context.Context, calendarID in
 	return events, nil
 }
 
-// ListSeriesOverrides returns the live override rows of the series of uid
-// in calendarID. These are the rows of that calendar and the legacy
-// overrides that the series owns (see storage.LegacyOverride). The list
-// holds one row per occurrence: the query gives the rows in the order of
-// the tie rule, and the first row of each recurrence ID stays. The export
-// then never holds two VEVENTs with one RECURRENCE-ID.
+// ListSeriesOverrides returns the live override rows of the series of uid in
+// calendarID. These are the rows of that calendar and the legacy overrides
+// that the series owns (see storage.LegacyOverride). The list holds one row
+// per occurrence. The query gives the rows in the order of the tie rule, and
+// the first row of each recurrence ID stays. The export then never holds two
+// VEVENTs with one RECURRENCE-ID.
 func (s *Service) ListSeriesOverrides(ctx context.Context, calendarID int64, uid string) ([]Event, error) {
 	rows, err := s.q.ListSeriesOverridesInCalendar(ctx, storage.ListSeriesOverridesInCalendarParams{
 		CalendarID: calendarID, Uid: uid,

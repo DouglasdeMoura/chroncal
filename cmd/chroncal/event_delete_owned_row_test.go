@@ -16,8 +16,8 @@ import (
 )
 
 // TestCheckRowInCalendar_AcceptsEachOwnedLegacyRow: --calendar on the
-// calendar of the master accepts each legacy override that the series
-// owns, also the row that loses the tie rule at its occurrence. A calendar
+// calendar of the master accepts each legacy override that the series owns.
+// This includes the row that loses the tie rule at its occurrence. A calendar
 // that owns no series of the row refuses it.
 func TestCheckRowInCalendar_AcceptsEachOwnedLegacyRow(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
@@ -106,9 +106,9 @@ func TestEventDeleteHooks_PushTheMasterCalendar(t *testing.T) {
 	}
 }
 
-// TestEventDeleteSeries_NumericLegacyIDTakesTheCalendar: a series delete
-// with --calendar and the ID of a legacy override targets the series of the
-// --calendar calendar, not the calendar of the row.
+// TestEventDeleteSeries_NumericLegacyIDTakesTheCalendar: a series delete with
+// --calendar and the ID of a legacy override targets the series of the
+// --calendar calendar. It does not target the calendar of the row.
 func TestEventDeleteSeries_NumericLegacyIDTakesTheCalendar(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -286,8 +286,8 @@ func TestEventDeleteSeries_OrphanUIDWithoutCalendar(t *testing.T) {
 }
 
 // TestAmbiguousUIDHint_PerCommand: the hint for a UID in two calendars names
-// --calendar only where the command uses it to choose the series: event
-// delete, and event update with --recurrence-id.
+// --calendar only where the command uses it to choose the series. Those
+// commands are event delete, and event update with --recurrence-id.
 func TestAmbiguousUIDHint_PerCommand(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")

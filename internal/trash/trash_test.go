@@ -400,8 +400,8 @@ func keptSeriesFixture(t *testing.T, db *sql.DB, events *event.Service) (int64, 
 }
 
 // TestPurgeOld_KeepsTheRowsAndLogsOfAKeptMaster: a master that the purge
-// keeps keeps its whole series in the same run: its old trashed override,
-// its series log, and its occurrence log.
+// keeps keeps its whole series in the same run. That series holds its old
+// trashed override, its series log, and its occurrence log.
 func TestPurgeOld_KeepsTheRowsAndLogsOfAKeptMaster(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	events := event.NewService(db, q)
