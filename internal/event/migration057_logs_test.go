@@ -49,7 +49,8 @@ func migratedLegacyLogs(t *testing.T) legacyLogFixture {
 		{`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
 		  VALUES (2, 'legacy', 1, 'Late', ?, ?, ?, '2026-05-01T00:00:00Z')`,
 			[]any{f.withRow.Add(time.Hour).Format(time.RFC3339), f.withRow.Add(2 * time.Hour).Format(time.RFC3339), x}},
-		{`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id) VALUES (1, 'legacy', ?)`, []any{x}},
+		// The old delete wrote the row and the log at the same time.
+		{`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, deleted_at) VALUES (1, 'legacy', ?, '2026-05-01T00:00:00Z')`, []any{x}},
 		{`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id) VALUES (1, 'legacy', ?)`, []any{y}},
 	} {
 		if _, err := conn.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
@@ -221,4 +222,35 @@ func TestMigration057_BackfillTakesLegacyRowsAndSkipsLaterDeletes(t *testing.T) 
 		t.Fatalf("RestoreByID(master B): %v", err)
 	}
 	wantTrashed(t, svc, false, 4)
+}
+
+// TestMigration057_BackfillSkipsRowsOfOtherDeletes: the backfill of an old
+// log skips a row that went to the trash long before the log: another delete
+// hid it. It also skips a row that a series delete hid at the time of the
+// log, with the master.
+func TestMigration057_BackfillSkipsRowsOfOtherDeletes(t *testing.T) {
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	x := start.Add(24 * time.Hour)
+	xs := x.Format(time.RFC3339)
+	const before, logTime = "2026-04-01T10:00:00Z", "2026-05-02T10:00:00Z"
+	svc := migratedAt056(t, func(exec func(string, ...any)) {
+		// Series A: a live master. Its row went in an earlier delete.
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_rule, exdates)
+		  VALUES (1, 'early', 1, 'A', ?, ?, 'FREQ=DAILY;COUNT=3', ?)`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339), xs)
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
+		  VALUES (2, 'early', 1, 'Late', ?, ?, ?, ?)`, x.Add(time.Hour).Format(time.RFC3339), x.Add(2*time.Hour).Format(time.RFC3339), xs, before)
+		exec(`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, deleted_at) VALUES (1, 'early', ?, ?)`, xs, logTime)
+		// Series B: a series delete hid the master and its row at the time
+		// of the log.
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_rule, exdates, deleted_at)
+		  VALUES (3, 'same-time', 1, 'B', ?, ?, 'FREQ=DAILY;COUNT=3', ?, ?)`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339), xs, logTime)
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
+		  VALUES (4, 'same-time', 1, 'Late', ?, ?, ?, ?)`, x.Add(time.Hour).Format(time.RFC3339), x.Add(2*time.Hour).Format(time.RFC3339), xs, logTime)
+		exec(`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, deleted_at) VALUES (1, 'same-time', ?, ?)`, xs, logTime)
+	})
+	for _, uid := range []string{"early", "same-time"} {
+		if ids, found := exdateLogRows(t, svc, uid, x); !found || len(ids) != 0 {
+			t.Errorf("log rows of %s = %v, %v; want the entry with no row", uid, ids, found)
+		}
+	}
 }

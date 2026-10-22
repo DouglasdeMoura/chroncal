@@ -334,10 +334,7 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 	if err != nil {
 		return err
 	}
-	var hidden []int64
-	for _, e := range olog.Entries {
-		hidden = append(hidden, e.Rows...)
-	}
+	hidden := olog.AllRows()
 	// A row that a purge or an earlier restore took is no error: the
 	// EXDATE still goes.
 	if _, _, err := restoreHiddenRowsTx(ctx, qtx, log.CalendarID, hidden); err != nil {
@@ -532,9 +529,11 @@ func (s *Service) purgeInstanceByLogID(ctx context.Context, logID int64) error {
 	if err != nil {
 		return err
 	}
-	var rows []int64
-	for _, e := range parsed.Entries {
-		rows = append(rows, e.Rows...)
+	rows := parsed.AllRows()
+	// The purge writes the calendar of each row: a legacy override lives in
+	// another calendar than its master.
+	if err := ensureRowsWritableTx(ctx, qtx, log.CalendarID, rows); err != nil {
+		return err
 	}
 	// The log goes first, so the settle of the purge finds no log.
 	if err := qtx.DeleteEventExdateDelete(ctx, logID); err != nil {

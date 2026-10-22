@@ -388,11 +388,116 @@ func loggedRowIDsTx(ctx context.Context, qtx *storage.Queries, calendarID int64,
 		if err != nil {
 			return loggedRows{}, err
 		}
-		for _, e := range log.Entries {
-			for _, id := range e.Rows {
-				out.ids[id] = true
-			}
+		for _, id := range log.AllRows() {
+			out.ids[id] = true
 		}
 	}
 	return out, nil
+}
+
+// deleteIdentity names one delete for its undo. The zero value names a
+// delete that wrote no log: a delete by ID beside a trashed master.
+type deleteIdentity struct {
+	// exdateLogID and seq name the entry of an occurrence log or an orphan
+	// log.
+	exdateLogID, seq int64
+	// seriesLogID names a series-delete log.
+	seriesLogID int64
+}
+
+// identityRefusalTx sorts the rows of ids, the rows that the delete of id
+// hid, for its undo. It reads the delete logs of uid once. For each row:
+//   - No row: a purge took it.
+//   - A live row: a restore came first.
+//   - A row in the trash that id names: the undo brings it back.
+//   - A row in the trash that a newer entry or log names: a newer delete
+//     owns it. The undo refuses with ErrDeletedAgain, so it never brings
+//     back a part of the rows.
+//   - A row in the trash that no log names: a trigger dropped the log, for
+//     example the insert or the revive of a master. The delete of the user
+//     is still the last action on the row, so the undo brings it back.
+//
+// It returns the rows to bring back. With none, it gives ErrAlreadyRestored
+// when a row is live, else ErrNotDeleted.
+func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, ids []int64, id deleteIdentity) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	own := make(map[int64]bool)
+	other := make(map[int64]bool)
+	mark := func(rows []int64, owned bool) {
+		for _, r := range rows {
+			if owned {
+				own[r] = true
+			} else {
+				other[r] = true
+			}
+		}
+	}
+	occurrences, err := qtx.ListEventExdateDeletesByUID(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("list exdate logs: %w", err)
+	}
+	for _, l := range occurrences {
+		log, err := parseOccurrenceLog(l)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range log.Entries {
+			mark(e.Rows, id.exdateLogID != 0 && l.ID == id.exdateLogID && e.Seq == id.seq)
+		}
+	}
+	series, err := qtx.ListEventSeriesDeletesByUID(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("list series delete logs: %w", err)
+	}
+	for _, l := range series {
+		rows, err := parseRowIDs(l.HiddenIds)
+		if err != nil {
+			return nil, err
+		}
+		mark(rows, id.seriesLogID != 0 && l.ID == id.seriesLogID)
+	}
+	truncs, err := qtx.ListEventTruncateDeletesByUID(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("list truncation logs: %w", err)
+	}
+	for _, l := range truncs {
+		rows, err := parseRowIDs(storage.NullableToString(l.HiddenIds))
+		if err != nil {
+			return nil, err
+		}
+		mark(rows, false)
+	}
+	states, err := rowStatesTx(ctx, qtx, ids)
+	if err != nil {
+		return nil, err
+	}
+	present := make(map[int64]storage.ListEventRowStatesByIDsRow, len(states))
+	for _, st := range states {
+		present[st.ID] = st
+	}
+	var restore []int64
+	live := false
+	for _, rowID := range ids {
+		st, ok := present[rowID]
+		switch {
+		case !ok:
+		case st.DeletedAt == nil:
+			live = true
+		case own[rowID]:
+			restore = append(restore, rowID)
+		case other[rowID]:
+			return nil, ErrDeletedAgain
+		default:
+			restore = append(restore, rowID)
+		}
+	}
+	if len(restore) == 0 {
+		if live {
+			return nil, ErrAlreadyRestored
+		}
+		return nil, ErrNotDeleted
+	}
+	return restore, nil
 }

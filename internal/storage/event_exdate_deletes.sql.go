@@ -235,6 +235,45 @@ func (q *Queries) ListEventExdateDeletesByCalendarUID(ctx context.Context, arg L
 	return items, nil
 }
 
+const listEventExdateDeletesByUID = `-- name: ListEventExdateDeletesByUID :many
+SELECT id, calendar_id, uid, recurrence_id, deleted_at, pruned, hidden_ids, owns_exdate, delete_seq FROM event_exdate_deletes WHERE uid = ? AND pruned = 0 ORDER BY id
+`
+
+// The occurrence logs of one UID in every calendar, with no pruned marker.
+// The identity check of an undo reads them once.
+func (q *Queries) ListEventExdateDeletesByUID(ctx context.Context, uid string) ([]EventExdateDelete, error) {
+	rows, err := q.db.QueryContext(ctx, listEventExdateDeletesByUID, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventExdateDelete
+	for rows.Next() {
+		var i EventExdateDelete
+		if err := rows.Scan(
+			&i.ID,
+			&i.CalendarID,
+			&i.Uid,
+			&i.RecurrenceID,
+			&i.DeletedAt,
+			&i.Pruned,
+			&i.HiddenIds,
+			&i.OwnsExdate,
+			&i.DeleteSeq,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOldEventExdateDeletes = `-- name: ListOldEventExdateDeletes :many
 SELECT id, calendar_id, uid FROM event_exdate_deletes WHERE deleted_at < ?
 `

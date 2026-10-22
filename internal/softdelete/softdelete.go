@@ -136,6 +136,16 @@ func (l OccurrenceLog) HasRows() bool {
 	return false
 }
 
+// AllRows returns the rows that the entries of the log name, in the order
+// of the entries.
+func (l OccurrenceLog) AllRows() []int64 {
+	var rows []int64
+	for _, e := range l.Entries {
+		rows = append(rows, e.Rows...)
+	}
+	return rows
+}
+
 // Entry returns the entry of the delete seq. found is false with no entry.
 func (l OccurrenceLog) Entry(seq int64) (entry OccurrenceEntry, found bool) {
 	for _, e := range l.Entries {
