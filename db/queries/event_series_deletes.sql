@@ -60,3 +60,11 @@ UPDATE event_series_deletes SET hidden_ids = ? WHERE id = ?;
 -- The rows that a delete of orphan rows merged into the log stay. The log
 -- keeps them as an orphan log, with no master and no token of a master.
 UPDATE event_series_deletes SET hidden_ids = ?, had_master = 0, delete_token = 0 WHERE id = ?;
+
+-- name: UpdateEventSeriesDeleteAsAgedOrphanLog :exec
+-- The age purge of a master keeps the young rows that a delete of orphan
+-- rows merged into its log. The log row stays, so its ID (and the undo that
+-- names it) stays. It becomes an orphan log with only those rows. Its time
+-- is the earliest time of those rows, so a later age purge keeps it as long
+-- as the rows.
+UPDATE event_series_deletes SET hidden_ids = ?, deleted_at = ?, had_master = 0, delete_token = 0 WHERE id = ?;

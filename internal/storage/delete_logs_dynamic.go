@@ -38,18 +38,7 @@ ORDER BY d.id`
 // ListEventExdateDeletesNamingRows returns the occurrence logs of uid, with no
 // pruned marker, that name a row of ids.
 func (q *Queries) ListEventExdateDeletesNamingRows(ctx context.Context, uid string, ids []int64) ([]EventExdateDelete, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	arg, err := rowIDsJSON(ids)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := q.db.QueryContext(ctx, listEventExdateDeletesNamingRows, uid, arg)
-	if err != nil {
-		return nil, err
-	}
-	return scanLogRows(rows, func(r *sql.Rows) (EventExdateDelete, error) {
+	return queryLogsNamingRows(ctx, q, listEventExdateDeletesNamingRows, uid, ids, func(r *sql.Rows) (EventExdateDelete, error) {
 		var i EventExdateDelete
 		err := r.Scan(&i.ID, &i.CalendarID, &i.Uid, &i.RecurrenceID, &i.DeletedAt, &i.Pruned, &i.HiddenIds, &i.OwnsExdate, &i.DeleteSeq)
 		return i, err
@@ -66,18 +55,7 @@ ORDER BY d.id`
 // ListEventSeriesDeletesNamingRows returns the series-delete logs of uid that
 // name a row of ids.
 func (q *Queries) ListEventSeriesDeletesNamingRows(ctx context.Context, uid string, ids []int64) ([]EventSeriesDelete, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	arg, err := rowIDsJSON(ids)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := q.db.QueryContext(ctx, listEventSeriesDeletesNamingRows, uid, arg)
-	if err != nil {
-		return nil, err
-	}
-	return scanLogRows(rows, func(r *sql.Rows) (EventSeriesDelete, error) {
+	return queryLogsNamingRows(ctx, q, listEventSeriesDeletesNamingRows, uid, ids, func(r *sql.Rows) (EventSeriesDelete, error) {
 		var i EventSeriesDelete
 		err := r.Scan(&i.ID, &i.CalendarID, &i.Uid, &i.HiddenIds, &i.DeletedAt, &i.HadMaster, &i.DeleteToken)
 		return i, err
@@ -95,6 +73,16 @@ ORDER BY d.id`
 // name a row of ids. A log from before the row IDs (hidden_ids NULL) names
 // no row.
 func (q *Queries) ListEventTruncateDeletesNamingRows(ctx context.Context, uid string, ids []int64) ([]EventTruncateDelete, error) {
+	return queryLogsNamingRows(ctx, q, listEventTruncateDeletesNamingRows, uid, ids, func(r *sql.Rows) (EventTruncateDelete, error) {
+		var i EventTruncateDelete
+		err := r.Scan(&i.ID, &i.CalendarID, &i.Uid, &i.CutoffTime, &i.PreviousRrule, &i.DeletedAt, &i.HiddenOverrides, &i.RemovedRdates, &i.HiddenIds, &i.DeleteToken)
+		return i, err
+	})
+}
+
+// queryLogsNamingRows runs query with uid and the JSON array of ids, and
+// reads each row with scan. No ID gives no row and no query.
+func queryLogsNamingRows[T any](ctx context.Context, q *Queries, query, uid string, ids []int64, scan func(*sql.Rows) (T, error)) ([]T, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -102,19 +90,10 @@ func (q *Queries) ListEventTruncateDeletesNamingRows(ctx context.Context, uid st
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.db.QueryContext(ctx, listEventTruncateDeletesNamingRows, uid, arg)
+	rows, err := q.db.QueryContext(ctx, query, uid, arg)
 	if err != nil {
 		return nil, err
 	}
-	return scanLogRows(rows, func(r *sql.Rows) (EventTruncateDelete, error) {
-		var i EventTruncateDelete
-		err := r.Scan(&i.ID, &i.CalendarID, &i.Uid, &i.CutoffTime, &i.PreviousRrule, &i.DeletedAt, &i.HiddenOverrides, &i.RemovedRdates, &i.HiddenIds, &i.DeleteToken)
-		return i, err
-	})
-}
-
-// scanLogRows reads every row of rows with scan, and closes rows.
-func scanLogRows[T any](rows *sql.Rows, scan func(*sql.Rows) (T, error)) ([]T, error) {
 	defer rows.Close()
 	var items []T
 	for rows.Next() {

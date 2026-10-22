@@ -82,21 +82,19 @@ func (s *UndoStack) Remove(meta event.UndoMeta) bool {
 }
 
 // sameUndoTarget reports whether two UndoMeta values describe the same
-// soft-delete operation. Kind, UID, RecurrenceID, and CutoffTime uniquely
-// identify a reversible delete. A series delete and a single-instance
-// delete of the same UID differ by Kind. Distinct overrides differ by
-// RecurrenceID.
-//
-// CalendarID separates the series of two calendars that hold one UID.
-// CutoffTime disambiguates UndoKindFromInstance truncations. Those always
-// have an empty RecurrenceID. Two truncations of the same series would
-// otherwise look identical (issue #514). CutoffTime is the zero time for
-// every other Kind. A compare is then always safe.
+// soft-delete operation. Every field that names the delete must match:
+//   - Kind, UID, and CalendarID name the series. Two calendars can hold one
+//     UID (issue #842).
+//   - RecurrenceID names the occurrence. CutoffTime names the truncation:
+//     a truncation has no RecurrenceID, and two truncations of one series
+//     differ by their cutoff (issue #514). CutoffTime is the zero time for
+//     every other Kind, so the compare is always safe.
+//   - RowID, RowIDs, and MasterID name the rows that the delete hid.
+//   - ExdateLogID, ExdateDeleteSeq, and SeriesLogID name the log entry of
+//     the delete.
+//   - DeleteToken names the statement of the delete. Two deletes of one
+//     occurrence, or two truncations at one cutoff, differ by it.
 func sameUndoTarget(a, b event.UndoMeta) bool {
-	// Two calendars can hold the same UID (issue #842), so the calendar is part
-	// of the target too. RowID, RowIDs, MasterID, ExdateLogID, ExdateDeleteSeq,
-	// SeriesLogID, and DeleteToken name the rows, the log, and the statement of
-	// the delete. Two deletes of one occurrence can hide different rows.
 	return a.Kind == b.Kind && a.UID == b.UID && a.CalendarID == b.CalendarID &&
 		a.RecurrenceID == b.RecurrenceID && a.CutoffTime.Equal(b.CutoffTime) &&
 		a.RowID == b.RowID && a.MasterID == b.MasterID && slices.Equal(a.RowIDs, b.RowIDs) &&

@@ -20,12 +20,29 @@ func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 	if calendarID == 0 || uid == "" {
 		return nil
 	}
+	return markResourceDirty(ctx, db, calendarID, uid, ownerType, 0)
+}
+
+// MarkEventRowDirty is MarkResourceDirty for an edit of the event row rowID
+// of uid in calendarID. When no series owns the row (NoSeriesOwnerMsg), only
+// that row gets the edit_unowned mark.
+func MarkEventRowDirty(ctx context.Context, db DBTX, calendarID int64, uid string, rowID int64) error {
+	if calendarID == 0 || uid == "" {
+		return nil
+	}
+	return markResourceDirty(ctx, db, calendarID, uid, "event", rowID)
+}
+
+// markResourceDirty is the body of MarkResourceDirty. rowID names the edited
+// event row, or 0 when the caller knows no row. With no row, an edit with no
+// series owner marks every live override row of uid in calendarID.
+func markResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string, rowID int64) error {
 	target, err := dirtyCalendar(ctx, db, calendarID, uid, ownerType)
 	if err != nil {
 		return err
 	}
 	if target == unownedCalendar {
-		return recordUnownedEdit(ctx, db, calendarID, uid)
+		return recordUnownedEdit(ctx, db, calendarID, uid, rowID)
 	}
 	if err := clearUnownedEdit(ctx, db, calendarID, uid, ownerType); err != nil {
 		return err
@@ -47,16 +64,20 @@ const NoSeriesOwnerMsg = "the item belongs to no series because two calendars ho
 // no series owns (NoSeriesOwnerMsg).
 const unownedCalendar = -1
 
-// recordUnownedEdit sets edit_unowned on the live override rows of uid in
+// recordUnownedEdit sets edit_unowned on the edited row rowID. With rowID 0
+// (a caller that knows no row), it marks the live override rows of uid in
 // calendarID. No calendar gets a dirty mark, so no push drops the edit. The
 // edit stays local, and the sync status lists the UID. The mark lives on the
 // event rows, so the edit makes no sync row.
-func recordUnownedEdit(ctx context.Context, db DBTX, calendarID int64, uid string) error {
-	if _, err := db.ExecContext(ctx,
-		`UPDATE events SET edit_unowned = 1
-		 WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NULL`,
-		calendarID, uid,
-	); err != nil {
+func recordUnownedEdit(ctx context.Context, db DBTX, calendarID int64, uid string, rowID int64) error {
+	query := `UPDATE events SET edit_unowned = 1
+		 WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NULL`
+	args := []any{calendarID, uid}
+	if rowID != 0 {
+		query += ` AND id = ?`
+		args = append(args, rowID)
+	}
+	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("record the edit with no series: %w", err)
 	}
 	return nil
@@ -99,7 +120,7 @@ func ReconcileAfterRestore(ctx context.Context, db DBTX, calendarID int64, uid, 
 	if target == unownedCalendar {
 		// No series owns the restored row. The tombstone stays, and the
 		// sync status lists the row.
-		return recordUnownedEdit(ctx, db, calendarID, uid)
+		return recordUnownedEdit(ctx, db, calendarID, uid, 0)
 	}
 	if err := clearUnownedEdit(ctx, db, calendarID, uid, ownerType); err != nil {
 		return err

@@ -800,6 +800,7 @@ func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 			"events_master_revive_drops_series_log", "events_master_insert_drops_stale_logs",
 			"events_override_revive_drops_stale_logs", "events_override_insert_drops_prune_marker",
 			"events_purge_drops_row_from_logs",
+			"events_master_change_settles_unowned_edits", "events_master_purge_settles_unowned_edits",
 		}
 		for _, name := range triggers {
 			q := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = '` + name + `'`
@@ -875,6 +876,8 @@ func TestMigrationsReadmeMatches057(t *testing.T) {
 		triggerStatement(t, "events_override_revive_drops_stale_logs"),
 		triggerStatement(t, "events_override_insert_drops_prune_marker"),
 		triggerStatement(t, "events_purge_drops_row_from_logs"),
+		triggerStatement(t, "events_master_change_settles_unowned_edits"),
+		triggerStatement(t, "events_master_purge_settles_unowned_edits"),
 	}
 	if len(blocks) != len(want) {
 		t.Fatalf("README SQL blocks = %d, want %d", len(blocks), len(want))

@@ -2,6 +2,8 @@ package storage_test
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -172,4 +174,118 @@ func TestMarkResourceDirtyRecordsAnUnownedEdit(t *testing.T) {
 		t.Errorf("edit_unowned of the row after the owner came back = %d, want 0", got)
 	}
 	wantFailure("after the clear")
+}
+
+// TestMarkEventRowDirtyFlagsOnlyTheEditedRow: A and B hold a live master of
+// one UID, and C holds two legacy overrides of it. No series owns them. The
+// edit of one row marks that row only.
+func TestMarkEventRowDirtyFlagsOnlyTheEditedRow(t *testing.T) {
+	t.Parallel()
+	db, q := testutil.NewTestDB(t)
+	ctx := context.Background()
+	var cals []int64
+	for _, name := range []string{"a", "b", "c"} {
+		c, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: name})
+		if err != nil {
+			t.Fatalf("CreateCalendar %s: %v", name, err)
+		}
+		cals = append(cals, c.ID)
+	}
+	ids := map[string]int64{}
+	for _, r := range []struct {
+		key   string
+		cal   int64
+		recID string
+	}{{"a", cals[0], ""}, {"b", cals[1], ""}, {"c1", cals[2], "2026-05-20T09:00:00Z"}, {"c2", cals[2], "2026-05-21T09:00:00Z"}} {
+		res, err := db.ExecContext(ctx,
+			`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+			 VALUES ('u1', ?, 't', '2026-05-18T09:00:00Z', '2026-05-18T10:00:00Z', ?)`, r.cal, r.recID)
+		if err != nil {
+			t.Fatalf("insert row: %v", err)
+		}
+		ids[r.key], _ = res.LastInsertId()
+	}
+	if err := storage.MarkEventRowDirty(ctx, db, cals[2], "u1", ids["c1"]); err != nil {
+		t.Fatalf("MarkEventRowDirty: %v", err)
+	}
+	for key, want := range map[string]int64{"c1": 1, "c2": 0} {
+		var got int64
+		if err := db.QueryRowContext(ctx, `SELECT edit_unowned FROM events WHERE id = ?`, ids[key]).Scan(&got); err != nil {
+			t.Fatalf("read the mark of %s: %v", key, err)
+		}
+		if got != want {
+			t.Errorf("edit_unowned of %s = %d, want %d", key, got, want)
+		}
+	}
+}
+
+// TestMasterChangeSettlesAnUnownedEdit: A and B hold a live master of one UID,
+// and C holds a legacy override with an edit that no series owned. A change
+// of a master gives the row one owner again. The trigger of the master then
+// marks the calendar of the owner dirty and clears the mark of the row:
+//   - a delete of the master of B: A owns the row;
+//   - a purge of the master of B: A owns the row;
+//   - a move of the master of B to C: C owns the row beside its master.
+func TestMasterChangeSettlesAnUnownedEdit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		stmt  string
+		owner string
+	}{
+		{"delete", `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE id = :b`, "a"},
+		{"purge", `DELETE FROM events WHERE id = :b`, "a"},
+		{"move", `UPDATE events SET calendar_id = :c WHERE id = :b`, "c"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db, q := testutil.NewTestDB(t)
+			ctx := context.Background()
+			account, err := q.CreateAccount(ctx, storage.CreateAccountParams{Name: "acct", ServerUrl: "https://example.com", AuthType: "basic", Username: "u"})
+			if err != nil {
+				t.Fatalf("CreateAccount: %v", err)
+			}
+			cals := map[string]int64{}
+			for _, name := range []string{"a", "b", "c"} {
+				c, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: name})
+				if err != nil {
+					t.Fatalf("CreateCalendar %s: %v", name, err)
+				}
+				if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+					ID: c.ID, AccountID: &account.ID, RemoteUrl: storage.StringToNullable("/" + name + "/"),
+				}); err != nil {
+					t.Fatalf("LinkCalendarToAccount %s: %v", name, err)
+				}
+				cals[name] = c.ID
+			}
+			ids := map[string]int64{}
+			for _, r := range []struct {
+				key   string
+				recID string
+			}{{"a", ""}, {"b", ""}, {"c", "2026-05-20T09:00:00Z"}} {
+				res, err := db.ExecContext(ctx,
+					`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+					 VALUES ('u1', ?, 't', '2026-05-18T09:00:00Z', '2026-05-18T10:00:00Z', ?)`, cals[r.key], r.recID)
+				if err != nil {
+					t.Fatalf("insert row: %v", err)
+				}
+				ids[r.key], _ = res.LastInsertId()
+			}
+			if err := storage.MarkEventRowDirty(ctx, db, cals["c"], "u1", ids["c"]); err != nil {
+				t.Fatalf("MarkEventRowDirty: %v", err)
+			}
+			stmt := strings.NewReplacer(":b", strconv.FormatInt(ids["b"], 10), ":c", strconv.FormatInt(cals["c"], 10)).Replace(tc.stmt)
+			if _, err := db.ExecContext(ctx, stmt); err != nil {
+				t.Fatalf("change the master of B: %v", err)
+			}
+			var mark int64
+			if err := db.QueryRowContext(ctx, `SELECT edit_unowned FROM events WHERE id = ?`, ids["c"]).Scan(&mark); err != nil || mark != 0 {
+				t.Errorf("edit_unowned after the change = %d, %v; want 0", mark, err)
+			}
+			sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: cals[tc.owner], Uid: "u1"})
+			if err != nil || sr.Dirty != 1 {
+				t.Errorf("sync row of the owner %s = %+v, %v; want it dirty", tc.owner, sr, err)
+			}
+		})
+	}
 }

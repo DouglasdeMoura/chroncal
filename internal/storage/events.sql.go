@@ -1328,12 +1328,13 @@ func (q *Queries) ListSeriesCalendarIDs(ctx context.Context, arg ListSeriesCalen
 }
 
 const listSeriesLogsOfMasters = `-- name: ListSeriesLogsOfMasters :many
-SELECT d.hidden_ids, d.deleted_at, m.id AS master_id FROM event_series_deletes AS d
+SELECT d.id, d.hidden_ids, d.deleted_at, m.id AS master_id FROM event_series_deletes AS d
 JOIN events AS m ON m.calendar_id = d.calendar_id AND m.uid = d.uid AND m.recurrence_id = ''
 WHERE m.id IN (/*SLICE:master_ids*/?)
 `
 
 type ListSeriesLogsOfMastersRow struct {
+	ID        int64
 	HiddenIds string
 	DeletedAt string
 	MasterID  int64
@@ -1360,7 +1361,12 @@ func (q *Queries) ListSeriesLogsOfMasters(ctx context.Context, masterIds []int64
 	var items []ListSeriesLogsOfMastersRow
 	for rows.Next() {
 		var i ListSeriesLogsOfMastersRow
-		if err := rows.Scan(&i.HiddenIds, &i.DeletedAt, &i.MasterID); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.HiddenIds,
+			&i.DeletedAt,
+			&i.MasterID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
