@@ -10,6 +10,9 @@
 -- override, and the pull hid its row. A marker is no delete of the user.
 -- The trash and the EXDATE contract ignore it. The restore of a master
 -- with no series-delete log reads it, so the pruned row stays hidden.
+-- hidden_id names the override row that the occurrence delete hid. NULL
+-- names no row: the occurrence had no stored override. The restore of the
+-- occurrence from the trash un-hides that row.
 CREATE TABLE event_exdate_deletes_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
@@ -17,6 +20,7 @@ CREATE TABLE event_exdate_deletes_new (
     recurrence_id TEXT NOT NULL,
     deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     pruned INTEGER NOT NULL DEFAULT 0,
+    hidden_id INTEGER,
     UNIQUE (calendar_id, uid, recurrence_id)
 );
 INSERT INTO event_exdate_deletes_new (id, calendar_id, uid, recurrence_id, deleted_at)
@@ -167,9 +171,10 @@ END;
 -- import all clear deleted_at. The trigger drops the pruned marker of its
 -- occurrence, and removes its ID from each series-delete log and each
 -- truncation log. A log then names a row only while the row stays in the
--- trash from that delete. A series-delete log with no row left goes, unless
--- the master of its calendar is in the trash: that log still records the
--- series delete.
+-- trash from that delete. A series-delete log that names only this row goes.
+-- A master of its calendar in the trash keeps that log, because the log still
+-- records the series delete. A log that names no row stays, because the row
+-- does not belong to that delete.
 -- +goose StatementBegin
 CREATE TRIGGER events_override_revive_drops_stale_logs
 AFTER UPDATE OF deleted_at ON events
@@ -177,15 +182,15 @@ WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id
 BEGIN
     DELETE FROM event_exdate_deletes
     WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
-    UPDATE event_series_deletes
-    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
-    WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
     DELETE FROM event_series_deletes
-    WHERE uid = NEW.uid AND hidden_ids = ''
+    WHERE uid = NEW.uid AND hidden_ids = CAST(NEW.id AS TEXT)
       AND NOT EXISTS (
         SELECT 1 FROM events AS m
         WHERE m.calendar_id = event_series_deletes.calendar_id AND m.uid = NEW.uid
           AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL);
+    UPDATE event_series_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
+    WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
     UPDATE event_truncate_deletes
     SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
     WHERE uid = NEW.uid AND hidden_ids IS NOT NULL AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';

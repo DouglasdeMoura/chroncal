@@ -193,30 +193,17 @@ func (s *Service) Purge(ctx context.Context, e Entry) error {
 func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCounts, error) {
 	var counts PurgeCounts
 	if s.events != nil {
-		report, err := s.events.PurgeDeletedReport(ctx, olderThan)
-		n := report.Purged
-		counts.EventMastersSkipped = report.Skipped
+		// One transaction purges the rows and the logs. The logs of a kept
+		// master stay with it.
+		report, err := s.events.PurgeOld(ctx, olderThan)
 		if err != nil {
 			return counts, fmt.Errorf("purge events: %w", err)
 		}
-		counts.Events = n
-		// The logs of a kept master stay with it in this run.
-		keep := report.Skipped
-		n, err = s.events.PurgeOldInstanceDeletes(ctx, olderThan, keep...)
-		if err != nil {
-			return counts, fmt.Errorf("purge event instance logs: %w", err)
-		}
-		counts.EventInstanceLogs = n
-		n, err = s.events.PurgeOldTruncationDeletes(ctx, olderThan, keep...)
-		if err != nil {
-			return counts, fmt.Errorf("purge event truncation logs: %w", err)
-		}
-		counts.EventTruncateLogs = n
-		n, err = s.events.PurgeOldSeriesDeletes(ctx, olderThan, keep...)
-		if err != nil {
-			return counts, fmt.Errorf("purge event series logs: %w", err)
-		}
-		counts.EventSeriesLogs = n
+		counts.Events = report.Purged
+		counts.EventMastersSkipped = report.Skipped
+		counts.EventInstanceLogs = report.InstanceLogs
+		counts.EventTruncateLogs = report.TruncateLogs
+		counts.EventSeriesLogs = report.SeriesLogs
 	}
 	if s.todos != nil {
 		n, err := s.todos.PurgeDeleted(ctx, olderThan)

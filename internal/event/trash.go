@@ -225,81 +225,38 @@ func (s *Service) RestoreTrash(ctx context.Context, entry TrashEntry) error {
 	}
 }
 
-// PurgeOldInstanceDeletes drops event_exdate_deletes rows older than olderThan.
-// The logs of the series of keep stay: the purge of the same run kept those
-// masters (PurgeReport.Skipped).
-// Returns the number of rows purged. The related EXDATEs on the master
-// stay in place. The user intended those instances to be gone.
-func (s *Service) PurgeOldInstanceDeletes(ctx context.Context, olderThan time.Time, keep ...SkippedMaster) (int, error) {
-	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
-	rows, err := s.q.ListOldEventExdateDeletes(ctx, cutoff)
-	if err != nil {
-		return 0, err
-	}
-	kept := keptSeries(keep)
-	ids := make([]int64, 0, len(rows))
-	for _, r := range rows {
-		if !kept[seriesKeyOf(r.CalendarID, r.Uid)] {
-			ids = append(ids, r.ID)
-		}
-	}
-	var total int64
-	for _, chunk := range chunkIDs(ids) {
-		n, err := s.q.DeleteEventExdateDeletesByIDs(ctx, chunk)
-		if err != nil {
-			return 0, err
-		}
-		total += n
-	}
-	return int(total), nil
+// oldLogRow is the shape of the rows of ListOldEventExdateDeletes,
+// ListOldEventTruncateDeletes, and ListOldEventSeriesDeletes.
+type oldLogRow = struct {
+	ID         int64
+	CalendarID int64
+	Uid        string
 }
 
-// PurgeOldTruncationDeletes drops event_truncate_deletes rows older than
-// olderThan. Returns the number of rows purged. The truncated RRULE and
-// soft-deleted overrides on the master stay in place.
-func (s *Service) PurgeOldTruncationDeletes(ctx context.Context, olderThan time.Time, keep ...SkippedMaster) (int, error) {
-	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
-	rows, err := s.q.ListOldEventTruncateDeletes(ctx, cutoff)
+// purgeOldLogsTx drops the log rows that list gives for cutoff, except the
+// logs of the series of keep. The purge of the same run kept those masters
+// (PurgeReport.Skipped). del drops the rows by ID, in chunks. It returns the
+// count of purged rows. A purge of an exdate log or a truncate log keeps
+// the EXDATE or the RRULE on the master. The user intended those
+// occurrences to be gone. A restore of a series with no log brings the
+// master back alone.
+func purgeOldLogsTx[R ~oldLogRow](ctx context.Context, cutoff string, keep []SkippedMaster,
+	list func(context.Context, string) ([]R, error), del func(context.Context, []int64) (int64, error),
+) (int, error) {
+	rows, err := list(ctx, cutoff)
 	if err != nil {
 		return 0, err
 	}
 	kept := keptSeries(keep)
 	ids := make([]int64, 0, len(rows))
 	for _, r := range rows {
-		if !kept[seriesKeyOf(r.CalendarID, r.Uid)] {
-			ids = append(ids, r.ID)
+		if row := oldLogRow(r); !kept[seriesKeyOf(row.CalendarID, row.Uid)] {
+			ids = append(ids, row.ID)
 		}
 	}
 	var total int64
 	for _, chunk := range chunkIDs(ids) {
-		n, err := s.q.DeleteEventTruncateDeletesByIDs(ctx, chunk)
-		if err != nil {
-			return 0, err
-		}
-		total += n
-	}
-	return int(total), nil
-}
-
-// PurgeOldSeriesDeletes drops event_series_deletes rows older than
-// olderThan. Returns the number of rows purged. A restore of the series
-// then brings the master back alone.
-func (s *Service) PurgeOldSeriesDeletes(ctx context.Context, olderThan time.Time, keep ...SkippedMaster) (int, error) {
-	cutoff := olderThan.UTC().Format(timeutil.StorageTimeFormat)
-	rows, err := s.q.ListOldEventSeriesDeletes(ctx, cutoff)
-	if err != nil {
-		return 0, err
-	}
-	kept := keptSeries(keep)
-	ids := make([]int64, 0, len(rows))
-	for _, r := range rows {
-		if !kept[seriesKeyOf(r.CalendarID, r.Uid)] {
-			ids = append(ids, r.ID)
-		}
-	}
-	var total int64
-	for _, chunk := range chunkIDs(ids) {
-		n, err := s.q.DeleteEventSeriesDeletesByIDs(ctx, chunk)
+		n, err := del(ctx, chunk)
 		if err != nil {
 			return 0, err
 		}
@@ -326,9 +283,11 @@ func (s *Service) PurgeTrashEntry(ctx context.Context, entry TrashEntry) error {
 	}
 }
 
-// restoreInstanceByLogID removes the EXDATE for (uid, recurrence_id) from
-// the master and deletes the log row. The master is marked dirty so the
-// next push propagates the EXDATE removal.
+// restoreInstanceByLogID removes the EXDATE for (uid, recurrence_id) from the
+// master and deletes the log row. It un-hides the override row that the
+// occurrence delete hid (the hidden_id of the log). The write guard covers
+// each calendar of the series, also when the master is in the trash. The
+// restore marks the master dirty, so the next push sends the EXDATE removal.
 func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error {
 	log, err := s.q.GetEventExdateDelete(ctx, logID)
 	if err != nil {
@@ -356,6 +315,17 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 			return fmt.Errorf("get master: %w", ErrNotDeleted)
 		}
 		return fmt.Errorf("get master: %w", err)
+	}
+	if err := ensureSeriesWritableIn(ctx, qtx, log.CalendarID, log.Uid); err != nil {
+		return err
+	}
+	if log.HiddenID != nil {
+		// A purge or a restore of the row that came first leaves no row to
+		// un-hide. The EXDATE still goes.
+		err := restoreRowByIDTx(ctx, qtx, *log.HiddenID)
+		if err != nil && !errors.Is(err, ErrNotDeleted) {
+			return err
+		}
 	}
 
 	existing := ParseTimeList(storage.NullableToString(master.Exdates))

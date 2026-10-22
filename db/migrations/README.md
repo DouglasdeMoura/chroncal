@@ -98,15 +98,15 @@ WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id
 BEGIN
     DELETE FROM event_exdate_deletes
     WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
-    UPDATE event_series_deletes
-    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
-    WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
     DELETE FROM event_series_deletes
-    WHERE uid = NEW.uid AND hidden_ids = ''
+    WHERE uid = NEW.uid AND hidden_ids = CAST(NEW.id AS TEXT)
       AND NOT EXISTS (
         SELECT 1 FROM events AS m
         WHERE m.calendar_id = event_series_deletes.calendar_id AND m.uid = NEW.uid
           AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL);
+    UPDATE event_series_deletes
+    SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
+    WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
     UPDATE event_truncate_deletes
     SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
     WHERE uid = NEW.uid AND hidden_ids IS NOT NULL AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';

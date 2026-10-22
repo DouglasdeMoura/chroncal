@@ -321,10 +321,10 @@ func TestTrashRestore_ScopedToCalendar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTrash(B): %v", err)
 	}
-	// The trash of B holds the two log rows and the override row that
-	// the occurrence delete hid. Each entry names calendar B only. The
-	// log rows go first: a restore of the override row consumes the
-	// EXDATE log of its occurrence.
+	// The trash of B holds the two log rows and the override row that the
+	// occurrence delete hid. Each entry names calendar B only. The log rows go
+	// first. The restore of the occurrence log un-hides the override row, so the
+	// restore of its entry gives ErrAlreadyRestored.
 	if len(entries) != 3 {
 		t.Fatalf("trash of calendar B holds %d entries, want 3: %+v", len(entries), entries)
 	}
@@ -339,7 +339,14 @@ func TestTrashRestore_ScopedToCalendar(t *testing.T) {
 			if e.Kind != TrashKindEvent && e.Title != "Standup B" {
 				t.Errorf("trash entry %v names master %q, want the master of calendar B", e.Kind, e.Title)
 			}
-			if err := svc.RestoreTrash(ctx, e); err != nil {
+			err := svc.RestoreTrash(ctx, e)
+			if e.Kind == TrashKindEvent {
+				if !errors.Is(err, ErrAlreadyRestored) {
+					t.Fatalf("RestoreTrash(override row) = %v, want ErrAlreadyRestored", err)
+				}
+				continue
+			}
+			if err != nil {
 				t.Fatalf("RestoreTrash(%v): %v", e.Kind, err)
 			}
 		}
@@ -2273,10 +2280,11 @@ func TestGetByUIDAndRecurrenceID_TwoLegacyRowsNameThem(t *testing.T) {
 
 // TestUndoSeries_OrphanRowsBesideMasterHiddenByPull is the reviewer's state:
 // a pull hid the master of calendar 1 with no log, a legacy override lives in
-// L. The undo of the series delete of L restores the legacy row from the log
-// of L. It leaves the master in the trash and consumes the log. A delete that
-// names no calendar refuses: the legacy row belongs to the series in the
-// trash, so that series comes back first.
+// L. With the calendar named or not, the delete follows one rule. The legacy
+// row goes as an orphan and joins a fresh log of the master in the trash.
+// That log has had_master 1. The undo restores the legacy row and leaves the
+// master in the trash. The log of the master stays for the restore of the
+// master.
 func TestUndoSeries_OrphanRowsBesideMasterHiddenByPull(t *testing.T) {
 	for name, calendar := range map[string]bool{"named calendar": true, "calendar 0": false} {
 		t.Run(name, func(t *testing.T) {
@@ -2308,12 +2316,6 @@ func TestUndoSeries_OrphanRowsBesideMasterHiddenByPull(t *testing.T) {
 				target = 0
 			}
 			meta, err := svc.DeleteSeriesWithUndo(ctx, target, "pull-uid")
-			if !calendar {
-				if !errors.Is(err, ErrSeriesInTrash) {
-					t.Fatalf("DeleteSeriesWithUndo(0) err = %v, want ErrSeriesInTrash", err)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatalf("DeleteSeriesWithUndo(%d): %v", target, err)
 			}
@@ -2322,6 +2324,10 @@ func TestUndoSeries_OrphanRowsBesideMasterHiddenByPull(t *testing.T) {
 			}
 			if r, err := svc.GetIncludingDeleted(ctx, legacy.ID); err != nil || r.DeletedAt == nil {
 				t.Fatalf("legacy row after the delete = %+v, %v; want it hidden", r, err)
+			}
+			log, err := svc.q.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{CalendarID: 1, Uid: "pull-uid"})
+			if err != nil || log.HadMaster != 1 || log.HiddenIds != strconv.FormatInt(legacy.ID, 10) {
+				t.Fatalf("log of the master = %+v, %v; want had_master 1 and the legacy row", log, err)
 			}
 			if err := svc.RestoreUndo(ctx, meta); err != nil {
 				t.Fatalf("RestoreUndo: %v", err)
@@ -3492,10 +3498,12 @@ func TestInsertMaster_DropsOrphanSeriesLog(t *testing.T) {
 	}
 }
 
-// TestRestoreByUID_LogBeatsTrashedCopy: a calendar with a series-delete log
-// wins over a calendar with a master in the trash and no log. An example is
-// an old copy whose log the purge dropped.
-func TestRestoreByUID_LogBeatsTrashedCopy(t *testing.T) {
+// TestRestoreByUID_LogAndTrashedCopyAreAmbiguous: a calendar with a
+// series-delete log and a calendar with a master in the trash and no log
+// have equal rank. An example of the second is an old copy whose log the
+// purge dropped. The UID alone then gives ErrAmbiguousUID. The ID of a
+// master names one series.
+func TestRestoreByUID_LogAndTrashedCopyAreAmbiguous(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	masterA, masterB, _ := twoCalendarSeries(t, svc)
@@ -3508,14 +3516,19 @@ func TestRestoreByUID_LogBeatsTrashedCopy(t *testing.T) {
 	if err := svc.DeleteSeries(ctx, masterA.CalendarID, masterA.UID); err != nil {
 		t.Fatalf("DeleteSeries(A): %v", err)
 	}
-	if err := svc.RestoreByUID(ctx, masterA.UID); err != nil {
-		t.Fatalf("RestoreByUID: %v", err)
+	if err := svc.RestoreByUID(ctx, masterA.UID); !errors.Is(err, ErrAmbiguousUID) {
+		t.Fatalf("RestoreByUID with a log in A and a trashed copy in B = %v, want ErrAmbiguousUID", err)
 	}
-	if a, err := svc.GetIncludingDeleted(ctx, masterA.ID); err != nil || a.DeletedAt != nil {
-		t.Errorf("master A after the restore = trashed %v, %v; want it live", a.DeletedAt != nil, err)
+	for _, m := range []Event{masterA, masterB} {
+		if e, err := svc.GetIncludingDeleted(ctx, m.ID); err != nil || e.DeletedAt == nil {
+			t.Errorf("master %d after the refused restore = trashed %v, %v; want it in the trash", m.ID, e.DeletedAt != nil, err)
+		}
+	}
+	if err := svc.RestoreByID(ctx, masterA.ID); err != nil {
+		t.Fatalf("RestoreByID(master A): %v", err)
 	}
 	if b, err := svc.GetIncludingDeleted(ctx, masterB.ID); err != nil || b.DeletedAt == nil {
-		t.Errorf("master B after the restore = trashed %v, %v; want it still in the trash", b.DeletedAt != nil, err)
+		t.Errorf("master B after the restore of A = trashed %v, %v; want it still in the trash", b.DeletedAt != nil, err)
 	}
 	// With no log anywhere, two trashed masters stay ambiguous.
 	if err := svc.DeleteSeries(ctx, masterA.CalendarID, masterA.UID); err != nil {
@@ -3574,7 +3587,7 @@ func TestRestoreByUID_NoMasterReconcilesRestoredCalendarsOnly(t *testing.T) {
 // TestDeleteSeries_OrphanRowsBesideReadOnlyTrashedCopy: a series delete
 // in the calendar of the orphan rows guards that calendar. A read-only copy
 // in the trash does not block the delete. With no calendar, the delete
-// refuses: the rows belong to the series in the trash.
+// follows the same rule.
 func TestDeleteSeries_OrphanRowsBesideReadOnlyTrashedCopy(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -3599,14 +3612,18 @@ func TestDeleteSeries_OrphanRowsBesideReadOnlyTrashedCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert orphan row: %v", err)
 	}
-	if err := svc.DeleteSeries(ctx, 0, uid); !errors.Is(err, ErrSeriesInTrash) {
-		t.Fatalf("DeleteSeries(0) err = %v, want ErrSeriesInTrash", err)
-	}
-	if err := svc.DeleteSeries(ctx, 1, uid); err != nil {
-		t.Fatalf("DeleteSeries(1) beside a read-only trashed copy: %v", err)
-	}
-	if r, err := svc.GetIncludingDeleted(ctx, row.ID); err != nil || r.DeletedAt == nil {
-		t.Errorf("orphan row after the delete = trashed %v, %v; want it in the trash", r.DeletedAt != nil, err)
+	for _, target := range []int64{0, 1} {
+		if err := svc.DeleteSeries(ctx, target, uid); err != nil {
+			t.Fatalf("DeleteSeries(%d) beside a read-only trashed copy: %v", target, err)
+		}
+		if r, err := svc.GetIncludingDeleted(ctx, row.ID); err != nil || r.DeletedAt == nil {
+			t.Errorf("orphan row after DeleteSeries(%d) = trashed %v, %v; want it in the trash", target, r.DeletedAt != nil, err)
+		}
+		// A restore by ID writes the read-only master, so the guard refuses
+		// it. The next case takes the row back with SQL.
+		if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE id = ?`, row.ID); err != nil {
+			t.Fatalf("revive the orphan row: %v", err)
+		}
 	}
 }
 
@@ -4328,8 +4345,9 @@ func TestOrphanDelete_NoMasterWritesFreshLog(t *testing.T) {
 
 // TestEmptiedSeriesLog_StaysBesideTrashedMaster: a restore by ID of the last
 // row of a series-delete log keeps the log with an empty list. That holds
-// while the master of its calendar is in the trash. RestoreByUID then still
-// ranks that calendar above a trashed copy with no log.
+// while the master of its calendar is in the trash. A trashed copy with no
+// log in another calendar has equal rank, so RestoreByUID refuses. The ID of
+// the master then restores the series.
 func TestEmptiedSeriesLog_StaysBesideTrashedMaster(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -4354,8 +4372,11 @@ func TestEmptiedSeriesLog_StaysBesideTrashedMaster(t *testing.T) {
 	if err != nil || log.HiddenIds != "" {
 		t.Fatalf("series log of A = %q, %v; want an empty list that stays", log.HiddenIds, err)
 	}
-	if err := svc.RestoreByUID(ctx, masterA.UID); err != nil {
-		t.Fatalf("RestoreByUID: %v", err)
+	if err := svc.RestoreByUID(ctx, masterA.UID); !errors.Is(err, ErrAmbiguousUID) {
+		t.Fatalf("RestoreByUID = %v, want ErrAmbiguousUID", err)
+	}
+	if err := svc.RestoreByID(ctx, masterA.ID); err != nil {
+		t.Fatalf("RestoreByID(master A): %v", err)
 	}
 	if a, err := svc.GetIncludingDeleted(ctx, masterA.ID); err != nil || a.DeletedAt != nil {
 		t.Errorf("master A after the restore = trashed %v, %v; want it live", a.DeletedAt != nil, err)
