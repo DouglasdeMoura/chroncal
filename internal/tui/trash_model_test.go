@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
@@ -305,5 +306,20 @@ func TestTrashModel_SetEntriesPreservesSelection(t *testing.T) {
 	e, _ := m.selectedEntry()
 	if e.Kind != trash.KindEventInstance || e.ID != 7 {
 		t.Fatalf("selection not preserved: got %+v, want Instance ID=7", e)
+	}
+}
+
+// TestTrashDetailLines_NamesTheRowsThatKeepAMaster: the detail pane of a
+// master that the purge keeps names the live override rows that keep it. The
+// user can then act on them. An entry that the purge takes has no such line.
+func TestTrashDetailLines_NamesTheRowsThatKeepAMaster(t *testing.T) {
+	kept := trash.Entry{Kind: trash.KindEvent, ID: 1, Title: "Series", KeptOverrideIDs: []int64{5, 6}}
+	text := ansi.Strip(strings.Join(trashDetailLines(kept, CalendarInfo{}, 120, 10, nil), "\n"))
+	if !strings.Contains(text, "kept: the series still has live overrides, rows 5, 6") {
+		t.Errorf("detail of the kept master = %q, want the note with rows 5, 6", text)
+	}
+	plain := trash.Entry{Kind: trash.KindEvent, ID: 2, Title: "Single"}
+	if text := ansi.Strip(strings.Join(trashDetailLines(plain, CalendarInfo{}, 120, 10, nil), "\n")); strings.Contains(text, "kept:") {
+		t.Errorf("detail of an entry that the purge takes = %q, want no note", text)
 	}
 }

@@ -2196,26 +2196,100 @@ func TestUndoTruncation_SecondAtSameCutoffRestoresItsOwnRows(t *testing.T) {
 	}
 }
 
-// TestRestoreTruncation_OlderFirstHandsOnItsRule: a restore from the trash of
-// the older of two truncations at the same cutoff gives its rule to the newer
-// log row. The later restore of the newer row then keeps the full rule. It
-// does not truncate the series again.
-func TestRestoreTruncation_OlderFirstHandsOnItsRule(t *testing.T) {
+// TestRestoreTruncation_OlderFirstRefuses: the restore of the older of two
+// truncations at the same cutoff refuses while the newer one is in the trash.
+// The newer one recorded the rule that the older one wrote. After the restore
+// of the newer one, the older one restores the full rule.
+func TestRestoreTruncation_OlderFirstRefuses(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	master, second, third := singleSeriesWithOverrides(t, svc)
 	firstMeta, secondMeta, late := truncateAgainAtSameCutoff(t, svc, master, second, third.Add(24*time.Hour))
-	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, firstMeta.DeleteToken), 0); err != nil {
-		t.Fatalf("restore the first: %v", err)
+	firstLog := truncationLogID(t, svc, master.UID, firstMeta.DeleteToken)
+	var newer *NewerTruncationError
+	if err := svc.restoreTruncationByLogID(ctx, firstLog, 0); !errors.As(err, &newer) || !newer.Cutoff.Equal(second) {
+		t.Fatalf("restore the older first = %v, want NewerTruncationError at %s", err, second)
 	}
 	wantTrashed(t, svc, true, late.ID)
 	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, secondMeta.DeleteToken), 0); err != nil {
-		t.Fatalf("restore the second: %v", err)
+		t.Fatalf("restore the newer: %v", err)
+	}
+	if err := svc.restoreTruncationByLogID(ctx, firstLog, 0); err != nil {
+		t.Fatalf("restore the older: %v", err)
 	}
 	wantTrashed(t, svc, false, late.ID)
 	if got := masterRule(t, svc, master.ID); got != master.RecurrenceRule {
 		t.Errorf("rule after both restores = %q, want %q", got, master.RecurrenceRule)
 	}
+}
+
+// TestRestoreTruncation_NewerAtAnEarlierCutoffComesFirst: a truncation at the
+// later cutoff (the "Mar 10" case), then a newer one at an earlier cutoff (the
+// "Mar 1" case). The restore of the first refuses and names the cutoff of the
+// newer one. The restore of the newer one, then of the first, gives back the
+// full rule and every row.
+func TestRestoreTruncation_NewerAtAnEarlierCutoffComesFirst(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	later, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, third)
+	if err != nil {
+		t.Fatalf("truncate at the later cutoff: %v", err)
+	}
+	earlier, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("truncate at the earlier cutoff: %v", err)
+	}
+	laterLog := truncationLogID(t, svc, master.UID, later.DeleteToken)
+	err = svc.restoreTruncationByLogID(ctx, laterLog, 0)
+	var newer *NewerTruncationError
+	if !errors.As(err, &newer) || !errors.Is(err, ErrNewerTruncation) || !newer.Cutoff.Equal(second) {
+		t.Fatalf("restore the later cutoff first = %v, want NewerTruncationError at %s", err, second)
+	}
+	if !strings.Contains(err.Error(), "restore the newer truncation of this series first (cutoff "+second.Format(time.RFC3339)+")") {
+		t.Errorf("text = %q, want the cutoff of the newer truncation", err.Error())
+	}
+	// The undo of the older truncation is a permanent refusal for the TUI.
+	if err := svc.RestoreUndo(ctx, later); !errors.Is(err, ErrUndoNotPossible) {
+		t.Errorf("RestoreUndo(later) = %v, want ErrUndoNotPossible", err)
+	}
+	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, earlier.DeleteToken), 0); err != nil {
+		t.Fatalf("restore the earlier cutoff: %v", err)
+	}
+	if err := svc.restoreTruncationByLogID(ctx, laterLog, 0); err != nil {
+		t.Fatalf("restore the later cutoff: %v", err)
+	}
+	if got := masterRule(t, svc, master.ID); got != master.RecurrenceRule {
+		t.Errorf("rule after both restores = %q, want %q", got, master.RecurrenceRule)
+	}
+	if rows := trashedOverrideIDs(t, svc, master.UID); len(rows) != 0 {
+		t.Errorf("trashed rows after both restores = %v, want none", rows)
+	}
+}
+
+// TestUndoTruncation_StaleGuardInTheTransaction: an edit of the master after
+// the truncation refuses the undo with ErrMasterAdvanced, and the log stays.
+// The guard reads the master in the transaction of the restore: no master
+// read runs outside it.
+func TestUndoTruncation_StaleGuardInTheTransaction(t *testing.T) {
+	svc, spy := spiedService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET updated_at = '2099-01-01T00:00:00Z' WHERE id = ?`, master.ID); err != nil {
+		t.Fatalf("advance the master: %v", err)
+	}
+	spy.names = nil
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrMasterAdvanced) {
+		t.Fatalf("RestoreUndo = %v, want ErrMasterAdvanced", err)
+	}
+	if spy.ran("GetEvent") || spy.ran("GetSeriesMaster") {
+		t.Errorf("queries outside the transaction = %v, want no read of the master", spy.names)
+	}
+	truncationLogID(t, svc, master.UID, meta.DeleteToken)
 }
 
 // trashedOverrideIDs returns the IDs of the trashed override rows of uid.
@@ -2245,34 +2319,59 @@ func truncationLogID(t *testing.T, svc *Service, uid string, token int64) int64 
 	return id
 }
 
-// truncateLogReadSpy wraps a DBTX and counts the reads of a truncation log
-// row that do not run in a transaction.
-type truncateLogReadSpy struct {
+// outsideTxSpy wraps a DBTX and records the name of each query that runs
+// outside a transaction. A query in a transaction runs on the *sql.Tx of
+// Queries.WithTx, not on this wrapper.
+type outsideTxSpy struct {
 	storage.DBTX
-	reads int
+	names []string
 }
 
-func (d *truncateLogReadSpy) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	if strings.Contains(query, "name: GetEventTruncateDelete") {
-		d.reads++
+func (d *outsideTxSpy) record(query string) {
+	if _, rest, ok := strings.Cut(query, "-- name: "); ok {
+		name, _, _ := strings.Cut(rest, " ")
+		d.names = append(d.names, name)
 	}
+}
+
+func (d *outsideTxSpy) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	d.record(query)
 	return d.DBTX.QueryRowContext(ctx, query, args...)
+}
+
+func (d *outsideTxSpy) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	d.record(query)
+	return d.DBTX.QueryContext(ctx, query, args...)
+}
+
+// ran reports whether the spy saw a query whose name starts with prefix.
+func (d *outsideTxSpy) ran(prefix string) bool {
+	return slices.ContainsFunc(d.names, func(n string) bool { return strings.HasPrefix(n, prefix) })
+}
+
+// spiedService returns a service whose queries outside a transaction go
+// through an outsideTxSpy.
+func spiedService(t *testing.T) (*Service, *outsideTxSpy) {
+	t.Helper()
+	db, q := testutil.NewTestDB(t)
+	spy := &outsideTxSpy{DBTX: db}
+	svc := NewService(db, q)
+	svc.q = storage.New(spy)
+	return svc, spy
 }
 
 // TestRestoreTruncation_ReadsTheLogInTheTransaction: the restore of a
 // truncation reads its log row in its transaction. A read outside it lets a
 // concurrent restore consume the row between the read and the writes.
 func TestRestoreTruncation_ReadsTheLogInTheTransaction(t *testing.T) {
-	db, q := testutil.NewTestDB(t)
-	spy := &truncateLogReadSpy{DBTX: db}
-	svc := NewService(db, q)
-	svc.q = storage.New(spy)
+	svc, spy := spiedService(t)
 	ctx := context.Background()
 	master, second, _ := singleSeriesWithOverrides(t, svc)
 	meta, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, second)
 	if err != nil {
 		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
 	}
+	spy.names = nil
 	if err := svc.RestoreUndo(ctx, meta); err != nil {
 		t.Fatalf("RestoreUndo: %v", err)
 	}
@@ -2283,8 +2382,29 @@ func TestRestoreTruncation_ReadsTheLogInTheTransaction(t *testing.T) {
 	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, meta.DeleteToken), 0); err != nil {
 		t.Fatalf("restoreTruncationByLogID: %v", err)
 	}
-	if spy.reads != 0 {
-		t.Errorf("truncation log reads outside the transaction = %d, want 0", spy.reads)
+	if spy.ran("GetEventTruncateDelete") {
+		t.Errorf("queries outside the transaction = %v, want no read of a truncation log", spy.names)
+	}
+}
+
+// TestUndoSingle_ReadsTheMasterInTheTransaction: the undo of a single delete
+// reads the master in its transaction and chooses its path there. A series
+// delete between a read outside it and the restore would send the undo down
+// the path of a live master.
+func TestUndoSingle_ReadsTheMasterInTheTransaction(t *testing.T) {
+	svc, spy := spiedService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("DeleteInstanceWithUndo: %v", err)
+	}
+	spy.names = nil
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if spy.ran("GetEventIncludingDeleted") {
+		t.Errorf("queries outside the transaction = %v, want no read of the master", spy.names)
 	}
 }
 
@@ -2317,4 +2437,78 @@ func TestRestoreUndo_ClassifiesPermanentRefusals(t *testing.T) {
 	if err := svc.RestoreUndo(ctx, UndoMeta{Kind: UndoKind(99), UID: "x"}); !errors.Is(err, ErrUndoNotPossible) {
 		t.Errorf("RestoreUndo(unknown kind) = %v, want ErrUndoNotPossible", err)
 	}
+}
+
+// TestOrphanDelete_JoinsTheLogOfTheTrashedMaster: a delete of orphan rows
+// beside a trashed master joins the log with the token of that master. It
+// does not join the newest log of the calendar. The sequence:
+//
+//  1. A series delete hides the master and its rows.
+//  2. A pull brings back one row (merged) beside the trashed master.
+//  3. A delete of orphan rows merges that row into the log of the master.
+//  4. The undo of step 1 brings back the master. The log keeps the merged row
+//     as an orphan log.
+//  5. A pull hides the series again in one statement, with no log.
+//  6. A pull brings back the other row (own) beside the trashed master.
+//  7. A delete of orphan rows hides it again.
+//
+// Step 7 writes a new log with the token of the master. The orphan log of
+// step 3 keeps only its row. The restore of the master then brings back the
+// row of step 7, and the row of step 3 stays in the trash.
+func TestOrphanDelete_JoinsTheLogOfTheTrashedMaster(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	get := func(at time.Time) storage.Event {
+		t.Helper()
+		r, err := svc.q.GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams{
+			CalendarID: 1, Uid: master.UID, RecurrenceID: at.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("get override %s: %v", at, err)
+		}
+		return r
+	}
+	own, merged := get(second), get(third)
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo: %v", err)
+	}
+	if err := reviveRow(svc, merged.ID); err != nil {
+		t.Fatalf("revive the merged row: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries(merged row): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID, DeleteToken: nextToken(t, svc)}); err != nil {
+		t.Fatalf("pull hides the series: %v", err)
+	}
+	if err := reviveRow(svc, own.ID); err != nil {
+		t.Fatalf("revive the own row: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries(own row): %v", err)
+	}
+	trashed, err := svc.q.GetEventIncludingDeleted(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("get master: %v", err)
+	}
+	var hidden string
+	if err := svc.db.QueryRowContext(ctx, `SELECT hidden_ids FROM event_series_deletes WHERE uid = ? AND delete_token = ? AND had_master = 1`, master.UID, trashed.DeleteToken).Scan(&hidden); err != nil {
+		t.Fatalf("log with the token of the master: %v", err)
+	}
+	if hidden != strconv.FormatInt(own.ID, 10) {
+		t.Errorf("log of the master = %q, want the row of step 7 (%d)", hidden, own.ID)
+	}
+	if n := countLogsIn(t, svc, 1, master.UID); n != 2 {
+		t.Errorf("series logs = %d, want the orphan log and the log of the master", n)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	wantTrashed(t, svc, false, master.ID, own.ID)
+	wantTrashed(t, svc, true, merged.ID)
 }

@@ -488,6 +488,12 @@ func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int, rw url
 		// fields render below via IsEvent().
 	}
 
+	// The purge keeps a master whose series still has live overrides. The
+	// line names the rows, so the user can act on them.
+	if note := e.KeptNote(); note != "" {
+		lines = append(lines, detailLine(faint, "Purge", note, labelWidth, w))
+	}
+
 	if e.Kind.IsEvent() {
 		if when := trashWhen(e); when != "" {
 			lines = append(lines, detailLine(faint, "When", when, labelWidth, w))

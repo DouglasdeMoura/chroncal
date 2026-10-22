@@ -628,6 +628,11 @@ Stuck resources:
 - After the stop, a new version of the resource on the server (a new ETag) gets one more attempt. When that attempt fails, the retries stay stopped, and sync does not warn again.
 - `chroncal sync status` lists each such resource on a `stuck href=...` line below its calendar. The `-o json` output lists it under `stuck_hrefs`. Correct the resource on the server. The next good fetch removes the entry.
 
+Failed pushes:
+
+- `chroncal sync status` lists each resource whose last push failed on a `push failed uid=...` line below its calendar. The line gives the count of failed attempts and the last error. The `-o json` output lists it under `push_failures`.
+- An edit of an occurrence that no series owns stays local with such a failure. This occurs when two calendars hold a live master of its UID. The error is "the item belongs to no series because two calendars hold its master; use the row ID of one series". Delete or move one of the two masters. The next edit of the occurrence then goes to the other series.
+
 ### Google Calendar via CalDAV
 
 Google Calendar requires OAuth 2.0. It only exposes `VEVENT` over CalDAV.

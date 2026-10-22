@@ -20,11 +20,69 @@ func MarkResourceDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 	if calendarID == 0 || uid == "" {
 		return nil
 	}
-	calendarID, err := dirtyCalendar(ctx, db, calendarID, uid, ownerType)
-	if err != nil || calendarID == 0 {
+	target, err := dirtyCalendar(ctx, db, calendarID, uid, ownerType)
+	if err != nil {
 		return err
 	}
-	return markCalendarDirty(ctx, db, calendarID, uid, ownerType)
+	if target == unownedCalendar {
+		return recordUnownedEdit(ctx, db, calendarID, uid, ownerType)
+	}
+	if err := clearUnownedEdit(ctx, db, calendarID, uid); err != nil {
+		return err
+	}
+	if target == 0 {
+		return nil
+	}
+	return markCalendarDirty(ctx, db, target, uid, ownerType)
+}
+
+// NoSeriesOwnerMsg is the push failure of an edit of a legacy override that
+// no series owns. Two calendars hold a live master of its UID. No
+// export holds the row, so a dirty mark would drop the edit in silence.
+// MarkResourceDirty records the edit as a push failure of the calendar of the
+// row instead, and the sync status shows this text.
+const NoSeriesOwnerMsg = "the item belongs to no series because two calendars hold its master; use the row ID of one series"
+
+// unownedCalendar is the result of dirtyCalendar for a legacy override that
+// no series owns (NoSeriesOwnerMsg).
+const unownedCalendar = -1
+
+// recordUnownedEdit records an edit of a legacy override with no owner as a
+// push failure of its sync row in calendarID (NoSeriesOwnerMsg). The row
+// stays clean, so no push drops the edit. The edit stays local, and the sync
+// status shows the failure. A local calendar has no sync row, so it records
+// nothing.
+func recordUnownedEdit(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
+	linked, err := calendarHasAccount(ctx, db, calendarID)
+	if err != nil || !linked {
+		return err
+	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy, push_fail_count, last_push_error)
+		 VALUES (?, ?, ?, 0, 'sync-token', 1, ?)
+		 ON CONFLICT(calendar_id, uid) DO UPDATE SET
+		     push_fail_count = push_fail_count + 1,
+		     last_push_error = excluded.last_push_error`,
+		calendarID, uid, ownerType, NoSeriesOwnerMsg,
+	)
+	if err != nil {
+		return fmt.Errorf("record the edit with no series: %w", err)
+	}
+	return nil
+}
+
+// clearUnownedEdit drops the push failure of recordUnownedEdit from the sync
+// row of uid in calendarID. A later edit with an owner, or with its own
+// master, makes the failure stale.
+func clearUnownedEdit(ctx context.Context, db DBTX, calendarID int64, uid string) error {
+	if _, err := db.ExecContext(ctx,
+		`UPDATE sync_resources SET push_fail_count = 0, last_push_error = ''
+		 WHERE calendar_id = ? AND uid = ? AND last_push_error = ?`,
+		calendarID, uid, NoSeriesOwnerMsg,
+	); err != nil {
+		return fmt.Errorf("clear the edit with no series: %w", err)
+	}
+	return nil
 }
 
 // ReconcileAfterRestore resets the sync state of uid in calendarID after a
@@ -40,8 +98,19 @@ func ReconcileAfterRestore(ctx context.Context, db DBTX, calendarID int64, uid, 
 		return nil
 	}
 	target, err := dirtyCalendar(ctx, db, calendarID, uid, ownerType)
-	if err != nil || target == 0 {
+	if err != nil {
 		return err
+	}
+	if target == unownedCalendar {
+		// No series owns the restored row. The tombstone stays, and the
+		// sync status shows the failure.
+		return recordUnownedEdit(ctx, db, calendarID, uid, ownerType)
+	}
+	if err := clearUnownedEdit(ctx, db, calendarID, uid); err != nil {
+		return err
+	}
+	if target == 0 {
+		return nil
 	}
 	// The mark of a legacy override goes to the calendar of its master. The
 	// tombstone of the calendar of the row then stays: the server object
@@ -65,18 +134,9 @@ func (q *Queries) ReconcileAfterRestore(ctx context.Context, calendarID int64, u
 // account. A local calendar gets no sync row.
 func markCalendarDirty(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
 	// Only act if the calendar is linked to an account.
-	var accountID *int64
-	err := db.QueryRowContext(ctx,
-		`SELECT account_id FROM calendars WHERE id = ?`, calendarID,
-	).Scan(&accountID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
+	linked, err := calendarHasAccount(ctx, db, calendarID)
+	if err != nil || !linked {
 		return err
-	}
-	if accountID == nil || *accountID == 0 {
-		return nil
 	}
 	// Bump rev on every edit so a concurrent push (which captured the prior
 	// rev before exporting the body) refuses to clear dirty and silently drop
@@ -88,6 +148,22 @@ func markCalendarDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 		calendarID, uid, ownerType,
 	)
 	return err
+}
+
+// calendarHasAccount reports whether an account links calendarID. A
+// local calendar, or no calendar, gives false.
+func calendarHasAccount(ctx context.Context, db DBTX, calendarID int64) (bool, error) {
+	var accountID *int64
+	err := db.QueryRowContext(ctx,
+		`SELECT account_id FROM calendars WHERE id = ?`, calendarID,
+	).Scan(&accountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return accountID != nil && *accountID != 0, nil
 }
 
 // CreateTombstoneIfSynced inserts a tombstone row if the resource was
@@ -154,6 +230,7 @@ func LegacyOverride(ownMasterRows int64) bool {
 
 // dirtyCalendar returns the calendar whose sync row a write of a row of uid
 // in calendarID must mark dirty. 0 means no calendar gets the mark.
+// unownedCalendar means that no series owns the row (NoSeriesOwnerMsg).
 //
 // The export of a UID in one calendar holds the master of that calendar, its
 // overrides, and the legacy overrides that its series owns. See
@@ -174,7 +251,9 @@ func LegacyOverride(ownMasterRows int64) bool {
 //   - A live owner master gets the mark in its calendar.
 //   - An owner master in the trash gets no mark. The rows stay local until
 //     the master comes back, as the export rule of sync requires.
-//   - With no owner, calendarID gets the mark.
+//   - With no owner and two live masters of the UID, no calendar gets the
+//     mark: the result is unownedCalendar (NoSeriesOwnerMsg).
+//   - With no owner and no live master, calendarID gets the mark.
 //
 // For a todo or a journal, the one calendar with a live master gets the
 // mark. Else calendarID gets it.
@@ -211,6 +290,15 @@ func dirtyCalendar(ctx context.Context, db DBTX, calendarID int64, uid, ownerTyp
 			case err != nil:
 				return 0, err
 			case !found:
+				// No series owns the row. With two live masters of the
+				// UID, no export holds it (NoSeriesOwnerMsg).
+				live, err := q.EventUIDMasterCalendars(ctx, uid)
+				if err != nil {
+					return 0, err
+				}
+				if live.Calendars >= 2 {
+					return unownedCalendar, nil
+				}
 				return calendarID, nil
 			case m.DeletedAt != nil:
 				return 0, nil

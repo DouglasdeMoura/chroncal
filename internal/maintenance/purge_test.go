@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -179,53 +180,78 @@ func keptSeriesFixture(t *testing.T, db *sql.DB, events *event.Service) (int64, 
 	return master.ID, overrides[0]
 }
 
-// TestPurger_WarnsOncePerKeptMaster: the purge loop warns about a kept
-// master once. A later run that keeps it again logs at Debug.
-func TestPurger_WarnsOncePerKeptMaster(t *testing.T) {
+// resetKeptLog empties the set of kept masters that this process logged, so
+// each test starts as a new process.
+func resetKeptLog(t *testing.T) {
+	t.Helper()
+	keptLogged.Lock()
+	keptLogged.ids = make(map[int64]bool)
+	keptLogged.Unlock()
+}
+
+// TestPurger_LogsAKeptMasterOncePerProcess: the purge logs a kept master once
+// per process, at Info. A later run logs it at Debug, also a run of another
+// Purger in the same process. No run logs at Warn.
+func TestPurger_LogsAKeptMasterOncePerProcess(t *testing.T) {
+	resetKeptLog(t)
 	db, q := testutil.NewTestDB(t)
 	events := event.NewService(db, q)
 	trashSvc := trash.NewService(events, todo.NewService(db, q), journal.NewService(db, q))
 	keptSeriesFixture(t, db, events)
 	var buf bytes.Buffer
-	p := NewPurger(trashSvc, nil, 30, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	for i := 0; i < 2; i++ {
-		if _, err := p.RunOnce(context.Background()); err != nil {
-			t.Fatalf("RunOnce %d: %v", i, err)
+		p := NewPurger(trashSvc, nil, 30, logger)
+		for j := 0; j < 2; j++ {
+			if _, err := p.RunOnce(context.Background()); err != nil {
+				t.Fatalf("RunOnce %d.%d: %v", i, j, err)
+			}
 		}
 	}
 	out := buf.String()
-	if n := strings.Count(out, "level=WARN"); n != 1 {
-		t.Errorf("warnings = %d, want 1:\n%s", n, out)
+	if n := strings.Count(out, "level=WARN"); n != 0 {
+		t.Errorf("warnings = %d, want 0:\n%s", n, out)
 	}
-	if !strings.Contains(out, "level=DEBUG") {
-		t.Errorf("the second run logs no Debug record:\n%s", out)
+	if n := strings.Count(out, `level=INFO msg="soft-delete purge kept a master`); n != 1 {
+		t.Errorf("Info records of the kept master = %d, want 1:\n%s", n, out)
+	}
+	if n := strings.Count(out, `level=DEBUG msg="soft-delete purge kept a master`); n != 3 {
+		t.Errorf("Debug records of the kept master = %d, want 3:\n%s", n, out)
 	}
 }
 
-// TestPurger_WarnedSetFollowsTheLastRun: the set of warned masters holds the
-// masters of the last run only. A master that the purge no longer keeps
-// leaves it.
-func TestPurger_WarnedSetFollowsTheLastRun(t *testing.T) {
+// TestTrashList_NamesTheRowsThatKeepAMaster: the trash entry of a master that
+// the purge keeps names the live override rows that keep it.
+func TestTrashList_NamesTheRowsThatKeepAMaster(t *testing.T) {
+	resetKeptLog(t)
 	db, q := testutil.NewTestDB(t)
 	events := event.NewService(db, q)
 	trashSvc := trash.NewService(events, todo.NewService(db, q), journal.NewService(db, q))
-	keptSeriesFixture(t, db, events)
-	p := NewPurger(trashSvc, nil, 30, nil)
+	masterID, _ := keptSeriesFixture(t, db, events)
 	ctx := context.Background()
-	if _, err := p.RunOnce(ctx); err != nil {
-		t.Fatalf("first RunOnce: %v", err)
+	if _, err := NewPurger(trashSvc, nil, 30, nil).RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
 	}
-	if len(p.warned) != 1 {
-		t.Fatalf("warned after the first run = %v, want one master", p.warned)
+	var live int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM events WHERE uid = 'kept-series' AND recurrence_id != '' AND deleted_at IS NULL`).Scan(&live); err != nil {
+		t.Fatalf("live override: %v", err)
 	}
-	// The live override goes, so the next run purges the master.
-	if _, err := db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE uid = 'kept-series'`); err != nil {
-		t.Fatalf("trash the live override: %v", err)
+	entries, err := trashSvc.List(ctx, 1)
+	if err != nil {
+		t.Fatalf("List: %v", err)
 	}
-	if _, err := p.RunOnce(ctx); err != nil {
-		t.Fatalf("second RunOnce: %v", err)
+	for _, e := range entries {
+		if e.Kind != trash.KindEvent || e.ID != masterID {
+			if e.KeptNote() != "" {
+				t.Errorf("entry %d (%v) note = %q, want none", e.ID, e.Kind, e.KeptNote())
+			}
+			continue
+		}
+		want := fmt.Sprintf("kept: the series still has live overrides, rows %d", live)
+		if got := e.KeptNote(); got != want {
+			t.Errorf("note of the kept master = %q, want %q", got, want)
+		}
+		return
 	}
-	if len(p.warned) != 0 {
-		t.Errorf("warned after the master went = %v, want empty", p.warned)
-	}
+	t.Fatalf("no trash entry of the kept master %d", masterID)
 }

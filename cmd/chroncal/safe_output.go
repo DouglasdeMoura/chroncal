@@ -74,6 +74,15 @@ func writeSyncStatusLine(w io.Writer, status syncPkg.SyncStatus) {
 			safeText(h.GaveUpAt),
 		)
 	}
+	// A push failure keeps an edit local. This line is its signal.
+	for _, f := range status.PushFailures {
+		fmt.Fprintf(w, "    push failed uid=%s  type=%s  attempts=%d  error=%s  (local copy kept)\n",
+			safeText(f.UID),
+			safeText(f.OwnerType),
+			f.Count,
+			safeText(f.Error),
+		)
+	}
 }
 
 func writeSyncConflictLine(w io.Writer, conflict syncPkg.Conflict) {

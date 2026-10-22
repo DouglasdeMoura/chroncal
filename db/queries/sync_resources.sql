@@ -48,6 +48,13 @@ SET push_fail_count = push_fail_count + 1,
     last_push_error = ?
 WHERE calendar_id = ? AND uid = ?;
 
+-- name: ListSyncResourcePushFailures :many
+-- The sync rows of one calendar with a failed push attempt. The sync status
+-- lists them, so a push failure that keeps an edit local is visible.
+SELECT uid, owner_type, push_fail_count, last_push_error FROM sync_resources
+WHERE calendar_id = ? AND push_fail_count > 0
+ORDER BY uid;
+
 -- name: ClearSyncResourcePushFailure :exec
 -- Reset the failure bookkeeping after a successful push. The engine clears
 -- it next to FinalizePushedResource. The sync doctor clears it after its

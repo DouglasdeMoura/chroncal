@@ -67,7 +67,16 @@ type Entry struct {
 	Description string
 	Status      string
 	Categories  string
+
+	// KeptOverrideIDs lists the live override rows that keep a master in
+	// the trash (KindEvent). The purge keeps the master until they go.
+	KeptOverrideIDs []int64
 }
+
+// KeptNote tells the user why the purge keeps the entry, and names the rows
+// that keep it (event.KeptNote). It is empty for an entry that the purge
+// takes.
+func (e Entry) KeptNote() string { return event.KeptNote(e.KeptOverrideIDs) }
 
 // Service joins soft-delete state across event, todo, and journal
 // into one List/Restore/Purge surface.
@@ -253,6 +262,8 @@ func fromEventTrash(e event.TrashEntry) Entry {
 		Description:   e.Description,
 		Status:        e.Status,
 		Categories:    e.Categories,
+
+		KeptOverrideIDs: e.KeptOverrideIDs,
 	}
 }
 
@@ -276,6 +287,8 @@ func toEventTrash(e Entry) event.TrashEntry {
 		Description:   e.Description,
 		Status:        e.Status,
 		Categories:    e.Categories,
+
+		KeptOverrideIDs: e.KeptOverrideIDs,
 	}
 }
 

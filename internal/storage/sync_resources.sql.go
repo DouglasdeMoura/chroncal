@@ -352,6 +352,49 @@ func (q *Queries) ListSiblingTombstones(ctx context.Context, arg ListSiblingTomb
 	return items, nil
 }
 
+const listSyncResourcePushFailures = `-- name: ListSyncResourcePushFailures :many
+SELECT uid, owner_type, push_fail_count, last_push_error FROM sync_resources
+WHERE calendar_id = ? AND push_fail_count > 0
+ORDER BY uid
+`
+
+type ListSyncResourcePushFailuresRow struct {
+	Uid           string
+	OwnerType     string
+	PushFailCount int64
+	LastPushError string
+}
+
+// The sync rows of one calendar with a failed push attempt. The sync status
+// lists them, so a push failure that keeps an edit local is visible.
+func (q *Queries) ListSyncResourcePushFailures(ctx context.Context, calendarID int64) ([]ListSyncResourcePushFailuresRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSyncResourcePushFailures, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSyncResourcePushFailuresRow
+	for rows.Next() {
+		var i ListSyncResourcePushFailuresRow
+		if err := rows.Scan(
+			&i.Uid,
+			&i.OwnerType,
+			&i.PushFailCount,
+			&i.LastPushError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSyncResourcesByCalendar = `-- name: ListSyncResourcesByCalendar :many
 SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error FROM sync_resources WHERE calendar_id = ? ORDER BY id
 `
