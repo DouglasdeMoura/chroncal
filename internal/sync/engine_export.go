@@ -35,8 +35,9 @@ var errUnknownOwnerType = errors.New("unknown owner type")
 // entry rather than synchronized edits to parallel switches. A missed
 // type cannot compile cleanly into a silent mis-dispatch.
 type ownerOps struct {
-	// softDeleteByUID soft-deletes the live rows of uid in one calendar.
-	softDeleteByUID func(ctx context.Context, e *Engine, calendarID int64, uid string) error
+	// softDeleteByUID soft-deletes the live rows of uid in one calendar. q
+	// binds to the transaction of the caller.
+	softDeleteByUID func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error
 	// lookupID finds the live master row of uid in one calendar.
 	lookupID func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error)
 	// export bundles the series of uid in one calendar.
@@ -62,16 +63,17 @@ func overridesByUID[T any](list func(context.Context, string) ([]T, error)) func
 
 var ownerOpsByType = map[string]ownerOps{
 	ownerTypeEvent: {
-		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
+		softDeleteByUID: func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error {
 			// A pull writes the rows of the pulled calendar only. A legacy
 			// override in another calendar keeps its row (see AGENTS.md).
 			// The delete of the pull takes a fresh delete token, so the undo
-			// of an earlier delete of these rows refuses.
-			token, err := e.q.NextEventDeleteToken(ctx)
+			// of an earlier delete of these rows refuses. The token and the
+			// delete share the transaction of q.
+			token, err := q.NextEventDeleteToken(ctx)
 			if err != nil {
 				return fmt.Errorf("delete token: %w", err)
 			}
-			return e.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: calendarID, Uid: uid, DeleteToken: token})
+			return q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: calendarID, Uid: uid, DeleteToken: token})
 		},
 		lookupID: func(ctx context.Context, e *Engine, calendarID int64, uid string) (int64, error) {
 			row, err := e.q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
@@ -87,8 +89,8 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 	},
 	ownerTypeTodo: {
-		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
-			return e.q.SoftDeleteTodosByCalendarUID(ctx, storage.SoftDeleteTodosByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+		softDeleteByUID: func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error {
+			return q.SoftDeleteTodosByCalendarUID(ctx, storage.SoftDeleteTodosByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
 		lookupID: func(ctx context.Context, e *Engine, _ int64, uid string) (int64, error) {
 			row, err := e.q.GetTodoByUID(ctx, uid)
@@ -104,8 +106,8 @@ var ownerOpsByType = map[string]ownerOps{
 		},
 	},
 	ownerTypeJournal: {
-		softDeleteByUID: func(ctx context.Context, e *Engine, calendarID int64, uid string) error {
-			return e.q.SoftDeleteJournalsByCalendarUID(ctx, storage.SoftDeleteJournalsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+		softDeleteByUID: func(ctx context.Context, q *storage.Queries, calendarID int64, uid string) error {
+			return q.SoftDeleteJournalsByCalendarUID(ctx, storage.SoftDeleteJournalsByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
 		},
 		lookupID: func(ctx context.Context, e *Engine, _ int64, uid string) (int64, error) {
 			row, err := e.q.GetJournalByUID(ctx, uid)
@@ -259,13 +261,26 @@ func ownerOpsFor(ownerType string) (ownerOps, error) {
 func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64, ownerType, uid string) error {
 	// Soft-delete across every owner type so a remote DELETE that races with
 	// a user action doesn't nuke the local row — it stays in trash until the
-	// retention window expires. The caller clears the sync_resource so a
-	// later restore re-CREATEs a fresh one via MarkResourceDirty.
+	// retention window expires. One transaction holds the delete and the
+	// drop of the sync_resource, so a later restore re-CREATEs a fresh one
+	// via MarkResourceDirty.
 	ops, err := ownerOpsFor(ownerType)
 	if err != nil {
 		return err
 	}
-	return ops.softDeleteByUID(ctx, e, calendarID, uid)
+	tx, err := e.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := e.q.WithTx(tx)
+	if err := ops.softDeleteByUID(ctx, qtx, calendarID, uid); err != nil {
+		return err
+	}
+	if err := qtx.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{CalendarID: calendarID, Uid: uid}); err != nil {
+		return fmt.Errorf("delete sync resource: %w", err)
+	}
+	return tx.Commit()
 }
 
 // lookupOwnerID resolves the local row ID that backs a UID in calendarID

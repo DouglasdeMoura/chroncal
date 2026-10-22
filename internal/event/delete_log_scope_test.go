@@ -1911,3 +1911,113 @@ func TestMasterRevive_ConsumesOnlyItsSeriesLog(t *testing.T) {
 		t.Errorf("series logs after the revive = %d, want 1: the other log stays", n)
 	}
 }
+
+// TestRestoreByUID_OrphanRowsGroupByToken: with no master and no log, the
+// restore by UID brings back the rows of the newest delete. Two deletes in
+// one second have one time and two tokens: the token tells them apart. Rows
+// from before migration 057 have token 0, and the time groups them.
+func TestRestoreByUID_OrphanRowsGroupByToken(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy %v", legacy), func(t *testing.T) {
+			svc := newTestService(t)
+			ctx := context.Background()
+			uid := fmt.Sprintf("orphan-group-%v", legacy)
+			rows := orphanRows(t, svc, uid, 3)
+			first := nextToken(t, svc)
+			second := nextToken(t, svc)
+			for i, token := range []int64{first, second, second} {
+				if err := svc.q.SoftDeleteEvent(ctx, storage.SoftDeleteEventParams{ID: rows[i].ID, DeleteToken: token}); err != nil {
+					t.Fatalf("hide row %d: %v", i, err)
+				}
+			}
+			if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-05-01T00:00:00Z' WHERE uid = ?`, uid); err != nil {
+				t.Fatalf("one second for the rows: %v", err)
+			}
+			if legacy {
+				// The old rows: no token. The first row went one second
+				// earlier.
+				if _, err := svc.db.ExecContext(ctx, `UPDATE events SET delete_token = 0 WHERE uid = ?`, uid); err != nil {
+					t.Fatalf("clear the tokens: %v", err)
+				}
+				if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2026-04-30T23:59:59Z' WHERE id = ?`, rows[0].ID); err != nil {
+					t.Fatalf("move the first row: %v", err)
+				}
+			}
+			if err := svc.RestoreByUID(ctx, uid); err != nil {
+				t.Fatalf("RestoreByUID: %v", err)
+			}
+			wantTrashed(t, svc, true, rows[0].ID)
+			wantTrashed(t, svc, false, rows[1].ID, rows[2].ID)
+		})
+	}
+}
+
+// TestUndoSeries_PurgedMasterRefusesAnotherLog is the five-step sequence:
+//  1. A series delete of a master writes its log.
+//  2. A purge of the master takes the log with it.
+//  3. A pull imports an orphan row of the UID.
+//  4. A series delete of the orphan row writes a new log.
+//  5. The undo of the first delete names its own log, which is gone. It
+//     gives ErrAlreadyRestored and leaves the log of step 4 alone.
+func TestUndoSeries_PurgedMasterRefusesAnotherLog(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil || meta.SeriesLogID == 0 {
+		t.Fatalf("DeleteSeriesWithUndo = %+v, %v; want a series log ID", meta, err)
+	}
+	if err := svc.PurgeByID(ctx, master.ID); err != nil {
+		t.Fatalf("PurgeByID(master): %v", err)
+	}
+	o := legacyAt(t, svc, master.UID, 1, second)
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries(orphan): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrAlreadyRestored) {
+		t.Fatalf("RestoreUndo = %v, want ErrAlreadyRestored", err)
+	}
+	wantTrashed(t, svc, true, o.ID)
+	if n := countLogsIn(t, svc, 1, master.UID); n != 1 {
+		t.Errorf("series logs after the refused undo = %d, want the 1 of step 4", n)
+	}
+}
+
+// TestUndoSeries_MasterLeavesTheMergedOrphanRows: a delete of orphan rows
+// beside a trashed master merges its rows into the log of that master, with
+// its own token. The undo of the series delete of the master brings back the
+// master and the rows with its token. The merged row stays in the trash for
+// its own undo.
+func TestUndoSeries_MasterLeavesTheMergedOrphanRows(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	get := func(at time.Time) storage.Event {
+		t.Helper()
+		r, err := svc.q.GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams{
+			CalendarID: 1, Uid: master.UID, RecurrenceID: at.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("get override %s: %v", at, err)
+		}
+		return r
+	}
+	own, merged := get(second), get(third)
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo: %v", err)
+	}
+	// A pull brings back one row beside the trashed master, and a delete of
+	// orphan rows hides it again into the log of the master.
+	if err := reviveRow(svc, merged.ID); err != nil {
+		t.Fatalf("revive the row: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries(orphan row): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	wantTrashed(t, svc, false, master.ID, own.ID)
+	wantTrashed(t, svc, true, merged.ID)
+}

@@ -2111,24 +2111,6 @@ func (q *Queries) SoftDeleteEventsByIDs(ctx context.Context, arg SoftDeleteEvent
 	return err
 }
 
-const softDeleteEventsByUID = `-- name: SoftDeleteEventsByUID :exec
-UPDATE events SET
-    deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    delete_token = ?1
-WHERE uid = ?2 AND deleted_at IS NULL
-`
-
-type SoftDeleteEventsByUIDParams struct {
-	DeleteToken int64
-	Uid         string
-}
-
-func (q *Queries) SoftDeleteEventsByUID(ctx context.Context, arg SoftDeleteEventsByUIDParams) error {
-	_, err := q.db.ExecContext(ctx, softDeleteEventsByUID, arg.DeleteToken, arg.Uid)
-	return err
-}
-
 const softDeleteSeriesRowsInCalendar = `-- name: SoftDeleteSeriesRowsInCalendar :exec
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
