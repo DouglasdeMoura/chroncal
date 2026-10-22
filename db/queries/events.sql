@@ -425,7 +425,7 @@ WHERE s.uid IN (sqlc.slice(uids)) AND s.recurrence_id != '';
 -- name: ListSeriesLogsOfMasters :many
 -- The series-delete logs of the calendars of the masters, each with the ID of
 -- its master.
-SELECT d.hidden_ids, d.deleted_at, m.id AS master_id FROM event_series_deletes AS d
+SELECT d.id, d.hidden_ids, d.deleted_at, m.id AS master_id FROM event_series_deletes AS d
 JOIN events AS m ON m.calendar_id = d.calendar_id AND m.uid = d.uid AND m.recurrence_id = ''
 WHERE m.id IN (sqlc.slice(master_ids));
 

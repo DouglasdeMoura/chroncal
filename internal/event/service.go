@@ -271,7 +271,7 @@ func (s *Service) markDirtyByID(ctx context.Context, eventID int64) error {
 	if err != nil {
 		return fmt.Errorf("get event for dirty mark: %w", err)
 	}
-	if err := storage.MarkResourceDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, "event"); err != nil {
+	if err := storage.MarkEventRowDirty(ctx, s.dirtyExec(), r.CalendarID, r.Uid, r.ID); err != nil {
 		return fmt.Errorf("mark resource dirty: %w", err)
 	}
 	return nil
@@ -361,7 +361,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Event, error) {
 	// Mark dirty inside the transaction so a failed sync-tracking write rolls
 	// the new event back rather than committing a row that can never be pushed
 	// (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+	if err := storage.MarkEventRowDirty(ctx, tx, e.CalendarID, e.UID, e.ID); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -796,7 +796,7 @@ func (s *Service) UpdateInstance(ctx context.Context, calendarID int64, uid stri
 	// Mark the override dirty inside the transaction so a failed sync-tracking
 	// write rolls the override back rather than committing a change that is
 	// never pushed (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, uid, "event"); err != nil {
+	if err := storage.MarkEventRowDirty(ctx, tx, e.CalendarID, uid, e.ID); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -838,7 +838,7 @@ func (s *Service) UpdateInstanceWithRelations(ctx context.Context, calendarID in
 	// Mark the override dirty inside the transaction so a failed sync-tracking
 	// write rolls the override and its children back rather than committing a
 	// change that is never pushed (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, uid, "event"); err != nil {
+	if err := storage.MarkEventRowDirty(ctx, tx, e.CalendarID, uid, e.ID); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -1175,7 +1175,7 @@ func (s *Service) UpdateFromInstance(ctx context.Context, calendarID int64, uid 
 	if err := storage.MarkResourceDirty(ctx, tx, masterCalendarID, uid, "event"); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+	if err := storage.MarkEventRowDirty(ctx, tx, e.CalendarID, e.UID, e.ID); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -1220,7 +1220,7 @@ func (s *Service) UpdateFromInstanceWithRelations(ctx context.Context, calendarI
 	if err := storage.MarkResourceDirty(ctx, tx, masterCalendarID, uid, "event"); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
-	if err := storage.MarkResourceDirty(ctx, tx, e.CalendarID, e.UID, "event"); err != nil {
+	if err := storage.MarkEventRowDirty(ctx, tx, e.CalendarID, e.UID, e.ID); err != nil {
 		return Event{}, fmt.Errorf("mark resource dirty: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

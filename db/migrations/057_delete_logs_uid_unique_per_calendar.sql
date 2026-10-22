@@ -276,8 +276,9 @@ END;
 -- occurrence, and removes its ID from each series-delete log, each truncation
 -- log, and each occurrence log. A log then names a row only while the row
 -- stays in the trash from that delete. A series-delete log that names only
--- this row goes. A master of its calendar in the trash keeps that log,
--- because the log still records the series delete. A log that names no row
+-- this row goes. A master of its calendar in the trash keeps the log of a
+-- master, because the log still records the series delete. An orphan log
+-- (had_master 0) goes in any case: an empty orphan log records nothing. A log that names no row
 -- stays, because the row does not belong to that delete.
 -- +goose StatementBegin
 CREATE TRIGGER events_override_revive_drops_stale_logs
@@ -288,10 +289,10 @@ BEGIN
     WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
     DELETE FROM event_series_deletes
     WHERE uid = NEW.uid AND hidden_ids = CAST(NEW.id AS TEXT)
-      AND NOT EXISTS (
+      AND (had_master = 0 OR NOT EXISTS (
         SELECT 1 FROM events AS m
         WHERE m.calendar_id = event_series_deletes.calendar_id AND m.uid = NEW.uid
-          AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL);
+          AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL));
     UPDATE event_series_deletes
     SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
     WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
@@ -348,7 +349,62 @@ END;
 -- push failures of a sync row.
 ALTER TABLE events ADD COLUMN edit_unowned INTEGER NOT NULL DEFAULT 0;
 
+-- A change of a master settles the edits that no series owned. A delete, a
+-- move, a revive, or a purge of a master can give such a row one owner
+-- again. Each path of that change, a pull or an import included, then runs
+-- the same rule. For each marked live row (edit_unowned) that a series owns
+-- now (the view event_series_rows):
+--   - a live owner master marks its calendar dirty, when an account links
+--     the calendar, so the next push sends the edit;
+--   - the mark of the row clears. An owner master in the trash gets no dirty
+--     mark: the restore of its series marks the UID (ReconcileAfterRestore).
+-- A row with no owner keeps its mark. The WHEN clause reads the index on uid,
+-- so a change of a master of a UID with no marked row costs one lookup.
+-- +goose StatementBegin
+CREATE TRIGGER events_master_change_settles_unowned_edits
+AFTER UPDATE OF deleted_at, calendar_id ON events
+WHEN NEW.recurrence_id = '' AND EXISTS (
+    SELECT 1 FROM events AS u WHERE u.uid = NEW.uid AND u.edit_unowned = 1)
+BEGIN
+    INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+    SELECT DISTINCT s.owner_calendar_id, s.uid, 'event', 1, 'sync-token'
+    FROM event_series_rows AS s
+    JOIN events AS m ON m.calendar_id = s.owner_calendar_id AND m.uid = s.uid
+        AND m.recurrence_id = '' AND m.deleted_at IS NULL
+    JOIN calendars AS c ON c.id = s.owner_calendar_id AND c.account_id IS NOT NULL AND c.account_id != 0
+    WHERE s.uid = NEW.uid AND s.id IN (
+        SELECT u.id FROM events AS u WHERE u.uid = NEW.uid AND u.edit_unowned = 1 AND u.deleted_at IS NULL)
+    ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
+    UPDATE events SET edit_unowned = 0
+    WHERE uid = NEW.uid AND edit_unowned = 1
+      AND id IN (SELECT s.id FROM event_series_rows AS s WHERE s.uid = NEW.uid);
+END;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE TRIGGER events_master_purge_settles_unowned_edits
+AFTER DELETE ON events
+WHEN OLD.recurrence_id = '' AND EXISTS (
+    SELECT 1 FROM events AS u WHERE u.uid = OLD.uid AND u.edit_unowned = 1)
+BEGIN
+    INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+    SELECT DISTINCT s.owner_calendar_id, s.uid, 'event', 1, 'sync-token'
+    FROM event_series_rows AS s
+    JOIN events AS m ON m.calendar_id = s.owner_calendar_id AND m.uid = s.uid
+        AND m.recurrence_id = '' AND m.deleted_at IS NULL
+    JOIN calendars AS c ON c.id = s.owner_calendar_id AND c.account_id IS NOT NULL AND c.account_id != 0
+    WHERE s.uid = OLD.uid AND s.id IN (
+        SELECT u.id FROM events AS u WHERE u.uid = OLD.uid AND u.edit_unowned = 1 AND u.deleted_at IS NULL)
+    ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
+    UPDATE events SET edit_unowned = 0
+    WHERE uid = OLD.uid AND edit_unowned = 1
+      AND id IN (SELECT s.id FROM event_series_rows AS s WHERE s.uid = OLD.uid);
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS events_master_change_settles_unowned_edits;
+DROP TRIGGER IF EXISTS events_master_purge_settles_unowned_edits;
 ALTER TABLE events DROP COLUMN edit_unowned;
 DROP TABLE IF EXISTS event_delete_token;
 DROP INDEX IF EXISTS idx_event_exdate_deletes_uid;

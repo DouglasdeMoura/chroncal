@@ -2482,7 +2482,9 @@ func mustListSeriesOverrides(t *testing.T, svc *Service, calendarID int64, uid s
 
 // TestOrphanDelete_MergesIntoSeriesLog: a delete of orphan rows beside the
 // trashed master of the calendar joins the log of the earlier series delete.
-// The restore of the master then brings every hidden row back.
+// The restore of the master brings back the rows of its own delete. The
+// merged row keeps the token of its own delete, so it stays in the log as an
+// orphan log. A restore by UID then brings it back.
 func TestOrphanDelete_MergesIntoSeriesLog(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2525,10 +2527,19 @@ func TestOrphanDelete_MergesIntoSeriesLog(t *testing.T) {
 	if err := svc.RestoreByID(ctx, master.ID); err != nil {
 		t.Fatalf("RestoreByID(master): %v", err)
 	}
-	for _, id := range []int64{master.ID, o1.ID, o2.ID} {
+	for _, id := range []int64{master.ID, o2.ID} {
 		if r, err := svc.Get(ctx, id); err != nil || r.DeletedAt != nil {
 			t.Errorf("row %d after the restore of the master = %+v, %v; want it live", id, r, err)
 		}
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, o1.ID); err != nil || r.DeletedAt == nil {
+		t.Errorf("merged row o1 after the restore of the master = %v, %v; want it in the trash", r.DeletedAt, err)
+	}
+	if err := svc.RestoreByUID(ctx, master.UID); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	if r, err := svc.Get(ctx, o1.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("merged row o1 after the restore by UID = %+v, %v; want it live", r, err)
 	}
 }
 
@@ -4033,8 +4044,9 @@ func TestUndoLegacyOverrideDelete_ClearsMasterEXDATE(t *testing.T) {
 // TestRestoreByUID_OrphanFallbackTakesNewestDelete: with no master and no
 // series-delete log, the restore by UID takes the one calendar with rows in
 // the trash. It brings back the rows of the newest delete there. An older
-// delete and a row that an occurrence log names stay in the trash. Two
-// calendars give ErrAmbiguousUID.
+// delete and a row that an occurrence log names stay in the trash. With rows
+// in two calendars, the newest delete names its calendar. Only a tie of two
+// calendars gives ErrAmbiguousUID.
 func TestRestoreByUID_OrphanFallbackTakesNewestDelete(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -4088,8 +4100,19 @@ func TestRestoreByUID_OrphanFallbackTakesNewestDelete(t *testing.T) {
 		t.Fatalf("upsert orphan in Y: %v", err)
 	}
 	trash(other.ID, "2026-05-03T10:00:00Z")
+	if err := svc.RestoreByUID(ctx, uid); err != nil {
+		t.Fatalf("RestoreByUID with the newest delete in Y: %v", err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, other.ID); err != nil || r.DeletedAt != nil {
+		t.Errorf("row of Y after the restore = %v, %v; want it live", r.DeletedAt, err)
+	}
+	if r, err := svc.GetIncludingDeleted(ctx, ids[0]); err != nil || r.DeletedAt == nil {
+		t.Errorf("older row of calendar 1 after the restore = %v, %v; want it in the trash", r.DeletedAt, err)
+	}
+	// A tie: rows of two calendars from before the token, in the same second.
+	trash(other.ID, "2026-05-01T10:00:00Z")
 	if err := svc.RestoreByUID(ctx, uid); !errors.Is(err, ErrAmbiguousUID) {
-		t.Errorf("RestoreByUID with trashed rows in two calendars = %v, want ErrAmbiguousUID", err)
+		t.Errorf("RestoreByUID with a tie of two calendars = %v, want ErrAmbiguousUID", err)
 	}
 }
 

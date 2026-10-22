@@ -16,13 +16,15 @@ must follow these steps:
 1. Drop the view: `DROP VIEW IF EXISTS event_series_rows;`
 2. Rebuild the table as migration 050 does.
 3. Create the view again with the statement below.
-4. Create the five triggers of migration 057 again:
+4. Create the seven triggers of migration 057 again:
    `events_master_revive_drops_series_log`,
    `events_master_insert_drops_stale_logs`,
    `events_override_revive_drops_stale_logs`,
-   `events_override_insert_drops_prune_marker`, and
-   `events_purge_drops_row_from_logs`. The drop of `events` drops them.
-   Copy their statements from migration 057.
+   `events_override_insert_drops_prune_marker`,
+   `events_purge_drops_row_from_logs`,
+   `events_master_change_settles_unowned_edits`, and
+   `events_master_purge_settles_unowned_edits`. The drop of `events` drops
+   them. Copy their statements from migration 057.
 
 The triggers drop the stale delete logs of a calendar. The revive
 trigger of a master drops the series-delete log of its delete when the
@@ -37,7 +39,11 @@ EXDATE. The purge trigger removes a purged override row from the delete
 logs, so a log never names a row that is gone. An orphan series-delete
 log that names only the purged row goes too. The revive trigger of a
 master keeps the rows that a delete of orphan rows merged into its log.
-The log then becomes an orphan log with only those rows.
+The log then becomes an orphan log with only those rows. The two settle
+triggers of a master run when a master changes or goes. An edit of a row
+that no series owned (`edit_unowned`) then reaches the owner of the row
+again. The calendar of a live owner master gets a dirty mark, and the mark
+of the row clears.
 
 Each statement below must stay equal to the one in migration 057. The
 storage test `TestMigrationsReadmeMatches057` compares them, and the
@@ -120,10 +126,10 @@ BEGIN
     WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND recurrence_id = NEW.recurrence_id AND pruned = 1;
     DELETE FROM event_series_deletes
     WHERE uid = NEW.uid AND hidden_ids = CAST(NEW.id AS TEXT)
-      AND NOT EXISTS (
+      AND (had_master = 0 OR NOT EXISTS (
         SELECT 1 FROM events AS m
         WHERE m.calendar_id = event_series_deletes.calendar_id AND m.uid = NEW.uid
-          AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL);
+          AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL));
     UPDATE event_series_deletes
     SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ',' || NEW.id || ',', ','), ',')
     WHERE uid = NEW.uid AND ',' || hidden_ids || ',' LIKE '%,' || NEW.id || ',%';
@@ -162,5 +168,47 @@ BEGIN
     UPDATE event_exdate_deletes
     SET hidden_ids = TRIM(REPLACE(',' || hidden_ids || ',', ':' || OLD.id || ',', ':,'), ',')
     WHERE uid = OLD.uid AND ',' || hidden_ids || ',' LIKE '%:' || OLD.id || ',%';
+END;
+```
+
+```sql
+CREATE TRIGGER events_master_change_settles_unowned_edits
+AFTER UPDATE OF deleted_at, calendar_id ON events
+WHEN NEW.recurrence_id = '' AND EXISTS (
+    SELECT 1 FROM events AS u WHERE u.uid = NEW.uid AND u.edit_unowned = 1)
+BEGIN
+    INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+    SELECT DISTINCT s.owner_calendar_id, s.uid, 'event', 1, 'sync-token'
+    FROM event_series_rows AS s
+    JOIN events AS m ON m.calendar_id = s.owner_calendar_id AND m.uid = s.uid
+        AND m.recurrence_id = '' AND m.deleted_at IS NULL
+    JOIN calendars AS c ON c.id = s.owner_calendar_id AND c.account_id IS NOT NULL AND c.account_id != 0
+    WHERE s.uid = NEW.uid AND s.id IN (
+        SELECT u.id FROM events AS u WHERE u.uid = NEW.uid AND u.edit_unowned = 1 AND u.deleted_at IS NULL)
+    ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
+    UPDATE events SET edit_unowned = 0
+    WHERE uid = NEW.uid AND edit_unowned = 1
+      AND id IN (SELECT s.id FROM event_series_rows AS s WHERE s.uid = NEW.uid);
+END;
+```
+
+```sql
+CREATE TRIGGER events_master_purge_settles_unowned_edits
+AFTER DELETE ON events
+WHEN OLD.recurrence_id = '' AND EXISTS (
+    SELECT 1 FROM events AS u WHERE u.uid = OLD.uid AND u.edit_unowned = 1)
+BEGIN
+    INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+    SELECT DISTINCT s.owner_calendar_id, s.uid, 'event', 1, 'sync-token'
+    FROM event_series_rows AS s
+    JOIN events AS m ON m.calendar_id = s.owner_calendar_id AND m.uid = s.uid
+        AND m.recurrence_id = '' AND m.deleted_at IS NULL
+    JOIN calendars AS c ON c.id = s.owner_calendar_id AND c.account_id IS NOT NULL AND c.account_id != 0
+    WHERE s.uid = OLD.uid AND s.id IN (
+        SELECT u.id FROM events AS u WHERE u.uid = OLD.uid AND u.edit_unowned = 1 AND u.deleted_at IS NULL)
+    ON CONFLICT(calendar_id, uid) DO UPDATE SET dirty = 1, rev = rev + 1;
+    UPDATE events SET edit_unowned = 0
+    WHERE uid = OLD.uid AND edit_unowned = 1
+      AND id IN (SELECT s.id FROM event_series_rows AS s WHERE s.uid = OLD.uid);
 END;
 ```
