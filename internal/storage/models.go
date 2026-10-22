@@ -234,6 +234,7 @@ type EventTruncateDelete struct {
 	HiddenOverrides *string
 	RemovedRdates   *string
 	HiddenIds       *string
+	DeleteToken     int64
 }
 
 type EventsFt struct {

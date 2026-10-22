@@ -362,12 +362,7 @@ func TieBefore(a, b OverrideTie) bool {
 //     whether masters exist and the rule cannot choose, so a caller can
 //     tell "no master" from "more than one master".
 func LegacyOwner(masters []Master) (calendarID int64, ok, ambiguous bool) {
-	var live []Master
-	for _, m := range masters {
-		if !m.Trashed {
-			live = append(live, m)
-		}
-	}
+	live := liveOf(masters)
 	switch {
 	case len(live) == 1:
 		return live[0].CalendarID, true, false
@@ -378,4 +373,22 @@ func LegacyOwner(masters []Master) (calendarID int64, ok, ambiguous bool) {
 	default:
 		return 0, false, true
 	}
+}
+
+// LiveOwner is LegacyOwner for a live edit. Only the live masters count, so a
+// master in the trash never owns the row, and masters in the trash make no
+// ambiguity.
+func LiveOwner(masters []Master) (calendarID int64, ok, ambiguous bool) {
+	return LegacyOwner(liveOf(masters))
+}
+
+// liveOf returns the live masters of masters.
+func liveOf(masters []Master) []Master {
+	var live []Master
+	for _, m := range masters {
+		if !m.Trashed {
+			live = append(live, m)
+		}
+	}
+	return live
 }

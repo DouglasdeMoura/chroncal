@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -3648,10 +3649,10 @@ func TestDeleteSeries_OrphanRowsBesideReadOnlyTrashedCopy(t *testing.T) {
 	}
 }
 
-// TestTruncation_SecondAtSameCutoffMergesLog: a second truncation at the
-// same cutoff extends the log of the first. The log names the rows of both
-// truncations, so a restore brings back all of them.
-func TestTruncation_SecondAtSameCutoffMergesLog(t *testing.T) {
+// TestTruncation_SecondAtSameCutoffKeepsItsOwnLog: a second truncation at the
+// same cutoff writes its own log row with its own token. The first row keeps
+// its two rows, and the second row names the late row only.
+func TestTruncation_SecondAtSameCutoffKeepsItsOwnLog(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	master, second, third := singleSeriesWithOverrides(t, svc)
@@ -3684,22 +3685,22 @@ func TestTruncation_SecondAtSameCutoffMergesLog(t *testing.T) {
 		t.Fatalf("upsert late override: %v", err)
 	}
 	truncate()
-	log, err := svc.q.GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx, storage.GetEventTruncateDeleteByCalendarUIDAndCutoffParams{
-		CalendarID: 1, Uid: master.UID, CutoffTime: second.Format(time.RFC3339),
-	})
-	if err != nil {
-		t.Fatalf("get truncation log: %v", err)
+	logs, err := svc.q.ListEventTruncateDeletesByCalendarUID(ctx, storage.ListEventTruncateDeletesByCalendarUIDParams{CalendarID: 1, Uid: master.UID})
+	if err != nil || len(logs) != 2 {
+		t.Fatalf("truncation logs = %d, %v; want one row per truncation", len(logs), err)
 	}
-	ids, err := parseRowIDs(storage.NullableToString(log.HiddenIds))
-	if err != nil {
-		t.Fatalf("parse hidden ids: %v", err)
+	first, later := logs[0], logs[1]
+	if first.DeleteToken == 0 || first.DeleteToken == later.DeleteToken {
+		t.Errorf("tokens = %d, %d; want two distinct tokens", first.DeleteToken, later.DeleteToken)
 	}
-	if len(ids) != 3 || !strings.Contains(storage.NullableToString(log.HiddenIds), strconv.FormatInt(late.ID, 10)) {
-		t.Errorf("hidden_ids = %q, want the two first rows and the late row %d", storage.NullableToString(log.HiddenIds), late.ID)
+	if ids, err := parseRowIDs(storage.NullableToString(first.HiddenIds)); err != nil || len(ids) != 2 || slices.Contains(ids, late.ID) {
+		t.Errorf("first hidden_ids = %q, %v; want the two first rows", storage.NullableToString(first.HiddenIds), err)
 	}
-	recIDs := strings.Split(storage.NullableToString(log.HiddenOverrides), ",")
-	if len(recIDs) != 3 || !strings.Contains(storage.NullableToString(log.HiddenOverrides), fourth.Format(time.RFC3339)) {
-		t.Errorf("hidden_overrides = %q, want three recurrence IDs with %s", storage.NullableToString(log.HiddenOverrides), fourth.Format(time.RFC3339))
+	if got := storage.NullableToString(later.HiddenIds); got != strconv.FormatInt(late.ID, 10) {
+		t.Errorf("second hidden_ids = %q, want the late row %d only", got, late.ID)
+	}
+	if got := storage.NullableToString(later.HiddenOverrides); got != fourth.Format(time.RFC3339) {
+		t.Errorf("second hidden_overrides = %q, want %s only", got, fourth.Format(time.RFC3339))
 	}
 }
 
@@ -3934,9 +3935,8 @@ func TestSeriesView_BesideMaster(t *testing.T) {
 }
 
 // TestTruncation_SecondOverLogWithoutRowIDs: a log from before migration 057
-// has no hidden_ids. A second truncation at its cutoff resolves the
-// recurrence IDs of that log to its trashed rows. The merged log then names
-// the rows of both truncations.
+// has no hidden_ids. A second truncation at its cutoff leaves that log as it
+// is and writes its own log, which names the late row only.
 func TestTruncation_SecondOverLogWithoutRowIDs(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -3973,18 +3973,15 @@ func TestTruncation_SecondOverLogWithoutRowIDs(t *testing.T) {
 		t.Fatalf("upsert late override: %v", err)
 	}
 	truncate()
-	log, err := svc.q.GetEventTruncateDeleteByCalendarUIDAndCutoff(ctx, storage.GetEventTruncateDeleteByCalendarUIDAndCutoffParams{
-		CalendarID: 1, Uid: master.UID, CutoffTime: second.Format(time.RFC3339),
-	})
-	if err != nil {
-		t.Fatalf("get truncation log: %v", err)
+	logs, err := svc.q.ListEventTruncateDeletesByCalendarUID(ctx, storage.ListEventTruncateDeletesByCalendarUIDParams{CalendarID: 1, Uid: master.UID})
+	if err != nil || len(logs) != 2 {
+		t.Fatalf("truncation logs = %d, %v; want the old log and a new one", len(logs), err)
 	}
-	ids, err := parseRowIDs(storage.NullableToString(log.HiddenIds))
-	if err != nil {
-		t.Fatalf("parse hidden ids: %v", err)
+	if logs[0].HiddenIds != nil {
+		t.Errorf("old log hidden_ids = %q, want NULL", *logs[0].HiddenIds)
 	}
-	if len(ids) != 3 || !strings.Contains(storage.NullableToString(log.HiddenIds), strconv.FormatInt(late.ID, 10)) {
-		t.Errorf("hidden_ids = %q, want the two first rows and the late row %d", storage.NullableToString(log.HiddenIds), late.ID)
+	if got := storage.NullableToString(logs[1].HiddenIds); got != strconv.FormatInt(late.ID, 10) {
+		t.Errorf("new log hidden_ids = %q, want the late row %d only", got, late.ID)
 	}
 }
 

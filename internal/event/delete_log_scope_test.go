@@ -2,6 +2,7 @@ package event
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 // countLogsIn returns the count of series-delete logs of uid in calendarID.
@@ -2067,5 +2069,252 @@ func TestRestoreSeries_LogAboveTheParameterLimit(t *testing.T) {
 	var trashed int
 	if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE uid = 'big-log' AND deleted_at IS NOT NULL`).Scan(&trashed); err != nil || trashed != 0 {
 		t.Errorf("rows in the trash after the restore = %d, %v; want 0", trashed, err)
+	}
+}
+
+// TestRestoreMasterByID_SkipsTheOrphanLogOfAnotherDelete: a master restore with
+// no named log takes only the log that carries the token of the master. The
+// sequence:
+//
+//  1. A series delete hides the master and its rows.
+//  2. A pull brings back one row beside the trashed master.
+//  3. A delete of orphan rows merges that row into the log of the master.
+//  4. The undo of step 1 brings back the master. The log keeps the merged row
+//     as an orphan log.
+//  5. A pull hides the series again in one statement, with no log.
+//
+// The restore of the master by ID then pairs the rows of the pull of step 5.
+// The merged row of step 3 stays in the trash, and its orphan log stays.
+func TestRestoreMasterByID_SkipsTheOrphanLogOfAnotherDelete(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	get := func(at time.Time) storage.Event {
+		t.Helper()
+		r, err := svc.q.GetEventByCalendarUIDAndRecurrenceIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDIncludingDeletedParams{
+			CalendarID: 1, Uid: master.UID, RecurrenceID: at.Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("get override %s: %v", at, err)
+		}
+		return r
+	}
+	own, merged := get(second), get(third)
+	meta, err := svc.DeleteSeriesWithUndo(ctx, 1, master.UID)
+	if err != nil {
+		t.Fatalf("DeleteSeriesWithUndo: %v", err)
+	}
+	if err := reviveRow(svc, merged.ID); err != nil {
+		t.Fatalf("revive the row: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries(orphan row): %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: master.UID, DeleteToken: nextToken(t, svc)}); err != nil {
+		t.Fatalf("pull hides the series: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, master.ID); err != nil {
+		t.Fatalf("RestoreByID(master): %v", err)
+	}
+	wantTrashed(t, svc, false, master.ID, own.ID)
+	wantTrashed(t, svc, true, merged.ID)
+	if n := countLogsIn(t, svc, 1, master.UID); n != 1 {
+		t.Errorf("series logs = %d, want the orphan log of step 3", n)
+	}
+}
+
+// truncateAgainAtSameCutoff truncates the series of master at cutoff, imports
+// a late override after the cutoff, and truncates again at the same cutoff.
+// It returns the undo data of both truncations and the late row.
+func truncateAgainAtSameCutoff(t *testing.T, svc *Service, master Event, cutoff, after time.Time) (first, second UndoMeta, late Event) {
+	t.Helper()
+	ctx := context.Background()
+	first, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, cutoff)
+	if err != nil {
+		t.Fatalf("first truncation: %v", err)
+	}
+	late, err = svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: 1, Title: "Late import",
+		StartTime: after, EndTime: after.Add(time.Hour), RecurrenceID: after.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert late override: %v", err)
+	}
+	second, err = svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, cutoff)
+	if err != nil {
+		t.Fatalf("second truncation: %v", err)
+	}
+	return first, second, late
+}
+
+// masterRule returns the recurrence rule of the master row id.
+func masterRule(t *testing.T, svc *Service, id int64) string {
+	t.Helper()
+	r, err := svc.q.GetEventIncludingDeleted(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get master: %v", err)
+	}
+	return storage.NullableToString(r.RecurrenceRule)
+}
+
+// TestUndoTruncation_SecondAtSameCutoffRestoresItsOwnRows: two truncations at
+// the same cutoff have one log row each. The undo of the second brings back
+// its own row and the rule after the first truncation. The rows of the first
+// stay in the trash with their log. The undo of the first then brings them
+// back with the rule before both truncations.
+func TestUndoTruncation_SecondAtSameCutoffRestoresItsOwnRows(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	firstRows := trashedOverrideIDs(t, svc, master.UID)
+	if len(firstRows) != 0 {
+		t.Fatalf("trashed rows before the truncation = %v", firstRows)
+	}
+	firstMeta, secondMeta, late := truncateAgainAtSameCutoff(t, svc, master, second, third.Add(24*time.Hour))
+	firstRows = slices.DeleteFunc(trashedOverrideIDs(t, svc, master.UID), func(id int64) bool { return id == late.ID })
+	if len(firstRows) != 2 {
+		t.Fatalf("rows of the first truncation = %v, want 2", firstRows)
+	}
+	truncatedRule := masterRule(t, svc, master.ID)
+	if err := svc.RestoreUndo(ctx, secondMeta); err != nil {
+		t.Fatalf("RestoreUndo(second): %v", err)
+	}
+	wantTrashed(t, svc, false, late.ID)
+	wantTrashed(t, svc, true, firstRows...)
+	if got := masterRule(t, svc, master.ID); got != truncatedRule {
+		t.Errorf("rule after the undo of the second = %q, want the rule of the first truncation %q", got, truncatedRule)
+	}
+	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, firstMeta.DeleteToken), firstMeta.DeleteToken); err != nil {
+		t.Fatalf("undo of the first: %v", err)
+	}
+	wantTrashed(t, svc, false, firstRows...)
+	if got := masterRule(t, svc, master.ID); got != master.RecurrenceRule {
+		t.Errorf("rule after both undos = %q, want %q", got, master.RecurrenceRule)
+	}
+}
+
+// TestRestoreTruncation_OlderFirstHandsOnItsRule: a restore from the trash of
+// the older of two truncations at the same cutoff gives its rule to the newer
+// log row. The later restore of the newer row then keeps the full rule. It
+// does not truncate the series again.
+func TestRestoreTruncation_OlderFirstHandsOnItsRule(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	firstMeta, secondMeta, late := truncateAgainAtSameCutoff(t, svc, master, second, third.Add(24*time.Hour))
+	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, firstMeta.DeleteToken), 0); err != nil {
+		t.Fatalf("restore the first: %v", err)
+	}
+	wantTrashed(t, svc, true, late.ID)
+	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, secondMeta.DeleteToken), 0); err != nil {
+		t.Fatalf("restore the second: %v", err)
+	}
+	wantTrashed(t, svc, false, late.ID)
+	if got := masterRule(t, svc, master.ID); got != master.RecurrenceRule {
+		t.Errorf("rule after both restores = %q, want %q", got, master.RecurrenceRule)
+	}
+}
+
+// trashedOverrideIDs returns the IDs of the trashed override rows of uid.
+func trashedOverrideIDs(t *testing.T, svc *Service, uid string) []int64 {
+	t.Helper()
+	rows, err := svc.q.ListTrashedEventsByUID(context.Background(), uid)
+	if err != nil {
+		t.Fatalf("list trashed rows: %v", err)
+	}
+	var ids []int64
+	for _, r := range rows {
+		if r.RecurrenceID != "" {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids
+}
+
+// truncationLogID returns the ID of the truncation log of uid with token.
+func truncationLogID(t *testing.T, svc *Service, uid string, token int64) int64 {
+	t.Helper()
+	var id int64
+	if err := svc.db.QueryRowContext(context.Background(),
+		`SELECT id FROM event_truncate_deletes WHERE uid = ? AND delete_token = ?`, uid, token).Scan(&id); err != nil {
+		t.Fatalf("truncation log of token %d: %v", token, err)
+	}
+	return id
+}
+
+// truncateLogReadSpy wraps a DBTX and counts the reads of a truncation log
+// row that do not run in a transaction.
+type truncateLogReadSpy struct {
+	storage.DBTX
+	reads int
+}
+
+func (d *truncateLogReadSpy) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	if strings.Contains(query, "name: GetEventTruncateDelete") {
+		d.reads++
+	}
+	return d.DBTX.QueryRowContext(ctx, query, args...)
+}
+
+// TestRestoreTruncation_ReadsTheLogInTheTransaction: the restore of a
+// truncation reads its log row in its transaction. A read outside it lets a
+// concurrent restore consume the row between the read and the writes.
+func TestRestoreTruncation_ReadsTheLogInTheTransaction(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	spy := &truncateLogReadSpy{DBTX: db}
+	svc := NewService(db, q)
+	svc.q = storage.New(spy)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	meta, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo: %v", err)
+	}
+	if err := svc.RestoreUndo(ctx, meta); err != nil {
+		t.Fatalf("RestoreUndo: %v", err)
+	}
+	meta, err = svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("DeleteFromInstanceWithUndo(again): %v", err)
+	}
+	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, meta.DeleteToken), 0); err != nil {
+		t.Fatalf("restoreTruncationByLogID: %v", err)
+	}
+	if spy.reads != 0 {
+		t.Errorf("truncation log reads outside the transaction = %d, want 0", spy.reads)
+	}
+}
+
+// TestRestoreUndo_ClassifiesPermanentRefusals: a read-only calendar is a
+// permanent refusal of the undo. It matches ErrUndoNotPossible and keeps the
+// cause and its text. A canceled context is transient and does not match.
+func TestRestoreUndo_ClassifiesPermanentRefusals(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	ev := createEvent(t, svc)
+	meta, err := svc.DeleteWithUndo(ctx, ev.ID)
+	if err != nil {
+		t.Fatalf("DeleteWithUndo: %v", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := svc.RestoreUndo(canceled, meta); err == nil || errors.Is(err, ErrUndoNotPossible) {
+		t.Errorf("RestoreUndo(canceled) = %v, want a transient error", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read', remote_components = 'VEVENT' WHERE id = 1`); err != nil {
+		t.Fatalf("make the calendar read-only: %v", err)
+	}
+	err = svc.RestoreUndo(ctx, meta)
+	if !errors.Is(err, ErrUndoNotPossible) || !errors.Is(err, calendaraccess.ErrReadOnly) {
+		t.Fatalf("RestoreUndo(read-only) = %v, want ErrUndoNotPossible with ErrReadOnly", err)
+	}
+	if !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("text = %q, want the text of the cause", err.Error())
+	}
+	if err := svc.RestoreUndo(ctx, UndoMeta{Kind: UndoKind(99), UID: "x"}); !errors.Is(err, ErrUndoNotPossible) {
+		t.Errorf("RestoreUndo(unknown kind) = %v, want ErrUndoNotPossible", err)
 	}
 }

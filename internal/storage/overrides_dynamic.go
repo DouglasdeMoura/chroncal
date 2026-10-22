@@ -10,7 +10,7 @@ import "context"
 // The function is hand-written, because database/sql has no slice parameter.
 func (q *Queries) ListOverridesByUIDs(ctx context.Context, uids []string) ([]Event, error) {
 	var out []Event
-	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
+	for _, chunk := range ChunkSlice(uids, sqliteINBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		where := "WHERE uid IN (" + placeholders + ") AND recurrence_id != '' AND deleted_at IS NULL /* ListOverridesByUIDs */"
 		rows, err := q.queryEvents(ctx, where, args, "uid ASC, recurrence_id ASC")
@@ -50,7 +50,7 @@ type MasterKey struct {
 // ListOverridesByUIDs.
 func (q *Queries) ListMasterKeysByUIDs(ctx context.Context, uids []string) ([]MasterKey, error) {
 	var out []MasterKey
-	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
+	for _, chunk := range ChunkSlice(uids, sqliteINBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		query := "SELECT calendar_id, uid FROM events WHERE uid IN (" + placeholders +
 			") AND recurrence_id = '' /* ListMasterKeysByUIDs */"
@@ -88,7 +88,7 @@ type SeriesOwner struct {
 // chunks, as in ListOverridesByUIDs.
 func (q *Queries) ListSeriesOwnersByUIDs(ctx context.Context, uids []string) ([]SeriesOwner, error) {
 	var out []SeriesOwner
-	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
+	for _, chunk := range ChunkSlice(uids, sqliteINBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		query := "SELECT id, owner_calendar_id FROM event_series_rows WHERE uid IN (" + placeholders +
 			") AND recurrence_id != '' AND deleted_at IS NULL /* ListSeriesOwnersByUIDs */"
@@ -117,7 +117,7 @@ func (q *Queries) ListSeriesOwnersByUIDs(ctx context.Context, uids []string) ([]
 // ListTodoOverridesByUIDs is the batched form of ListTodoOverridesByUID.
 func (q *Queries) ListTodoOverridesByUIDs(ctx context.Context, uids []string) ([]Todo, error) {
 	var out []Todo
-	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
+	for _, chunk := range ChunkSlice(uids, sqliteINBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		where := "WHERE uid IN (" + placeholders + ") AND recurrence_id != '' AND deleted_at IS NULL /* ListTodoOverridesByUIDs */"
 		rows, err := q.queryTodos(ctx, where, args, "uid ASC, recurrence_id ASC")
@@ -132,7 +132,7 @@ func (q *Queries) ListTodoOverridesByUIDs(ctx context.Context, uids []string) ([
 // ListJournalOverridesByUIDs is the batched form of ListJournalOverridesByUID.
 func (q *Queries) ListJournalOverridesByUIDs(ctx context.Context, uids []string) ([]Journal, error) {
 	var out []Journal
-	for _, chunk := range chunkSlice(uids, sqliteINBatch) {
+	for _, chunk := range ChunkSlice(uids, sqliteINBatch) {
 		placeholders, args := expandStringPlaceholders(chunk)
 		where := "WHERE uid IN (" + placeholders + ") AND recurrence_id != '' AND deleted_at IS NULL /* ListJournalOverridesByUIDs */"
 		rows, err := q.queryJournals(ctx, where, args, "uid ASC, recurrence_id ASC")
@@ -144,9 +144,10 @@ func (q *Queries) ListJournalOverridesByUIDs(ctx context.Context, uids []string)
 	return out, nil
 }
 
-// chunkSlice splits vals into consecutive slices of at most size elements.
+// ChunkSlice splits vals into consecutive slices of at most size elements.
+// The event service also uses it for its ID lists.
 // Returns nil for empty input. The returned slices alias vals (no copy).
-func chunkSlice[T any](vals []T, size int) [][]T {
+func ChunkSlice[T any](vals []T, size int) [][]T {
 	if len(vals) == 0 {
 		return nil
 	}

@@ -277,6 +277,31 @@ func TestLegacyOwner(t *testing.T) {
 	}
 }
 
+// TestLiveOwner: the rule of a live edit counts the live masters only. A
+// master in the trash never owns the row, and two masters in the trash make no
+// ambiguity.
+func TestLiveOwner(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		masters       []Master
+		want          int64
+		ok, ambiguous bool
+	}{
+		{name: "no master"},
+		{name: "one live", masters: []Master{{CalendarID: 1}}, want: 1, ok: true},
+		{name: "one live, one trashed", masters: []Master{{CalendarID: 1}, {CalendarID: 2, Trashed: true}}, want: 1, ok: true},
+		{name: "one trashed", masters: []Master{{CalendarID: 2, Trashed: true}}},
+		{name: "two live", masters: []Master{{CalendarID: 1}, {CalendarID: 2}}, ambiguous: true},
+		{name: "two trashed", masters: []Master{{CalendarID: 1, Trashed: true}, {CalendarID: 2, Trashed: true}}},
+	} {
+		got, ok, ambiguous := LiveOwner(tc.masters)
+		if got != tc.want || ok != tc.ok || ambiguous != tc.ambiguous {
+			t.Errorf("%s: LiveOwner = (%d, %v, %v), want (%d, %v, %v)", tc.name, got, ok, ambiguous, tc.want, tc.ok, tc.ambiguous)
+		}
+	}
+}
+
 // TestTieBefore: the tie rule orders by recurrence ID, then the row beside
 // the master, then the lowest ID.
 func TestTieBefore(t *testing.T) {

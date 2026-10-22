@@ -65,13 +65,19 @@ CREATE TABLE event_truncate_deletes_new (
     hidden_overrides TEXT,
     removed_rdates TEXT,
     hidden_ids TEXT,
-    UNIQUE (calendar_id, uid, cutoff_time)
+    delete_token INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (calendar_id, uid, cutoff_time, delete_token)
 );
 -- hidden_ids lists the override rows that the truncation hid, by row ID
 -- (comma-separated). A restore un-hides exactly those rows, so a change
 -- of the series owner after the truncation does not strand a row. A row
 -- from before this migration has NULL: its restore reads hidden_overrides
 -- (recurrence IDs) through the series rule.
+-- delete_token is the delete token of the truncation (events.delete_token).
+-- Each truncation gets its own row, also a second truncation at the same
+-- cutoff. The row keeps the rule before its own truncation (previous_rrule),
+-- and its undo restores its own rows only. A row from before this migration
+-- has 0.
 INSERT INTO event_truncate_deletes_new (id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates)
 SELECT id, calendar_id, uid, cutoff_time, previous_rrule, deleted_at, hidden_overrides, removed_rdates FROM event_truncate_deletes;
 DROP INDEX IF EXISTS idx_event_truncate_deletes_calendar;
