@@ -93,10 +93,13 @@ type PurgeCounts struct {
 	// EventMastersSkipped lists the event masters that the purge kept,
 	// because their series still owns a live override.
 	EventMastersSkipped []event.SkippedMaster
-	Todos               int
-	TodoInstanceLogs    int
-	Journals            int
-	JournalInstanceLogs int
+	// EventReadOnlySkipped lists the event rows that the purge kept,
+	// because their calendar refuses a write.
+	EventReadOnlySkipped []int64
+	Todos                int
+	TodoInstanceLogs     int
+	Journals             int
+	JournalInstanceLogs  int
 }
 
 // List returns every trash entry for calendarID across all domains,
@@ -201,6 +204,7 @@ func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCount
 		}
 		counts.Events = report.Purged
 		counts.EventMastersSkipped = report.Skipped
+		counts.EventReadOnlySkipped = report.ReadOnly
 		counts.EventInstanceLogs = report.InstanceLogs
 		counts.EventTruncateLogs = report.TruncateLogs
 		counts.EventSeriesLogs = report.SeriesLogs

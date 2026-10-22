@@ -224,33 +224,54 @@ func TestMigration057_BackfillTakesLegacyRowsAndSkipsLaterDeletes(t *testing.T) 
 	wantTrashed(t, svc, false, 4)
 }
 
-// TestMigration057_BackfillSkipsRowsOfOtherDeletes: the backfill of an old
-// log skips a row that went to the trash long before the log: another delete
-// hid it. It also skips a row that a series delete hid at the time of the
-// log, with the master.
-func TestMigration057_BackfillSkipsRowsOfOtherDeletes(t *testing.T) {
+// TestMigration057_BackfillTakesTheRowsOfTheOldRestore: the backfill takes
+// the rows that the old restore brought back by recurrence ID. That includes
+// the row of an earlier delete whose log time a later delete moved. It skips
+// a row of a series delete and a row of a truncation. It also skips a row
+// that went more than one second after the log. The last case has a fraction
+// of a second, which a compare of the text gets wrong.
+func TestMigration057_BackfillTakesTheRowsOfTheOldRestore(t *testing.T) {
 	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
 	x := start.Add(24 * time.Hour)
 	xs := x.Format(time.RFC3339)
-	const before, logTime = "2026-04-01T10:00:00Z", "2026-05-02T10:00:00Z"
-	svc := migratedAt056(t, func(exec func(string, ...any)) {
-		// Series A: a live master. Its row went in an earlier delete.
-		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_rule, exdates)
-		  VALUES (1, 'early', 1, 'A', ?, ?, 'FREQ=DAILY;COUNT=3', ?)`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339), xs)
-		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
-		  VALUES (2, 'early', 1, 'Late', ?, ?, ?, ?)`, x.Add(time.Hour).Format(time.RFC3339), x.Add(2*time.Hour).Format(time.RFC3339), xs, before)
-		exec(`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, deleted_at) VALUES (1, 'early', ?, ?)`, xs, logTime)
-		// Series B: a series delete hid the master and its row at the time
-		// of the log.
+	const before, logTime, late = "2026-04-01T10:00:00Z", "2026-05-02T10:00:00Z", "2026-05-02T10:00:01.500Z"
+	series := func(exec func(string, ...any), id int64, uid, masterDeleted string) {
+		var deleted any
+		if masterDeleted != "" {
+			deleted = masterDeleted
+		}
 		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_rule, exdates, deleted_at)
-		  VALUES (3, 'same-time', 1, 'B', ?, ?, 'FREQ=DAILY;COUNT=3', ?, ?)`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339), xs, logTime)
+		  VALUES (?, ?, 1, 'Series', ?, ?, 'FREQ=DAILY;COUNT=3', ?, ?)`, id, uid, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339), xs, deleted)
+		exec(`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, deleted_at) VALUES (1, ?, ?, ?)`, uid, xs, logTime)
+	}
+	row := func(exec func(string, ...any), id int64, uid, deleted string) {
 		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
-		  VALUES (4, 'same-time', 1, 'Late', ?, ?, ?, ?)`, x.Add(time.Hour).Format(time.RFC3339), x.Add(2*time.Hour).Format(time.RFC3339), xs, logTime)
-		exec(`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, deleted_at) VALUES (1, 'same-time', ?, ?)`, xs, logTime)
+		  VALUES (?, ?, 1, 'Late', ?, ?, ?, ?)`, id, uid, x.Add(time.Hour).Format(time.RFC3339), x.Add(2*time.Hour).Format(time.RFC3339), xs, deleted)
+	}
+	svc := migratedAt056(t, func(exec func(string, ...any)) {
+		series(exec, 1, "refreshed", "")
+		row(exec, 2, "refreshed", before)
+		series(exec, 3, "same-time", logTime)
+		row(exec, 4, "same-time", logTime)
+		series(exec, 5, "truncated", "")
+		row(exec, 6, "truncated", before)
+		exec(`INSERT INTO event_truncate_deletes (calendar_id, uid, cutoff_time, previous_rrule, hidden_overrides, removed_rdates, deleted_at)
+		  VALUES (1, 'truncated', ?, 'FREQ=DAILY;COUNT=3', '', '', ?)`, start.Add(12*time.Hour).Format(time.RFC3339), before)
+		series(exec, 7, "fraction", "")
+		row(exec, 8, "fraction", late)
 	})
-	for _, uid := range []string{"early", "same-time"} {
-		if ids, found := exdateLogRows(t, svc, uid, x); !found || len(ids) != 0 {
-			t.Errorf("log rows of %s = %v, %v; want the entry with no row", uid, ids, found)
+	for _, tc := range []struct {
+		uid  string
+		want []int64
+	}{
+		{"refreshed", []int64{2}},
+		{"same-time", nil},
+		{"truncated", nil},
+		{"fraction", nil},
+	} {
+		ids, found := exdateLogRows(t, svc, tc.uid, x)
+		if !found || len(ids) != len(tc.want) || (len(ids) == 1 && ids[0] != tc.want[0]) {
+			t.Errorf("log rows of %s = %v, %v; want %v", tc.uid, ids, found, tc.want)
 		}
 	}
 }

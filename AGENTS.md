@@ -267,13 +267,14 @@ Every event undo carries the identity of its delete and reverses only the rows t
 - A series delete of orphan rows keeps the ID of its series-delete log (`UndoMeta.SeriesLogID`).
 - A delete by ID beside a trashed master writes no log. A delete log that names its row now belongs to a newer delete.
 
-One helper, `identityRefusalTx` in `internal/event/occurrence_log.go`, holds the rule for each row of the delete:
+One helper, `identityRefusalTx` in `internal/event/occurrence_log.go`, holds the rule. The undo is all or nothing: one refusal refuses the whole undo. For each row of the delete:
 
-- No row: a purge took it (`ErrNotDeleted` when no row comes back).
-- A live row: a restore came first (`ErrAlreadyRestored` when no row comes back).
-- A row in the trash that the identity names: the undo brings it back.
-- A row in the trash that a newer entry or log names: the whole undo refuses with `ErrDeletedAgain`. The undo never brings back a part of the rows.
-- A row in the trash that no log names: a trigger dropped the log, for example the insert or the revive of a master. The delete of the user is still the last action on the row, so the undo brings it back.
+- No row, or a live row: the row is done. A purge took it, or a restore came first. With no row to bring back, the undo gives `ErrAlreadyRestored` when a row is live, else `ErrNotDeleted`.
+- A row in the trash that a newer entry or log names: the undo refuses with `ErrDeletedAgain`. A newer record wins over the identity of the delete.
+- A row in the trash that the identity names: the row comes back.
+- A row in the trash that no log names: a pull or a trigger changed it. A pull hid it with no log, or a trigger dropped the log. The undo refuses with `ErrChangedSince`, and the trash still restores the row. A delete beside a trashed master wrote no log, so for its undo such a row comes back.
+
+The restore by ID of a row beside a trashed master uses the same helper. A log that names the row gives `ErrMasterInTrash` there.
 
 An undo of an occurrence delete that hid no row needs its entry in the log. Another log, or no entry, gives `ErrAlreadyRestored`. A restore of an occurrence refuses with `ErrMasterInTrash` while the master is in the trash. Restore the series first.
 
