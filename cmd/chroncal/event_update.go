@@ -75,7 +75,7 @@ values. Repeatable flags such as --alarm, --attendee, --resource, and
 					return err
 				}
 			}
-			existing, createOverride, viaCalendar, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID, calID, calendarName)
+			existing, createOverride, viaCalendar, err := resolveEventOccurrence(ctx, a, args[0], recurrenceID, calID, calendarName, recurrenceID != "")
 			if err != nil {
 				return fmt.Errorf("get event: %w", err)
 			}

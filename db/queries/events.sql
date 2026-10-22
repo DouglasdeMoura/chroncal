@@ -130,7 +130,15 @@ UPDATE events SET
 WHERE id = ? AND deleted_at IS NOT NULL;
 
 -- name: PurgeSoftDeletedEvents :execrows
-DELETE FROM events WHERE deleted_at IS NOT NULL AND deleted_at < ?;
+-- Hard-delete the rows in the trash before the cutoff. A master whose series
+-- still owns a live override stays: its purge would hand the live rows to
+-- another series (see ListPurgeBlockedMastersBefore).
+DELETE FROM events
+WHERE events.deleted_at IS NOT NULL AND events.deleted_at < sqlc.arg(cutoff)
+  AND NOT (events.recurrence_id = '' AND EXISTS (
+    SELECT 1 FROM event_series_rows AS l
+    WHERE l.uid = events.uid AND l.owner_calendar_id = events.calendar_id
+      AND l.recurrence_id != '' AND l.deleted_at IS NULL));
 
 -- name: PurgeEventByID :execrows
 DELETE FROM events WHERE id = ? AND deleted_at IS NOT NULL;
@@ -401,14 +409,73 @@ SELECT CAST(EXISTS (
     SELECT 1 FROM event_series_rows AS s WHERE s.id = sqlc.arg(id) AND s.owner_calendar_id = sqlc.arg(calendar_id)
 ) AS BOOLEAN) AS owned;
 
--- name: PurgeTrashedOverridesInCalendar :execrows
--- Hard-delete the override rows of one UID in one calendar that are in the
--- trash. The purge of a master takes them along, and the live rows stay.
-DELETE FROM events
-WHERE calendar_id = ? AND uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL;
+-- name: CountLiveSeriesOverridesOfCalendar :one
+-- Count the live override rows that the series of one UID in one calendar
+-- owns (see the view event_series_rows). The purge of a master refuses
+-- while it is not 0.
+SELECT COUNT(*) FROM event_series_rows AS s
+WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
+  AND s.recurrence_id != '' AND s.deleted_at IS NULL;
 
--- name: ListTrashedMastersBefore :many
--- The master rows in the trash with deleted_at before the cutoff. The purge
--- by age applies the rule of the purge of one master to each of them.
-SELECT calendar_id, uid FROM events
-WHERE recurrence_id = '' AND deleted_at IS NOT NULL AND deleted_at < ?;
+-- name: ListTrashedSeriesRowIDs :many
+-- The IDs of the override rows in the trash that the series of one UID in
+-- one calendar owns, in that calendar and in other calendars. The purge of
+-- the master reads them before the delete of the master.
+SELECT s.id FROM event_series_rows AS s
+WHERE s.uid = sqlc.arg(uid) AND s.owner_calendar_id = sqlc.arg(calendar_id)
+  AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL;
+
+-- name: PurgeEventsByIDs :execrows
+-- Hard-delete a set of rows in the trash by ID. A live row stays.
+DELETE FROM events WHERE id IN (sqlc.slice(ids)) AND deleted_at IS NOT NULL;
+
+-- name: ListPurgeBlockedMastersBefore :many
+-- The master rows in the trash before the cutoff whose series still owns a
+-- live override. The purge by age skips them and reports them.
+SELECT m.id, m.calendar_id, m.uid FROM events AS m
+WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
+  AND EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL);
+
+-- name: ListTrashedSeriesRowIDsOfMastersBefore :many
+-- The IDs of the override rows in the trash that the series of each
+-- purgeable master owns (a master in the trash before the cutoff with no
+-- live override). The purge by age reads them before the delete of the
+-- masters.
+SELECT s.id FROM event_series_rows AS s
+JOIN events AS m ON m.uid = s.uid AND m.calendar_id = s.owner_calendar_id
+WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL)
+  AND s.recurrence_id != '' AND s.deleted_at IS NOT NULL;
+
+-- name: ListSeriesLogsOfMastersBefore :many
+-- The series-delete logs of the purgeable masters. Their row IDs name the
+-- legacy overrides that the series delete hid, also when another series
+-- owns them in the view now.
+SELECT d.hidden_ids FROM event_series_deletes AS d
+JOIN events AS m ON m.calendar_id = d.calendar_id AND m.uid = d.uid
+WHERE m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL);
+
+-- name: PurgeExdateLogsOfMastersBefore :exec
+-- Drop the occurrence logs of the purgeable masters.
+DELETE FROM event_exdate_deletes WHERE EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.calendar_id = event_exdate_deletes.calendar_id AND m.uid = event_exdate_deletes.uid
+      AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL));
+
+-- name: PurgeTruncateLogsOfMastersBefore :exec
+-- Drop the truncation logs of the purgeable masters.
+DELETE FROM event_truncate_deletes WHERE EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.calendar_id = event_truncate_deletes.calendar_id AND m.uid = event_truncate_deletes.uid
+      AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL));
+
+-- name: PurgeSeriesLogsOfMastersBefore :exec
+-- Drop the series-delete logs of the purgeable masters.
+DELETE FROM event_series_deletes WHERE EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.calendar_id = event_series_deletes.calendar_id AND m.uid = event_series_deletes.uid
+      AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL AND m.deleted_at < sqlc.arg(cutoff)
+      AND NOT EXISTS (SELECT 1 FROM event_series_rows AS l WHERE l.uid = m.uid AND l.owner_calendar_id = m.calendar_id AND l.recurrence_id != '' AND l.deleted_at IS NULL));

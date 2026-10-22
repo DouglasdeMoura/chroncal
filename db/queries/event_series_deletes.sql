@@ -14,8 +14,8 @@ SELECT * FROM event_series_deletes WHERE calendar_id = ? AND uid = ?;
 
 -- name: DeleteEventSeriesDeletesByCalendarUID :exec
 -- Drop the log row of one series. A restore of the series consumes it. A
--- purge of the master keeps it for the undo. A calendar move clears a stale
--- row in the target calendar before the move.
+-- purge of the master drops it with the master. A calendar move clears a
+-- stale row in the target calendar before the move.
 DELETE FROM event_series_deletes WHERE calendar_id = ? AND uid = ?;
 
 -- name: PurgeOldEventSeriesDeletes :execrows

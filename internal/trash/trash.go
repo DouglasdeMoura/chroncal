@@ -86,10 +86,13 @@ func NewService(e *event.Service, t *todo.Service, j *journal.Service) *Service 
 // PurgeCounts reports how many rows each domain dropped from a PurgeOld
 // call so callers (maintenance, CLI) can log per-domain numbers.
 type PurgeCounts struct {
-	Events              int
-	EventInstanceLogs   int
-	EventTruncateLogs   int
-	EventSeriesLogs     int
+	Events            int
+	EventInstanceLogs int
+	EventTruncateLogs int
+	EventSeriesLogs   int
+	// EventMastersSkipped lists the event masters that the purge kept,
+	// because their series still owns a live override.
+	EventMastersSkipped []event.SkippedMaster
 	Todos               int
 	TodoInstanceLogs    int
 	Journals            int
@@ -190,7 +193,9 @@ func (s *Service) Purge(ctx context.Context, e Entry) error {
 func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCounts, error) {
 	var counts PurgeCounts
 	if s.events != nil {
-		n, err := s.events.PurgeDeleted(ctx, olderThan)
+		report, err := s.events.PurgeDeletedReport(ctx, olderThan)
+		n := report.Purged
+		counts.EventMastersSkipped = report.Skipped
 		if err != nil {
 			return counts, fmt.Errorf("purge events: %w", err)
 		}

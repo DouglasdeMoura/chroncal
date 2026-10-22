@@ -52,6 +52,10 @@ func (p *Purger) RunOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("trash purge: %w", err)
 	}
+	for _, m := range counts.EventMastersSkipped {
+		p.logger.Warn("soft-delete purge kept a master: the series still has live overrides",
+			"event_id", m.ID, "calendar_id", m.CalendarID, "uid", m.UID)
+	}
 	total := counts.Events + counts.EventInstanceLogs + counts.EventTruncateLogs + counts.EventSeriesLogs +
 		counts.Todos + counts.TodoInstanceLogs + counts.Journals + counts.JournalInstanceLogs
 	if total > 0 {

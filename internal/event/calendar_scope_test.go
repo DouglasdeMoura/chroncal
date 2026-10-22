@@ -4461,9 +4461,10 @@ func TestRestorePurgedMasterRows_RefusedBesideLiveMaster(t *testing.T) {
 	}
 }
 
-// TestPurgeMaster_PurgesItsTrashedOverrides: the purge of a master takes its
-// trashed overrides in its calendar along, and keeps the live ones.
-func TestPurgeMaster_PurgesItsTrashedOverrides(t *testing.T) {
+// TestPurgeMaster_RefusesLiveOverridesThenTakesItsRows: the purge of a
+// master refuses while its series still owns a live override. After the
+// delete of that override, the purge takes every trashed row of the series.
+func TestPurgeMaster_RefusesLiveOverridesThenTakesItsRows(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	master, second, third := singleSeriesWithOverrides(t, svc)
@@ -4482,14 +4483,56 @@ func TestPurgeMaster_PurgesItsTrashedOverrides(t *testing.T) {
 	if err := svc.RestoreByID(ctx, live.ID); err != nil {
 		t.Fatalf("RestoreByID(live override): %v", err)
 	}
+	if err := svc.PurgeByID(ctx, master.ID); !errors.Is(err, ErrSeriesHasLiveOverrides) {
+		t.Fatalf("PurgeByID(master) err = %v, want ErrSeriesHasLiveOverrides", err)
+	}
+	if m, err := svc.GetIncludingDeleted(ctx, master.ID); err != nil || m.DeletedAt == nil {
+		t.Fatalf("master after the refusal = trashed %v, %v; want it in the trash", m.DeletedAt != nil, err)
+	}
+	if err := svc.Delete(ctx, live.ID); err != nil {
+		t.Fatalf("Delete(live override): %v", err)
+	}
+	if err := svc.PurgeByID(ctx, master.ID); err != nil {
+		t.Fatalf("PurgeByID(master) after the delete: %v", err)
+	}
+	for _, id := range []int64{master.ID, trashed.ID, live.ID} {
+		if _, err := svc.GetIncludingDeleted(ctx, id); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("row %d after the purge: err = %v, want it purged", id, err)
+		}
+	}
+}
+
+// TestPurgeMaster_TakesLegacyRowsOfItsLog: the purge of a master takes the
+// trashed legacy overrides that its series delete hid in another calendar,
+// also when a live master elsewhere owns them in the view now.
+func TestPurgeMaster_TakesLegacyRowsOfItsLog(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	calL := insertCalendar(t, svc, "Legacy")
+	fourth := second.Add(48 * time.Hour)
+	legacy, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calL, Title: "Legacy",
+		StartTime: fourth, EndTime: fourth.Add(time.Hour), RecurrenceID: fourth.Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	calB := insertCalendar(t, svc, "B")
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calB, Title: "Other series",
+		StartTime: master.StartTime, EndTime: master.EndTime, RecurrenceRule: master.RecurrenceRule,
+	}); err != nil {
+		t.Fatalf("upsert master B: %v", err)
+	}
 	if err := svc.PurgeByID(ctx, master.ID); err != nil {
 		t.Fatalf("PurgeByID(master): %v", err)
 	}
-	if _, err := svc.GetIncludingDeleted(ctx, trashed.ID); !errors.Is(err, sql.ErrNoRows) {
-		t.Errorf("trashed override after the purge: err = %v, want it purged", err)
-	}
-	if r, err := svc.GetIncludingDeleted(ctx, live.ID); err != nil || r.DeletedAt != nil {
-		t.Errorf("live override after the purge = trashed %v, %v; want it live", r.DeletedAt != nil, err)
+	if _, err := svc.GetIncludingDeleted(ctx, legacy.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("legacy row after the purge: err = %v, want it purged", err)
 	}
 }
 
@@ -4624,43 +4667,102 @@ func TestRestore_FailedDirtyMarkRollsBack(t *testing.T) {
 
 // TestPurgeDeleted_MasterTakesItsRowsAndLogs: the purge by age applies the
 // rule of the purge of one master. Its trashed overrides go, whatever their
-// deleted_at, and so do its delete logs. A live override stays.
+// deleted_at, and so do its delete logs.
 func TestPurgeDeleted_MasterTakesItsRowsAndLogs(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	master, second, third := singleSeriesWithOverrides(t, svc)
-	get := func(at time.Time) storage.Event {
-		t.Helper()
+	ids := make([]int64, 0, 3)
+	ids = append(ids, master.ID)
+	for _, at := range []time.Time{second, third} {
 		r, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: at.Format(time.RFC3339)})
 		if err != nil {
 			t.Fatalf("get override: %v", err)
 		}
-		return r
+		ids = append(ids, r.ID)
 	}
-	trashed, live := get(second), get(third)
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	// The master is old. The overrides are new, so the cutoff alone would
+	// keep them.
+	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE id = ?`, master.ID); err != nil {
+		t.Fatalf("age the master: %v", err)
+	}
+	report, err := svc.PurgeDeletedReport(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("PurgeDeletedReport: %v", err)
+	}
+	if report.Purged != 3 || len(report.Skipped) != 0 {
+		t.Errorf("report = %+v, want 3 rows and no skip", report)
+	}
+	for _, id := range ids {
+		if _, err := svc.GetIncludingDeleted(ctx, id); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("row %d after the purge: err = %v, want it purged", id, err)
+		}
+	}
+	var logs int
+	if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_series_deletes WHERE uid = ?`, master.UID).Scan(&logs); err != nil || logs != 0 {
+		t.Errorf("series logs after the purge = %d, %v; want 0", logs, err)
+	}
+}
+
+// TestPurgeDeleted_SkipsMasterWithLiveOverride: the purge by age keeps a
+// master whose series still owns a live override, and reports it.
+func TestPurgeDeleted_SkipsMasterWithLiveOverride(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, _, third := singleSeriesWithOverrides(t, svc)
+	live, err := svc.q.GetEventByCalendarUIDAndRecurrenceID(ctx, storage.GetEventByCalendarUIDAndRecurrenceIDParams{CalendarID: 1, Uid: master.UID, RecurrenceID: third.Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("get override: %v", err)
+	}
 	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 		t.Fatalf("DeleteSeries: %v", err)
 	}
 	if err := svc.RestoreByID(ctx, live.ID); err != nil {
 		t.Fatalf("RestoreByID(live override): %v", err)
 	}
-	// The master is old. The trashed override is new, so the cutoff alone
-	// would keep it.
 	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE id = ?`, master.ID); err != nil {
 		t.Fatalf("age the master: %v", err)
 	}
-	if _, err := svc.PurgeDeleted(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
-		t.Fatalf("PurgeDeleted: %v", err)
+	report, err := svc.PurgeDeletedReport(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("PurgeDeletedReport: %v", err)
 	}
-	for id, wantGone := range map[int64]bool{master.ID: true, trashed.ID: true, live.ID: false} {
-		_, err := svc.GetIncludingDeleted(ctx, id)
-		if gone := errors.Is(err, sql.ErrNoRows); gone != wantGone {
-			t.Errorf("row %d gone = %v, want %v", id, gone, wantGone)
-		}
+	if len(report.Skipped) != 1 || report.Skipped[0].ID != master.ID {
+		t.Errorf("skipped = %+v, want the master %d", report.Skipped, master.ID)
 	}
-	var logs int
-	if err := svc.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_series_deletes WHERE uid = ?`, master.UID).Scan(&logs); err != nil || logs != 0 {
-		t.Errorf("series logs after the purge = %d, %v; want 0", logs, err)
+	if m, err := svc.GetIncludingDeleted(ctx, master.ID); err != nil || m.DeletedAt == nil {
+		t.Errorf("master after the purge = trashed %v, %v; want it kept in the trash", m.DeletedAt != nil, err)
+	}
+}
+
+// TestDeleteSeries_TombstonesLegacyCalendar: a series delete that hides a
+// legacy override in a synced calendar queues a tombstone there too.
+func TestDeleteSeries_TombstonesLegacyCalendar(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, _ := singleSeriesWithOverrides(t, svc)
+	calB := insertCalendar(t, svc, "B")
+	fourth := second.Add(48 * time.Hour)
+	if _, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: master.UID, CalendarID: calB, Title: "Legacy",
+		StartTime: fourth, EndTime: fourth.Add(time.Hour), RecurrenceID: fourth.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("upsert legacy row: %v", err)
+	}
+	if err := svc.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calB, Uid: master.UID, OwnerType: "event",
+		RemoteUrl: "https://example.com/b/series.ics", Etag: "e", SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("upsert sync resource: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if n := countTombstones(t, svc, calB, master.UID); n != 1 {
+		t.Errorf("tombstones of the legacy calendar = %d, want 1", n)
 	}
 }
 
