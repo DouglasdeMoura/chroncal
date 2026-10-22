@@ -218,7 +218,7 @@ func (s *Service) RestoreTrash(ctx context.Context, entry TrashEntry) error {
 	case TrashKindInstance:
 		return s.restoreInstanceByLogID(ctx, entry.ID)
 	case TrashKindTruncation:
-		return s.restoreTruncationByLogID(ctx, entry.ID)
+		return s.restoreTruncationByLogID(ctx, entry.ID, 0)
 	default:
 		return fmt.Errorf("unknown trash kind %d", entry.Kind)
 	}
@@ -359,7 +359,7 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 // un-hides every override soft-deleted at or after the cutoff. It then
 // drops the log row. The master is marked dirty so the next push
 // propagates the restored series.
-func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) error {
+func (s *Service) restoreTruncationByLogID(ctx context.Context, logID, token int64) error {
 	log, err := s.q.GetEventTruncateDelete(ctx, logID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -404,6 +404,18 @@ func (s *Service) restoreTruncationByLogID(ctx context.Context, logID int64) err
 		// The truncation rewrites the rule of a live master. The entry
 		// stays, and the restore of the series comes first.
 		return ErrMasterInTrash
+	}
+	// The undo of a truncation (token non-zero) refuses when a row of the
+	// log went to the trash again in a later delete (tokenCheckTx). The
+	// check comes before any write.
+	if token != 0 && log.HiddenIds != nil {
+		ids, err := parseRowIDs(*log.HiddenIds)
+		if err != nil {
+			return err
+		}
+		if _, err := tokenCheckTx(ctx, qtx, ids, token); err != nil {
+			return err
+		}
 	}
 
 	if err := qtx.UpdateEventRecurrenceRule(ctx, storage.UpdateEventRecurrenceRuleParams{

@@ -286,3 +286,23 @@ func TestMigration057_BackfillTakesTheRowsOfTheOldRestore(t *testing.T) {
 		}
 	}
 }
+
+// TestMigration057_BackfillOwnsNoEXDATEBesideALiveOverride: an old log whose
+// occurrence holds a live override owns no EXDATE after the backfill. The
+// EXDATE then belongs to the server or an import, and a restore keeps it.
+func TestMigration057_BackfillOwnsNoEXDATEBesideALiveOverride(t *testing.T) {
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	x := start.Add(24 * time.Hour)
+	xs := x.Format(time.RFC3339)
+	svc := migratedAt056(t, func(exec func(string, ...any)) {
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_rule, exdates)
+		  VALUES (1, 'live-x', 1, 'Series', ?, ?, 'FREQ=DAILY;COUNT=3', ?)`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339), xs)
+		exec(`INSERT INTO events (id, uid, calendar_id, title, start_time, end_time, recurrence_id)
+		  VALUES (2, 'live-x', 1, 'Live', ?, ?, ?)`, x.Add(time.Hour).Format(time.RFC3339), x.Add(2*time.Hour).Format(time.RFC3339), xs)
+		exec(`INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, deleted_at) VALUES (1, 'live-x', ?, '2026-05-02T10:00:00Z')`, xs)
+	})
+	log, found, err := occurrenceLogTx(context.Background(), svc.q, 1, "live-x", xs)
+	if err != nil || !found || log.OwnsExdate {
+		t.Fatalf("log after the backfill = %+v, %v, %v; want a log that owns no EXDATE", log, found, err)
+	}
+}

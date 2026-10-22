@@ -525,11 +525,16 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 		case ownedByOther:
 			return nil, ErrDeletedAgain
 		case ownedBySelf:
+			// The log of the delete names the row. The token rule still
+			// holds: the row must carry the token of the delete.
+			if !tokenMatches(st, id.token) {
+				return nil, ErrChangedSince
+			}
 			restore = append(restore, st)
 		default:
 			sameDelete := id.logless()
 			if id.token != 0 {
-				sameDelete = st.DeleteToken == id.token
+				sameDelete = tokenMatches(st, id.token)
 			}
 			if !sameDelete {
 				return nil, ErrChangedSince
@@ -544,4 +549,34 @@ func identityRefusalTx(ctx context.Context, qtx *storage.Queries, uid string, id
 		return nil, ErrNotDeleted
 	}
 	return restore, nil
+}
+
+// tokenCheckTx applies the token rule of an undo to the rows of ids. It reads
+// the rows in the transaction of the restore. A live or a purged row is done.
+// A row in the trash with another delete token than token went in a later
+// delete, a pull included: the undo refuses with ErrChangedSince. token 0
+// means that the caller has no token, and no row refuses. It returns the
+// states of the rows in the trash.
+func tokenCheckTx(ctx context.Context, qtx *storage.Queries, ids []int64, token int64) ([]storage.ListEventRowStatesByIDsRow, error) {
+	states, err := rowStatesTx(ctx, qtx, ids)
+	if err != nil {
+		return nil, err
+	}
+	trashed := make([]storage.ListEventRowStatesByIDsRow, 0, len(states))
+	for _, st := range states {
+		if st.DeletedAt == nil {
+			continue
+		}
+		if !tokenMatches(st, token) {
+			return nil, ErrChangedSince
+		}
+		trashed = append(trashed, st)
+	}
+	return trashed, nil
+}
+
+// tokenMatches reports whether the row st in the trash carries the delete
+// token of the undo. token 0 matches each row.
+func tokenMatches(st storage.ListEventRowStatesByIDsRow, token int64) bool {
+	return token == 0 || st.DeleteToken == token
 }

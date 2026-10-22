@@ -92,8 +92,11 @@ CREATE TABLE event_series_deletes (
     uid TEXT NOT NULL,
     hidden_ids TEXT NOT NULL DEFAULT '',
     deleted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    had_master INTEGER NOT NULL DEFAULT 0
+    had_master INTEGER NOT NULL DEFAULT 0,
+    delete_token INTEGER NOT NULL DEFAULT 0
 );
+-- delete_token is the delete token of the master that the series delete hid
+-- (events.delete_token). The revive of that master consumes this log only.
 -- One row per series delete: the id names the delete. Two deletes of orphan
 -- rows in one calendar keep two rows. A restore by UID reverses the newest
 -- one, and the other one stays restorable.
@@ -176,7 +179,15 @@ WHERE NOT EXISTS (
 -- The times compare as whole seconds (unixepoch, SQLite 3.38 or later).
 -- unixepoch drops a fraction of a second, so the bound of one second is
 -- exact.
-UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
+-- The log owns its EXDATE only while no live override of the series sits at
+-- the occurrence (see softdelete.SettleOccurrence).
+UPDATE event_exdate_deletes SET delete_seq = 1,
+    owns_exdate = NOT EXISTS (
+        SELECT 1 FROM event_series_rows AS live
+        WHERE live.uid = event_exdate_deletes.uid
+          AND live.owner_calendar_id = event_exdate_deletes.calendar_id
+          AND live.recurrence_id = event_exdate_deletes.recurrence_id
+          AND live.deleted_at IS NULL),
     hidden_ids = COALESCE((
         SELECT GROUP_CONCAT('1:' || s.id, ',') FROM event_series_rows AS s
         WHERE s.uid = event_exdate_deletes.uid
@@ -197,16 +208,18 @@ UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
               AND unixepoch(t.deleted_at) = unixepoch(s.deleted_at))), '1:');
 
 -- A master that comes back from the trash by any path consumes the
--- series-delete log of its calendar. The restore of the series reads and
--- drops the log before it un-hides the master. A pull, an import, or a
--- re-import un-hides the master with no log read. The log is then stale.
--- A later restore must not replay it (issue #287).
+-- series-delete log of its delete: the log with the delete token of the
+-- master. The restore of the series reads and drops the log before it
+-- un-hides the master. A pull, an import, or a re-import un-hides the master
+-- with no log read. That log is stale, and a later restore must not replay it
+-- (issue #287). The other logs of the calendar stay.
 -- +goose StatementBegin
 CREATE TRIGGER events_master_revive_drops_series_log
 AFTER UPDATE OF deleted_at ON events
 WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL AND NEW.recurrence_id = ''
 BEGIN
-    DELETE FROM event_series_deletes WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid;
+    DELETE FROM event_series_deletes
+    WHERE calendar_id = NEW.calendar_id AND uid = NEW.uid AND delete_token = OLD.delete_token;
 END;
 -- +goose StatementEnd
 

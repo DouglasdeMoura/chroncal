@@ -235,3 +235,23 @@ func TestUndoStack_Remove_DistinguishesRows(t *testing.T) {
 		t.Error("Remove matched an entry with another MasterID")
 	}
 }
+
+// TestSameUndoTarget_TokenAndSeriesLogTellDeletesApart: two deletes of one
+// series differ by their delete token or by their series-delete log. The
+// undo stack keeps them as two targets.
+func TestSameUndoTarget_TokenAndSeriesLogTellDeletesApart(t *testing.T) {
+	base := event.UndoMeta{Kind: event.UndoKindSeries, UID: "u", CalendarID: 1, DeleteToken: 1, SeriesLogID: 1}
+	if !sameUndoTarget(base, base) {
+		t.Fatal("sameUndoTarget(base, base) = false, want true")
+	}
+	token := base
+	token.DeleteToken = 2
+	if sameUndoTarget(base, token) {
+		t.Error("deletes with two tokens are one target, want two")
+	}
+	log := base
+	log.SeriesLogID = 2
+	if sameUndoTarget(base, log) {
+		t.Error("deletes with two series logs are one target, want two")
+	}
+}

@@ -3,9 +3,10 @@
 -- id), so an earlier delete in the same calendar keeps its record. The merge
 -- of orphan rows into the log of a master in the trash updates that row
 -- (UpdateEventSeriesDeleteHiddenIds). It returns the ID, which the undo
--- keeps (UndoMeta.SeriesLogID).
-INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master)
-VALUES (?, ?, ?, ?)
+-- keeps (UndoMeta.SeriesLogID). delete_token is the token of the master
+-- that the delete hid, so the revive of that master consumes this log.
+INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master, delete_token)
+VALUES (?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: GetEventSeriesDeleteByID :one
