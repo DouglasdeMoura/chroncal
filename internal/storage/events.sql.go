@@ -1688,8 +1688,8 @@ type ListTrashedRowsOwnedByMastersRow struct {
 	MasterID int64
 }
 
-// The override rows in the trash that the series of each master owns, in
-// its calendar and in other calendars, with the ID of the master.
+// The override rows in the trash that the series of each master owns, in its
+// calendar and in other calendars. Each row comes with the ID of its master.
 func (q *Queries) ListTrashedRowsOwnedByMasters(ctx context.Context, masterIds []int64) ([]ListTrashedRowsOwnedByMastersRow, error) {
 	query := listTrashedRowsOwnedByMasters
 	var queryParams []interface{}

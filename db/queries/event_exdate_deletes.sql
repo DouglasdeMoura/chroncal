@@ -2,11 +2,13 @@
 -- Idempotent: a second delete of the same occurrence in one calendar keeps
 -- one log row. Each calendar keeps its own row (issue #842). A delete of
 -- the user turns a pruned marker of the occurrence into a delete log.
-INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id)
-VALUES (?, ?, ?)
+-- hidden_id names the override row that the delete hid, or NULL.
+INSERT INTO event_exdate_deletes (calendar_id, uid, recurrence_id, hidden_id)
+VALUES (sqlc.arg(calendar_id), sqlc.arg(uid), sqlc.arg(recurrence_id), sqlc.narg(hidden_id))
 ON CONFLICT(calendar_id, uid, recurrence_id) DO UPDATE SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    pruned = 0;
+    pruned = 0,
+    hidden_id = excluded.hidden_id;
 
 -- name: RecordEventExdatePrune :exec
 -- Write the pruned marker of an override row that a pull prune hid. A

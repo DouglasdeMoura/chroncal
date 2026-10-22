@@ -180,6 +180,7 @@ type EventExdateDelete struct {
 	RecurrenceID string
 	DeletedAt    string
 	Pruned       int64
+	HiddenID     *int64
 }
 
 type EventRelation struct {

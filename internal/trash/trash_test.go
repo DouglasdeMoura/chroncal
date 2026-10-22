@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -425,5 +426,41 @@ func TestPurgeOld_KeepsTheRowsAndLogsOfAKeptMaster(t *testing.T) {
 		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE uid = 'kept-series'`).Scan(&n); err != nil || n != 1 {
 			t.Errorf("%s rows after the purge = %d, %v; want 1", table, n, err)
 		}
+	}
+}
+
+// TestPurgeOld_OneTransactionForRowsAndLogs: the purge of the event rows and
+// the purge of the delete logs share one transaction. A failure in the log
+// purge rolls back the row purge. Thus the purge cannot keep a master and
+// lose its logs.
+func TestPurgeOld_OneTransactionForRowsAndLogs(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	ctx := context.Background()
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	single, err := events.UpsertByUID(ctx, event.UpsertParams{
+		UID: "old-single", CalendarID: 1, Title: "Old",
+		StartTime: start, EndTime: start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	for _, stmt := range []string{
+		`UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE id = ` + strconv.FormatInt(single.ID, 10),
+		`INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, deleted_at, had_master)
+		 VALUES (1, 'boom', '', '2020-01-01T00:00:00Z', 0)`,
+		`CREATE TRIGGER test_boom BEFORE DELETE ON event_series_deletes WHEN OLD.uid = 'boom'
+		 BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	if _, err := svc.PurgeOld(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("PurgeOld: got nil, want the error of the log purge")
+	}
+	if _, err := events.GetIncludingDeleted(ctx, single.ID); err != nil {
+		t.Errorf("old row after the failed purge: %v, want the rollback to keep it", err)
 	}
 }
