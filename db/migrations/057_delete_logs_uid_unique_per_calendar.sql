@@ -58,10 +58,10 @@ CREATE INDEX idx_event_truncate_deletes_deleted_at ON event_truncate_deletes(del
 -- delete hid (hidden_ids, comma-separated event row IDs). A restore of the
 -- series un-hides exactly those rows, by ID. A change of the series owner
 -- after the delete then strands no row. An override that a sync prune or an
--- occurrence delete hid before stays hidden.
--- had_master is 1 for the log of a series delete with a master in the
--- calendar, and 0 for the log of a delete of orphan rows. A restore of a log
--- whose master row is gone refuses the rows only when had_master is 1.
+-- occurrence delete hid before stays hidden. had_master is 1 for the log of a
+-- series delete with a master in the calendar. It is 0 for the log of a
+-- delete of orphan rows. A restore of a log whose master row is gone refuses
+-- the rows only when had_master is 1.
 CREATE TABLE event_series_deletes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
@@ -71,8 +71,8 @@ CREATE TABLE event_series_deletes (
     had_master INTEGER NOT NULL DEFAULT 0
 );
 -- One row per series delete: the id names the delete. Two deletes of orphan
--- rows in one calendar keep two rows, so a restore by UID reverses the
--- newest one and leaves the other one restorable.
+-- rows in one calendar keep two rows. A restore by UID reverses the newest
+-- one, and the other one stays restorable.
 CREATE INDEX idx_event_series_deletes_calendar ON event_series_deletes(calendar_id, uid);
 CREATE INDEX idx_event_series_deletes_deleted_at ON event_series_deletes(deleted_at);
 
@@ -146,9 +146,9 @@ END;
 -- +goose StatementEnd
 
 -- A new live master consumes the delete logs of its UID in its calendar. A
--- log there describes a delete with no master in the calendar: the delete
--- of orphan rows, or a delete by ID of an orphan row (an occurrence log). A
--- pull or an import that inserts a master makes such a log stale. An
+-- log there describes a delete with no master in the calendar. It records the
+-- delete of orphan rows, or a delete by ID of an orphan row (an occurrence
+-- log). A pull or an import that inserts a master makes such a log stale. An
 -- occurrence log would then strip an imported EXDATE of the new master on a
 -- restore (issue #86). The unique key holds one master row per calendar and
 -- UID, so the insert of a master never meets a log of a master there.
@@ -162,14 +162,14 @@ BEGIN
 END;
 -- +goose StatementEnd
 
--- An override row that comes back, by any path, leaves the delete logs of
--- its UID: a restore by ID, an undo, an edit that revives the row, and a
--- pull that imports it again all clear deleted_at. The trigger drops the
--- pruned marker of its occurrence, and removes its ID from each
--- series-delete log and each truncation log. A log then names a row only
--- while the row stays in the trash from that delete. A series-delete log
--- with no row left goes, unless the master of its calendar is in the trash:
--- that log still records the series delete.
+-- An override row that comes back, by any path, leaves the delete logs of its
+-- UID. A restore by ID, an undo, an edit that revives the row, and a pull
+-- import all clear deleted_at. The trigger drops the pruned marker of its
+-- occurrence, and removes its ID from each series-delete log and each
+-- truncation log. A log then names a row only while the row stays in the
+-- trash from that delete. A series-delete log with no row left goes, unless
+-- the master of its calendar is in the trash: that log still records the
+-- series delete.
 -- +goose StatementBegin
 CREATE TRIGGER events_override_revive_drops_stale_logs
 AFTER UPDATE OF deleted_at ON events

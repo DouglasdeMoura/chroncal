@@ -6,8 +6,8 @@ them as the schema of sqlc.
 ## Rebuild of the events table
 
 SQLite cannot drop a table constraint, so a change of a constraint of
-`events` rebuilds the table (see migration 050): create `events_new`, copy
-the rows, drop `events`, and rename `events_new`.
+`events` rebuilds the table (see migration 050). The rebuild creates
+`events_new`, copies the rows, drops `events`, and renames `events_new`.
 
 The view `event_series_rows` (migration 057) reads `events`. SQLite refuses
 the rename while a view reads the dropped table. A rebuild of `events`
@@ -23,15 +23,15 @@ must follow these steps:
    `events_override_insert_drops_prune_marker`. The drop of `events` drops
    them. Copy their statements from migration 057.
 
-The triggers drop the stale delete logs of a calendar. The revive trigger
-of a master drops the series-delete log when a master of that calendar
-comes back from the trash. The insert trigger of a master drops the
-series-delete log and the occurrence logs of the UID when a new live
-master arrives. The two triggers of an override drop the pruned marker of
-an occurrence when its row comes back, and the revive trigger removes the
-row from the delete logs. Without them, a log that a pull or
-an import left behind brings back the wrong rows, or strips an imported
-EXDATE, on the next restore.
+The triggers drop the stale delete logs of a calendar. The revive
+trigger of a master drops the series-delete log when a master of that
+calendar comes back from the trash. The insert trigger of a master drops
+the series-delete log and the occurrence logs of the UID when a new live
+master arrives. The two triggers of an override drop the pruned marker
+of an occurrence when its row comes back. The revive trigger also
+removes the row from the delete logs. Without them, a log that a pull or
+an import left behind can bring back the wrong rows on the next restore.
+It can also strip an imported EXDATE.
 
 Each statement below must stay equal to the one in migration 057. The
 storage test `TestMigrationsReadmeMatches057` compares them, and the

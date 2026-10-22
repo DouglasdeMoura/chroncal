@@ -3,11 +3,11 @@ package storage
 import "context"
 
 // ListOverridesByUIDs returns all recurrence overrides (rows with a non-empty
-// recurrence_id) for the given master UIDs. Recurrence expansion uses it
-// to avoid one SELECT per master. Results are ordered by uid then recurrence_id; soft-deleted rows are
-// excluded. The UIDs are chunked so the IN clause never exceeds SQLite's
-// parameter limit. Hand-written because database/sql has no slice-parameter
-// support.
+// recurrence_id) for the given master UIDs. Recurrence expansion uses it to
+// avoid one SELECT per master. The query orders the results by uid, then
+// recurrence_id, and leaves out the soft-deleted rows. It splits the UIDs
+// into chunks, so the IN clause stays under the parameter limit of SQLite.
+// The function is hand-written, because database/sql has no slice parameter.
 func (q *Queries) ListOverridesByUIDs(ctx context.Context, uids []string) ([]Event, error) {
 	var out []Event
 	for _, chunk := range chunkSlice(uids, sqliteINBatch) {

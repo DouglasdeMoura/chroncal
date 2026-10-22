@@ -726,7 +726,7 @@ func TestMigration057UpDown(t *testing.T) {
 }
 
 // seriesViewStatement reads the CREATE VIEW statement of event_series_rows
-// from migration 057, so the rebuild test runs the statement that the
+// from migration 057. The rebuild test then runs the statement that the
 // migrations README tells a rebuild to copy.
 func seriesViewStatement(t *testing.T) string {
 	t.Helper()
@@ -771,9 +771,9 @@ func rebuildEvents(ctx context.Context, conn *sql.DB) error {
 }
 
 // TestEventsRebuildKeepsSeriesView proves the sequence that the migrations
-// README gives for a rebuild of the events table: SQLite refuses the
-// rename while the view event_series_rows reads events, and the rebuild
-// works with the view dropped first and created again after.
+// README gives for a rebuild of the events table. SQLite refuses the rename
+// while the view event_series_rows reads events. The rebuild works when it
+// drops the view first and creates it again after.
 func TestEventsRebuildKeepsSeriesView(t *testing.T) {
 	ctx := context.Background()
 	t.Run("rename fails with the view in place", func(t *testing.T) {

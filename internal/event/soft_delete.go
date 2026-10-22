@@ -362,10 +362,10 @@ func clearOtherTombstonesTx(ctx context.Context, qtx *storage.Queries, seriesCal
 	return nil
 }
 
-// restoreOrphanDeleteTx is RestoreByUID for a UID with no master row and
-// no series-delete log. trashed holds the rows of the UID in the trash. A
-// row that an occurrence log names had its own delete, for example a delete
-// by ID of an orphan row, and stays in the trash. Of the other rows, one
+// restoreOrphanDeleteTx is RestoreByUID for a UID with no master row and no
+// series-delete log. trashed holds the rows of the UID in the trash. A row
+// that an occurrence log names had its own delete, and it stays in the trash.
+// An example is a delete by ID of an orphan row. Of the other rows, one
 // orphan delete hides the rows of one calendar with one deleted_at, to the
 // second. The restore takes the calendar of those rows, and brings back its
 // rows of the newest deleted_at. Two calendars give ErrAmbiguousUID. No row
@@ -563,12 +563,12 @@ func (s *Service) restoreMasterByID(ctx context.Context, id int64) error {
 	return tx.Commit()
 }
 
-// recordSeriesDeleteTx writes the series-delete log of (calendarID, uid)
-// with hidden. Each delete gets its own log row. merge adds the rows to the
-// newest log row of the same series instead: only a delete of orphan rows
-// beside a master in the trash merges, because that master still needs its
-// log. A delete of orphan rows with no master writes a row of its own, so
-// an earlier orphan delete keeps its record and stays restorable.
+// recordSeriesDeleteTx writes the series-delete log of (calendarID, uid) with
+// hidden. Each delete gets its own log row. merge adds the rows to the newest
+// log row of the same series instead. Only a delete of orphan rows beside a
+// master in the trash merges, because that master still needs its log. A
+// delete of orphan rows with no master writes a row of its own, so an earlier
+// orphan delete keeps its record and stays restorable.
 func recordSeriesDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string, hidden []int64, merge, hadMaster bool) error {
 	if merge {
 		log, err := qtx.GetEventSeriesDeleteByCalendarUID(ctx, storage.GetEventSeriesDeleteByCalendarUIDParams{
@@ -843,11 +843,11 @@ func (s *Service) PurgeDeletedReport(ctx context.Context, olderThan time.Time) (
 // the masters of masterIDs takes along:
 //   - the rows that each series owns in the view, in its calendar and in
 //     other calendars;
-//   - the rows in the trash that the series-delete log of each master
-//     names. Another series can own such a row in the view now. A log names
-//     a row only while the row stays in the trash from that delete: the
-//     revive trigger of migration 057 removes a row that comes back by any
-//     path, so a later delete of the row is not in the log.
+//   - the rows in the trash that the series-delete log of each master names.
+//     Another series can own such a row in the view now. A log names a row
+//     only while the row stays in the trash from that delete. The revive
+//     trigger of migration 057 removes a row that comes back by any path. A
+//     later delete of the row is then not in the log.
 //
 // PurgeByID and PurgeDeletedReport share it. It reads the view once.
 func seriesPurgeSetTx(ctx context.Context, qtx *storage.Queries, masterIDs []int64) ([]int64, error) {
@@ -1422,11 +1422,11 @@ func (s *Service) restoreOverrideByID(ctx context.Context, r storage.Event) (ser
 		}
 		seriesCalendarID, masterTrashed = master.CalendarID, master.DeletedAt != nil
 	}
-	// Beside a master in the trash, the row stays local until the master
-	// comes back: the tombstone of the series stays, and the UID gets no
-	// dirty mark. Else the export of the series calendar carries the row. A
-	// legacy override in another calendar leaves the tombstone of that
-	// calendar: the old server object there still needs its delete.
+	// Beside a master in the trash, the row stays local until the master comes
+	// back. The tombstone of the series stays, and the UID gets no dirty mark.
+	// Else the export of the series calendar carries the row. A legacy override
+	// in another calendar leaves the tombstone of that calendar: the old server
+	// object there still needs its delete.
 	if !masterTrashed {
 		if err := reconcileTx(ctx, qtx, seriesCalendarID, r.Uid); err != nil {
 			return 0, false, err
@@ -1870,9 +1870,9 @@ func recordOrphanDeleteTx(ctx context.Context, qtx *storage.Queries, calendarID 
 // dropOrphanDeleteLogTx drops the occurrence log that recordOrphanDeleteTx
 // wrote for an orphan row in calendarID. The restore and the purge of the row
 // call it. calendarHoldsMaster reports a master row of the UID in calendarID,
-// live or in the trash: that calendar keeps its logs, because the EXDATE
-// contract owns them. A master in another calendar owns no log of
-// calendarID, so the log goes.
+// live or in the trash. That calendar keeps its logs, because the EXDATE
+// contract owns them. A master in another calendar owns no log of calendarID,
+// so the log goes.
 func dropOrphanDeleteLogTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid, recurrenceID string, calendarHoldsMaster bool) error {
 	if recurrenceID == "" || calendarHoldsMaster {
 		return nil
@@ -2102,9 +2102,9 @@ func softDeleteOverridesAndRecordTruncation(ctx context.Context, qtx *storage.Qu
 	return nil
 }
 
-// trashedRowsAtTx returns the IDs of the trashed rows of the series of master
-// at the recurrence IDs of the comma-separated list recIDs, as a list of row
-// IDs.
+// trashedRowsAtTx returns a list of the IDs of the trashed rows of the series
+// of master. The rows are at the recurrence IDs of the comma-separated list
+// recIDs.
 func trashedRowsAtTx(ctx context.Context, qtx *storage.Queries, master storage.Event, recIDs string) (string, error) {
 	want, err := parseCommaList(recIDs, parseRecurrenceID)
 	if err != nil || len(want) == 0 {
@@ -2265,15 +2265,15 @@ func (s *Service) deleteSeries(ctx context.Context, calendarID int64, uid string
 	if err != nil {
 		return seriesDeletion{}, err
 	}
-	// The tombstone and the soft-delete commit together, so a failed
-	// tombstone write cannot leave a tombstone for a live series whose next
-	// sync would DELETE it from the server (issue #107).
+	// The tombstone and the soft-delete commit together (issue #107). A failed
+	// tombstone write then cannot leave a tombstone for a live series, which the
+	// next sync would DELETE from the server.
 	if t.master.ID == 0 {
 		// No live master anywhere: the live rows of the calendar are orphans.
 		// Beside a master of the calendar in the trash, the log of the series
-		// delete of that master still names rows, and the new rows join that
-		// list. With no master in the calendar, an earlier log names another
-		// delete, and the delete writes a fresh log.
+		// delete of that master still names rows. The new rows join that list. With
+		// no master in the calendar, an earlier log names another delete, and the
+		// delete writes a fresh log.
 		ids := make([]int64, 0, len(t.orphans))
 		for _, o := range t.orphans {
 			ids = append(ids, o.ID)

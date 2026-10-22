@@ -145,9 +145,9 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 	lookupMaster := func(calendarID int64, uid string) *Event { return masters[masterKey{calendarID, uid}] }
 
 	for _, l := range instLogs {
-		// An occurrence log with no master in its calendar is no entry. The
-		// log of a delete by ID of an orphan row names a row that the trash
-		// lists already, and a stale log names nothing to restore.
+		// An occurrence log with no master in its calendar is no entry. The log of
+		// a delete by ID of an orphan row names a row that the trash lists already.
+		// A stale log names nothing to restore.
 		if lookupMaster(l.CalendarID, l.Uid) == nil {
 			continue
 		}

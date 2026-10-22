@@ -43,12 +43,11 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 		key := seriesKey(owner, r.Uid)
 		byUID[key] = append(byUID[key], r)
 	}
-	// One row per occurrence and series, with the tie rule of the series
-	// queries: the row beside the master of the series comes first, then
-	// the lowest ID. A row is beside the master when its calendar holds a
-	// master row of its UID, as the view column beside_master says. An
-	// orphan row is not. The common case reads no view, so this loop sets
-	// the order.
+	// The loop keeps one row per occurrence and series, with the tie rule of the
+	// series queries. The row beside the master of the series comes first, then
+	// the lowest ID. A row is beside the master when its calendar holds a master
+	// row of its UID, as the view column beside_master says. An orphan row is
+	// not. The common case reads no view, so this loop sets the order.
 	for key, group := range byUID {
 		if len(group) < 2 {
 			continue
@@ -62,13 +61,13 @@ func (s *Service) eventOverridesByUID(ctx context.Context, masters []storage.Eve
 	return byUID, nil
 }
 
-// overrideOwners gives the owner calendar of each legacy override of rows,
-// and the rule that tells whether the calendar of a row holds a master row
-// of its UID. A row beside a loaded master holds one, so the common case
-// reads nothing. For the other rows, one batched query reads the master
-// rows of their UIDs. Only a row in a calendar with no master row at all is
-// a legacy override, and only those UIDs read the view event_series_rows. A
-// row with no owner is not in ownerOf.
+// overrideOwners gives the owner calendar of each legacy override of rows. It
+// also gives the rule that tells whether the calendar of a row holds a master
+// row of its UID. A row beside a loaded master holds one, so the common case
+// reads nothing. For the other rows, one batched query reads the master rows
+// of their UIDs. Only a row in a calendar with no master row at all is a
+// legacy override, and only those UIDs read the view event_series_rows. A row
+// with no owner is not in ownerOf.
 func (s *Service) overrideOwners(ctx context.Context, masters, rows []storage.Event) (ownerOf map[int64]int64, holdsMaster func(storage.Event) bool, err error) {
 	loaded := make(map[string]bool, len(masters))
 	for _, m := range masters {

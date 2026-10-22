@@ -11,9 +11,10 @@ import (
 )
 
 // TestEventDelete_SeriesPromptNamesTheSeries: the series resolver with
-// --calendar gives the prompt the title of the series: the title of the live
-// master, or else of the first orphan row. A series in the trash and a UID
-// with no live row in the calendar get their refusal before the prompt.
+// --calendar gives the prompt the title of the series. The title comes from
+// the live master, or else from the first orphan row. A series in the trash
+// and a UID with no live row in the calendar get their refusal before the
+// prompt.
 func TestEventDelete_SeriesPromptNamesTheSeries(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")

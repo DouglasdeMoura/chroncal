@@ -180,10 +180,10 @@ func resolveSeriesMaster(ctx context.Context, a *app.App, ref string, calendarID
 	return e, nil
 }
 
-// checkRowInCalendar accepts a row of calendarID. It also accepts each
-// legacy override in another calendar that the series of calendarID owns,
-// also a row that loses the tie rule at its occurrence. Every other row is
-// a contradiction of the row ID and --calendar.
+// checkRowInCalendar accepts a row of calendarID. It also accepts each legacy
+// override in another calendar that the series of calendarID owns. This
+// includes a row that loses the tie rule at its occurrence. Every other row
+// is a contradiction of the row ID and --calendar.
 func checkRowInCalendar(ctx context.Context, a *app.App, e event.Event, calendarID int64, wantCalendar string) error {
 	if e.CalendarID == calendarID {
 		return nil

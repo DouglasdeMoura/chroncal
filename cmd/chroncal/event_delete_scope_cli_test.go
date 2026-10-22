@@ -282,9 +282,9 @@ func TestEventDelete_NumericIDMustMatchCalendar(t *testing.T) {
 	}
 }
 
-// TestEventRestore_SeriesInTwoCalendarsByMasterID: with the UID in the
-// trash of two calendars, the restore by UID names no series, and the ID
-// of a master restores that series.
+// TestEventRestore_SeriesInTwoCalendarsByMasterID: with the UID in the trash
+// of two calendars, the restore by UID names no series. The ID of a master
+// restores that series.
 func TestEventRestore_SeriesInTwoCalendarsByMasterID(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -325,8 +325,8 @@ func TestEventRestore_SeriesInTwoCalendarsByMasterID(t *testing.T) {
 }
 
 // TestEventUpdate_RecurrenceIDNamesSeriesCalendar: with the UID in two
-// calendars, an occurrence edit by UID needs --calendar to name the
-// series, and the edit then touches that series only.
+// calendars, an occurrence edit by UID needs --calendar to name the series.
+// The edit then touches that series only.
 func TestEventUpdate_RecurrenceIDNamesSeriesCalendar(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -455,9 +455,9 @@ func seedLegacyOverrideInHome(t *testing.T) (string, int64) {
 }
 
 // TestEventUpdate_CalendarOfLegacyOverrideNamesSeries: --calendar on the
-// calendar of a legacy override names the series of its master, so an
-// edit of another occurrence creates the override beside the master and
-// is not a move.
+// calendar of a legacy override names the series of its master. An edit of
+// another occurrence then creates the override beside the master, and it is
+// not a move.
 func TestEventUpdate_CalendarOfLegacyOverrideNamesSeries(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -487,8 +487,8 @@ func TestEventUpdate_CalendarOfLegacyOverrideNamesSeries(t *testing.T) {
 }
 
 // TestEventDelete_LegacyOverrideRowActsOnMaster: a delete of an occurrence
-// through the row ID of a legacy override acts on the master of its
-// series, in the calendar of the master.
+// through the row ID of a legacy override acts on the master of its series.
+// The delete writes the calendar of the master.
 func TestEventDelete_LegacyOverrideRowActsOnMaster(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -586,8 +586,8 @@ func TestEventUpdate_CalendarOfMasterEditsLegacyOverride(t *testing.T) {
 }
 
 // TestEventUpdate_LegacyCalendarWithTwoMastersNamesIt: --calendar on a
-// calendar that holds a legacy override of a UID with two live masters
-// names that calendar in the error, not the generic --calendar hint.
+// calendar with a legacy override of a UID with two live masters names that
+// calendar in the error. The error does not give the generic --calendar hint.
 func TestEventUpdate_LegacyCalendarWithTwoMastersNamesIt(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -648,8 +648,9 @@ func TestEventGet_TwoLegacyOverridesShowTheWinner(t *testing.T) {
 }
 
 // TestEventDelete_CalendarWithTwoMastersElsewhereNamesIt: --calendar on a
-// legacy calendar of a UID with two live masters names that calendar in
-// the error of a scoped delete, not the generic --calendar hint.
+// legacy calendar of a UID with two live masters names that calendar in the
+// error of a scoped delete. The error does not give the generic --calendar
+// hint.
 func TestEventDelete_CalendarWithTwoMastersElsewhereNamesIt(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
@@ -677,9 +678,9 @@ func TestEventDelete_CalendarWithTwoMastersElsewhereNamesIt(t *testing.T) {
 }
 
 // TestEventDelete_PlainWithCalendarTargetsTheRowThere: a plain delete with
-// --calendar on the calendar of a legacy override deletes that row, not
-// the master of its series in another calendar. A row ID of the legacy
-// override with the calendar of its master is accepted too.
+// --calendar on the calendar of a legacy override deletes that row, not the
+// master of its series in another calendar. The delete also accepts a row ID
+// of the legacy override with the calendar of its master.
 func TestEventDelete_PlainWithCalendarTargetsTheRowThere(t *testing.T) {
 	setupCalendarCLITestEnv(t)
 	t.Setenv("TZ", "UTC")
