@@ -237,8 +237,10 @@ SELECT CAST(EXISTS (
 ) AS BOOLEAN) AS has_override;
 
 -- name: SoftDeleteEventsByIDs :exec
--- Soft-delete a set of live rows by ID in one statement. The truncation of
--- a series reads its rows once and hides them with it.
+-- Soft-delete a set of live rows by ID in one statement, so every row gets
+-- the same deleted_at. The truncation of a series reads its rows once and
+-- hides them with it. The occurrence delete uses it too: its undo compares
+-- that time (UndoMeta.DeletedAt).
 UPDATE events SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')

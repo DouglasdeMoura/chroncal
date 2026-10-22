@@ -156,8 +156,9 @@ WHERE NOT EXISTS (
 --     the master and its rows in one statement.
 --   - a row that a truncation hid at the same time: its truncation log
 --     owns it.
--- The times compare as instants (julianday), so a fraction of a second
--- compares right. One second is 1/86400 of a day.
+-- The times compare as whole seconds (unixepoch, SQLite 3.38 or later).
+-- unixepoch drops a fraction of a second, so the bound of one second is
+-- exact.
 UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
     hidden_ids = COALESCE((
         SELECT GROUP_CONCAT('1:' || s.id, ',') FROM event_series_rows AS s
@@ -165,17 +166,17 @@ UPDATE event_exdate_deletes SET delete_seq = 1, owns_exdate = 1,
           AND s.owner_calendar_id = event_exdate_deletes.calendar_id
           AND s.recurrence_id = event_exdate_deletes.recurrence_id
           AND s.deleted_at IS NOT NULL
-          AND julianday(s.deleted_at) <= julianday(event_exdate_deletes.deleted_at) + 1.0 / 86400
+          AND unixepoch(s.deleted_at) <= unixepoch(event_exdate_deletes.deleted_at) + 1
           AND NOT EXISTS (
             SELECT 1 FROM events AS m
             WHERE m.uid = s.uid AND m.calendar_id = s.owner_calendar_id
               AND m.recurrence_id = '' AND m.deleted_at IS NOT NULL
-              AND abs(julianday(m.deleted_at) - julianday(s.deleted_at)) < 1.0 / 86400)
+              AND unixepoch(m.deleted_at) = unixepoch(s.deleted_at))
           AND NOT EXISTS (
             SELECT 1 FROM event_truncate_deletes AS t
             WHERE t.uid = s.uid AND t.calendar_id = s.owner_calendar_id
-              AND julianday(t.cutoff_time) <= julianday(s.recurrence_id)
-              AND abs(julianday(t.deleted_at) - julianday(s.deleted_at)) < 1.0 / 86400)), '1:');
+              AND unixepoch(t.cutoff_time) <= unixepoch(s.recurrence_id)
+              AND unixepoch(t.deleted_at) = unixepoch(s.deleted_at))), '1:');
 
 -- A master that comes back from the trash by any path consumes the
 -- series-delete log of its calendar. The restore of the series reads and

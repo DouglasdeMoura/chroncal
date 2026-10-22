@@ -1360,12 +1360,12 @@ func masterInsertedBy(t *testing.T, svc *Service, uid string) {
 	}
 }
 
-// TestUndo_TriggerDroppedLogRefuses: a pull inserts a master, and the insert
-// trigger drops the log of the delete. No log of the delete names the row
-// then, so the undo refuses with ErrChangedSince. The restore by ID still
-// brings the row back. The case holds for a series delete of orphan rows and
-// for a delete by ID of an orphan row.
-func TestUndo_TriggerDroppedLogRefuses(t *testing.T) {
+// TestUndo_TriggerDroppedLogRestores: a pull inserts a master, and the insert
+// trigger drops the log of the delete. No log names the row then, but the
+// row is as the delete left it: its deleted_at is the time of the delete. So
+// the undo brings it back. The case holds for a series delete of orphan rows
+// and for a delete by ID of an orphan row.
+func TestUndo_TriggerDroppedLogRestores(t *testing.T) {
 	for _, kind := range []string{"series delete", "delete by ID"} {
 		t.Run(kind, func(t *testing.T) {
 			svc := newTestService(t)
@@ -1383,12 +1383,8 @@ func TestUndo_TriggerDroppedLogRefuses(t *testing.T) {
 				t.Fatalf("delete: %v", err)
 			}
 			masterInsertedBy(t, svc, uid)
-			if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrChangedSince) {
-				t.Fatalf("RestoreUndo = %v, want ErrChangedSince", err)
-			}
-			wantTrashed(t, svc, true, o.ID)
-			if err := svc.RestoreByID(ctx, o.ID); err != nil {
-				t.Fatalf("RestoreByID: %v", err)
+			if err := svc.RestoreUndo(ctx, meta); err != nil {
+				t.Fatalf("RestoreUndo: %v", err)
 			}
 			wantTrashed(t, svc, false, o.ID)
 		})
@@ -1481,35 +1477,10 @@ func TestUndoOrphanDeleteByID_GuardsTheCalendar(t *testing.T) {
 
 // TestPurgeTrashEntry_InstanceGuardsTheRowCalendars: a purge of an
 // occurrence entry hard-deletes the legacy rows of the log in other
-// calendars. A read-only calendar of such a row refuses the purge.
-func TestPurgeTrashEntry_InstanceGuardsTheRowCalendars(t *testing.T) {
-	svc := newTestService(t)
-	ctx := context.Background()
-	master, second, _ := singleSeriesWithOverrides(t, svc)
-	calL := insertCalendar(t, svc, "Legacy")
-	legacy := legacyAt(t, svc, master.UID, calL, second)
-	if err := svc.DeleteInstance(ctx, 1, master.UID, second); err != nil {
-		t.Fatalf("DeleteInstance: %v", err)
-	}
-	if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read', remote_components = 'VEVENT' WHERE id = ?`, calL); err != nil {
-		t.Fatalf("make the legacy calendar read-only: %v", err)
-	}
-	entries, err := svc.ListTrash(ctx, 1)
-	if err != nil {
-		t.Fatalf("ListTrash: %v", err)
-	}
-	for _, e := range entries {
-		if e.Kind == TrashKindInstance {
-			if err := svc.PurgeTrashEntry(ctx, e); !errors.Is(err, calendaraccess.ErrReadOnly) {
-				t.Fatalf("PurgeTrashEntry = %v, want ErrReadOnly", err)
-			}
-		}
-	}
-	wantTrashed(t, svc, true, legacy.ID)
-}
 
-// TestUndo_PullDeletedRowRefuses: a pull hides the row of a delete again
-// with no log of that delete. The undo then refuses with ErrChangedSince.
+// TestUndo_PullDeletedRowRefuses: a later pull hides the row of a delete
+// again with no log of that delete. The row has a newer deleted_at, so the
+// undo refuses with ErrChangedSince.
 // The cases are a series delete of a calendar by a pull, and a pull prune
 // with its marker.
 func TestUndo_PullDeletedRowRefuses(t *testing.T) {
@@ -1528,6 +1499,7 @@ func TestUndo_PullDeletedRowRefuses(t *testing.T) {
 		if err := svc.q.SoftDeleteEventsByCalendarUID(ctx, storage.SoftDeleteEventsByCalendarUIDParams{CalendarID: 1, Uid: uid}); err != nil {
 			t.Fatalf("pull hides the rows: %v", err)
 		}
+		laterPull(t, svc, o.ID)
 		if err := svc.RestoreUndo(ctx, meta); !errors.Is(err, ErrChangedSince) {
 			t.Fatalf("RestoreUndo = %v, want ErrChangedSince", err)
 		}
@@ -1548,6 +1520,7 @@ func TestUndo_PullDeletedRowRefuses(t *testing.T) {
 		if err := svc.q.SoftDeleteEvent(ctx, row); err != nil {
 			t.Fatalf("pull prune: %v", err)
 		}
+		laterPull(t, svc, row)
 		if err := svc.q.RecordEventExdatePrune(ctx, storage.RecordEventExdatePruneParams{CalendarID: 1, Uid: master.UID, RecurrenceID: second.Format(time.RFC3339)}); err != nil {
 			t.Fatalf("pruned marker: %v", err)
 		}
@@ -1630,8 +1603,23 @@ func readOnly(t *testing.T, svc *Service, calendarID int64) {
 // TestPurge_GuardsEveryCalendarOfItsRows: each purge guards the calendar of
 // each row that it hard-deletes. Three purges refuse a read-only calendar:
 // the purge by ID of a row, of a master with a legacy row, and of an
-// occurrence entry.
-func TestPurge_GuardsEveryCalendarOfItsRows(t *testing.T) {
+
+// TestPurgeDeletedReport_SkipsReadOnlyCalendars: the age purge runs in the
+// background. It keeps the rows of a calendar that refuses a write, names
+
+// TestPurge_ReadOnlyCalendarsStillEmptyTheTrash: a purge of the local trash
+// makes no server write, so it needs no write guard. Four purges take their
+// rows from a read-only calendar. These are the purge by ID of a row and of a
+// master, the entry purge, and the age purge.
+func TestPurge_ReadOnlyCalendarsStillEmptyTheTrash(t *testing.T) {
+	gone := func(t *testing.T, svc *Service, ids ...int64) {
+		t.Helper()
+		for _, id := range ids {
+			if _, err := svc.GetIncludingDeleted(context.Background(), id); err == nil {
+				t.Errorf("row %d after the purge exists, want it gone", id)
+			}
+		}
+	}
 	t.Run("purge by ID of a row", func(t *testing.T) {
 		svc := newTestService(t)
 		ctx := context.Background()
@@ -1640,10 +1628,10 @@ func TestPurge_GuardsEveryCalendarOfItsRows(t *testing.T) {
 			t.Fatalf("Delete: %v", err)
 		}
 		readOnly(t, svc, 1)
-		if err := svc.PurgeByID(ctx, o.ID); !errors.Is(err, calendaraccess.ErrReadOnly) {
-			t.Fatalf("PurgeByID = %v, want ErrReadOnly", err)
+		if err := svc.PurgeByID(ctx, o.ID); err != nil {
+			t.Fatalf("PurgeByID: %v", err)
 		}
-		wantTrashed(t, svc, true, o.ID)
+		gone(t, svc, o.ID)
 	})
 	t.Run("purge by ID of a master", func(t *testing.T) {
 		svc := newTestService(t)
@@ -1654,58 +1642,60 @@ func TestPurge_GuardsEveryCalendarOfItsRows(t *testing.T) {
 		if err := svc.DeleteSeries(ctx, 1, master.UID); err != nil {
 			t.Fatalf("DeleteSeries: %v", err)
 		}
+		readOnly(t, svc, 1)
 		readOnly(t, svc, calL)
-		if err := svc.PurgeByID(ctx, master.ID); !errors.Is(err, calendaraccess.ErrReadOnly) {
-			t.Fatalf("PurgeByID(master) = %v, want ErrReadOnly", err)
+		if err := svc.PurgeByID(ctx, master.ID); err != nil {
+			t.Fatalf("PurgeByID(master): %v", err)
 		}
-		wantTrashed(t, svc, true, master.ID, legacy.ID)
+		gone(t, svc, master.ID, legacy.ID)
 	})
 	t.Run("purge of an occurrence entry", func(t *testing.T) {
 		svc := newTestService(t)
 		ctx := context.Background()
 		master, second, _ := singleSeriesWithOverrides(t, svc)
+		calL := insertCalendar(t, svc, "Legacy")
+		legacy := legacyAt(t, svc, master.UID, calL, second)
 		meta, err := svc.DeleteInstanceWithUndo(ctx, 1, master.UID, second)
 		if err != nil {
 			t.Fatalf("DeleteInstanceWithUndo: %v", err)
 		}
 		readOnly(t, svc, 1)
+		readOnly(t, svc, calL)
 		entries, err := svc.ListTrash(ctx, 1)
 		if err != nil {
 			t.Fatalf("ListTrash: %v", err)
 		}
 		for _, e := range entries {
 			if e.Kind == TrashKindInstance {
-				if err := svc.PurgeTrashEntry(ctx, e); !errors.Is(err, calendaraccess.ErrReadOnly) {
-					t.Fatalf("PurgeTrashEntry = %v, want ErrReadOnly", err)
+				if err := svc.PurgeTrashEntry(ctx, e); err != nil {
+					t.Fatalf("PurgeTrashEntry: %v", err)
 				}
 			}
 		}
-		wantTrashed(t, svc, true, meta.RowIDs...)
+		gone(t, svc, append(meta.RowIDs, legacy.ID)...)
+	})
+	t.Run("age purge", func(t *testing.T) {
+		svc := newTestService(t)
+		ctx := context.Background()
+		calRO := insertCalendar(t, svc, "Read-only")
+		row := legacyAt(t, svc, "purge-ro-age", calRO, time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC))
+		if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE id = ?`, row.ID); err != nil {
+			t.Fatalf("age the row: %v", err)
+		}
+		readOnly(t, svc, calRO)
+		report, err := svc.PurgeDeletedReport(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
+		if err != nil || report.Purged != 1 {
+			t.Fatalf("PurgeDeletedReport = %+v, %v; want 1 row purged", report, err)
+		}
+		gone(t, svc, row.ID)
 	})
 }
 
-// TestPurgeDeletedReport_SkipsReadOnlyCalendars: the age purge runs in the
-// background. It keeps the rows of a calendar that refuses a write, names
-// them in the report, and purges the other rows.
-func TestPurgeDeletedReport_SkipsReadOnlyCalendars(t *testing.T) {
-	svc := newTestService(t)
-	ctx := context.Background()
-	calRO := insertCalendar(t, svc, "Read-only")
-	kept := legacyAt(t, svc, "purge-skip", calRO, time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC))
-	gone := legacyAt(t, svc, "purge-skip", 1, time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC))
-	if _, err := svc.db.ExecContext(ctx, `UPDATE events SET deleted_at = '2020-01-01T00:00:00Z' WHERE id IN (?, ?)`, kept.ID, gone.ID); err != nil {
-		t.Fatalf("age the rows: %v", err)
-	}
-	readOnly(t, svc, calRO)
-	report, err := svc.PurgeDeletedReport(ctx, time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
-	if err != nil {
-		t.Fatalf("PurgeDeletedReport: %v", err)
-	}
-	if len(report.ReadOnly) != 1 || report.ReadOnly[0] != kept.ID || report.Purged != 1 {
-		t.Errorf("report = %+v; want row %d kept as read-only and 1 purged", report, kept.ID)
-	}
-	wantTrashed(t, svc, true, kept.ID)
-	if _, err := svc.GetIncludingDeleted(ctx, gone.ID); err == nil {
-		t.Error("the writable row survived the purge, want it gone")
+// laterPull gives the row the deleted_at of a pull after the delete. A test
+// runs in one second, so it writes the later time itself.
+func laterPull(t *testing.T, svc *Service, id int64) {
+	t.Helper()
+	if _, err := svc.db.ExecContext(context.Background(), `UPDATE events SET deleted_at = '2100-01-01T00:00:00Z' WHERE id = ?`, id); err != nil {
+		t.Fatalf("set the time of the pull: %v", err)
 	}
 }
