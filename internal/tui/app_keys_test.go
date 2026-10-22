@@ -261,7 +261,7 @@ func pressKey(t *testing.T, m Model, k string) Model {
 	t.Helper()
 	updated, cmd := m.Update(keyPressMsg(k))
 	m = updated.(Model)
-	// The sidebar answers the way out with SidebarFocusEscapedMsg.
+	// The sidebar answers a key that leaves it with SidebarFocusEscapedMsg.
 	if cmd != nil {
 		if msg := cmd(); msg != nil {
 			if _, ok := msg.(SidebarFocusEscapedMsg); ok {

@@ -565,24 +565,36 @@ func (q *Queries) GetTombstoneByCalendarAndUID(ctx context.Context, arg GetTombs
 	return i, err
 }
 
-const hasMoveTombstonesOfTarget = `-- name: HasMoveTombstonesOfTarget :one
-SELECT EXISTS (
-  SELECT 1 FROM tombstones WHERE uid = ?1 AND moved_to_calendar_id = ?2
-) AS has_tombstone
+const hasMoveIntoCalendar = `-- name: HasMoveIntoCalendar :one
+SELECT CAST(
+  EXISTS (
+    SELECT 1 FROM tombstones t
+    WHERE t.uid = ?1 AND t.moved_to_calendar_id = CAST(?2 AS INTEGER)
+  )
+  OR EXISTS (
+    SELECT 1 FROM sync_conflicts sc
+    WHERE sc.calendar_id = CAST(?2 AS INTEGER) AND sc.uid = ?1
+      AND sc.move_source_calendar_id IS NOT NULL
+      AND sc.move_state IN ('open', 'local-picked', 'cancel-failed')
+  ) AS INTEGER) AS has_move
 `
 
-type HasMoveTombstonesOfTargetParams struct {
+type HasMoveIntoCalendarParams struct {
 	Uid        string
-	CalendarID *int64
+	CalendarID int64
 }
 
-// Report whether a move tombstone of uid names calendar_id as the target.
-// The organizer gate uses it for its early return. See issue #841.
-func (q *Queries) HasMoveTombstonesOfTarget(ctx context.Context, arg HasMoveTombstonesOfTargetParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, hasMoveTombstonesOfTarget, arg.Uid, arg.CalendarID)
-	var has_tombstone int64
-	err := row.Scan(&has_tombstone)
-	return has_tombstone, err
+// Report whether a move of uid into calendar_id exists. Two rows show it:
+// a move tombstone that names calendar_id as the target, and a move
+// conflict on calendar_id that is not in a final state. The organizer gate
+// uses it for its early return. A tombstone that names a third calendar
+// does not count: that move goes into the third calendar. See issues #841
+// and #863.
+func (q *Queries) HasMoveIntoCalendar(ctx context.Context, arg HasMoveIntoCalendarParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, hasMoveIntoCalendar, arg.Uid, arg.CalendarID)
+	var has_move int64
+	err := row.Scan(&has_move)
+	return has_move, err
 }
 
 const isTombstoneWaiting = `-- name: IsTombstoneWaiting :one

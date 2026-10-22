@@ -4,7 +4,7 @@ import "context"
 
 // The TUI blocks the calendar list and the account manager while a sync or
 // an account discovery runs. A server that accepts the connection and never
-// answers then holds the screen for the whole budget. esc is the way out:
+// answers then holds the screen for the whole budget. esc stops the wait:
 // it cancels the operation, and the operation reports the cancellation
 // through its own finished message.
 //

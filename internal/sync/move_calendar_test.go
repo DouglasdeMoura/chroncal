@@ -61,6 +61,9 @@ type icloudFakeServer struct {
 	lastIfMatch string
 	// gets counts the GET requests.
 	gets int
+	// refusePuts makes the next refusePuts PUTs answer 412, as a server
+	// that frees the UID of a deleted object late does.
+	refusePuts int
 }
 
 var (
@@ -109,6 +112,11 @@ func (f *icloudFakeServer) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		uid := m[1]
+		if f.refusePuts > 0 {
+			f.refusePuts--
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
 		for prefix, code := range f.putStatus {
 			if strings.HasPrefix(r.URL.Path, prefix) {
 				w.WriteHeader(code)
@@ -225,6 +233,12 @@ func (f *icloudFakeServer) setPutStatus(prefix string, code int) {
 		f.putStatus = map[string]int{}
 	}
 	f.putStatus[prefix] = code
+}
+
+func (f *icloudFakeServer) setRefusePuts(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refusePuts = n
 }
 
 func (f *icloudFakeServer) setGetStatus(prefix string, code int) {
