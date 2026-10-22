@@ -265,16 +265,17 @@ func purgeOldLogsTx[R ~oldLogRow](ctx context.Context, cutoff string, keep []Ski
 }
 
 // PurgeTrashEntry hard-removes entry from the trash. For TrashKindEvent it
-// drops the events row. For TrashKindInstance and TrashKindTruncation it
-// drops the log row only. The EXDATE (or truncated RRULE plus deleted
-// overrides) stays on the master. That matches the "deleted forever"
-// semantic the user expressed at delete time.
+// drops the events row. For TrashKindInstance it drops the log row and the
+// override rows that the log names. For TrashKindTruncation it drops the
+// log row only. The EXDATE (or truncated RRULE plus deleted overrides) stays
+// on the master. That matches the "deleted forever" semantic the user
+// expressed at delete time.
 func (s *Service) PurgeTrashEntry(ctx context.Context, entry TrashEntry) error {
 	switch entry.Kind {
 	case TrashKindEvent:
 		return s.PurgeByID(ctx, entry.ID)
 	case TrashKindInstance:
-		return s.q.DeleteEventExdateDelete(ctx, entry.ID)
+		return s.purgeInstanceByLogID(ctx, entry.ID)
 	case TrashKindTruncation:
 		return s.q.DeleteEventTruncateDelete(ctx, entry.ID)
 	default:
@@ -303,6 +304,11 @@ func (s *Service) restoreInstanceByLogID(ctx context.Context, logID int64) error
 			return ErrNotDeleted
 		}
 		return fmt.Errorf("get exdate log: %w", err)
+	}
+	// A pruned marker is no delete of the user, so the trash has no entry
+	// of it.
+	if log.Pruned == 1 {
+		return ErrNotDeleted
 	}
 
 	// Read the master inside the transaction so the EXDATE list we rewrite
@@ -499,4 +505,43 @@ func keptSeries(keep []SkippedMaster) map[string]bool {
 // seriesKeyOf names the series of uid in calendarID.
 func seriesKeyOf(calendarID int64, uid string) string {
 	return strconv.FormatInt(calendarID, 10) + "\x00" + uid
+}
+
+// purgeInstanceByLogID hard-removes the occurrence delete of the log logID
+// from the trash. The rows that the log names go with the log, and the
+// EXDATE stays: the delete stands for good. A pruned marker gives
+// ErrNotDeleted.
+func (s *Service) purgeInstanceByLogID(ctx context.Context, logID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.q.WithTx(tx)
+	log, err := qtx.GetEventExdateDelete(ctx, logID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotDeleted
+		}
+		return fmt.Errorf("get exdate log: %w", err)
+	}
+	if log.Pruned == 1 {
+		return ErrNotDeleted
+	}
+	parsed, err := parseOccurrenceLog(log)
+	if err != nil {
+		return err
+	}
+	var rows []int64
+	for _, e := range parsed.Entries {
+		rows = append(rows, e.Rows...)
+	}
+	// The log goes first, so the settle of the purge finds no log.
+	if err := qtx.DeleteEventExdateDelete(ctx, logID); err != nil {
+		return fmt.Errorf("delete exdate log: %w", err)
+	}
+	if _, err := purgeIDsTx(ctx, qtx, rows); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

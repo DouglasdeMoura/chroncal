@@ -1,10 +1,17 @@
--- name: RecordEventSeriesDelete :exec
+-- name: RecordEventSeriesDelete :one
 -- Write the log row of one series delete. Each delete gets its own row (the
 -- id), so an earlier delete in the same calendar keeps its record. The merge
 -- of orphan rows into the log of a master in the trash updates that row
--- (UpdateEventSeriesDeleteHiddenIds).
+-- (UpdateEventSeriesDeleteHiddenIds). It returns the ID, which the undo
+-- keeps (UndoMeta.SeriesLogID).
 INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master)
-VALUES (?, ?, ?, ?);
+VALUES (?, ?, ?, ?)
+RETURNING id;
+
+-- name: GetEventSeriesDeleteByID :one
+-- The log row of one series delete, by its ID. The undo of an orphan
+-- delete reads it.
+SELECT * FROM event_series_deletes WHERE id = ?;
 
 -- name: GetEventSeriesDeleteByCalendarUID :one
 -- The newest series-delete log row of one series in one calendar. A restore

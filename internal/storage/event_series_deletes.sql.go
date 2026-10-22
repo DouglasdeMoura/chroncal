@@ -83,6 +83,26 @@ func (q *Queries) GetEventSeriesDeleteByCalendarUID(ctx context.Context, arg Get
 	return i, err
 }
 
+const getEventSeriesDeleteByID = `-- name: GetEventSeriesDeleteByID :one
+SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE id = ?
+`
+
+// The log row of one series delete, by its ID. The undo of an orphan
+// delete reads it.
+func (q *Queries) GetEventSeriesDeleteByID(ctx context.Context, id int64) (EventSeriesDelete, error) {
+	row := q.db.QueryRowContext(ctx, getEventSeriesDeleteByID, id)
+	var i EventSeriesDelete
+	err := row.Scan(
+		&i.ID,
+		&i.CalendarID,
+		&i.Uid,
+		&i.HiddenIds,
+		&i.DeletedAt,
+		&i.HadMaster,
+	)
+	return i, err
+}
+
 const listEventSeriesDeletesByCalendarUID = `-- name: ListEventSeriesDeletesByCalendarUID :many
 SELECT id, calendar_id, uid, hidden_ids, deleted_at, had_master FROM event_series_deletes WHERE calendar_id = ? AND uid = ? ORDER BY id
 `
@@ -210,9 +230,10 @@ func (q *Queries) MoveEventSeriesDeletesUIDToCalendar(ctx context.Context, arg M
 	return err
 }
 
-const recordEventSeriesDelete = `-- name: RecordEventSeriesDelete :exec
+const recordEventSeriesDelete = `-- name: RecordEventSeriesDelete :one
 INSERT INTO event_series_deletes (calendar_id, uid, hidden_ids, had_master)
 VALUES (?, ?, ?, ?)
+RETURNING id
 `
 
 type RecordEventSeriesDeleteParams struct {
@@ -225,15 +246,18 @@ type RecordEventSeriesDeleteParams struct {
 // Write the log row of one series delete. Each delete gets its own row (the
 // id), so an earlier delete in the same calendar keeps its record. The merge
 // of orphan rows into the log of a master in the trash updates that row
-// (UpdateEventSeriesDeleteHiddenIds).
-func (q *Queries) RecordEventSeriesDelete(ctx context.Context, arg RecordEventSeriesDeleteParams) error {
-	_, err := q.db.ExecContext(ctx, recordEventSeriesDelete,
+// (UpdateEventSeriesDeleteHiddenIds). It returns the ID, which the undo
+// keeps (UndoMeta.SeriesLogID).
+func (q *Queries) RecordEventSeriesDelete(ctx context.Context, arg RecordEventSeriesDeleteParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, recordEventSeriesDelete,
 		arg.CalendarID,
 		arg.Uid,
 		arg.HiddenIds,
 		arg.HadMaster,
 	)
-	return err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const updateEventSeriesDeleteHiddenIds = `-- name: UpdateEventSeriesDeleteHiddenIds :exec

@@ -350,9 +350,49 @@ func purgedOccurrencesTx(ctx context.Context, qtx *storage.Queries, rows []stora
 func settlePurgedTx(ctx context.Context, qtx *storage.Queries, list []purgedOccurrence) error {
 	keep := func(l softdelete.OccurrenceLog) softdelete.OccurrenceLog { return l }
 	for _, o := range list {
-		if err := settleOccurrenceTx(ctx, qtx, o.master, o.recID, keep); err != nil {
+		// The settle of an earlier occurrence can write the EXDATE list of
+		// the same master, so each settle reads the master again.
+		master, err := qtx.GetEventIncludingDeleted(ctx, o.master.ID)
+		if err != nil {
+			return fmt.Errorf("get master: %w", err)
+		}
+		if err := settleOccurrenceTx(ctx, qtx, master, o.recID, keep); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// loggedRows is the record of the occurrence logs of one UID in one calendar.
+type loggedRows struct {
+	// ids holds the override rows that the delete logs name by ID.
+	ids map[int64]bool
+	// pruned holds the occurrences of the pruned markers. A marker is no
+	// delete of the user, so it names no row.
+	pruned map[string]bool
+}
+
+// loggedRowIDsTx reads the occurrence logs of uid in calendarID once.
+func loggedRowIDsTx(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (loggedRows, error) {
+	logs, err := qtx.ListEventExdateDeletesByCalendarUID(ctx, storage.ListEventExdateDeletesByCalendarUIDParams{CalendarID: calendarID, Uid: uid})
+	if err != nil {
+		return loggedRows{}, fmt.Errorf("list exdate logs: %w", err)
+	}
+	out := loggedRows{ids: make(map[int64]bool), pruned: make(map[string]bool)}
+	for _, l := range logs {
+		if l.Pruned == 1 {
+			out.pruned[l.RecurrenceID] = true
+			continue
+		}
+		log, err := parseOccurrenceLog(l)
+		if err != nil {
+			return loggedRows{}, err
+		}
+		for _, e := range log.Entries {
+			for _, id := range e.Rows {
+				out.ids[id] = true
+			}
+		}
+	}
+	return out, nil
 }

@@ -532,8 +532,13 @@ func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 		// no rows.
 		m.undoStack.Remove(msg.meta)
 		reason := "nothing to restore"
-		if errors.Is(msg.err, event.ErrAlreadyRestored) {
+		switch {
+		case errors.Is(msg.err, event.ErrAlreadyRestored):
 			reason = "already restored"
+		case errors.Is(msg.err, event.ErrDeletedAgain):
+			// A newer delete owns the rows. Its own undo or the trash
+			// brings them back.
+			reason = "the item was deleted again; restore that delete instead"
 		}
 		return m, tea.Batch(m.loadEvents(), m.toast.Failed(reason))
 	}

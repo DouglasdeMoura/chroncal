@@ -261,7 +261,13 @@ Events keep one invariant. An EXDATE that a delete recorded exists at an occurre
 
 When the last live override of the occurrence goes later, the delete adds the EXDATE again. A pull or an import through `UpsertByUID` that changes the EXDATE list of a master clears `owns_exdate` of every log of that master. A server or an imported EXDATE then never goes. A purge of an override removes its ID from every delete log (the trigger `events_purge_drops_row_from_logs`), and the occurrence log settles. Bind new paths through `recordOccurrenceDeleteTx` and `settleOccurrenceTx` in `internal/event/occurrence_log.go`.
 
-The undo of an event occurrence delete keeps the ID of its log and the seq of its entry (`UndoMeta.ExdateLogID`, `UndoMeta.ExdateDeleteSeq`). The undo reverses that entry only. When the log at the occurrence is another row, or the entry is gone, the undo refuses with `ErrAlreadyRestored`. A restore of an occurrence refuses with `ErrMasterInTrash` while the master is in the trash. Restore the series first.
+Every event undo carries the identity of its delete and reverses only the rows that this identity still names:
+
+- An occurrence delete and a delete by ID of an orphan row keep the log ID and the seq of the entry (`UndoMeta.ExdateLogID`, `UndoMeta.ExdateDeleteSeq`).
+- A series delete of orphan rows keeps the ID of its series-delete log (`UndoMeta.SeriesLogID`).
+- A delete by ID beside a trashed master writes no log. A delete log that names its row now belongs to a newer delete.
+
+A row in the trash that the identity no longer names came back and went again. The undo then refuses with `ErrDeletedAgain`. When the log at the occurrence is another row, or the entry is gone with no row in the trash, the undo refuses with `ErrAlreadyRestored`. A restore of an occurrence refuses with `ErrMasterInTrash` while the master is in the trash. Restore the series first.
 
 ### List or purge mixed trash
 
