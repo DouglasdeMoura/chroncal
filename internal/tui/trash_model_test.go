@@ -323,3 +323,32 @@ func TestTrashDetailLines_NamesTheRowsThatKeepAMaster(t *testing.T) {
 		t.Errorf("detail of an entry that the purge takes = %q, want no note", text)
 	}
 }
+
+// TestTrashDetailLines_NamesTheTruncationToRestoreFirst: the detail pane of a
+// truncation that a newer truncation of the series blocks names the cutoff of
+// the newer one. A truncation that restores now has no such line.
+func TestTrashDetailLines_NamesTheTruncationToRestoreFirst(t *testing.T) {
+	cutoff := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	blocked := trash.Entry{
+		Kind: trash.KindEventSeriesTail, ID: 1, Title: "Series", CutoffTime: cutoff,
+		NewerTruncationID: 2, NewerTruncationCutoff: newer,
+	}
+	text := ansi.Strip(strings.Join(trashDetailLines(blocked, CalendarInfo{}, 120, 10, nil), "\n"))
+	want := "restore the truncation with cutoff " + newer.Local().Format("Mon, Jan 2 15:04") + " first"
+	if !strings.Contains(text, want) {
+		t.Errorf("detail of the blocked truncation = %q, want %q", text, want)
+	}
+
+	same := blocked
+	same.NewerTruncationCutoff = cutoff
+	text = ansi.Strip(strings.Join(trashDetailLines(same, CalendarInfo{}, 120, 10, nil), "\n"))
+	if !strings.Contains(text, "restore the newer truncation at the same cutoff first") {
+		t.Errorf("detail of a truncation blocked at the same cutoff = %q, want the same-cutoff note", text)
+	}
+
+	free := trash.Entry{Kind: trash.KindEventSeriesTail, ID: 2, Title: "Series", CutoffTime: newer}
+	if text := ansi.Strip(strings.Join(trashDetailLines(free, CalendarInfo{}, 120, 10, nil), "\n")); strings.Contains(text, " first") {
+		t.Errorf("detail of a truncation that restores = %q, want no restore note", text)
+	}
+}

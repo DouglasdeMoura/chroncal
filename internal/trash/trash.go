@@ -54,9 +54,14 @@ type Entry struct {
 	InstanceTime  time.Time
 	CutoffTime    time.Time
 	PreviousRRule string
-	StartTime     time.Time
-	EndTime       time.Time
-	AllDay        bool
+	// NewerTruncationID names the newer truncation of the same series
+	// that the user must restore first (KindEventSeriesTail). It is 0 when
+	// this entry restores. NewerTruncationCutoff is the cutoff of that entry.
+	NewerTruncationID     int64
+	NewerTruncationCutoff time.Time
+	StartTime             time.Time
+	EndTime               time.Time
+	AllDay                bool
 
 	// Todo-specific (KindTodo).
 	DueDate         time.Time
@@ -246,22 +251,24 @@ func (s *Service) PurgeOld(ctx context.Context, olderThan time.Time) (PurgeCount
 // detail content it did before the aggregator.
 func fromEventTrash(e event.TrashEntry) Entry {
 	return Entry{
-		Kind:          mapEventKind(e.Kind),
-		ID:            e.ID,
-		CalendarID:    e.CalendarID,
-		UID:           e.UID,
-		Title:         e.Title,
-		DeletedAt:     e.DeletedAt,
-		InstanceTime:  e.InstanceTime,
-		CutoffTime:    e.CutoffTime,
-		PreviousRRule: e.PreviousRRule,
-		StartTime:     e.StartTime,
-		EndTime:       e.EndTime,
-		AllDay:        e.AllDay,
-		Location:      e.Location,
-		Description:   e.Description,
-		Status:        e.Status,
-		Categories:    e.Categories,
+		Kind:                  mapEventKind(e.Kind),
+		ID:                    e.ID,
+		CalendarID:            e.CalendarID,
+		UID:                   e.UID,
+		Title:                 e.Title,
+		DeletedAt:             e.DeletedAt,
+		InstanceTime:          e.InstanceTime,
+		CutoffTime:            e.CutoffTime,
+		PreviousRRule:         e.PreviousRRule,
+		NewerTruncationID:     e.NewerTruncationID,
+		NewerTruncationCutoff: e.NewerTruncationCutoff,
+		StartTime:             e.StartTime,
+		EndTime:               e.EndTime,
+		AllDay:                e.AllDay,
+		Location:              e.Location,
+		Description:           e.Description,
+		Status:                e.Status,
+		Categories:            e.Categories,
 
 		KeptOverrideIDs: e.KeptOverrideIDs,
 	}
@@ -271,22 +278,24 @@ func fromEventTrash(e event.TrashEntry) Entry {
 // back to event.Service.RestoreTrash / PurgeTrashEntry.
 func toEventTrash(e Entry) event.TrashEntry {
 	return event.TrashEntry{
-		Kind:          unmapEventKind(e.Kind),
-		ID:            e.ID,
-		CalendarID:    e.CalendarID,
-		UID:           e.UID,
-		Title:         e.Title,
-		DeletedAt:     e.DeletedAt,
-		InstanceTime:  e.InstanceTime,
-		CutoffTime:    e.CutoffTime,
-		PreviousRRule: e.PreviousRRule,
-		StartTime:     e.StartTime,
-		EndTime:       e.EndTime,
-		AllDay:        e.AllDay,
-		Location:      e.Location,
-		Description:   e.Description,
-		Status:        e.Status,
-		Categories:    e.Categories,
+		Kind:                  unmapEventKind(e.Kind),
+		ID:                    e.ID,
+		CalendarID:            e.CalendarID,
+		UID:                   e.UID,
+		Title:                 e.Title,
+		DeletedAt:             e.DeletedAt,
+		InstanceTime:          e.InstanceTime,
+		CutoffTime:            e.CutoffTime,
+		PreviousRRule:         e.PreviousRRule,
+		NewerTruncationID:     e.NewerTruncationID,
+		NewerTruncationCutoff: e.NewerTruncationCutoff,
+		StartTime:             e.StartTime,
+		EndTime:               e.EndTime,
+		AllDay:                e.AllDay,
+		Location:              e.Location,
+		Description:           e.Description,
+		Status:                e.Status,
+		Categories:            e.Categories,
 
 		KeptOverrideIDs: e.KeptOverrideIDs,
 	}
