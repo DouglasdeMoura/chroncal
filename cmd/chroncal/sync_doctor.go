@@ -24,9 +24,10 @@ func syncDoctorCmd() *cobra.Command {
 		Short: "Find and recover wedged sync resources",
 		Long: `List local resources whose unreadable data wedges the sync.
 
-The list also shows each resource whose push waits for another step, each
-resource whose last push failed, and each edit that stays local because no
-series owns the edited row.
+The list also shows three other kinds of resources:
+  - a resource whose push waits for another step;
+  - a resource whose last push failed;
+  - an edit that stays local, because no series owns the edited row.
 
 A wedged resource stays dirty forever. Every sync retries it and fails on
 the same unreadable relation, and no edit under its UID reaches the server.
@@ -115,7 +116,10 @@ type noteEntry struct {
 
 // notesAll collects the push failures and the unowned edits of the
 // calendars cals. A push failure of a wedged resource stays out: the wedged
-// line names its count already.
+// line names its count already. A calendar with no account link cannot
+// push, so its old push failures stay out, as in the sync status. Its
+// unowned edits stay in: the edit of a legacy override goes to the calendar
+// of a master, and that calendar can have a link.
 func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar, wedged []doctorEntry) ([]noteEntry, error) {
 	type key struct {
 		calendarID int64
@@ -127,9 +131,12 @@ func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar
 	}
 	var notes []noteEntry
 	for _, cal := range cals {
-		failures, err := svc.PushFailures(ctx, cal.ID)
-		if err != nil {
-			return nil, fmt.Errorf("calendar %q: %w", cal.Name, err)
+		var failures []syncPkg.PushFailure
+		if storage.CalendarLinked(cal) {
+			var err error
+			if failures, err = svc.PushFailures(ctx, cal.ID); err != nil {
+				return nil, fmt.Errorf("calendar %q: %w", cal.Name, err)
+			}
 		}
 		for _, f := range failures {
 			if isWedged[key{cal.ID, f.UID}] {
