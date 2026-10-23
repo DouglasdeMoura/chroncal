@@ -3065,3 +3065,57 @@ func TestPurgeOld_YoungLegacyRowOfAnotherCalendarRestores(t *testing.T) {
 	}
 	wantTrashed(t, svc, false, legacy.ID)
 }
+
+// TestListTrash_NamesTheNewerTruncationToRestoreFirst: two truncations of one
+// series are in the trash. The entry of the older one names the newer one and
+// its cutoff, by the rule of the restore. The newer entry names no
+// truncation. After the restore of the newer one, the older entry names no
+// truncation.
+func TestListTrash_NamesTheNewerTruncationToRestoreFirst(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	master, second, third := singleSeriesWithOverrides(t, svc)
+	later, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, third)
+	if err != nil {
+		t.Fatalf("truncate at the later cutoff: %v", err)
+	}
+	earlier, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, second)
+	if err != nil {
+		t.Fatalf("truncate at the earlier cutoff: %v", err)
+	}
+	laterLog := truncationLogID(t, svc, master.UID, later.DeleteToken)
+	earlierLog := truncationLogID(t, svc, master.UID, earlier.DeleteToken)
+
+	truncations := func() map[int64]TrashEntry {
+		t.Helper()
+		entries, err := svc.ListTrash(ctx, 1)
+		if err != nil {
+			t.Fatalf("ListTrash: %v", err)
+		}
+		out := map[int64]TrashEntry{}
+		for _, e := range entries {
+			if e.Kind == TrashKindTruncation {
+				out[e.ID] = e
+			}
+		}
+		return out
+	}
+	got := truncations()
+	if e := got[laterLog]; e.NewerTruncationID != earlierLog || !e.NewerTruncationCutoff.Equal(second) {
+		t.Errorf("older entry names %d at %s, want %d at %s", e.NewerTruncationID, e.NewerTruncationCutoff, earlierLog, second)
+	}
+	if e := got[earlierLog]; e.NewerTruncationID != 0 || !e.NewerTruncationCutoff.IsZero() {
+		t.Errorf("newer entry names %d at %s, want none", e.NewerTruncationID, e.NewerTruncationCutoff)
+	}
+	// The restore refuses the entry that the list marks, and takes the
+	// entry that the list does not mark.
+	if err := svc.restoreTruncationByLogID(ctx, laterLog, 0); !errors.Is(err, ErrNewerTruncation) {
+		t.Fatalf("restore the marked entry = %v, want ErrNewerTruncation", err)
+	}
+	if err := svc.restoreTruncationByLogID(ctx, earlierLog, 0); err != nil {
+		t.Fatalf("restore the newer: %v", err)
+	}
+	if e := truncations()[laterLog]; e.NewerTruncationID != 0 {
+		t.Errorf("older entry after the restore of the newer names %d, want none", e.NewerTruncationID)
+	}
+}

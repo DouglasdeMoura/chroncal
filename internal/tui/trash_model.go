@@ -447,6 +447,21 @@ func formatTrashRowLabel(e trash.Entry) string {
 	return e.Title
 }
 
+// trashRestoreOrderNote tells the user which truncation of the series to
+// restore first. It is empty when the entry restores now.
+func trashRestoreOrderNote(e trash.Entry) string {
+	if e.Kind != trash.KindEventSeriesTail || e.NewerTruncationID == 0 {
+		return ""
+	}
+	if e.NewerTruncationCutoff.IsZero() {
+		return "restore the newer truncation of this series first"
+	}
+	if e.NewerTruncationCutoff.Equal(e.CutoffTime) {
+		return "restore the newer truncation at the same cutoff first"
+	}
+	return "restore the truncation with cutoff " + e.NewerTruncationCutoff.Local().Format("Mon, Jan 2 15:04") + " first"
+}
+
 // trashDetailLines renders the right-pane fields for a trash entry. The
 // dialog is the ONLY place this data shows. Do not offer a secondary
 // "open view" action. Everything the user needs to restore or purge lives
@@ -471,6 +486,11 @@ func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int, rw url
 	case trash.KindEventSeriesTail:
 		if !e.CutoffTime.IsZero() {
 			lines = append(lines, detailLine(faint, "Cutoff", e.CutoffTime.Local().Format("Mon, Jan 2 15:04"), labelWidth, w))
+		}
+		// A newer truncation of the series blocks the restore of this
+		// one. The line names the entry to restore first.
+		if note := trashRestoreOrderNote(e); note != "" {
+			lines = append(lines, detailLine(faint, "Restore", note, labelWidth, w))
 		}
 	case trash.KindTodo:
 		if !e.DueDate.IsZero() {

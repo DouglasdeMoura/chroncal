@@ -57,6 +57,13 @@ type TrashEntry struct {
 	CutoffTime    time.Time // populated for TrashKindTruncation
 	PreviousRRule string    // populated for TrashKindTruncation
 	DeletedAt     time.Time
+	// NewerTruncationID names the newest truncation of the same series that
+	// is newer than this one (TrashKindTruncation). The restore of this entry
+	// refuses with ErrNewerTruncation until that entry is restored. It is 0
+	// when this entry restores. NewerTruncationCutoff is the cutoff of that
+	// entry.
+	NewerTruncationID     int64
+	NewerTruncationCutoff time.Time
 
 	StartTime   time.Time
 	EndTime     time.Time
@@ -196,6 +203,11 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 		}
 		entries = append(entries, entry)
 	}
+	truncBySeries := make(map[masterKey][]storage.EventTruncateDelete, len(truncLogs))
+	for _, l := range truncLogs {
+		key := masterKey{l.CalendarID, l.Uid}
+		truncBySeries[key] = append(truncBySeries[key], l)
+	}
 	for _, l := range truncLogs {
 		cutoff, _ := time.Parse(time.RFC3339, l.CutoffTime)
 		entry := TrashEntry{
@@ -206,6 +218,12 @@ func (s *Service) ListTrash(ctx context.Context, calendarID int64) ([]TrashEntry
 			CutoffTime:    cutoff,
 			PreviousRRule: l.PreviousRrule,
 			DeletedAt:     parseStorageTime(l.DeletedAt),
+		}
+		// The same rule as the restore: a newer truncation of the series
+		// comes first. The entry names it, so the user can restore it first.
+		if newer, found := newestNewerTruncation(truncBySeries[masterKey{l.CalendarID, l.Uid}], l); found {
+			entry.NewerTruncationID = newer.ID
+			entry.NewerTruncationCutoff, _ = time.Parse(time.RFC3339, newer.CutoffTime)
 		}
 		if m := lookupMaster(l.CalendarID, l.Uid); m != nil {
 			entry.Title = m.Title
@@ -438,8 +456,7 @@ func (k truncationKey) readTx(ctx context.Context, qtx *storage.Queries) (storag
 }
 
 // newerTruncationTx returns the newest truncation log row of the series of log
-// that is newer than log, at any cutoff. A higher delete token is newer. Two
-// rows from before the token (token 0) compare by deleted_at, then by ID.
+// that is newer than log, at any cutoff (newestNewerTruncation).
 func newerTruncationTx(ctx context.Context, qtx *storage.Queries, log storage.EventTruncateDelete) (storage.EventTruncateDelete, bool, error) {
 	logs, err := qtx.ListEventTruncateDeletesByCalendarUID(ctx, storage.ListEventTruncateDeletesByCalendarUIDParams{
 		CalendarID: log.CalendarID, Uid: log.Uid,
@@ -447,6 +464,16 @@ func newerTruncationTx(ctx context.Context, qtx *storage.Queries, log storage.Ev
 	if err != nil {
 		return storage.EventTruncateDelete{}, false, fmt.Errorf("list truncate logs: %w", err)
 	}
+	best, found := newestNewerTruncation(logs, log)
+	return best, found, nil
+}
+
+// newestNewerTruncation returns the newest row of logs that is newer than
+// log. logs holds the truncation log rows of the series of log. A higher
+// delete token is newer. Two rows from before the token (token 0) compare by
+// deleted_at, then by ID. The restore of a truncation refuses while such a
+// row exists, and the trash list names that row (TrashEntry.NewerTruncationID).
+func newestNewerTruncation(logs []storage.EventTruncateDelete, log storage.EventTruncateDelete) (storage.EventTruncateDelete, bool) {
 	newer := func(a, b storage.EventTruncateDelete) bool {
 		if a.DeleteToken != b.DeleteToken {
 			return a.DeleteToken > b.DeleteToken
@@ -459,11 +486,12 @@ func newerTruncationTx(ctx context.Context, qtx *storage.Queries, log storage.Ev
 	var best storage.EventTruncateDelete
 	found := false
 	for _, l := range logs {
-		if l.ID != log.ID && newer(l, log) && (!found || newer(l, best)) {
+		if l.ID != log.ID && l.CalendarID == log.CalendarID && l.Uid == log.Uid &&
+			newer(l, log) && (!found || newer(l, best)) {
 			best, found = l, true
 		}
 	}
-	return best, found, nil
+	return best, found
 }
 
 // restoreTruncation rewrites the master's RRULE back to the rule before the
