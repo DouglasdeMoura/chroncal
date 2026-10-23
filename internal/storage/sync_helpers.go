@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // MarkResourceDirty marks a resource as dirty for sync. If the calendar is
@@ -850,6 +851,13 @@ func checkNoSyncedCrossCalendarUpsert(ctx context.Context, q *Queries, p importR
 		return fmt.Errorf("%w: %s lives in calendar %q; move it there or delete it first", ErrCrossCalendarImport, p.UID, cal.Name)
 	}
 	return fmt.Errorf("%w: %s is in the trash of calendar %q; restore it there or purge it first", ErrCrossCalendarImport, p.UID, cal.Name)
+}
+
+// CalendarReadOnly reports whether a calendars.remote_access value marks a
+// read-only server collection. calendaraccess.IsReadOnly calls it, and the
+// startup heal of legacy overrides reads it.
+func CalendarReadOnly(remoteAccess string) bool {
+	return strings.EqualFold(strings.TrimSpace(remoteAccess), "read")
 }
 
 // CalendarLinked reports whether cal is linked to an account.

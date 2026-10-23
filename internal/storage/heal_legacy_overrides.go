@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 // healLegacyEventOverrides moves the legacy overrides of the local calendars
@@ -23,15 +22,25 @@ import (
 //     they are.
 //   - The owner calendar is not read-only. Its server object can lack the
 //     rows, and the next pull would then prune them.
-//   - The owner calendar has no open sync conflict of the UID.
+//   - The owner calendar has no open sync conflict of the UID, and the
+//     accounts of the move hold no open move conflict of the UID
+//     (CountOpenMoveConflictsInMoveScope). An earlier move then waits for
+//     the user.
+//   - The owner calendar has no tombstone of the UID. A pending delete of
+//     its server object is no state for a heal to change.
 //   - The owner calendar holds no row, live or in the trash, with the UID
 //     and a recurrence ID of a moved row. The move would break the UNIQUE
 //     key. The tie rule (uidmove.TieBefore) keeps such a row in use.
 //
 // Else the rows stay, and the code paths for a legacy override handle them.
-// A linked owner calendar gets the dirty mark, so its server object holds the
-// moved rows. Its export held them before the move, so the body does not
-// change.
+// The checks use the queries of the move rules in uidmove: the owner rule of
+// the view, the collision count, and the conflict counts. uidmove imports
+// storage, so the heal cannot call it.
+//
+// The owner calendar then gets the dirty mark (MarkResourceDirty). A linked
+// owner calendar pushes, so its server object holds the moved rows. Its
+// export held them before the move, so the body does not change. The mark
+// also clears a stale edit_unowned flag of the moved rows.
 //
 // Each UID moves in its own transaction. A failure is fatal to Open, like
 // every startup heal. The function runs on every startup. It changes nothing
@@ -72,7 +81,7 @@ func healLegacyEventOverride(ctx context.Context, conn *sql.DB, q *Queries, cale
 	if err != nil {
 		return fmt.Errorf("get owner calendar: %w", err)
 	}
-	if strings.EqualFold(strings.TrimSpace(cal.RemoteAccess), "read") {
+	if CalendarReadOnly(cal.RemoteAccess) {
 		return nil
 	}
 	open, err := qtx.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: owner.CalendarID, Uid: uid})
@@ -80,6 +89,22 @@ func healLegacyEventOverride(ctx context.Context, conn *sql.DB, q *Queries, cale
 		return fmt.Errorf("count open conflicts: %w", err)
 	}
 	if open > 0 {
+		return nil
+	}
+	moves, err := qtx.CountOpenMoveConflictsInMoveScope(ctx, CountOpenMoveConflictsInMoveScopeParams{
+		Uid: uid, FromCalendarID: calendarID, ToCalendarID: owner.CalendarID,
+	})
+	if err != nil {
+		return fmt.Errorf("count open move conflicts: %w", err)
+	}
+	if moves > 0 {
+		return nil
+	}
+	var tombstones int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tombstones WHERE calendar_id = ? AND uid = ?`, owner.CalendarID, uid).Scan(&tombstones); err != nil {
+		return fmt.Errorf("count owner tombstones: %w", err)
+	}
+	if tombstones > 0 {
 		return nil
 	}
 	collisions, err := qtx.CountEventUIDMoveCollisions(ctx, CountEventUIDMoveCollisionsParams{
@@ -96,10 +121,8 @@ func healLegacyEventOverride(ctx context.Context, conn *sql.DB, q *Queries, cale
 	}, true); err != nil {
 		return err
 	}
-	if CalendarLinked(cal) {
-		if err := MarkResourceDirty(ctx, tx, owner.CalendarID, uid, "event"); err != nil {
-			return fmt.Errorf("mark owner dirty: %w", err)
-		}
+	if err := MarkResourceDirty(ctx, tx, owner.CalendarID, uid, "event"); err != nil {
+		return fmt.Errorf("mark owner dirty: %w", err)
 	}
 	return tx.Commit()
 }
