@@ -315,3 +315,38 @@ func TestLinkUploadMeetsARemoteObject(t *testing.T) {
 	}
 	wantRecreated(t, q, srv, calC, evt.UID, path, "Local")
 }
+
+// TestRemoteDeleteOfAnEditWithAnOpenConflictKeepsTheDelete applies a
+// server-reported delete to a dirty row whose edit conflict is open. The
+// user did not pick a side, so the remote delete must win as before: the
+// event goes to the trash, and the conflict stays for the pick.
+func TestRemoteDeleteOfAnEditWithAnOpenConflictKeepsTheDelete(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	evt := createPushedEvent(t, engine, calA)
+	srv.deleteRemote("/cal/a/" + evt.UID + ".ics")
+	editTitle(t, engine, evt, "Dentist (local)")
+	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
+		CalendarID: calA, OwnerType: "event", OwnerID: evt.ID, Uid: evt.UID,
+		LocalIcal: "local", ServerIcal: "server", ServerEtag: `"e1"`,
+	}); err != nil {
+		t.Fatalf("CreateSyncConflict: %v", err)
+	}
+
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || res.Pushed != 0 || len(res.Errors) != 1 {
+		t.Fatalf("push of A = %+v, %v; want no create and one error", res, err)
+	}
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
+	if err != nil || sr.RemoteUrl == "" {
+		t.Fatalf("sync resource = %+v, %v; want the href kept", sr, err)
+	}
+	deletions := newPendingDeletions(engine.logger)
+	deletions.markExplicit(sr)
+	if deleted, failed, _ := deletions.apply(ctx, engine, calA, nil); deleted != 1 || failed != 0 {
+		t.Fatalf("apply = %d deleted, %d failed; want the remote delete applied", deleted, failed)
+	}
+	if got, err := engine.events.Get(ctx, evt.ID); err == nil && got.DeletedAt == nil {
+		t.Fatalf("event = %+v; want it in the trash", got)
+	}
+}
