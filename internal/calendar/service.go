@@ -356,8 +356,12 @@ func (s *Service) LinkToAccount(ctx context.Context, id, accountID int64, remote
 	}); err != nil {
 		return err
 	}
-	// As Connect does: a moved copy gets its sync row, in the transaction
-	// of the link (issue #841).
+	// As Connect does: each local item gets a dirty sync row, so the next
+	// push uploads it (issue #866). A moved copy gets its sync row too
+	// (issue #841). Both run in the transaction of the link.
+	if err := qtx.MarkLocalItemsDirtyInCalendar(ctx, id); err != nil {
+		return err
+	}
 	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, id); err != nil {
 		return err
 	}

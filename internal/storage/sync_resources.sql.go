@@ -1310,6 +1310,43 @@ func (q *Queries) ListWaitingSyncResources(ctx context.Context) ([]ListWaitingSy
 	return items, nil
 }
 
+const markLocalItemsDirtyInCalendar = `-- name: MarkLocalItemsDirtyInCalendar :exec
+INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+SELECT c.id, x.uid, x.owner_type, 1, 'sync-token'
+FROM calendars c
+JOIN (
+    SELECT e.uid, 'event' AS owner_type, 'VEVENT' AS component FROM events e
+    WHERE e.calendar_id = ?1 AND e.deleted_at IS NULL AND e.recurrence_id = ''
+    UNION
+    SELECT td.uid, 'todo' AS owner_type, 'VTODO' AS component FROM todos td
+    WHERE td.calendar_id = ?1 AND td.deleted_at IS NULL AND td.recurrence_id = ''
+    UNION
+    SELECT j.uid, 'journal' AS owner_type, 'VJOURNAL' AS component FROM journals j
+    WHERE j.calendar_id = ?1 AND j.deleted_at IS NULL AND j.recurrence_id = ''
+) x
+WHERE c.id = ?1 AND c.account_id IS NOT NULL AND c.account_id != 0
+  AND lower(trim(c.remote_access)) != 'read'
+  AND (trim(c.remote_components) = ''
+       OR instr(',' || upper(replace(c.remote_components, ' ', '')) || ',', ',' || x.component || ',') > 0)
+  AND NOT EXISTS (SELECT 1 FROM tombstones t WHERE t.calendar_id = c.id AND t.uid = x.uid)
+ON CONFLICT(calendar_id, uid) DO NOTHING
+`
+
+// Give each live local item of a linked calendar a dirty sync row without
+// an href, so the next push uploads it. A link of a local calendar runs it.
+// An item is a UID with a live master row. A UID with a sync row or a
+// tombstone keeps it. A read-only collection never takes an upload. A
+// collection that does not list a component (remote_components) gets no
+// item of that component. Each create sends If-None-Match, so an object at
+// the same href gets 412 and a conflict, not an overwrite. A link runs
+// MarkMovedCopiesDirtyInCalendar too: a moved copy gets its row also in a
+// read-only collection, because the move rules count that row. See issue
+// #866.
+func (q *Queries) MarkLocalItemsDirtyInCalendar(ctx context.Context, calendarID int64) error {
+	_, err := q.db.ExecContext(ctx, markLocalItemsDirtyInCalendar, calendarID)
+	return err
+}
+
 const markMovedCopiesDirtyInCalendar = `-- name: MarkMovedCopiesDirtyInCalendar :exec
 INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
 SELECT c.id, m.uid, x.owner_type, 1, 'sync-token'

@@ -4,7 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
@@ -235,4 +237,81 @@ func TestLocalPickOfAFailedCancelWinsOverARemoteDelete(t *testing.T) {
 	}
 	wantLive(t, engine, evt.ID, calA, "Dentist")
 	wantRecreated(t, q, srv, calA, evt.UID, path, "Dentist")
+}
+
+// linkLocalCalendar creates the local calendar name with one event and
+// links it to the account of calA at /cal/<name>/, as a connect does.
+func linkLocalCalendar(t *testing.T, engine *Engine, q *storage.Queries, calA int64, name string) (calendarID int64, evt event.Event) {
+	t.Helper()
+	ctx := context.Background()
+	a, err := q.GetCalendar(ctx, calA)
+	if err != nil {
+		t.Fatalf("GetCalendar A: %v", err)
+	}
+	cal, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: name})
+	if err != nil {
+		t.Fatalf("CreateCalendar %s: %v", name, err)
+	}
+	start := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+	evt, err = engine.events.Create(ctx, event.CreateParams{CalendarID: cal.ID, Title: "Local", StartTime: start, EndTime: start.Add(time.Hour)})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := calendar.NewService(engine.db, q).LinkToAccount(ctx, cal.ID, *a.AccountID, "/cal/"+name+"/"); err != nil {
+		t.Fatalf("LinkToAccount: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET sync_token = 'tok0' WHERE id = ?`, cal.ID); err != nil {
+		t.Fatalf("seed sync token: %v", err)
+	}
+	return cal.ID, evt
+}
+
+// TestLinkUploadsTheLocalItems links a local calendar with one event. The
+// first pass must upload the event (issue #866).
+func TestLinkUploadsTheLocalItems(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	calC, evt := linkLocalCalendar(t, engine, q, calA, "c")
+
+	if res, err := engine.SyncCalendar(ctx, calC, ConflictPrompt); err != nil || res.Pushed != 1 || len(res.Errors) != 0 {
+		t.Fatalf("pass of C = %+v, %v; want one upload", res, err)
+	}
+	wantRecreated(t, q, srv, calC, evt.UID, "/cal/c/"+evt.UID+".ics", "Local")
+}
+
+// TestLinkUploadMeetsARemoteObject links a local calendar whose event UID
+// the remote collection holds at the same href. The create must not
+// overwrite the remote object: the pass records a conflict. The local pick
+// then sends the local version as a conditional update.
+func TestLinkUploadMeetsARemoteObject(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	svc := newICloudPairService(engine, q)
+	calC, evt := linkLocalCalendar(t, engine, q, calA, "c")
+	path := "/cal/c/" + evt.UID + ".ics"
+	remote := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + evt.UID +
+		"\r\nDTSTAMP:20260403T100000Z\r\nDTSTART:20260403T100000Z\r\nDTEND:20260403T110000Z\r\nSUMMARY:Remote\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	srv.setRemoteBody(path, remote)
+
+	res, err := engine.SyncCalendar(ctx, calC, ConflictPrompt)
+	if err != nil || res.Pushed != 0 || res.Conflicts != 1 {
+		t.Fatalf("pass of C = %+v, %v; want one conflict and no upload", res, err)
+	}
+	if srv.body(path) != remote {
+		t.Fatalf("server object = %q; want the remote object kept", srv.body(path))
+	}
+	wantLive(t, engine, evt.ID, calC, "Local")
+	conflicts, err := q.ListSyncConflictsByCalendar(ctx, calC)
+	if err != nil || len(conflicts) != 1 {
+		t.Fatalf("conflicts = %v, %v; want one", conflicts, err)
+	}
+	if _, err := svc.ResolveConflict(ctx, conflicts[0].ID, "local"); err != nil {
+		t.Fatalf("local pick: %v", err)
+	}
+	if res, err := engine.PushLocalEdits(ctx, calC); err != nil || res.Pushed != 1 || len(res.Errors) != 0 {
+		t.Fatalf("push of C = %+v, %v; want the local version sent", res, err)
+	}
+	wantRecreated(t, q, srv, calC, evt.UID, path, "Local")
 }

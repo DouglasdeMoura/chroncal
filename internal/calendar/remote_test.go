@@ -1002,3 +1002,26 @@ func TestConnect_MarksAMovedCopyOfALocalCalendarDirty(t *testing.T) {
 		t.Fatalf("sync row of the copy = %+v, %v; want a dirty row", sr, err)
 	}
 }
+
+// TestConnect_MarksTheLocalItemsDirty links a local calendar with a plain
+// event. The link must give the event a dirty sync row without an href, so
+// the next push uploads it (issue #866).
+func TestConnect_MarksTheLocalItemsDirty(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	cal, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, err := svc.db.ExecContext(ctx, `INSERT INTO events (uid, calendar_id, title, start_time, end_time) VALUES ('local', 1, 'Local', '2026-04-03T10:00:00Z', '2026-04-03T11:00:00Z')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	link := RemoteLink{RemoteURL: "https://example.com/dav/calendars/work/", Username: "user", AuthType: "basic"}
+	if err := svc.Connect(ctx, cal, link, auth.Credential{Username: "user", Password: "pass"}, &memCredStore{}); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	sr, err := svc.q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: 1, Uid: "local"})
+	if err != nil || sr.Dirty != 1 || sr.RemoteUrl != "" || sr.OwnerType != "event" {
+		t.Fatalf("sync row = %+v, %v; want a dirty event row without an href", sr, err)
+	}
+}
