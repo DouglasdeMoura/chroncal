@@ -315,6 +315,19 @@ func seedNoteCLIResources(t *testing.T, dbPath string) {
 	if err != nil {
 		t.Fatalf("ListCalendars: %v", err)
 	}
+	// The calendar has an account link. A second calendar with no link
+	// keeps an old push failure, which the doctor does not list.
+	for _, stmt := range []string{
+		`INSERT INTO accounts (id, name, server_url, auth_type, username) VALUES (901, 'note-acct', 'https://example.com', 'basic', 'u')`,
+		`UPDATE calendars SET account_id = 901, remote_url = '/own/' WHERE id = ` + fmt.Sprint(cals[0].ID),
+		`INSERT INTO calendars (name) VALUES ('Unlinked')`,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, push_fail_count, last_push_error)
+		 SELECT id, 'stale-cli@example.com', 'event', '/x/stale.ics', 4, 'HTTP 500' FROM calendars WHERE name = 'Unlinked'`,
+	} {
+		if _, err := a.DB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
 	if _, err := a.DB.ExecContext(ctx,
 		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, push_fail_count, last_push_error)
 		 VALUES (?, 'fail-cli@example.com', 'event', '/c/fail.ics', 2, 'HTTP 500')`, cals[0].ID); err != nil {
@@ -330,7 +343,8 @@ func seedNoteCLIResources(t *testing.T, dbPath string) {
 
 // TestSyncDoctorListsPushFailuresAndUnownedEdits checks that the doctor
 // shows a push failure and an edit that no series owns, as the sync status
-// does (issue #862).
+// does (issue #862). The old push failure of a calendar with no account
+// link does not show.
 func TestSyncDoctorListsPushFailuresAndUnownedEdits(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	seedNoteCLIResources(t, dbPath)
@@ -360,6 +374,9 @@ func TestSyncDoctorListsPushFailuresAndUnownedEdits(t *testing.T) {
 	states := map[string]map[string]any{}
 	for _, it := range items {
 		states[it["state"].(string)] = it
+	}
+	if strings.Contains(stdout, "stale-cli@example.com") {
+		t.Errorf("output %q lists the push failure of an unlinked calendar", stdout)
 	}
 	if len(items) != 2 {
 		t.Fatalf("items = %v, want one push failure and one unowned edit", items)
