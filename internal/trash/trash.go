@@ -163,29 +163,27 @@ func (s *Service) List(ctx context.Context, calendarID int64) ([]Entry, error) {
 //
 // RestoreAll tries such an entry again after the other entries, as long as
 // a pass restores at least one entry. Each restore runs in its own
-// transaction, so a refusal changes nothing. Any other error stops the
-// restore at once, with one exception.
+// transaction, so a refusal changes nothing. Any other refusal stops the
+// passes.
 //
-// The restore of a master also restores the rows of its series delete. Their
-// own entries then give event.ErrNotDeleted. RestoreAll keeps such an entry
-// until the passes end. It then counts the entry as restored when an entry of
-// the same series (calendar and UID) restored in this call. Else the error
-// stands. The order of the selection then does not change the result.
+// An entry can give event.ErrNotDeleted because another restore brought its
+// row back: the restore of a master also restores the rows of its series
+// delete, in any calendar. So RestoreAll does not guess from the error. It
+// reads the trash again after the passes (stillInTrash). An entry that is no
+// longer in the trash counts as restored. An entry that is still there keeps
+// its error.
 //
-// RestoreAll returns the count of restored entries and the error, so a
-// caller can report a partial restore.
+// RestoreAll returns the count of restored entries and the error. Of the
+// errors, a refusal that stopped the passes comes first, then a wait (it
+// names the entry to restore first), then the error of an entry that is
+// still in the trash.
 func (s *Service) RestoreAll(ctx context.Context, entries []Entry) (int, error) {
-	type seriesKey struct {
-		calendarID int64
-		uid        string
-	}
-	restoredSeries := map[seriesKey]bool{}
 	restored := 0
 	var gone []Entry
 	var goneErrs []error
-	var waitErr error
+	var waitErr, stopErr error
 	pending := entries
-	for len(pending) > 0 {
+	for len(pending) > 0 && stopErr == nil {
 		var waiting []Entry
 		waitErr = nil
 		progress := false
@@ -195,17 +193,19 @@ func (s *Service) RestoreAll(ctx context.Context, entries []Entry) (int, error) 
 			case err == nil:
 				restored++
 				progress = true
-				restoredSeries[seriesKey{e.CalendarID, e.UID}] = true
-			case errors.Is(err, event.ErrNotDeleted):
-				gone = append(gone, e)
-				goneErrs = append(goneErrs, err)
 			case errors.Is(err, event.ErrNewerTruncation), errors.Is(err, event.ErrMasterInTrash):
 				waiting = append(waiting, e)
 				if waitErr == nil {
 					waitErr = err
 				}
+			case errors.Is(err, event.ErrNotDeleted):
+				gone = append(gone, e)
+				goneErrs = append(goneErrs, err)
 			default:
-				return restored, err
+				stopErr = err
+			}
+			if stopErr != nil {
+				break
 			}
 		}
 		if !progress {
@@ -213,13 +213,59 @@ func (s *Service) RestoreAll(ctx context.Context, entries []Entry) (int, error) 
 		}
 		pending = waiting
 	}
-	for i, e := range gone {
-		if !restoredSeries[seriesKey{e.CalendarID, e.UID}] {
-			return restored, goneErrs[i]
+	var goneErr error
+	if len(gone) > 0 {
+		inTrash, err := s.stillInTrash(ctx, gone)
+		if err != nil {
+			return restored, err
 		}
-		restored++
+		for i, e := range gone {
+			if inTrash[trashKey(e)] {
+				if goneErr == nil {
+					goneErr = goneErrs[i]
+				}
+				continue
+			}
+			restored++
+		}
 	}
-	return restored, waitErr
+	switch {
+	case stopErr != nil:
+		return restored, stopErr
+	case waitErr != nil:
+		return restored, waitErr
+	default:
+		return restored, goneErr
+	}
+}
+
+// entryKey names one trash entry: its kind and its ID.
+type entryKey struct {
+	kind Kind
+	id   int64
+}
+
+func trashKey(e Entry) entryKey { return entryKey{e.Kind, e.ID} }
+
+// stillInTrash reads the trash of each calendar of entries again. It reports
+// the entries that the trash still lists.
+func (s *Service) stillInTrash(ctx context.Context, entries []Entry) (map[entryKey]bool, error) {
+	listed := map[int64]bool{}
+	out := map[entryKey]bool{}
+	for _, e := range entries {
+		if listed[e.CalendarID] {
+			continue
+		}
+		listed[e.CalendarID] = true
+		now, err := s.List(ctx, e.CalendarID)
+		if err != nil {
+			return nil, fmt.Errorf("read the trash again: %w", err)
+		}
+		for _, n := range now {
+			out[trashKey(n)] = true
+		}
+	}
+	return out, nil
 }
 
 // Restore reverses the delete recorded in e. It dispatches by Kind.
