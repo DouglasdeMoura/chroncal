@@ -580,3 +580,49 @@ func TestService_RestoreAllRestoresARowBeforeItsMaster(t *testing.T) {
 		t.Errorf("trash after RestoreAll = %+v, %v; want empty", left, err)
 	}
 }
+
+// TestService_RestoreAllCountsRowsThatTheMasterBroughtBack marks the master
+// and the override of a deleted series. The restore of the master brings the
+// override back with it, so the entry of the override then gives
+// event.ErrNotDeleted. RestoreAll counts it as restored and reports no
+// error.
+func TestService_RestoreAllCountsRowsThatTheMasterBroughtBack(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	ctx := context.Background()
+
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	master, err := events.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	inst := start.AddDate(0, 0, 2)
+	if _, err := events.UpdateInstance(ctx, 1, master.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+	if err := events.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("delete series: %v", err)
+	}
+	entries, err := svc.List(ctx, 1)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var ordered []Entry
+	for _, e := range entries {
+		if e.ID == master.ID {
+			ordered = append([]Entry{e}, ordered...)
+		} else {
+			ordered = append(ordered, e)
+		}
+	}
+	if len(ordered) != 2 || ordered[0].ID != master.ID {
+		t.Fatalf("entries = %+v, want the master and the override", entries)
+	}
+	if n, err := svc.RestoreAll(ctx, ordered); err != nil || n != 2 {
+		t.Fatalf("RestoreAll(master first) = %d, %v; want 2, nil", n, err)
+	}
+}

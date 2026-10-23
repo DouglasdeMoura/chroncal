@@ -9,6 +9,7 @@ package trash
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -155,33 +156,48 @@ func (s *Service) List(ctx context.Context, calendarID int64) ([]Entry, error) {
 }
 
 // RestoreAll restores entries, in order. An entry can depend on another
-// entry of the selection: a truncation waits for a newer truncation of its
-// series (event.ErrNewerTruncation), and a row waits for its master
-// (event.ErrMasterInTrash). So RestoreAll tries each refused entry again
-// after the other entries, as long as a pass restores at least one entry.
-// Each restore runs in its own transaction, so a refusal changes nothing.
-// RestoreAll returns the count of restored entries and the first error of
-// the last pass, so a caller can report a partial restore.
+// entry of the selection:
+//   - A truncation waits for a newer truncation of its series
+//     (event.ErrNewerTruncation).
+//   - A row waits for the master of its series (event.ErrMasterInTrash).
+//
+// RestoreAll tries such an entry again after the other entries, as long as
+// a pass restores at least one entry. Each restore runs in its own
+// transaction, so a refusal changes nothing. Any other error stops the
+// restore at once.
+//
+// The restore of a master also restores the rows of its series delete. Their
+// own entries then give event.ErrNotDeleted. After a restore in the same call,
+// RestoreAll counts such an entry as restored.
+//
+// RestoreAll returns the count of restored entries and the error, so a
+// caller can report a partial restore.
 func (s *Service) RestoreAll(ctx context.Context, entries []Entry) (int, error) {
 	restored := 0
 	pending := entries
 	for len(pending) > 0 {
-		var refused []Entry
-		var firstErr error
+		var waiting []Entry
+		var waitErr error
 		for _, e := range pending {
-			if err := s.Restore(ctx, e); err != nil {
-				refused = append(refused, e)
-				if firstErr == nil {
-					firstErr = err
+			err := s.Restore(ctx, e)
+			switch {
+			case err == nil:
+				restored++
+			case restored > 0 && errors.Is(err, event.ErrNotDeleted):
+				restored++
+			case errors.Is(err, event.ErrNewerTruncation), errors.Is(err, event.ErrMasterInTrash):
+				waiting = append(waiting, e)
+				if waitErr == nil {
+					waitErr = err
 				}
-				continue
+			default:
+				return restored, err
 			}
-			restored++
 		}
-		if len(refused) == len(pending) {
-			return restored, firstErr
+		if len(waiting) == len(pending) {
+			return restored, waitErr
 		}
-		pending = refused
+		pending = waiting
 	}
 	return restored, nil
 }

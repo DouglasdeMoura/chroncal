@@ -359,13 +359,8 @@ func TestTrashDetailLines_NamesTheTruncationToRestoreFirst(t *testing.T) {
 // The series stores them at midnight UTC, so in local time west of UTC the
 // date is the day before.
 func TestTrashDetailLines_AllDayCutoffShowsTheUTCDate(t *testing.T) {
-	t.Setenv("TZ", "America/New_York")
-	loc, err := time.LoadLocation("America/New_York")
-	if err != nil {
-		t.Skipf("no tzdata: %v", err)
-	}
 	old := time.Local
-	time.Local = loc
+	time.Local = time.FixedZone("America/New_York", -5*60*60)
 	t.Cleanup(func() { time.Local = old })
 
 	e := trash.Entry{
