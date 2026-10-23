@@ -1970,7 +1970,15 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 		// The update met no object: another client deleted it. The local
 		// edit wins over the delete, as on the pull (keepUnpushedEdit). A
 		// server-wins pass keeps the delete: its pull moves the item to
-		// the trash (issue #866).
+		// the trash. An open conflict keeps the delete too, because the
+		// user did not pick a side yet (issue #866).
+		open, err := e.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{CalendarID: calendarID, Uid: res.Uid})
+		if err != nil {
+			return putConflictRecordFailed, nil, append(errs, fmt.Errorf("count the open conflicts of %s: %w", res.Uid, err))
+		}
+		if open > 0 {
+			return putConflictRecordFailed, nil, append(errs, fmt.Errorf("update %s: the server deleted the item, and its conflict is open; resolve the conflict (chroncal sync conflicts)", res.Uid))
+		}
 		n, err := e.q.ForgetGoneServerObject(ctx, storage.ForgetGoneServerObjectParams{CalendarID: calendarID, Uid: res.Uid, RemoteUrl: res.RemoteUrl})
 		if err != nil {
 			return putConflictRecordFailed, nil, append(errs, fmt.Errorf("drop the href of the gone object %s: %w", res.Uid, err))

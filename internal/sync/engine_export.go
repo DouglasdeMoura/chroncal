@@ -391,6 +391,10 @@ func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64,
 // keepUnpushedEdit drops the href and the etag of the sync row of uid when
 // the row is dirty and the calendar can push. kept reports that the row
 // stays for a create. See deleteLocalResourceByUID.
+//
+// An open conflict of the UID keeps the remote delete: the user did not
+// pick a side yet. A kept row would wait for that pick without an href, and
+// a server pick would then leave an item that no push sends.
 func keepUnpushedEdit(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (kept bool, err error) {
 	sr, err := qtx.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
 	found, err := storage.Found(err)
@@ -398,6 +402,13 @@ func keepUnpushedEdit(ctx context.Context, qtx *storage.Queries, calendarID int6
 		return false, fmt.Errorf("get sync resource: %w", err)
 	}
 	if !found || sr.Dirty == 0 || sr.RemoteUrl == "" {
+		return false, nil
+	}
+	open, err := qtx.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{CalendarID: calendarID, Uid: uid})
+	if err != nil {
+		return false, fmt.Errorf("count the open conflicts: %w", err)
+	}
+	if open > 0 {
 		return false, nil
 	}
 	cal, err := qtx.GetCalendar(ctx, calendarID)
