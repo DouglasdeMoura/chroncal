@@ -374,6 +374,12 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 				result.warnings = append(result.warnings, warnings...)
 				result.errors = append(result.errors, errs...)
 				switch outcome {
+				case putConflictRecreate:
+					// The row has no href now. Send the create at the old
+					// href, and the finalize records that href again.
+					res.RemoteUrl, res.Etag = "", ""
+					rowIDs = e.resourceRowIDs(ctx, calendarID, res)
+					newEtag, putErr = e.putResource(ctx, client, putPath, cal, "", true)
 				case putConflictLeftOpen:
 					result.conflicts++
 				case putConflictAutoResolved:
@@ -386,13 +392,17 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 					// No row exists, so nothing is counted. errs already
 					// carries the failure to the caller.
 				}
+				if outcome != putConflictRecreate {
+					continue
+				}
+			}
+			if putErr != nil {
+				e.logger.Error("PUT failed", "uid", res.Uid, "error", putErr)
+				putErr = fmt.Errorf("put %s: %w", res.Uid, putErr)
+				result.errors = append(result.errors, putErr)
+				e.recordPushFailure(ctx, calendarID, res.Uid, putErr)
 				continue
 			}
-			e.logger.Error("PUT failed", "uid", res.Uid, "error", putErr)
-			putErr = fmt.Errorf("put %s: %w", res.Uid, putErr)
-			result.errors = append(result.errors, putErr)
-			e.recordPushFailure(ctx, calendarID, res.Uid, putErr)
-			continue
 		}
 
 		// Store the new server ETag and clear the dirty flag — but only clear
@@ -1776,7 +1786,7 @@ var errConflictHeld = errors.New("an open conflict of another kind holds the res
 // dirty and skips the PUT result. A *moveSourceChangedError in moveErr
 // asks the caller to record a move conflict (recordMoveConflict).
 func (e *Engine) putOrSettleMove(ctx context.Context, client *caldav.Client, calendarID int64, putPath string, cal *ical.Calendar, res storage.SyncResource) (newEtag string, putErr, moveErr error) {
-	newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag)
+	newEtag, putErr = e.putResource(ctx, client, putPath, cal, res.Etag, res.RemoteUrl == "")
 	refusedCreate := putErr != nil && res.RemoteUrl == "" && (caldav.IsConflict(putErr) || caldav.IsUIDConflict(putErr))
 	if !refusedCreate {
 		return newEtag, putErr, nil
@@ -1794,7 +1804,7 @@ func (e *Engine) putOrSettleMove(ctx context.Context, client *caldav.Client, cal
 		return "", putErr, err
 	}
 	if retryPut {
-		newEtag, putErr = e.putAfterSettle(ctx, client, putPath, cal, res.Etag)
+		newEtag, putErr = e.putAfterSettle(ctx, client, putPath, cal)
 	}
 	return newEtag, putErr, nil
 }
@@ -1809,12 +1819,12 @@ var settleRetryDelays = []time.Duration{500 * time.Millisecond, 2 * time.Second}
 // deleted the move sources. It sends the PUT again after each wait of
 // settleRetryDelays while the server refuses the create. Another answer
 // ends the retries. The last answer is the result.
-func (e *Engine) putAfterSettle(ctx context.Context, client *caldav.Client, putPath string, cal *ical.Calendar, etag string) (string, error) {
+func (e *Engine) putAfterSettle(ctx context.Context, client *caldav.Client, putPath string, cal *ical.Calendar) (string, error) {
 	delays := settleRetryDelays
 	if e.testHooks != nil && e.testHooks.settleRetryDelays != nil {
 		delays = e.testHooks.settleRetryDelays
 	}
-	newEtag, err := e.putResource(ctx, client, putPath, cal, etag)
+	newEtag, err := e.putResource(ctx, client, putPath, cal, "", true)
 	for _, delay := range delays {
 		if err == nil || (!caldav.IsConflict(err) && !caldav.IsUIDConflict(err)) {
 			break
@@ -1826,7 +1836,7 @@ func (e *Engine) putAfterSettle(ctx context.Context, client *caldav.Client, putP
 			return "", ctx.Err()
 		case <-timer.C:
 		}
-		newEtag, err = e.putResource(ctx, client, putPath, cal, etag)
+		newEtag, err = e.putResource(ctx, client, putPath, cal, "", true)
 	}
 	return newEtag, err
 }
@@ -1839,10 +1849,23 @@ func (e *Engine) putAfterSettle(ctx context.Context, client *caldav.Client, putP
 // answers 412, a false conflict. After a transient failure, putResource
 // counts a 412 as the success that happened when the server body equals
 // the sent body. See issue #294.
-func (e *Engine) putResource(ctx context.Context, client *caldav.Client, putPath string, cal *ical.Calendar, etag string) (string, error) {
+//
+// create sends the PUT of a new object with If-None-Match: *, and etag is
+// then not used. An object at putPath already makes the server refuse the
+// create with 412. The push then records a conflict and does not overwrite
+// the object, for example after the link of a local calendar (issue #866).
+// A retried create whose first PUT landed gets 412 too, and the body check
+// above counts it as the success.
+func (e *Engine) putResource(ctx context.Context, client *caldav.Client, putPath string, cal *ical.Calendar, etag string, create bool) (string, error) {
 	priorAttemptMayHaveLanded := false
 	return caldav.Retry(ctx, syncRetryOptions, func(ctx context.Context) (string, error) {
-		newEtag, err := client.PutResource(ctx, putPath, cal, etag)
+		var newEtag string
+		var err error
+		if create {
+			newEtag, err = client.CreateResource(ctx, putPath, cal)
+		} else {
+			newEtag, err = client.PutResource(ctx, putPath, cal, etag)
+		}
 		if err == nil {
 			return newEtag, nil
 		}
@@ -1876,6 +1899,11 @@ const (
 	// delete that waits for its pass. The pass of that calendar sends its
 	// delete, and the next push creates the object (issue #841).
 	putConflictWaitsForSource
+	// putConflictRecreate means the server refused an update because its
+	// object is gone: another client deleted it. The local edit wins. The
+	// row lost its href and its etag, and the caller sends a create (issue
+	// #866).
+	putConflictRecreate
 )
 
 // handlePutConflict settles one 412 Precondition Failed answer. It records
@@ -1937,6 +1965,28 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 			e.recordPushFailure(ctx, calendarID, res.Uid, err)
 			return putConflictRecordFailed, nil, append(errs, err)
 		}
+	}
+	if res.RemoteUrl != "" && caldav.IsAbsent(fetchErr) && (strategy != ConflictServerWins || opportunistic) {
+		// The update met no object: another client deleted it. The local
+		// edit wins over the delete, as on the pull (keepUnpushedEdit). A
+		// server-wins pass keeps the delete: its pull moves the item to
+		// the trash (issue #866).
+		n, err := e.q.ForgetGoneServerObject(ctx, storage.ForgetGoneServerObjectParams{CalendarID: calendarID, Uid: res.Uid, RemoteUrl: res.RemoteUrl})
+		if err != nil {
+			return putConflictRecordFailed, nil, append(errs, fmt.Errorf("drop the href of the gone object %s: %w", res.Uid, err))
+		}
+		if n == 0 {
+			// A write changed the row during the PUT. The next pass acts on
+			// the current row.
+			return putConflictRecordFailed, nil, errs
+		}
+		w := ImportWarning{
+			Path:    putPath,
+			UID:     res.Uid,
+			Message: "the server deleted this item, but it has a local edit; the local edit wins, and the push creates the item again",
+		}
+		logImportWarnings(e.logger, []ImportWarning{w})
+		return putConflictRecreate, []ImportWarning{w}, errs
 	}
 	if fetchErr != nil {
 		e.logger.Warn("fetch server resource for conflict record failed", "uid", res.Uid, "error", fetchErr)

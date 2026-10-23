@@ -621,7 +621,7 @@ func TestPullDeletes_WriteANewDeleteToken(t *testing.T) {
 	if _, err := engine.db.ExecContext(ctx, `UPDATE events SET deleted_at = NULL WHERE uid = ?`, master.UID); err != nil {
 		t.Fatalf("revive the rows: %v", err)
 	}
-	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID); err != nil {
+	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID, false); err != nil {
 		t.Fatalf("delete of the pull: %v", err)
 	}
 	if got := token(override.ID); got == 0 || got == pruned {
@@ -646,7 +646,7 @@ func TestPullDelete_OneTransactionWithTheSyncState(t *testing.T) {
 		`CREATE TRIGGER test_refuse_sync_drop BEFORE DELETE ON sync_resources BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
 		t.Fatalf("seed trigger: %v", err)
 	}
-	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID); err == nil {
+	if _, err := engine.deleteLocalResourceByUID(ctx, calA, ownerTypeEvent, master.UID, false); err == nil {
 		t.Fatal("deleteLocalResourceByUID = nil, want the error of the drop")
 	}
 	var deleted *string

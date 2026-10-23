@@ -376,6 +376,15 @@ DELETE FROM tombstones WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
 UPDATE sync_resources SET remote_url = '', etag = '', dirty = 1, rev = rev + 1
 WHERE calendar_id = sqlc.arg(calendar_id) AND uid = sqlc.arg(uid);
 
+-- name: ForgetGoneServerObject :execrows
+-- Drop the href and the etag of a dirty sync row whose server object is
+-- gone. The row stays dirty and keeps its rev, so the next push sends the
+-- local edit as a create. The old href guards the write: a pull or a push
+-- that changed the row meanwhile makes the count 0. See issue #866.
+UPDATE sync_resources SET remote_url = '', etag = ''
+WHERE calendar_id = sqlc.arg(calendar_id) AND uid = sqlc.arg(uid)
+  AND remote_url = sqlc.arg(remote_url) AND remote_url != '' AND dirty = 1;
+
 -- name: ClearSyncResourceHref :exec
 -- Drop the href and the etag of a sync row whose server object is gone,
 -- and leave its dirty flag as it is. The clear of a tombstone uses it on a

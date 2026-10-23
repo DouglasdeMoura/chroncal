@@ -64,6 +64,10 @@ type icloudFakeServer struct {
 	// refusePuts makes the next refusePuts PUTs answer 412, as a server
 	// that frees the UID of a deleted object late does.
 	refusePuts int
+	// removed holds the hrefs that a remote delete removed. The next
+	// REPORT of their collection lists each one with 404, as an RFC 6578
+	// sync-collection lists a removed member.
+	removed []string
 }
 
 var (
@@ -96,10 +100,21 @@ func (f *icloudFakeServer) serve(w http.ResponseWriter, r *http.Request) {
   </d:response>
 </d:multistatus>`))
 	case "REPORT":
-		// Empty incremental sync-collection: the pull imports nothing.
+		// Incremental sync-collection with no changed member: the pull
+		// imports nothing. A removed member of the collection gets 404.
+		var gone strings.Builder
+		kept := f.removed[:0]
+		for _, p := range f.removed {
+			if strings.HasPrefix(p, r.URL.Path) {
+				gone.WriteString("\n  <d:response><d:href>" + p + "</d:href><d:status>HTTP/1.1 404 Not Found</d:status></d:response>")
+				continue
+			}
+			kept = append(kept, p)
+		}
+		f.removed = kept
 		w.WriteHeader(http.StatusMultiStatus)
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
-<d:multistatus xmlns:d="DAV:">
+<d:multistatus xmlns:d="DAV:">` + gone.String() + `
   <d:sync-token>tok-next</d:sync-token>
 </d:multistatus>`))
 	case "PUT":
@@ -150,10 +165,17 @@ func (f *icloudFakeServer) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if _, ok := f.objects[r.URL.Path]; ok && r.Header.Get("If-None-Match") == "*" {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
 		f.nextTag++
 		etag := fmt.Sprintf(`"e%d"`, f.nextTag)
 		f.objects[r.URL.Path] = string(body)
 		f.etags[r.URL.Path] = etag
+		// The collection holds the href again, so no REPORT lists it as
+		// removed.
+		f.removed = slices.DeleteFunc(f.removed, func(p string) bool { return p == r.URL.Path })
 		w.Header().Set("ETag", etag)
 		w.WriteHeader(http.StatusCreated)
 	case "GET":
@@ -266,6 +288,16 @@ func (f *icloudFakeServer) editRemoteSummary(path, summary string) {
 	f.objects[path] = icloudSummaryPattern.ReplaceAllString(f.objects[path], "SUMMARY:"+summary)
 	f.nextTag++
 	f.etags[path] = fmt.Sprintf(`"e%d"`, f.nextTag)
+}
+
+// deleteRemote removes the object at path, as a delete by another client
+// does. The next REPORT of the collection lists the removal.
+func (f *icloudFakeServer) deleteRemote(path string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.objects, path)
+	delete(f.etags, path)
+	f.removed = append(f.removed, path)
 }
 
 func (f *icloudFakeServer) setNoGetEtag(v bool) {
@@ -1479,7 +1511,7 @@ func TestPullOfMoveSourceKeepsMovedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadCalendarClient: %v", err)
 	}
-	if _, err := engine.pull(ctx, client, calA, remoteURL); err != nil {
+	if _, err := engine.pull(ctx, client, calA, remoteURL, ConflictPrompt); err != nil {
 		t.Fatalf("pull A: %v", err)
 	}
 
@@ -3453,11 +3485,12 @@ func TestLocalPickRefusesWhenTheMovedCopyIsGone(t *testing.T) {
 	}
 }
 
-// TestRestoreLocalVersionKeepsAnEmptyEtagOnACreatedRow resolves an edit
-// conflict for the local side after the sync row went away. The import
-// creates the row without a server object, so the row must keep an empty
-// etag. The push must create the object without If-Match.
-func TestRestoreLocalVersionKeepsAnEmptyEtagOnACreatedRow(t *testing.T) {
+// TestRestoreLocalVersionNamesThePlannedHrefOnACreatedRow resolves an edit
+// conflict for the local side after the sync row went away. The record
+// names the server object, so the row must take the planned href and the
+// recorded etag. The push must update the object with If-Match: a create
+// with If-None-Match gets 412 from the object (issue #866).
+func TestRestoreLocalVersionNamesThePlannedHrefOnACreatedRow(t *testing.T) {
 	t.Parallel()
 	engine, q, srv, calA, _ := newICloudPairEngine(t)
 	ctx := context.Background()
@@ -3471,7 +3504,7 @@ func TestRestoreLocalVersionKeepsAnEmptyEtagOnACreatedRow(t *testing.T) {
 	}
 	if _, err := q.CreateSyncConflict(ctx, storage.CreateSyncConflictParams{
 		CalendarID: calA, OwnerType: "event", OwnerID: evt.ID, Uid: evt.UID,
-		LocalIcal: string(local), ServerIcal: "server", ServerEtag: `"stale"`,
+		LocalIcal: string(local), ServerIcal: "server", ServerEtag: srv.etag(path),
 	}); err != nil {
 		t.Fatalf("CreateSyncConflict: %v", err)
 	}
@@ -3487,8 +3520,8 @@ func TestRestoreLocalVersionKeepsAnEmptyEtagOnACreatedRow(t *testing.T) {
 		t.Fatalf("ResolveConflict local: %v", err)
 	}
 	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
-	if err != nil || sr.Etag != "" || sr.Dirty != 1 || sr.RemoteUrl != "" {
-		t.Fatalf("sync resource after the restore = %+v, %v; want a dirty row without an etag", sr, err)
+	if err != nil || sr.Etag != srv.etag(path) || sr.Dirty != 1 || sr.RemoteUrl != path {
+		t.Fatalf("sync resource after the restore = %+v, %v; want a dirty row with the planned href and the recorded etag", sr, err)
 	}
 	res, err := engine.PushLocalEdits(ctx, calA)
 	if err != nil || len(res.Errors) != 0 || res.Pushed != 1 || res.Conflicts != 0 {
@@ -10025,60 +10058,6 @@ func TestLocalPickOfAFailedCancelRefusesBeforeTheProbe(t *testing.T) {
 	srv.mu.Unlock()
 	if gets != getsBefore {
 		t.Fatalf("GETs = %d, want none: the refusal runs before the probe", gets-getsBefore)
-	}
-}
-
-// TestUpdateOfAGoneObjectIsNotRecreated deletes the object of a pushed
-// event on the server and edits the event locally. The push never creates
-// the item again: the update fails. The pull then applies the server
-// delete.
-func TestUpdateOfAGoneObjectIsNotRecreated(t *testing.T) {
-	t.Parallel()
-	engine, q, srv, calA, _ := newICloudPairEngine(t)
-	ctx := context.Background()
-	evt := createPushedEvent(t, engine, calA)
-	path := "/cal/a/" + evt.UID + ".ics"
-	srv.mu.Lock()
-	delete(srv.objects, path)
-	delete(srv.etags, path)
-	getsBefore := srv.gets
-	srv.mu.Unlock()
-	if err := q.MarkSyncResourceDirty(ctx, storage.MarkSyncResourceDirtyParams{CalendarID: calA, Uid: evt.UID}); err != nil {
-		t.Fatalf("MarkSyncResourceDirty: %v", err)
-	}
-	putsBefore, _ := srv.counts()
-	res, err := engine.PushLocalEdits(ctx, calA)
-	if err != nil || res.Pushed != 0 || len(res.Errors) == 0 {
-		t.Fatalf("push of A = %+v, %v; want a failed update and no create", res, err)
-	}
-	if puts, _ := srv.counts(); puts != putsBefore+1 {
-		t.Fatalf("PUTs = %d, want %d: one update and no create", puts, putsBefore+1)
-	}
-	if srv.has(path) {
-		t.Fatal("the push created the item again, want the server delete kept")
-	}
-	srv.mu.Lock()
-	gets := srv.gets - getsBefore
-	srv.mu.Unlock()
-	if gets != 1 {
-		t.Fatalf("GETs = %d, want 1: the conflict handler only", gets)
-	}
-	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID}); err != nil || sr.RemoteUrl == "" {
-		t.Fatalf("sync resource A = %+v, %v; want the href kept", sr, err)
-	}
-	// The pull reports the server delete, and its rule applies: the event
-	// goes to the trash.
-	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
-	if err != nil {
-		t.Fatalf("GetSyncResource A: %v", err)
-	}
-	deletions := newPendingDeletions(engine.logger)
-	deletions.markExplicit(sr)
-	if deleted, failed, _ := deletions.apply(ctx, engine, calA, nil); deleted != 1 || failed != 0 {
-		t.Fatalf("apply = %d deleted, %d failed; want the event deleted", deleted, failed)
-	}
-	if got, err := engine.events.Get(ctx, evt.ID); err == nil && got.DeletedAt == nil {
-		t.Fatalf("event after the pull = %+v, want it soft-deleted", got)
 	}
 }
 

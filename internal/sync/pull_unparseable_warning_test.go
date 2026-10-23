@@ -92,7 +92,7 @@ func TestEnginePullWarnsOnUnparseableResource(t *testing.T) {
 
 	// Attempt 1: the change list nominates the href. The body does not
 	// parse. The pull must warn, not stay silent.
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull 1: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestEnginePullWarnsOnUnparseableResource(t *testing.T) {
 	// Each attempt warns once. The last attempt exhausts the miss budget,
 	// so its one warning also tells the user that the retries stop.
 	for attempt := 2; attempt <= pendingHrefMissLimit; attempt++ {
-		result, err = engine.pull(ctx, client, calendarID, "/calendar/")
+		result, err = engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 		if err != nil {
 			t.Fatalf("pull %d: %v", attempt, err)
 		}
@@ -124,7 +124,7 @@ func TestEnginePullWarnsOnUnparseableResource(t *testing.T) {
 
 	// The pending href is gone. The next pull fetches nothing and does not
 	// warn about the href again.
-	result, err = engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err = engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull after give-up: %v", err)
 	}

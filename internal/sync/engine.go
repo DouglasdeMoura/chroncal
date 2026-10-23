@@ -498,7 +498,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 	}
 
 	// Phase 2: Pull changes from server
-	pullResult, err := e.pull(ctx, client, calendarID, remoteURL)
+	pullResult, err := e.pull(ctx, client, calendarID, remoteURL, strategy)
 	if err != nil {
 		e.logger.Error("pull failed", "calendar_id", calendarID, "error", err)
 		result.Errors = append(result.Errors, fmt.Errorf("pull: %w", err))

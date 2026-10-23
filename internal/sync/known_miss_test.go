@@ -92,7 +92,7 @@ func TestEngineKnownHrefStopsBlockingAfterBudget(t *testing.T) {
 
 			pullOnce := func(run int) *pullResult {
 				t.Helper()
-				result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+				result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 				if err != nil {
 					t.Fatalf("pull %d: %v", run, err)
 				}
@@ -197,7 +197,7 @@ func TestEngineKnownMissCounterResetsAfterGoodFetch(t *testing.T) {
 	)
 	pullOnce := func(label string) *pullResult {
 		t.Helper()
-		result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+		result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 		if err != nil {
 			t.Fatalf("pull %s: %v", label, err)
 		}
@@ -278,7 +278,7 @@ func TestEngineKnownMissChangedAfterGiveUpGetsOneAttempt(t *testing.T) {
 	)
 	pullOnce := func(label string) *pullResult {
 		t.Helper()
-		result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+		result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 		if err != nil {
 			t.Fatalf("pull %s: %v", label, err)
 		}
@@ -349,7 +349,7 @@ func TestEngineKnownMissNeedsTimeSpanToGiveUp(t *testing.T) {
 	)
 	pullOnce := func(run int) *pullResult {
 		t.Helper()
-		result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+		result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 		if err != nil {
 			t.Fatalf("pull %d: %v", run, err)
 		}
@@ -500,7 +500,7 @@ func TestEngineKnownMissForgottenWhenListedETagMatchesLocal(t *testing.T) {
 		t.Fatalf("BumpSyncKnownMiss: %v", err)
 	}
 
-	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
 	if rows := listKnownMisses(t, q, calendarID); len(rows) != 0 {
@@ -528,7 +528,7 @@ func TestEngineKnownMissKeptWhenFetchedBodyHasNoUID(t *testing.T) {
 		func(string) string { return syncCollectionXML("https://example.com/sync/t1", knownMissHref) },
 		func(int, string) string { return multigetXML(map[string]string{knownMissHref: noUID}, nil) },
 	)
-	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
 	if rows := listKnownMisses(t, q, calendarID); len(rows) != 1 {

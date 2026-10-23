@@ -375,6 +375,20 @@ const calendarQueryBody = `<?xml version="1.0" encoding="utf-8"?>
 // If etag is non-empty, the server will reject the PUT if the resource was
 // modified since (If-Match precondition).
 func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calendar, etag string) (string, error) {
+	return c.put(ctx, path, data, etag, false)
+}
+
+// CreateResource uploads a new iCal resource. Returns the new ETag. The PUT
+// sends If-None-Match: *, so the server refuses it with 412 when an object
+// is at path already (RFC 7232 section 3.2). A create then cannot overwrite
+// an object that another client wrote (issue #866).
+func (c *Client) CreateResource(ctx context.Context, path string, data *ical.Calendar) (string, error) {
+	return c.put(ctx, path, data, "", true)
+}
+
+// put sends one PUT. create adds the If-None-Match precondition, and a
+// non-empty etag adds the If-Match precondition.
+func (c *Client) put(ctx context.Context, path string, data *ical.Calendar, etag string, create bool) (string, error) {
 	body, err := EncodeCalendar(data)
 	if err != nil {
 		return "", fmt.Errorf("encode calendar: %w", err)
@@ -385,7 +399,9 @@ func (c *Client) PutResource(ctx context.Context, path string, data *ical.Calend
 		return "", fmt.Errorf("new PUT request: %w", err)
 	}
 	req.Header.Set("Content-Type", ical.MIMEType)
-	if ifMatch := formatIfMatch(etag); ifMatch != "" {
+	if create {
+		req.Header.Set("If-None-Match", "*")
+	} else if ifMatch := formatIfMatch(etag); ifMatch != "" {
 		req.Header.Set("If-Match", ifMatch)
 	}
 

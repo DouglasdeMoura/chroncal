@@ -17,7 +17,10 @@ type pullResult struct {
 	warnings []ImportWarning
 }
 
-func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*pullResult, error) {
+// pull applies the remote changes of calendarID. strategy decides a remote
+// delete of an item with a local edit that no push sent: server-wins takes
+// the delete, and prompt keeps the edit (see pendingDeletions).
+func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, strategy ConflictStrategy) (*pullResult, error) {
 	cal, err := e.q.GetCalendar(ctx, calendarID)
 	if err != nil {
 		return nil, fmt.Errorf("get calendar: %w", err)
@@ -51,7 +54,7 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 			}
 			if errors.Is(syncErr, caldav.ErrSyncCollectionUnsupported) {
 				e.logger.Info("server lacks sync-collection support, falling back to QueryAll", "calendar_id", calendarID)
-				return e.pullFullSnapshot(ctx, client, calendarID, remoteURL)
+				return e.pullFullSnapshot(ctx, client, calendarID, remoteURL, strategy)
 			}
 		}
 		if syncErr != nil {
@@ -74,7 +77,7 @@ func (e *Engine) pull(ctx context.Context, client *caldav.Client, calendarID int
 			"calendar_id", calendarID, "page", page+1, "changes_so_far", len(merged.Changes))
 		token = syncResult.SyncToken
 	}
-	return e.applySyncCollection(ctx, client, calendarID, remoteURL, cal, merged, storedToken == "")
+	return e.applySyncCollection(ctx, client, calendarID, remoteURL, cal, merged, storedToken == "", strategy)
 }
 
 // maxSyncCollectionPages bounds the truncation-pagination loop. Google's
@@ -85,7 +88,7 @@ const maxSyncCollectionPages = 200
 // pullFullSnapshot is the legacy pull path: download every resource and
 // compare etags locally. Only used when the server doesn't support
 // sync-collection (RFC 6578).
-func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string) (*pullResult, error) {
+func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, strategy ConflictStrategy) (*pullResult, error) {
 	result := &pullResult{}
 
 	// Fetch all resources from server. QueryAll reports a body that is
@@ -285,6 +288,7 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 	// partial-fetch optimization here cannot silently start deleting against
 	// a partial view without flipping the complete flag.
 	deletions := newPendingDeletions(e.logger)
+	deletions.serverWins = strategy == ConflictServerWins
 	deletions.inferFromAbsence(calendarID, localResources, remoteUIDs, true, "complete (QueryAll)")
 	// The full-snapshot path stores no sync-token, so a failed deletion here is
 	// self-healing: the next snapshot re-infers the absence and retries.
@@ -329,6 +333,10 @@ type pendingDeletions struct {
 	// explicit holds the UIDs that the server reported as deleted (404),
 	// not only absent from the inventory.
 	explicit map[string]bool
+	// serverWins makes a remote delete win over a local edit that no push
+	// sent. Without it, apply keeps such an edit, and the next push creates
+	// the object again (issue #866).
+	serverWins bool
 }
 
 func newPendingDeletions(logger *slog.Logger) *pendingDeletions {
@@ -442,16 +450,25 @@ func (p *pendingDeletions) apply(ctx context.Context, e *Engine, calendarID int6
 		// One transaction reads the tombstones again and writes the rows and
 		// the sync row (deleteLocalResourceByUID). A failure of any write
 		// counts as a failed UID, so the sync token stays.
-		outcome, err := e.deleteLocalResourceByUID(ctx, calendarID, ownerType, uid)
+		outcome, err := e.deleteLocalResourceByUID(ctx, calendarID, ownerType, uid, !p.serverWins)
 		if err != nil {
 			e.logger.Error("apply remote delete", "uid", uid, "owner_type", ownerType, "error", err)
 			failed++
 			continue
 		}
-		if outcome != remoteDeleteDone {
-			continue
+		switch outcome {
+		case remoteDeleteKept:
+			// A tombstone holds the UID. The tombstone pass sends its DELETE.
+		case remoteDeleteDone:
+			deleted++
+		case remoteDeleteRecreate:
+			w := ImportWarning{
+				UID:     uid,
+				Message: "the server deleted this item, but it has a local edit that no push sent; the local edit wins, and the next push creates the item again",
+			}
+			logImportWarnings(e.logger, []ImportWarning{w})
+			warnings = append(warnings, w)
 		}
-		deleted++
 	}
 	return deleted, failed, warnings
 }
