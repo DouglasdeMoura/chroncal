@@ -530,3 +530,53 @@ func TestService_RestoreAllRestoresTruncationsInAnyOrder(t *testing.T) {
 		t.Errorf("RRULE after RestoreAll = %q, want the rule before the truncations", got.RecurrenceRule)
 	}
 }
+
+// TestService_RestoreAllRestoresARowBeforeItsMaster selects a deleted
+// occurrence before the master of its series, both in the trash. The
+// restore of the occurrence refuses with event.ErrMasterInTrash, so
+// RestoreAll tries it again after the master.
+func TestService_RestoreAllRestoresARowBeforeItsMaster(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	ctx := context.Background()
+
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	master, err := events.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	if err := events.DeleteInstance(ctx, 1, master.UID, start.AddDate(0, 0, 2)); err != nil {
+		t.Fatalf("delete occurrence: %v", err)
+	}
+	if err := events.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("delete series: %v", err)
+	}
+	entries, err := svc.List(ctx, 1)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var ordered []Entry
+	for _, e := range entries {
+		if e.Kind == KindEventInstance {
+			ordered = append([]Entry{e}, ordered...)
+		} else {
+			ordered = append(ordered, e)
+		}
+	}
+	if len(ordered) != 2 || ordered[0].Kind != KindEventInstance {
+		t.Fatalf("entries = %+v, want an occurrence and a master", entries)
+	}
+	if err := svc.Restore(ctx, ordered[0]); !errors.Is(err, event.ErrMasterInTrash) {
+		t.Fatalf("Restore(occurrence first) = %v, want ErrMasterInTrash", err)
+	}
+	if n, err := svc.RestoreAll(ctx, ordered); err != nil || n != 2 {
+		t.Fatalf("RestoreAll(occurrence first) = %d, %v; want 2, nil", n, err)
+	}
+	if left, err := svc.List(ctx, 1); err != nil || len(left) != 0 {
+		t.Errorf("trash after RestoreAll = %+v, %v; want empty", left, err)
+	}
+}

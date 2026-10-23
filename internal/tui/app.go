@@ -669,6 +669,9 @@ type trashActionDoneMsg struct {
 	action string // "restored" or "purged"
 	title  string
 	err    error
+	// done and total count the entries of a bulk restore. A failed restore
+	// with done > 0 is a partial restore, and the toast says so.
+	done, total int
 }
 
 func (m Model) Init() tea.Cmd {

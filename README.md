@@ -949,7 +949,7 @@ chroncal journal purge-deleted [--older-than DURATION] [--yes]
 
 List soft-deleted candidates with `--include-deleted` on the related `list` command. In the TUI, press `D` to open the mixed "Recently deleted" dialog. The dialog covers all three resource types. `r` restores the cursor row. `x` purges it. Space toggles multi-select so you can restore or purge many rows.
 
-A series can have two or more truncations ("This and following") in the trash. Restore the newest truncation first. An older truncation refuses the restore until then, because the newer truncation recorded the rule that the older one wrote. The detail pane of an older truncation shows a "Restore" line with the cutoff of the truncation to restore first.
+A series can have two or more truncations ("This and following") in the trash. Restore the newest truncation first. An older truncation refuses the restore until then, because the newer truncation recorded the rule that the older one wrote. The detail pane of an older truncation shows a "Restore" line with the cutoff of the truncation to restore first. To restore them all, mark each one and restore them together. A restore of marked entries restores them in the order that they need, for example a master before its occurrences. When it stops at an entry, the message gives the count of restored entries.
 
 ## TUI
 
