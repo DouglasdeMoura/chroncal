@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -627,11 +628,11 @@ func TestService_RestoreAllCountsRowsThatTheMasterBroughtBack(t *testing.T) {
 	}
 }
 
-// TestService_RestoreAllReportsAStaleEntryOfAnotherSeries marks two deleted
-// events, and the second one is already back. Its entry gives
-// event.ErrNotDeleted. No entry of its series restored in this call, so
-// RestoreAll reports the error, in either order of the selection.
-func TestService_RestoreAllReportsAStaleEntryOfAnotherSeries(t *testing.T) {
+// TestService_RestoreAllCountsAnEntryThatIsNoLongerInTheTrash marks two
+// deleted events, and the second one is already back. Its entry gives
+// event.ErrNotDeleted. The trash no longer lists it, so RestoreAll counts it
+// as restored, in either order of the selection.
+func TestService_RestoreAllCountsAnEntryThatIsNoLongerInTheTrash(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	events := event.NewService(db, q)
 	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
@@ -644,33 +645,119 @@ func TestService_RestoreAllReportsAStaleEntryOfAnotherSeries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create %s: %v", title, err)
 		}
-		if err := events.Delete(ctx, e.ID); err != nil {
-			t.Fatalf("delete %s: %v", title, err)
-		}
 		ids = append(ids, e.ID)
 	}
+	for _, order := range [][2]int{{0, 1}, {1, 0}} {
+		for _, id := range ids {
+			if err := events.Delete(ctx, id); err != nil {
+				t.Fatalf("delete %d: %v", id, err)
+			}
+		}
+		entries, err := svc.List(ctx, 1)
+		if err != nil || len(entries) != 2 {
+			t.Fatalf("List = %+v, %v; want 2 entries", entries, err)
+		}
+		byID := map[int64]Entry{}
+		for _, e := range entries {
+			byID[e.ID] = e
+		}
+		if err := svc.Restore(ctx, byID[ids[1]]); err != nil {
+			t.Fatalf("restore B: %v", err)
+		}
+		sel := []Entry{byID[ids[order[0]]], byID[ids[order[1]]]}
+		if n, err := svc.RestoreAll(ctx, sel); err != nil || n != 2 {
+			t.Fatalf("RestoreAll(order %v) = %d, %v; want 2, nil", order, n, err)
+		}
+	}
+}
+
+// TestService_RestoreAllReportsTheWaitFirst marks an older truncation without
+// its newer truncation. The error names the truncation to restore first: the
+// user can act on it.
+func TestService_RestoreAllReportsTheWaitFirst(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	ctx := context.Background()
+
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	master, err := events.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	for _, day := range []int{5, 3} {
+		if err := events.DeleteFromInstance(ctx, 1, master.UID, start.AddDate(0, 0, day)); err != nil {
+			t.Fatalf("truncate at day %d: %v", day, err)
+		}
+	}
 	entries, err := svc.List(ctx, 1)
-	if err != nil || len(entries) != 2 {
-		t.Fatalf("List = %+v, %v; want 2 entries", entries, err)
+	if err != nil {
+		t.Fatalf("List: %v", err)
 	}
-	byID := map[int64]Entry{}
+	var blocked Entry
 	for _, e := range entries {
-		byID[e.ID] = e
+		if e.Kind == KindEventSeriesTail && e.NewerTruncationID != 0 {
+			blocked = e
+		}
 	}
-	if err := svc.Restore(ctx, byID[ids[1]]); err != nil {
-		t.Fatalf("restore B: %v", err)
+	if blocked.ID == 0 {
+		t.Fatalf("entries = %+v, want a blocked truncation", entries)
 	}
-	if n, err := svc.RestoreAll(ctx, []Entry{byID[ids[0]], byID[ids[1]]}); !errors.Is(err, event.ErrNotDeleted) || n != 1 {
-		t.Fatalf("RestoreAll(A, stale B) = %d, %v; want 1, ErrNotDeleted", n, err)
+	n, err := svc.RestoreAll(ctx, []Entry{blocked})
+	if !errors.Is(err, event.ErrNewerTruncation) || n != 0 {
+		t.Fatalf("RestoreAll(blocked) = %d, %v; want 0, ErrNewerTruncation", n, err)
 	}
-	if err := events.Delete(ctx, ids[0]); err != nil {
-		t.Fatalf("delete A again: %v", err)
+}
+
+// TestService_RestoreAllCountsALegacyOverrideOfARestoredMaster marks a master
+// in calendar 1 and its legacy override in calendar 2 (an override in a
+// calendar with no master of its UID). One series delete hid both. The
+// restore of the master brings the override back, so its own entry gives
+// event.ErrNotDeleted. The trash no longer lists it, so RestoreAll counts it.
+func TestService_RestoreAllCountsALegacyOverrideOfARestoredMaster(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	ctx := context.Background()
+
+	other, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Other"})
+	if err != nil {
+		t.Fatalf("create calendar: %v", err)
 	}
-	entries, err = svc.List(ctx, 1)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("List = %+v, %v; want A", entries, err)
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	master, err := events.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
 	}
-	if n, err := svc.RestoreAll(ctx, []Entry{byID[ids[1]], entries[0]}); !errors.Is(err, event.ErrNotDeleted) || n != 1 {
-		t.Fatalf("RestoreAll(stale B, A) = %d, %v; want 1, ErrNotDeleted", n, err)
+	inst := start.AddDate(0, 0, 2)
+	override, err := events.UpdateInstance(ctx, 1, master.UID, inst, event.UpdateParams{CalendarID: 1, Title: "Late", StartTime: inst, EndTime: inst.Add(time.Hour)})
+	if err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, other.ID, override.ID); err != nil {
+		t.Fatalf("make a legacy override: %v", err)
+	}
+	if err := events.DeleteSeries(ctx, 1, master.UID); err != nil {
+		t.Fatalf("delete series: %v", err)
+	}
+	var sel []Entry
+	for _, calID := range []int64{other.ID, 1} {
+		entries, err := svc.List(ctx, calID)
+		if err != nil {
+			t.Fatalf("List %d: %v", calID, err)
+		}
+		sel = append(sel, entries...)
+	}
+	if len(sel) != 2 || sel[0].ID != override.ID {
+		t.Fatalf("entries = %+v, want the legacy override, then the master", sel)
+	}
+	if n, err := svc.RestoreAll(ctx, sel); err != nil || n != 2 {
+		t.Fatalf("RestoreAll(legacy override, master) = %d, %v; want 2, nil", n, err)
 	}
 }
