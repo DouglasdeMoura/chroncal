@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"image/color"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -459,7 +460,18 @@ func trashRestoreOrderNote(e trash.Entry) string {
 	if e.NewerTruncationCutoff.Equal(e.CutoffTime) {
 		return "restore the newer truncation at the same cutoff first"
 	}
-	return "restore the truncation with cutoff " + e.NewerTruncationCutoff.Local().Format("Mon, Jan 2 15:04") + " first"
+	return "restore the truncation with cutoff " + trashOccurrenceTime(e.NewerTruncationCutoff, e.AllDay) + " first"
+}
+
+// trashOccurrenceTime renders the time of an occurrence of the series of a
+// trash entry: an instance time or a cutoff. An all-day series stores its
+// occurrences at midnight UTC, so it shows the UTC date only. In local time,
+// the date west of UTC is the day before.
+func trashOccurrenceTime(t time.Time, allDay bool) string {
+	if allDay {
+		return t.UTC().Format("Mon, Jan 2")
+	}
+	return t.Local().Format("Mon, Jan 2 15:04")
 }
 
 // trashDetailLines renders the right-pane fields for a trash entry. The
@@ -481,11 +493,11 @@ func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int, rw url
 	switch e.Kind {
 	case trash.KindEventInstance:
 		if !e.InstanceTime.IsZero() {
-			lines = append(lines, detailLine(faint, "Instance", e.InstanceTime.Local().Format("Mon, Jan 2 15:04"), labelWidth, w))
+			lines = append(lines, detailLine(faint, "Instance", trashOccurrenceTime(e.InstanceTime, e.AllDay), labelWidth, w))
 		}
 	case trash.KindEventSeriesTail:
 		if !e.CutoffTime.IsZero() {
-			lines = append(lines, detailLine(faint, "Cutoff", e.CutoffTime.Local().Format("Mon, Jan 2 15:04"), labelWidth, w))
+			lines = append(lines, detailLine(faint, "Cutoff", trashOccurrenceTime(e.CutoffTime, e.AllDay), labelWidth, w))
 		}
 		// A newer truncation of the series blocks the restore of this
 		// one. The line names the entry to restore first.

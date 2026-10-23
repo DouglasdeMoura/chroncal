@@ -9,7 +9,6 @@ package trash
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -155,34 +154,34 @@ func (s *Service) List(ctx context.Context, calendarID int64) ([]Entry, error) {
 	return entries, nil
 }
 
-// RestoreAll restores entries, in order. A truncation that a newer
-// truncation of its series blocks (event.ErrNewerTruncation) waits. RestoreAll
-// tries it again after the other entries, so a selection that holds the
-// newer truncation too restores in any order. It stops at the first other
-// error. It returns the count of restored entries with the error, so a
-// caller can reload the view after a partial restore.
+// RestoreAll restores entries, in order. An entry can depend on another
+// entry of the selection: a truncation waits for a newer truncation of its
+// series (event.ErrNewerTruncation), and a row waits for its master
+// (event.ErrMasterInTrash). So RestoreAll tries each refused entry again
+// after the other entries, as long as a pass restores at least one entry.
+// Each restore runs in its own transaction, so a refusal changes nothing.
+// RestoreAll returns the count of restored entries and the first error of
+// the last pass, so a caller can report a partial restore.
 func (s *Service) RestoreAll(ctx context.Context, entries []Entry) (int, error) {
 	restored := 0
 	pending := entries
 	for len(pending) > 0 {
-		var blocked []Entry
-		var blockErr error
+		var refused []Entry
+		var firstErr error
 		for _, e := range pending {
-			err := s.Restore(ctx, e)
-			switch {
-			case err == nil:
-				restored++
-			case errors.Is(err, event.ErrNewerTruncation):
-				blocked = append(blocked, e)
-				blockErr = err
-			default:
-				return restored, err
+			if err := s.Restore(ctx, e); err != nil {
+				refused = append(refused, e)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
 			}
+			restored++
 		}
-		if len(blocked) == len(pending) {
-			return restored, blockErr
+		if len(refused) == len(pending) {
+			return restored, firstErr
 		}
-		pending = blocked
+		pending = refused
 	}
 	return restored, nil
 }

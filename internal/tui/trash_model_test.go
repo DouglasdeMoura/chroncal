@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -350,5 +351,57 @@ func TestTrashDetailLines_NamesTheTruncationToRestoreFirst(t *testing.T) {
 	free := trash.Entry{Kind: trash.KindEventSeriesTail, ID: 2, Title: "Series", CutoffTime: newer}
 	if text := ansi.Strip(strings.Join(trashDetailLines(free, CalendarInfo{}, 120, 10, nil), "\n")); strings.Contains(text, " first") {
 		t.Errorf("detail of a truncation that restores = %q, want no restore note", text)
+	}
+}
+
+// TestTrashDetailLines_AllDayCutoffShowsTheUTCDate checks that an all-day
+// series shows the date of its cutoff and of the cutoff to restore first.
+// The series stores them at midnight UTC, so in local time west of UTC the
+// date is the day before.
+func TestTrashDetailLines_AllDayCutoffShowsTheUTCDate(t *testing.T) {
+	t.Setenv("TZ", "America/New_York")
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("no tzdata: %v", err)
+	}
+	old := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = old })
+
+	e := trash.Entry{
+		Kind: trash.KindEventSeriesTail, ID: 1, Title: "Holiday", AllDay: true,
+		CutoffTime:        time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC),
+		NewerTruncationID: 2, NewerTruncationCutoff: time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC),
+	}
+	text := ansi.Strip(strings.Join(trashDetailLines(e, CalendarInfo{}, 120, 10, nil), "\n"))
+	for _, want := range []string{"Tue, Mar 10", "restore the truncation with cutoff Thu, Mar 5 first"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("detail = %q, want %q", text, want)
+		}
+	}
+	if strings.Contains(text, "Mar 9") || strings.Contains(text, "Mar 4") {
+		t.Errorf("detail = %q names the local day before", text)
+	}
+}
+
+// TestTrashActionDone_PartialRestoreReloadsAndCounts checks a bulk restore
+// that fails after it restores some entries. The toast gives the count, and
+// the model reloads the trash and the events, so the view shows the entries
+// that remain.
+func TestTrashActionDone_PartialRestoreReloadsAndCounts(t *testing.T) {
+	m := NewModel(nil, "")
+	next, cmd := m.handleTrashActionDone(trashActionDoneMsg{
+		action: "restored", title: "2 items", err: errors.New("calendar is read-only"), done: 1, total: 2,
+	})
+	m = next.(Model)
+	if m.toast.State() != ToastFailed || m.toast.reason != "restored 1 of 2; calendar is read-only" {
+		t.Errorf("toast = %v %q, want the failed toast with the count", m.toast.State(), m.toast.reason)
+	}
+	if cmd == nil {
+		t.Fatal("no command after a failed bulk restore")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 3 {
+		t.Errorf("command = %T with %d commands, want a batch of the trash reload, the events reload, and the toast", cmd(), len(batch))
 	}
 }
