@@ -613,6 +613,12 @@ chroncal sync reset     [--calendar NAME]
 
 Sync runs on each connected calendar on its own. Calendars that share an account reuse its credential and sync one after another. Distinct accounts can sync at the same time. Use `chroncal account calendars list` and `chroncal account calendars add` to inspect and import remote collections. Use the calendar remote flags above when you attach one known URL.
 
+When you attach a local calendar, the next sync uploads its items. Some items stay local:
+
+- A read-only collection gets no item.
+- A collection that does not support a component (for example `VTODO`) gets no item of that component.
+- An override without its series stays local.
+
 Narrow a run with `--calendar NAME` (one local calendar) or `--account NAME` (every calendar linked to one CalDAV account). The two flags are mutually exclusive. An account with no linked calendars is a clean no-op.
 
 Conflict handling:
@@ -622,6 +628,8 @@ Conflict handling:
 - A resolved conflict keeps its row. Run `chroncal sync conflicts --resolved` to list resolved conflicts. Run `chroncal sync resolve <id> --pick local` on a resolved conflict to restore the recorded local version.
 - One exception applies to a move conflict. A new move of the item drops the resolved move conflicts of the earlier move in the same account. Their recorded versions describe a move that no longer exists.
 - Some servers keep a UID unique in the whole account (for example, iCloud). Such a server refuses the create of a moved copy while the source object exists. Sync then deletes the source object and sends the create again. When the server still refuses the create, sync waits a short time and sends it again, at most two more times. After that, the next sync tries again.
+- A create never overwrites an object on the server. When the collection holds an object at the same href, sync records a conflict and keeps both versions. This can occur on the first sync after you attach a local calendar.
+- A remote delete can meet a local edit that sync did not send yet: an edit, a restore from the trash, or a move back into the calendar. The local edit wins. Sync creates the item again on the server and prints a note. A `server-wins` pass keeps the remote delete, and the item goes to the trash. A read-only calendar also keeps the remote delete.
 - A move between two calendars of one account can meet a remote edit. The item changed on the server in the source calendar before sync deleted it there. Sync then records a move conflict on the target calendar, and the source object stays on the server. When the server refuses the create of the copy, the moved copy stays unsent. When the create already landed, the copy is on the server in the target calendar. A cancel then deletes that copy on the next sync. A `server-wins` pass does not pick a side for you. Sync closes a move conflict by itself in three cases only, and an unlink of the source calendar ends it as `detached`. The conflict becomes `abandoned` when the moved copy is gone. A failed cancel becomes `cancelled` when a pull of the source brings the server version. The move becomes `finished` when the source object is gone from the server. The `sync conflicts` line shows `moved-from-calendar=<id>` and `move=<state>`. The JSON output has `move_source_calendar_id` and `move_state`. The state decides what each pick does:
   - `open`: no pick ran yet. `--pick local` completes the move: the next sync deletes the source object and creates the target object. `--pick server` cancels the move. The pick reads the current source object from the server. The item then goes back to the source calendar with that version. When the move already created a copy in the target calendar, the next sync deletes that copy.
   - `local-picked`: `--pick local` ran. The picks work as for `open`, so a second `--pick server` still cancels the move until the source object is gone.
