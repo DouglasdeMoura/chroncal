@@ -342,3 +342,53 @@ func TestOrganizerGateIsScopedToTheCalendar(t *testing.T) {
 		t.Errorf("targetPushGatedFor of a local calendar = %v, %v; want false", gated, err)
 	}
 }
+
+// TestResetOfTheSourceOnAGenericServerLeavesOneCopy moves an event from A to
+// B on a server that keeps a UID unique per collection only, and resets A.
+// The reset must keep the move tombstone, so the source DELETE still goes
+// out and no pull brings the source object back. Each order of the passes
+// must end with one object of the UID, in B (issue #866).
+func TestResetOfTheSourceOnAGenericServerLeavesOneCopy(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		landed bool
+		order  string
+	}{
+		{"unpushed copy, A first", false, "ABA"},
+		{"unpushed copy, B first", false, "BAB"},
+		{"landed copy, A first", true, "ABA"},
+		{"landed copy, B first", true, "BAB"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			engine, q, srv, calA, calB := newICloudPairEngine(t)
+			ctx := context.Background()
+			svc := newICloudPairService(engine, q)
+			evt := createPushedEvent(t, engine, calA)
+			srv.setGeneric(true)
+			moveEvent(t, engine, evt, calB)
+			if tc.landed {
+				if res, err := engine.PushLocalEdits(ctx, calB); err != nil || res.Pushed != 1 {
+					t.Fatalf("push of B = %+v, %v; want the copy landed", res, err)
+				}
+			}
+			if err := svc.ResetCalendar(ctx, calA); err != nil {
+				t.Fatalf("ResetCalendar A: %v", err)
+			}
+			for _, c := range tc.order {
+				cal := calA
+				if c == 'B' {
+					cal = calB
+				}
+				if _, err := engine.SyncCalendar(ctx, cal, ConflictPrompt); err != nil {
+					t.Fatalf("pass of %c: %v", c, err)
+				}
+			}
+			if srv.has("/cal/a/"+evt.UID+".ics") || !srv.has("/cal/b/"+evt.UID+".ics") {
+				t.Fatalf("server objects: a=%v b=%v; want one object in B", srv.has("/cal/a/"+evt.UID+".ics"), srv.has("/cal/b/"+evt.UID+".ics"))
+			}
+			wantLive(t, engine, evt.ID, calB, evt.Title)
+		})
+	}
+}
