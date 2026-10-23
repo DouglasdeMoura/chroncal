@@ -59,9 +59,9 @@ type TrashEntry struct {
 	DeletedAt     time.Time
 	// NewerTruncationID names the newest truncation of the same series that
 	// is newer than this one (TrashKindTruncation). The restore of this entry
-	// refuses with ErrNewerTruncation until that entry is restored. It is 0
-	// when this entry restores. NewerTruncationCutoff is the cutoff of that
-	// entry.
+	// refuses with ErrNewerTruncation until the user restores that entry. It
+	// is 0 when this entry restores. NewerTruncationCutoff is the cutoff of
+	// that entry.
 	NewerTruncationID     int64
 	NewerTruncationCutoff time.Time
 
@@ -486,8 +486,7 @@ func newestNewerTruncation(logs []storage.EventTruncateDelete, log storage.Event
 	var best storage.EventTruncateDelete
 	found := false
 	for _, l := range logs {
-		if l.ID != log.ID && l.CalendarID == log.CalendarID && l.Uid == log.Uid &&
-			newer(l, log) && (!found || newer(l, best)) {
+		if l.ID != log.ID && newer(l, log) && (!found || newer(l, best)) {
 			best, found = l, true
 		}
 	}

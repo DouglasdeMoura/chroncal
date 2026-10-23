@@ -9,6 +9,7 @@ package trash
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -152,6 +153,38 @@ func (s *Service) List(ctx context.Context, calendarID int64) ([]Entry, error) {
 		return entries[i].DeletedAt.After(entries[j].DeletedAt)
 	})
 	return entries, nil
+}
+
+// RestoreAll restores entries, in order. A truncation that a newer
+// truncation of its series blocks (event.ErrNewerTruncation) waits. RestoreAll
+// tries it again after the other entries, so a selection that holds the
+// newer truncation too restores in any order. It stops at the first other
+// error. It returns the count of restored entries with the error, so a
+// caller can reload the view after a partial restore.
+func (s *Service) RestoreAll(ctx context.Context, entries []Entry) (int, error) {
+	restored := 0
+	pending := entries
+	for len(pending) > 0 {
+		var blocked []Entry
+		var blockErr error
+		for _, e := range pending {
+			err := s.Restore(ctx, e)
+			switch {
+			case err == nil:
+				restored++
+			case errors.Is(err, event.ErrNewerTruncation):
+				blocked = append(blocked, e)
+				blockErr = err
+			default:
+				return restored, err
+			}
+		}
+		if len(blocked) == len(pending) {
+			return restored, blockErr
+		}
+		pending = blocked
+	}
+	return restored, nil
 }
 
 // Restore reverses the delete recorded in e. It dispatches by Kind.

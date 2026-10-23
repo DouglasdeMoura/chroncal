@@ -602,12 +602,8 @@ func (m Model) handleTrashRestoreRequested(msg TrashRestoreRequestedMsg) (tea.Mo
 	}
 	title := trashBulkTitle(entries)
 	return m, func() tea.Msg {
-		for _, e := range entries {
-			if err := m.app.Trash.Restore(context.Background(), e); err != nil {
-				return trashActionDoneMsg{action: "restored", title: title, err: err}
-			}
-		}
-		return trashActionDoneMsg{action: "restored", title: title, err: nil}
+		_, err := m.app.Trash.RestoreAll(context.Background(), entries)
+		return trashActionDoneMsg{action: "restored", title: title, err: err}
 	}
 }
 
@@ -634,8 +630,9 @@ func (m Model) handleTrashPurgeRequested(msg TrashPurgeRequestedMsg) (tea.Model,
 }
 func (m Model) handleTrashActionDone(msg trashActionDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		cmd := m.toast.Failed(msg.err.Error())
-		return m, cmd
+		// A bulk action can fail after it changes some entries. The reload
+		// shows the entries that remain, with notes that are current.
+		return m, tea.Batch(m.loadTrash(), m.loadEvents(), m.toast.Failed(msg.err.Error()))
 	}
 	m.trash = m.trash.ClearMarks()
 	cmds := []tea.Cmd{m.loadTrash(), m.loadEvents()}
