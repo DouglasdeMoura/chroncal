@@ -1160,6 +1160,46 @@ func (q *Queries) ListEventsByUIDAndRecurrenceID(ctx context.Context, arg ListEv
 	return items, nil
 }
 
+const listLegacyEventOverridesInCalendar = `-- name: ListLegacyEventOverridesInCalendar :many
+SELECT s.id, s.uid, s.owner_calendar_id FROM event_series_rows AS s
+WHERE s.calendar_id = ?1 AND s.deleted_at IS NULL
+  AND s.recurrence_id != '' AND s.owner_calendar_id != s.calendar_id
+ORDER BY s.uid, s.id
+`
+
+type ListLegacyEventOverridesInCalendarRow struct {
+	ID              int64
+	Uid             string
+	OwnerCalendarID int64
+}
+
+// The live legacy overrides of one calendar that a series owns, with the
+// calendar of the owner (see the view event_series_rows). The startup heal
+// moves the rows of a local calendar home. The rows that it keeps stay
+// here, and the sync doctor lists them.
+func (q *Queries) ListLegacyEventOverridesInCalendar(ctx context.Context, calendarID int64) ([]ListLegacyEventOverridesInCalendarRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLegacyEventOverridesInCalendar, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLegacyEventOverridesInCalendarRow
+	for rows.Next() {
+		var i ListLegacyEventOverridesInCalendarRow
+		if err := rows.Scan(&i.ID, &i.Uid, &i.OwnerCalendarID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveEventCalendarIDsByUID = `-- name: ListLiveEventCalendarIDsByUID :many
 SELECT DISTINCT calendar_id FROM events WHERE uid = ? AND deleted_at IS NULL ORDER BY calendar_id
 `
@@ -1314,6 +1354,56 @@ func (q *Queries) ListLiveSeriesOverridesAtOrAfter(ctx context.Context, arg List
 			&i.DeleteToken,
 			&i.EditUnowned,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLocalLegacyEventOverrideUIDs = `-- name: ListLocalLegacyEventOverrideUIDs :many
+SELECT DISTINCT e.calendar_id, e.uid
+FROM events AS e
+JOIN calendars AS c ON c.id = e.calendar_id
+WHERE e.recurrence_id != ''
+  AND (c.account_id IS NULL OR c.account_id = 0)
+  AND NOT EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.calendar_id = e.calendar_id AND m.uid = e.uid AND m.recurrence_id = '')
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_resources AS r WHERE r.calendar_id = e.calendar_id AND r.uid = e.uid)
+  AND NOT EXISTS (
+    SELECT 1 FROM tombstones AS t WHERE t.calendar_id = e.calendar_id AND t.uid = e.uid)
+ORDER BY e.calendar_id, e.uid
+`
+
+type ListLocalLegacyEventOverrideUIDsRow struct {
+	CalendarID int64
+	Uid        string
+}
+
+// The calendars with no account link that hold a legacy override, with its
+// UID: an override row, live or in the trash, in a calendar with no master
+// row of its UID (see storage.LegacyOverride). A calendar with a sync row or
+// a tombstone of the UID stays out, so the heal of legacy overrides makes
+// no server write. The heal reads it on each startup. The override filter
+// comes first, so a database with no legacy override reads few rows.
+func (q *Queries) ListLocalLegacyEventOverrideUIDs(ctx context.Context) ([]ListLocalLegacyEventOverrideUIDsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLocalLegacyEventOverrideUIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLocalLegacyEventOverrideUIDsRow
+	for rows.Next() {
+		var i ListLocalLegacyEventOverrideUIDsRow
+		if err := rows.Scan(&i.CalendarID, &i.Uid); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

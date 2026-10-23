@@ -36,6 +36,10 @@ var healSteps = []healStep{
 			return normalizeAlarmRepeatPairs(ctx, conn)
 		},
 	},
+	{
+		name: "move legacy event overrides home",
+		run:  healLegacyEventOverrides,
+	},
 }
 
 // heal is the heal phase of Open. It runs every declared heal step, in

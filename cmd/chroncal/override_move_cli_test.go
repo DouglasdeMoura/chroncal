@@ -140,6 +140,8 @@ func TestLegacyOverrideCalendarMoveCLIHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create override: %v", err)
 	}
+	// Old has an account link, so the startup heal keeps the row there.
+	linkCalendarForLegacyOverride(t, "Old")
 	if _, err := a.DB.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, oldCal, override.ID); err != nil {
 		t.Fatalf("seed legacy override: %v", err)
 	}

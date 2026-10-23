@@ -388,3 +388,67 @@ func TestSyncDoctorListsPushFailuresAndUnownedEdits(t *testing.T) {
 		t.Errorf("unowned item = %v", u)
 	}
 }
+
+// TestSyncDoctorListsLegacyOverride checks that the doctor lists a legacy
+// override that the startup heal keeps, with the command that moves it home
+// (issue #862). The row is in a linked calendar, so the heal does not move
+// it. After the move that the hint names, the doctor lists nothing.
+func TestSyncDoctorListsLegacyOverride(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	ctx := context.Background()
+	var rowID int64
+	for _, stmt := range []string{
+		`INSERT INTO accounts (id, name, server_url, auth_type, username) VALUES (902, 'legacy-acct', 'https://example.com', 'basic', 'u')`,
+		`INSERT INTO calendars (name, account_id, remote_url) VALUES ('Linked', 902, '/linked/')`,
+		`INSERT INTO calendars (name) VALUES ('Home')`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule)
+		 SELECT 'legacy-cli@example.com', id, 't', '2026-05-11T09:00:00Z', '2026-05-11T10:00:00Z', 'FREQ=WEEKLY' FROM calendars WHERE name = 'Home'`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+		 SELECT 'legacy-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z' FROM calendars WHERE name = 'Linked'`,
+	} {
+		if _, err := a.DB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	if err := a.DB.QueryRowContext(ctx, `SELECT id FROM events WHERE recurrence_id != '' AND uid = 'legacy-cli@example.com'`).Scan(&rowID); err != nil {
+		t.Fatalf("read row id: %v", err)
+	}
+	a.Close()
+
+	stdout, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
+	if err != nil {
+		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
+	}
+	want := fmt.Sprintf(`calendar "Linked" uid legacy-cli@example.com (event): row %d is an override with no master in this calendar; the series in calendar "Home" owns it. Move it there with: chroncal event update %d --calendar "Home"`, rowID, rowID)
+	if !strings.Contains(stdout, want) {
+		t.Errorf("output %q misses %q", stdout, want)
+	}
+
+	stdout, _, err = runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--output", "json")
+	if err != nil {
+		t.Fatalf("sync doctor --output json: %v", err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &items); err != nil {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	if len(items) != 1 || items[0]["state"] != "legacy_override" || items[0]["id"] != float64(rowID) ||
+		items[0]["owner_calendar_name"] != "Home" || items[0]["calendar_name"] != "Linked" {
+		t.Fatalf("items = %v, want one legacy_override item", items)
+	}
+
+	if _, stderr, err := runChroncalCommand(t, "event", "update", fmt.Sprint(rowID), "--calendar", "Home"); err != nil {
+		t.Fatalf("event update: %v (stderr: %s)", err, stderr)
+	}
+	stdout, _, err = runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--output", "json")
+	if err != nil {
+		t.Fatalf("sync doctor after the move: %v", err)
+	}
+	if strings.Contains(stdout, "legacy_override") {
+		t.Errorf("output %q still lists the legacy override after the move", stdout)
+	}
+}
