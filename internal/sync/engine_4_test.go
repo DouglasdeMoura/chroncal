@@ -70,7 +70,7 @@ func TestEnginePullHoldsTokenWhenDeletionApplyFails(t *testing.T) {
 		},
 	}
 
-	result, err := engine.applySyncCollection(ctx, client, calendarID, "/calendar/", cal, syncResult, false)
+	result, err := engine.applySyncCollection(ctx, client, calendarID, "/calendar/", cal, syncResult, false, ConflictPrompt)
 	if err != nil {
 		t.Fatalf("applySyncCollection: %v", err)
 	}
@@ -154,7 +154,7 @@ END:VCALENDAR
 		}, nil
 	})
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/user@example.com/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/user@example.com/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -911,7 +911,7 @@ END:VCALENDAR
 		}, nil
 	})
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}

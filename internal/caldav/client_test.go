@@ -88,6 +88,45 @@ func TestClientPutResourceSendsIfMatch(t *testing.T) {
 	}
 }
 
+// TestClientCreateResourceSendsIfNoneMatch checks that a create PUT sends
+// If-None-Match: * and no If-Match, and that a 412 is a typed conflict. A
+// create then cannot overwrite an object at the same href (issue #866).
+func TestClientCreateResourceSendsIfNoneMatch(t *testing.T) {
+	t.Parallel()
+
+	status := http.StatusCreated
+	client, err := NewClient(putTestHTTPClient{do: func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPut {
+			t.Fatalf("method = %s, want PUT", req.Method)
+		}
+		if got := req.Header.Get("If-None-Match"); got != "*" {
+			t.Fatalf("If-None-Match = %q, want *", got)
+		}
+		if got := req.Header.Get("If-Match"); got != "" {
+			t.Fatalf("If-Match = %q, want empty", got)
+		}
+		return &http.Response{
+			StatusCode: status,
+			Status:     http.StatusText(status),
+			Header:     http.Header{"Etag": []string{`"etag-new"`}},
+			Body:       io.NopCloser(http.NoBody),
+			Request:    req,
+		}, nil
+	}}, "https://example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	etag, err := client.CreateResource(context.Background(), "/cal/test.ics", testCalendar(t))
+	if err != nil || etag != "etag-new" {
+		t.Fatalf("CreateResource = %q, %v; want etag-new", etag, err)
+	}
+	status = http.StatusPreconditionFailed
+	if _, err := client.CreateResource(context.Background(), "/cal/test.ics", testCalendar(t)); !IsConflict(err) {
+		t.Fatalf("CreateResource on a 412 = %v; want a conflict", err)
+	}
+}
+
 func TestNormalizeAndFormatIfMatch(t *testing.T) {
 	t.Parallel()
 

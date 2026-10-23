@@ -527,7 +527,7 @@ END:VCALENDAR
 		}
 	})
 
-	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -663,7 +663,7 @@ END:VCALENDAR
 		t.Fatalf("RemoteUrl = %q, want /calendar/normalized-new.ics", res.RemoteUrl)
 	}
 
-	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -880,7 +880,7 @@ func TestEnginePullDeletesLocalResourceWhenServerRemovesIt(t *testing.T) {
 		}, nil
 	})
 
-	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	pullResult, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}

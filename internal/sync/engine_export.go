@@ -326,6 +326,10 @@ const (
 	remoteDeleteKept remoteDeleteOutcome = iota
 	// remoteDeleteDone: the local rows went to the trash.
 	remoteDeleteDone
+	// remoteDeleteRecreate: the sync row held a local edit that no push
+	// sent. The rows stay, and the row loses its href and its etag, so the
+	// next push creates the object again (issue #866).
+	remoteDeleteRecreate
 )
 
 // deleteLocalResourceByUID applies a remote delete of uid in calendarID in
@@ -337,12 +341,17 @@ const (
 // after that read keeps every row. The tombstone pass then sends the
 // DELETE, and its 404 settles the move with the move rules (issue #841).
 //
-// With no tombstone, the rows go to the trash, across every owner type, and
-// the sync row goes. A remote DELETE that races with a user action then keeps
-// the local row in the trash until the retention window ends. A later
-// restore re-CREATEs a fresh sync row via MarkResourceDirty. The read of the
-// tombstones and each write share the transaction.
-func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64, ownerType, uid string) (remoteDeleteOutcome, error) {
+// With keepEdit, a dirty sync row holds a local edit that no push sent: a
+// restore from the trash, a move back into the calendar, or a plain edit.
+// The local edit wins over the remote delete. The rows stay, and the row
+// loses its href and its etag, so the next push creates the object again.
+// A read-only calendar never pushes the edit, so the remote delete wins
+// there (issue #866).
+//
+// Else the rows go to the trash, across every owner type, and the sync row
+// goes. A later restore re-CREATEs a fresh sync row via MarkResourceDirty.
+// The read of the tombstones and each write share the transaction.
+func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64, ownerType, uid string, keepEdit bool) (remoteDeleteOutcome, error) {
 	ops, err := ownerOpsFor(ownerType)
 	if err != nil {
 		return remoteDeleteKept, err
@@ -361,6 +370,15 @@ func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64,
 	if tombstoned {
 		return remoteDeleteKept, nil
 	}
+	if keepEdit {
+		kept, err := keepUnpushedEdit(ctx, qtx, calendarID, uid)
+		if err != nil {
+			return remoteDeleteKept, err
+		}
+		if kept {
+			return remoteDeleteRecreate, tx.Commit()
+		}
+	}
 	if err := ops.softDeleteByUID(ctx, qtx, calendarID, uid); err != nil {
 		return remoteDeleteKept, err
 	}
@@ -368,6 +386,32 @@ func (e *Engine) deleteLocalResourceByUID(ctx context.Context, calendarID int64,
 		return remoteDeleteKept, fmt.Errorf("delete sync resource: %w", err)
 	}
 	return remoteDeleteDone, tx.Commit()
+}
+
+// keepUnpushedEdit drops the href and the etag of the sync row of uid when
+// the row is dirty and the calendar can push. kept reports that the row
+// stays for a create. See deleteLocalResourceByUID.
+func keepUnpushedEdit(ctx context.Context, qtx *storage.Queries, calendarID int64, uid string) (kept bool, err error) {
+	sr, err := qtx.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
+	found, err := storage.Found(err)
+	if err != nil {
+		return false, fmt.Errorf("get sync resource: %w", err)
+	}
+	if !found || sr.Dirty == 0 || sr.RemoteUrl == "" {
+		return false, nil
+	}
+	cal, err := qtx.GetCalendar(ctx, calendarID)
+	if err != nil {
+		return false, fmt.Errorf("get calendar: %w", err)
+	}
+	if remoteCalendarIsReadOnly(cal) {
+		return false, nil
+	}
+	n, err := qtx.ForgetGoneServerObject(ctx, storage.ForgetGoneServerObjectParams{CalendarID: calendarID, Uid: uid, RemoteUrl: sr.RemoteUrl})
+	if err != nil {
+		return false, fmt.Errorf("drop the href of the gone object: %w", err)
+	}
+	return n > 0, nil
 }
 
 // lookupOwnerID resolves the local row ID that backs a UID in calendarID

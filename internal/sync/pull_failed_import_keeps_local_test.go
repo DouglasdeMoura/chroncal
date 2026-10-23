@@ -76,7 +76,7 @@ END:VCALENDAR
 			Body:   io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}

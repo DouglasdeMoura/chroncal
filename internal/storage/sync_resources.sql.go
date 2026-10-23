@@ -509,6 +509,30 @@ func (q *Queries) FinalizePushedResource(ctx context.Context, arg FinalizePushed
 	return result.RowsAffected()
 }
 
+const forgetGoneServerObject = `-- name: ForgetGoneServerObject :execrows
+UPDATE sync_resources SET remote_url = '', etag = ''
+WHERE calendar_id = ?1 AND uid = ?2
+  AND remote_url = ?3 AND remote_url != '' AND dirty = 1
+`
+
+type ForgetGoneServerObjectParams struct {
+	CalendarID int64
+	Uid        string
+	RemoteUrl  string
+}
+
+// Drop the href and the etag of a dirty sync row whose server object is
+// gone. The row stays dirty and keeps its rev, so the next push sends the
+// local edit as a create. The old href guards the write: a pull or a push
+// that changed the row meanwhile makes the count 0. See issue #866.
+func (q *Queries) ForgetGoneServerObject(ctx context.Context, arg ForgetGoneServerObjectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, forgetGoneServerObject, arg.CalendarID, arg.Uid, arg.RemoteUrl)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getSyncResource = `-- name: GetSyncResource :one
 SELECT id, calendar_id, uid, owner_type, remote_url, etag, dirty, sync_strategy, rev, push_fail_count, last_push_error, wait_kind, wait_holder_calendar_id FROM sync_resources WHERE calendar_id = ? AND uid = ?
 `

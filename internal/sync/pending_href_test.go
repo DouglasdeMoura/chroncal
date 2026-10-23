@@ -233,7 +233,7 @@ func TestEnginePullUnknownMultigetMissAdvancesToken(t *testing.T) {
 		},
 	)
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestEnginePullUnknownMultigetMissAllowsAbsenceDeletion(t *testing.T) {
 		func(int, string) string { return multigetXML(nil, []string{phantom}) },
 	)
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestEnginePullRetriesUnknownMultigetMissAfterTokenAdvance(t *testing.T) {
 		},
 	)
 
-	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt); err != nil {
 		t.Fatalf("first pull: %v", err)
 	}
 	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "late-invite"}); err == nil {
@@ -338,7 +338,7 @@ func TestEnginePullRetriesUnknownMultigetMissAfterTokenAdvance(t *testing.T) {
 		t.Fatalf("sync_token after first pull = %q, want t1", tok)
 	}
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("second pull: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestEnginePullDropsUnknownMultigetMissAfterBudget(t *testing.T) {
 	)
 
 	for i := 0; i < pendingHrefMissLimit+2; i++ {
-		if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+		if _, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt); err != nil {
 			t.Fatalf("pull %d: %v", i+1, err)
 		}
 	}
@@ -488,7 +488,7 @@ func TestEnginePullUncanonicalMultigetMissAdvancesToken(t *testing.T) {
 				},
 			)
 
-			result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+			result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 			if err != nil {
 				t.Fatalf("pull: %v", err)
 			}
@@ -558,7 +558,7 @@ func TestEnginePullMixedKnownAndUnknownMultigetMissWithholdsToken(t *testing.T) 
 		func(int, string) string { return multigetXML(nil, []string{racey, phantom}) },
 	)
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}

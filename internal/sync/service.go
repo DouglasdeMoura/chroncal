@@ -613,7 +613,8 @@ type restoreMove struct {
 // after the record. The stored etag of the row can be the value that already
 // failed If-Match, and that value gets 412 without end. A row without a
 // server object keeps an empty etag, with one exception. The row of an edit
-// conflict on a create takes the planned href and the etag.
+// conflict on a create, or of an edit conflict whose row went away, takes
+// the planned href and the etag.
 func (s *Service) restoreLocalVersion(ctx context.Context, conflictCalendarID, calendarID int64, uid, localIcal, etag string, move *restoreMove) ([]ImportWarning, error) {
 	_, err := s.q.GetTombstoneByCalendarAndUID(ctx, storage.GetTombstoneByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
 	tombstoned, err := storage.Found(err)
@@ -629,15 +630,23 @@ func (s *Service) restoreLocalVersion(ctx context.Context, conflictCalendarID, c
 	}
 	// An edit conflict on a create: the row existed before the pick, and it
 	// has no server object. The record holds the etag of the object at its
-	// planned href. The import never creates such a row, so a row that only
-	// the import below creates keeps the rule of an empty etag.
+	// planned href. An edit conflict whose row went away takes the same
+	// href: a create with If-None-Match gets 412 from the object that the
+	// record names, so an empty etag would record the conflict again. A
+	// conditional update of a gone object gets 412 too, and the push then
+	// creates the object again (issue #866).
 	var createConflictHref string
-	if srErr == nil && sr.RemoteUrl == "" && etag != "" && conflictCalendarID == calendarID {
+	rowGone := errors.Is(srErr, sql.ErrNoRows) && move == nil
+	if (rowGone || (srErr == nil && sr.RemoteUrl == "")) && etag != "" && conflictCalendarID == calendarID {
 		href, err := s.engine.plannedHref(ctx, calendarID, uid)
-		if err != nil {
+		switch {
+		case err == nil:
+			createConflictHref = href
+		case !rowGone:
 			return nil, fmt.Errorf("planned href of %q: %w", uid, err)
 		}
-		createConflictHref = href
+		// A gone row of a calendar without a remote has no planned href. It
+		// keeps the rule of an empty etag: no push sends it.
 	}
 	var warnings []ImportWarning
 	// A restore of a move conflict imports the recorded body even into a dirty

@@ -611,7 +611,7 @@ END:VCALENDAR
 		}, nil
 	})
 
-	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
 
@@ -723,7 +723,7 @@ END:VCALENDAR
 		}, nil
 	})
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}

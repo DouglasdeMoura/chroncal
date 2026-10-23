@@ -12,7 +12,7 @@ import (
 // It fetches bodies for changed resources via calendar-multiget. It persists
 // them, applies deletions, and stores the new sync-token. This is the fast
 // path for steady-state syncs against RFC 6578-capable servers.
-func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, cal storage.Calendar, syncResult *caldav.SyncCollectionResult, initialSnapshot bool) (*pullResult, error) {
+func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client, calendarID int64, remoteURL string, cal storage.Calendar, syncResult *caldav.SyncCollectionResult, initialSnapshot bool, strategy ConflictStrategy) (*pullResult, error) {
 	result := &pullResult{}
 	view := pullView{truncated: syncResult.Truncated}
 
@@ -261,6 +261,7 @@ func (e *Engine) applySyncCollection(ctx context.Context, client *caldav.Client,
 	// no local row to lose. A persist failure leaves the local copy
 	// behind the server, so the token must be withheld too.
 	deletions := newPendingDeletions(e.logger)
+	deletions.serverWins = strategy == ConflictServerWins
 
 	// Explicit deletions: the server returned a top-level 404 for these
 	// hrefs. Positive evidence — sound even if the inventory is incomplete.

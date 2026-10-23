@@ -186,7 +186,7 @@ func TestEnginePullMultigetMissWithholdsAbsenceDeletions(t *testing.T) {
 			Body:   io.NopCloser(strings.NewReader(multigetBody)), Request: r}, nil
 	})
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -286,7 +286,7 @@ END:VCALENDAR
 		}, nil
 	})
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull (fullsnapshot): %v", err)
 	}
@@ -475,7 +475,7 @@ END:VCALENDAR
 		t.Fatalf("drop event_alarms table: %v", err)
 	}
 
-	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
 
@@ -574,7 +574,7 @@ END:VCALENDAR
 		t.Fatalf("drop event_alarms table: %v", err)
 	}
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -712,7 +712,7 @@ func TestOwnerDispatchRejectsUnknownTypeUniformly(t *testing.T) {
 	engine, _, _ := newTestEngine(t)
 	ctx := context.Background()
 
-	if _, err := engine.deleteLocalResourceByUID(ctx, 1, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
+	if _, err := engine.deleteLocalResourceByUID(ctx, 1, "bogus", "uid", false); !errors.Is(err, errUnknownOwnerType) {
 		t.Fatalf("deleteLocalResourceByUID err = %v, want errUnknownOwnerType", err)
 	}
 	if _, err := engine.lookupOwnerID(ctx, 1, "bogus", "uid"); !errors.Is(err, errUnknownOwnerType) {
@@ -966,7 +966,7 @@ END:VCALENDAR
 		}, nil
 	})
 
-	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt); err != nil {
 		t.Fatalf("pull (fullsnapshot): %v", err)
 	}
 	rows, err := q.ListSyncKnownMissesByCalendar(ctx, calendarID)
@@ -1047,7 +1047,7 @@ END:VCALENDAR
 		}, nil
 	})
 
-	if _, err := engine.pull(ctx, client, calendarID, "/calendar/"); err != nil {
+	if _, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt); err != nil {
 		t.Fatalf("pull (fullsnapshot): %v", err)
 	}
 	if _, err := q.GetEventByCalendarUID(ctx, storage.GetEventByCalendarUIDParams{CalendarID: 1, Uid: "bad-uid"}); err != nil {
@@ -1156,7 +1156,7 @@ END:VCALENDAR
 		}, nil
 	})
 
-	result, err := engine.pull(ctx, client, calendarID, "/calendar/")
+	result, err := engine.pull(ctx, client, calendarID, "/calendar/", ConflictPrompt)
 	if err != nil {
 		t.Fatalf("pull (full snapshot): %v", err)
 	}
