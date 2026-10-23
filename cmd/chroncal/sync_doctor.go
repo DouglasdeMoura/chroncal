@@ -204,6 +204,17 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// commandName quotes a calendar name for a printed command. The command must
+// name the calendar as it is, so it quotes the raw name. A name with a rune
+// that the terminal must not get (safeText changes it) prints in its safe
+// form. The command then fails with "calendar not found" and harms nothing.
+func commandName(name string) string {
+	if safe := safeText(name); safe != name {
+		return shellQuote(safe)
+	}
+	return shellQuote(name)
+}
+
 // diagnoseAll collects the wedged resources of every calendar.
 func diagnoseAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar) ([]doctorEntry, error) {
 	var entries []doctorEntry
@@ -297,7 +308,7 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 		if n.state == "legacy_override" {
 			fmt.Fprintf(out, "calendar %q uid %s (%s): %d override row(s) with no master in this calendar; the series in calendar %q owns them. Move them there with: chroncal event update %d --calendar %s\n",
 				safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), n.rows,
-				safeText(n.ownerCalendarName), n.rowID, shellQuote(safeText(n.ownerCalendarName)))
+				safeText(n.ownerCalendarName), n.rowID, commandName(n.ownerCalendarName))
 			continue
 		}
 		fmt.Fprintf(out, "calendar %q uid %s (%s): the edit stays local: %s\n",

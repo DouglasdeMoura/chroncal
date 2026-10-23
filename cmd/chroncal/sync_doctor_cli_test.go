@@ -409,6 +409,8 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 		`INSERT INTO calendars (name) VALUES ('Home')`,
 		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule)
 		 SELECT 'legacy-cli@example.com', id, 't', '2026-05-11T09:00:00Z', '2026-05-11T10:00:00Z', 'FREQ=WEEKLY' FROM calendars WHERE name = 'Home'`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
+		 SELECT 'legacy-cli@example.com', id, 't', '2026-05-12T09:30:00Z', '2026-05-12T10:30:00Z', '2026-05-12T09:00:00Z', '2026-05-01T00:00:00Z' FROM calendars WHERE name = 'Linked'`,
 		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
 		 SELECT 'legacy-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z' FROM calendars WHERE name = 'Linked'`,
 		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
@@ -422,7 +424,7 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 			t.Fatalf("seed %q: %v", stmt, err)
 		}
 	}
-	if err := a.DB.QueryRowContext(ctx, `SELECT MIN(id) FROM events WHERE recurrence_id != '' AND uid = 'legacy-cli@example.com'`).Scan(&rowID); err != nil {
+	if err := a.DB.QueryRowContext(ctx, `SELECT MIN(id) FROM events WHERE recurrence_id != '' AND uid = 'legacy-cli@example.com' AND deleted_at IS NULL`).Scan(&rowID); err != nil {
 		t.Fatalf("read row id: %v", err)
 	}
 	a.Close()
@@ -431,7 +433,7 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
 	}
-	want := fmt.Sprintf(`calendar "Linked" uid legacy-cli@example.com (event): 2 override row(s) with no master in this calendar; the series in calendar "Home" owns them. Move them there with: chroncal event update %d --calendar 'Home'`, rowID)
+	want := fmt.Sprintf(`calendar "Linked" uid legacy-cli@example.com (event): 3 override row(s) with no master in this calendar; the series in calendar "Home" owns them. Move them there with: chroncal event update %d --calendar 'Home'`, rowID)
 	if !strings.Contains(stdout, want) {
 		t.Errorf("output %q misses %q", stdout, want)
 	}
@@ -444,7 +446,7 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &items); err != nil {
 		t.Fatalf("decode %q: %v", stdout, err)
 	}
-	if len(items) != 1 || items[0]["state"] != "legacy_override" || items[0]["id"] != float64(rowID) || items[0]["rows"] != float64(2) ||
+	if len(items) != 1 || items[0]["state"] != "legacy_override" || items[0]["id"] != float64(rowID) || items[0]["rows"] != float64(3) ||
 		items[0]["owner_calendar_name"] != "Home" || items[0]["calendar_name"] != "Linked" {
 		t.Fatalf("items = %v, want one legacy_override item", items)
 	}

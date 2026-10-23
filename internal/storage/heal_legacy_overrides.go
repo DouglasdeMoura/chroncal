@@ -16,7 +16,7 @@ import (
 // The heal moves the rows of one UID in one calendar as one unit, with
 // their delete-log rows (MoveEventUIDRows). It moves the rows only when all
 // of these conditions are true:
-//   - The source calendar and the owner calendar are quiet (localQuietTx):
+//   - The source calendar and the owner calendar are quiet (localQuiet):
 //     no account link, no read-only access, and no sync row, tombstone, or
 //     open sync conflict of the UID. The heal then makes no server write,
 //     and no pull can prune the moved rows. An older version did not always
@@ -60,77 +60,95 @@ func healLegacyEventOverrides(ctx context.Context, conn *sql.DB, q *Queries) err
 // healLegacyEventOverride moves the legacy overrides of uid in calendarID to
 // the calendar of their owner, in one transaction. It does nothing when a
 // condition of healLegacyEventOverrides is false.
+//
+// The checks run first with no transaction. A row that stays then takes no
+// write lock on startup: the connection opens each transaction with
+// _txlock=immediate, and a sync of another process can hold the lock. The
+// transaction of the move runs the checks again.
 func healLegacyEventOverride(ctx context.Context, conn *sql.DB, q *Queries, calendarID int64, uid string) error {
+	if _, ok, err := legacyMoveTarget(ctx, q, calendarID, uid); err != nil || !ok {
+		return err
+	}
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	qtx := q.WithTx(tx)
-
-	owner, err := qtx.GetSeriesMasterOfCalendar(ctx, GetSeriesMasterOfCalendarParams{
-		CalendarID: calendarID, Uid: uid, IncludeDeleted: true,
-	})
-	if found, err := Found(err); err != nil {
-		return fmt.Errorf("find owner: %w", err)
-	} else if !found || owner.DeletedAt != nil || owner.CalendarID == calendarID {
-		return nil
-	}
-	for _, id := range []int64{calendarID, owner.CalendarID} {
-		if quiet, err := localQuietTx(ctx, qtx, id, uid); err != nil || !quiet {
-			return err
-		}
-	}
-	moves, err := qtx.CountOpenMoveConflictsInMoveScope(ctx, CountOpenMoveConflictsInMoveScopeParams{
-		Uid: uid, FromCalendarID: calendarID, ToCalendarID: owner.CalendarID,
-	})
-	if err != nil {
-		return fmt.Errorf("count open move conflicts: %w", err)
-	}
-	if moves > 0 {
-		return nil
-	}
-	collisions, err := qtx.CountEventUIDMoveCollisions(ctx, CountEventUIDMoveCollisionsParams{
-		ToCalendarID: owner.CalendarID, Uid: uid, FromCalendarID: calendarID,
-	})
-	if err != nil {
-		return fmt.Errorf("count collisions: %w", err)
-	}
-	if collisions.Live > 0 || collisions.Trashed > 0 {
-		return nil
+	ownerCalendarID, ok, err := legacyMoveTarget(ctx, qtx, calendarID, uid)
+	if err != nil || !ok {
+		return err
 	}
 	if err := MoveEventUIDRows(ctx, qtx, MoveEventUIDToCalendarParams{
-		FromCalendarID: calendarID, ToCalendarID: owner.CalendarID, Uid: uid,
+		FromCalendarID: calendarID, ToCalendarID: ownerCalendarID, Uid: uid,
 	}, true); err != nil {
 		return err
 	}
-	if err := MarkResourceDirty(ctx, tx, owner.CalendarID, uid, "event"); err != nil {
+	if err := MarkResourceDirty(ctx, tx, ownerCalendarID, uid, "event"); err != nil {
 		return fmt.Errorf("mark owner dirty: %w", err)
 	}
 	return tx.Commit()
 }
 
-// localQuietTx reports whether calendarID is a local calendar with no sync
+// legacyMoveTarget checks the conditions of healLegacyEventOverrides for the
+// legacy overrides of uid in calendarID. ok reports whether the heal moves
+// them. ownerCalendarID is the calendar of the owner.
+func legacyMoveTarget(ctx context.Context, q *Queries, calendarID int64, uid string) (ownerCalendarID int64, ok bool, err error) {
+	owner, err := q.GetSeriesMasterOfCalendar(ctx, GetSeriesMasterOfCalendarParams{
+		CalendarID: calendarID, Uid: uid, IncludeDeleted: true,
+	})
+	if found, err := Found(err); err != nil {
+		return 0, false, fmt.Errorf("find owner: %w", err)
+	} else if !found || owner.DeletedAt != nil || owner.CalendarID == calendarID {
+		return 0, false, nil
+	}
+	for _, id := range []int64{calendarID, owner.CalendarID} {
+		if quiet, err := localQuiet(ctx, q, id, uid); err != nil || !quiet {
+			return 0, false, err
+		}
+	}
+	moves, err := q.CountOpenMoveConflictsInMoveScope(ctx, CountOpenMoveConflictsInMoveScopeParams{
+		Uid: uid, FromCalendarID: calendarID, ToCalendarID: owner.CalendarID,
+	})
+	if err != nil {
+		return 0, false, fmt.Errorf("count open move conflicts: %w", err)
+	}
+	if moves > 0 {
+		return 0, false, nil
+	}
+	collisions, err := q.CountEventUIDMoveCollisions(ctx, CountEventUIDMoveCollisionsParams{
+		ToCalendarID: owner.CalendarID, Uid: uid, FromCalendarID: calendarID,
+	})
+	if err != nil {
+		return 0, false, fmt.Errorf("count collisions: %w", err)
+	}
+	if collisions.Live > 0 || collisions.Trashed > 0 {
+		return 0, false, nil
+	}
+	return owner.CalendarID, true, nil
+}
+
+// localQuiet reports whether calendarID is a local calendar with no sync
 // state of uid: no account link, no read-only access (a user edit there
 // refuses), and no sync row, tombstone, or open sync conflict of uid. An
 // unlink can leave such state.
-func localQuietTx(ctx context.Context, qtx *Queries, calendarID int64, uid string) (bool, error) {
-	cal, err := qtx.GetCalendar(ctx, calendarID)
+func localQuiet(ctx context.Context, q *Queries, calendarID int64, uid string) (bool, error) {
+	cal, err := q.GetCalendar(ctx, calendarID)
 	if err != nil {
 		return false, fmt.Errorf("get calendar %d: %w", calendarID, err)
 	}
 	if CalendarLinked(cal) || CalendarReadOnly(cal.RemoteAccess) {
 		return false, nil
 	}
-	_, err = qtx.GetSyncResource(ctx, GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
+	_, err = q.GetSyncResource(ctx, GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
 	if found, err := Found(err); err != nil || found {
 		return false, err
 	}
-	_, err = qtx.GetTombstoneByCalendarAndUID(ctx, GetTombstoneByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
+	_, err = q.GetTombstoneByCalendarAndUID(ctx, GetTombstoneByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
 	if found, err := Found(err); err != nil || found {
 		return false, err
 	}
-	open, err := qtx.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: calendarID, Uid: uid})
+	open, err := q.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: calendarID, Uid: uid})
 	if err != nil {
 		return false, fmt.Errorf("count open conflicts: %w", err)
 	}

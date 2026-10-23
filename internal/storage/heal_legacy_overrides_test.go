@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
@@ -265,5 +266,50 @@ func TestHealLegacyOverrides_ClearsUnownedEdit(t *testing.T) {
 	}
 	if flagged != 0 {
 		t.Errorf("rows with edit_unowned after the heal = %d, want 0", flagged)
+	}
+}
+
+// TestHealLegacyOverrides_KeptRowTakesNoWriteLock holds the write lock in a
+// second connection, as a sync of another process can. A legacy override
+// that the heal keeps (here: a collision in the owner calendar) must not
+// wait for the lock, or Open fails with SQLITE_BUSY after the busy timeout.
+func TestHealLegacyOverrides_KeptRowTakesNoWriteLock(t *testing.T) {
+	t.Parallel()
+	path := testutil.DBPath(t)
+	db, q, err := storage.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	f := legacyFixture{db: db, q: q}
+	f.m = f.calendar(t, "M")
+	f.l = f.calendar(t, "L")
+	f.event(t, f.m, "", false)
+	f.event(t, f.m, "2026-04-08T09:00:00Z", false)
+	f.event(t, f.l, "2026-04-08T09:00:00Z", false)
+
+	other, _, err := storage.Open(path)
+	if err != nil {
+		t.Fatalf("Open second connection: %v", err)
+	}
+	defer other.Close()
+	lock, err := other.Begin()
+	if err != nil {
+		t.Fatalf("take the write lock: %v", err)
+	}
+	defer func() { _ = lock.Rollback() }()
+
+	done := make(chan error, 1)
+	go func() { done <- storage.HealLegacyEventOverrides(context.Background(), db, q) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("heal under a held write lock: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("heal waits for the write lock for a row that it keeps")
+	}
+	if got := f.rowsIn(t, f.l); got != 1 {
+		t.Errorf("rows in L = %d, want 1", got)
 	}
 }
