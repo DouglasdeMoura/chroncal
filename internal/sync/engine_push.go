@@ -1816,7 +1816,7 @@ func (e *Engine) putAfterSettle(ctx context.Context, client *caldav.Client, putP
 	}
 	newEtag, err := e.putResource(ctx, client, putPath, cal, etag)
 	for _, delay := range delays {
-		if err == nil || !(caldav.IsConflict(err) || caldav.IsUIDConflict(err)) {
+		if err == nil || (!caldav.IsConflict(err) && !caldav.IsUIDConflict(err)) {
 			break
 		}
 		timer := time.NewTimer(delay)
