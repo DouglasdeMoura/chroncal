@@ -626,3 +626,51 @@ func TestService_RestoreAllCountsRowsThatTheMasterBroughtBack(t *testing.T) {
 		t.Fatalf("RestoreAll(master first) = %d, %v; want 2, nil", n, err)
 	}
 }
+
+// TestService_RestoreAllReportsAStaleEntryOfAnotherSeries marks two deleted
+// events, and the second one is already back. Its entry gives
+// event.ErrNotDeleted. No entry of its series restored in this call, so
+// RestoreAll reports the error, in either order of the selection.
+func TestService_RestoreAllReportsAStaleEntryOfAnotherSeries(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	ctx := context.Background()
+
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	var ids []int64
+	for _, title := range []string{"A", "B"} {
+		e, err := events.Create(ctx, event.CreateParams{CalendarID: 1, Title: title, StartTime: start, EndTime: start.Add(time.Hour)})
+		if err != nil {
+			t.Fatalf("create %s: %v", title, err)
+		}
+		if err := events.Delete(ctx, e.ID); err != nil {
+			t.Fatalf("delete %s: %v", title, err)
+		}
+		ids = append(ids, e.ID)
+	}
+	entries, err := svc.List(ctx, 1)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("List = %+v, %v; want 2 entries", entries, err)
+	}
+	byID := map[int64]Entry{}
+	for _, e := range entries {
+		byID[e.ID] = e
+	}
+	if err := svc.Restore(ctx, byID[ids[1]]); err != nil {
+		t.Fatalf("restore B: %v", err)
+	}
+	if n, err := svc.RestoreAll(ctx, []Entry{byID[ids[0]], byID[ids[1]]}); !errors.Is(err, event.ErrNotDeleted) || n != 1 {
+		t.Fatalf("RestoreAll(A, stale B) = %d, %v; want 1, ErrNotDeleted", n, err)
+	}
+	if err := events.Delete(ctx, ids[0]); err != nil {
+		t.Fatalf("delete A again: %v", err)
+	}
+	entries, err = svc.List(ctx, 1)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("List = %+v, %v; want A", entries, err)
+	}
+	if n, err := svc.RestoreAll(ctx, []Entry{byID[ids[1]], entries[0]}); !errors.Is(err, event.ErrNotDeleted) || n != 1 {
+		t.Fatalf("RestoreAll(stale B, A) = %d, %v; want 1, ErrNotDeleted", n, err)
+	}
+}

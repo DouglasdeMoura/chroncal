@@ -164,27 +164,41 @@ func (s *Service) List(ctx context.Context, calendarID int64) ([]Entry, error) {
 // RestoreAll tries such an entry again after the other entries, as long as
 // a pass restores at least one entry. Each restore runs in its own
 // transaction, so a refusal changes nothing. Any other error stops the
-// restore at once.
+// restore at once, with one exception.
 //
 // The restore of a master also restores the rows of its series delete. Their
-// own entries then give event.ErrNotDeleted. After a restore in the same call,
-// RestoreAll counts such an entry as restored.
+// own entries then give event.ErrNotDeleted. RestoreAll keeps such an entry
+// until the passes end. It then counts the entry as restored when an entry of
+// the same series (calendar and UID) restored in this call. Else the error
+// stands. The order of the selection then does not change the result.
 //
 // RestoreAll returns the count of restored entries and the error, so a
 // caller can report a partial restore.
 func (s *Service) RestoreAll(ctx context.Context, entries []Entry) (int, error) {
+	type seriesKey struct {
+		calendarID int64
+		uid        string
+	}
+	restoredSeries := map[seriesKey]bool{}
 	restored := 0
+	var gone []Entry
+	var goneErrs []error
+	var waitErr error
 	pending := entries
 	for len(pending) > 0 {
 		var waiting []Entry
-		var waitErr error
+		waitErr = nil
+		progress := false
 		for _, e := range pending {
 			err := s.Restore(ctx, e)
 			switch {
 			case err == nil:
 				restored++
-			case restored > 0 && errors.Is(err, event.ErrNotDeleted):
-				restored++
+				progress = true
+				restoredSeries[seriesKey{e.CalendarID, e.UID}] = true
+			case errors.Is(err, event.ErrNotDeleted):
+				gone = append(gone, e)
+				goneErrs = append(goneErrs, err)
 			case errors.Is(err, event.ErrNewerTruncation), errors.Is(err, event.ErrMasterInTrash):
 				waiting = append(waiting, e)
 				if waitErr == nil {
@@ -194,12 +208,18 @@ func (s *Service) RestoreAll(ctx context.Context, entries []Entry) (int, error) 
 				return restored, err
 			}
 		}
-		if len(waiting) == len(pending) {
-			return restored, waitErr
+		if !progress {
+			break
 		}
 		pending = waiting
 	}
-	return restored, nil
+	for i, e := range gone {
+		if !restoredSeries[seriesKey{e.CalendarID, e.UID}] {
+			return restored, goneErrs[i]
+		}
+		restored++
+	}
+	return restored, waitErr
 }
 
 // Restore reverses the delete recorded in e. It dispatches by Kind.
