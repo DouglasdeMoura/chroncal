@@ -132,27 +132,6 @@ func TestHealLegacyOverrides_MovesLocalRowsHome(t *testing.T) {
 	}
 }
 
-// TestHealLegacyOverrides_MarksLinkedOwnerDirty checks that a linked owner
-// calendar gets the dirty mark, so its server object holds the moved rows.
-func TestHealLegacyOverrides_MarksLinkedOwnerDirty(t *testing.T) {
-	t.Parallel()
-	f := newLegacyFixture(t)
-	f.link(t, f.m, "write")
-
-	f.heal(t)
-
-	if got := f.rowsIn(t, f.m); got != 3 {
-		t.Fatalf("rows in M after the heal = %d, want 3", got)
-	}
-	res, err := f.q.GetSyncResource(context.Background(), storage.GetSyncResourceParams{CalendarID: f.m, Uid: legacyUID})
-	if err != nil {
-		t.Fatalf("GetSyncResource: %v", err)
-	}
-	if res.Dirty != 1 {
-		t.Errorf("dirty = %d, want 1", res.Dirty)
-	}
-}
-
 // TestHealLegacyOverrides_KeepsRows covers each condition that keeps the
 // rows of L where they are.
 func TestHealLegacyOverrides_KeepsRows(t *testing.T) {
@@ -179,8 +158,23 @@ func TestHealLegacyOverrides_KeepsRows(t *testing.T) {
 				t.Fatalf("trash master: %v", err)
 			}
 		}},
-		{"read-only owner calendar", func(t *testing.T, f legacyFixture) {
-			f.link(t, f.m, "read")
+		{"linked owner calendar", func(t *testing.T, f legacyFixture) {
+			f.link(t, f.m, "write")
+		}},
+		{"read-only access left on the owner calendar", func(t *testing.T, f legacyFixture) {
+			if _, err := f.db.Exec(`UPDATE calendars SET remote_access = 'read' WHERE id = ?`, f.m); err != nil {
+				t.Fatalf("set remote_access: %v", err)
+			}
+		}},
+		{"sync row of the uid in the owner calendar", func(t *testing.T, f legacyFixture) {
+			if _, err := f.db.Exec(`INSERT INTO sync_resources (calendar_id, uid, owner_type) VALUES (?, ?, 'event')`, f.m, legacyUID); err != nil {
+				t.Fatalf("insert sync row: %v", err)
+			}
+		}},
+		{"open conflict in the source calendar", func(t *testing.T, f legacyFixture) {
+			if _, err := f.db.Exec(`INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag) VALUES (?, 'event', 1, ?, '', '', '')`, f.l, legacyUID); err != nil {
+				t.Fatalf("insert conflict: %v", err)
+			}
 		}},
 		{"collision in the owner calendar", func(t *testing.T, f legacyFixture) {
 			f.event(t, f.m, "2026-04-08T09:00:00Z", false)

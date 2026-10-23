@@ -431,7 +431,7 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
 	}
-	want := fmt.Sprintf(`calendar "Linked" uid legacy-cli@example.com (event): 2 override row(s) with no master in this calendar; the series in calendar "Home" owns them. Move them there with: chroncal event update %d --calendar "Home"`, rowID)
+	want := fmt.Sprintf(`calendar "Linked" uid legacy-cli@example.com (event): 2 override row(s) with no master in this calendar; the series in calendar "Home" owns them. Move them there with: chroncal event update %d --calendar 'Home'`, rowID)
 	if !strings.Contains(stdout, want) {
 		t.Errorf("output %q misses %q", stdout, want)
 	}
@@ -458,5 +458,20 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 	}
 	if strings.Contains(stdout, "legacy_override") {
 		t.Errorf("output %q still lists the legacy override after the move", stdout)
+	}
+}
+
+// TestShellQuoteKeepsTheNameLiteral checks the quote of a calendar name in a
+// printed command. A shell must not expand $ or a backtick in the name.
+func TestShellQuoteKeepsTheNameLiteral(t *testing.T) {
+	for in, want := range map[string]string{
+		"Home":       `'Home'`,
+		"Work $HOME": `'Work $HOME'`,
+		"a`b`":       "'a`b`'",
+		"Doug's":     `'Doug'\''s'`,
+	} {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+		}
 	}
 }

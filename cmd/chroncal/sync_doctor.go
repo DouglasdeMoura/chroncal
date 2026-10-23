@@ -89,10 +89,7 @@ func waitingAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calend
 	if err != nil {
 		return nil, err
 	}
-	names := make(map[int64]string, len(cals))
-	for _, cal := range cals {
-		names[cal.ID] = cal.Name
-	}
+	names := calendarNames(cals)
 	var entries []waitingEntry
 	for _, w := range rows {
 		name, ok := names[w.CalendarID]
@@ -143,10 +140,7 @@ func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar
 	for _, en := range wedged {
 		isWedged[key{en.wedged.CalendarID, en.wedged.UID}] = true
 	}
-	names := make(map[int64]string, len(cals))
-	for _, cal := range cals {
-		names[cal.ID] = cal.Name
-	}
+	names := calendarNames(cals)
 	var notes []noteEntry
 	for _, cal := range cals {
 		var failures []syncPkg.PushFailure
@@ -182,7 +176,8 @@ func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar
 		for _, l := range legacy {
 			owner, ok := names[l.OwnerCalendarID]
 			if !ok {
-				owner = fmt.Sprint(l.OwnerCalendarID)
+				// cals holds every calendar, so the owner is in it.
+				continue
 			}
 			notes = append(notes, noteEntry{
 				state: "legacy_override", calendarID: cal.ID, calendarName: cal.Name,
@@ -192,6 +187,21 @@ func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar
 		}
 	}
 	return notes, nil
+}
+
+// calendarNames maps the ID of each calendar of cals to its name.
+func calendarNames(cals []storage.Calendar) map[int64]string {
+	names := make(map[int64]string, len(cals))
+	for _, cal := range cals {
+		names[cal.ID] = cal.Name
+	}
+	return names
+}
+
+// shellQuote quotes s for a POSIX shell, so a printed command stays safe to
+// paste. A calendar name can hold $, a backtick, or a quote.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // diagnoseAll collects the wedged resources of every calendar.
@@ -285,9 +295,9 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 			continue
 		}
 		if n.state == "legacy_override" {
-			fmt.Fprintf(out, "calendar %q uid %s (%s): %d override row(s) with no master in this calendar; the series in calendar %q owns them. Move them there with: chroncal event update %d --calendar %q\n",
+			fmt.Fprintf(out, "calendar %q uid %s (%s): %d override row(s) with no master in this calendar; the series in calendar %q owns them. Move them there with: chroncal event update %d --calendar %s\n",
 				safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), n.rows,
-				safeText(n.ownerCalendarName), n.rowID, safeText(n.ownerCalendarName))
+				safeText(n.ownerCalendarName), n.rowID, shellQuote(safeText(n.ownerCalendarName)))
 			continue
 		}
 		fmt.Fprintf(out, "calendar %q uid %s (%s): the edit stays local: %s\n",
