@@ -187,11 +187,11 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
 			return err
 		}
-		// A moved copy in a calendar that was local has no sync row. The
-		// link gives it one, so the copy pushes and counts as live (issue
-		// #841).
-		if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, cal.ID); err != nil {
-			return fmt.Errorf("mark the moved copies dirty: %w", err)
+		// An item of a calendar that was local has no sync row. The link
+		// gives each one a dirty row, so the next push uploads it (issue
+		// #866). A moved copy then pushes and counts as live (issue #841).
+		if err := markLinkedItemsDirty(ctx, qtx, cal.ID); err != nil {
+			return err
 		}
 		// Intentionally skip seeding RemoteColor on re-link: the calendar
 		// is already linked, the user may have just edited Color in the
@@ -253,10 +253,11 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
 		return err
 	}
-	// A moved copy in a calendar that was local has no sync row. The link
-	// gives it one, so the copy pushes and counts as live (issue #841).
-	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, cal.ID); err != nil {
-		return fmt.Errorf("mark the moved copies dirty: %w", err)
+	// An item of a calendar that was local has no sync row. The link gives
+	// each one a dirty row, so the next push uploads it (issue #866). A
+	// moved copy then pushes and counts as live (issue #841).
+	if err := markLinkedItemsDirty(ctx, qtx, cal.ID); err != nil {
+		return err
 	}
 	if link.RemoteColor != "" {
 		if err := qtx.UpdateCalendarColorFromSync(ctx, storage.UpdateCalendarColorFromSyncParams{
@@ -303,6 +304,21 @@ func updateCalendarCapabilities(ctx context.Context, q *storage.Queries, calenda
 		ID:               calendarID,
 	}); err != nil {
 		return fmt.Errorf("seed remote calendar capabilities: %w", err)
+	}
+	return nil
+}
+
+// markLinkedItemsDirty gives each local item of a newly linked calendar a
+// dirty sync row (MarkLocalItemsDirtyInCalendar) and each moved copy its
+// sync row (MarkMovedCopiesDirtyInCalendar). The next push then uploads the
+// items. Each create sends If-None-Match, so an object of the remote
+// collection at the same href gets a conflict, not an overwrite.
+func markLinkedItemsDirty(ctx context.Context, qtx *storage.Queries, calendarID int64) error {
+	if err := qtx.MarkLocalItemsDirtyInCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("mark the local items dirty: %w", err)
+	}
+	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("mark the moved copies dirty: %w", err)
 	}
 	return nil
 }

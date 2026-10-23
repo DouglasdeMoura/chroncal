@@ -507,6 +507,37 @@ SELECT CAST(
       AND sc.move_state IN ('open', 'local-picked', 'cancel-failed')
   ) AS INTEGER) AS has_move;
 
+-- name: MarkLocalItemsDirtyInCalendar :exec
+-- Give each live local item of a linked calendar a dirty sync row without
+-- an href, so the next push uploads it. A link of a local calendar runs it.
+-- An item is a UID with a live master row. A UID with a sync row or a
+-- tombstone keeps it. A read-only collection never takes an upload. A
+-- collection that does not list a component (remote_components) gets no
+-- item of that component. Each create sends If-None-Match, so an object at
+-- the same href gets 412 and a conflict, not an overwrite. A link runs
+-- MarkMovedCopiesDirtyInCalendar too: a moved copy gets its row also in a
+-- read-only collection, because the move rules count that row. See issue
+-- #866.
+INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
+SELECT c.id, x.uid, x.owner_type, 1, 'sync-token'
+FROM calendars c
+JOIN (
+    SELECT e.uid, 'event' AS owner_type, 'VEVENT' AS component FROM events e
+    WHERE e.calendar_id = sqlc.arg(calendar_id) AND e.deleted_at IS NULL AND e.recurrence_id = ''
+    UNION
+    SELECT td.uid, 'todo' AS owner_type, 'VTODO' AS component FROM todos td
+    WHERE td.calendar_id = sqlc.arg(calendar_id) AND td.deleted_at IS NULL AND td.recurrence_id = ''
+    UNION
+    SELECT j.uid, 'journal' AS owner_type, 'VJOURNAL' AS component FROM journals j
+    WHERE j.calendar_id = sqlc.arg(calendar_id) AND j.deleted_at IS NULL AND j.recurrence_id = ''
+) x
+WHERE c.id = sqlc.arg(calendar_id) AND c.account_id IS NOT NULL AND c.account_id != 0
+  AND lower(trim(c.remote_access)) != 'read'
+  AND (trim(c.remote_components) = ''
+       OR instr(',' || upper(replace(c.remote_components, ' ', '')) || ',', ',' || x.component || ',') > 0)
+  AND NOT EXISTS (SELECT 1 FROM tombstones t WHERE t.calendar_id = c.id AND t.uid = x.uid)
+ON CONFLICT(calendar_id, uid) DO NOTHING;
+
 -- name: MarkMovedCopiesDirtyInCalendar :exec
 -- Give each live moved copy in a linked calendar a dirty sync row. The query
 -- starts from the moves into the calendar: the move tombstones that name it

@@ -519,6 +519,21 @@ func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 		t.Fatalf("account remove should keep remote_name and local color: %+v", unlinked)
 	}
 
+	// An event made while the calendar is local has no sync row. The relink
+	// must give it a dirty row, so the next push uploads it (issue #866).
+	offline, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: seededID,
+		Title:      "Made offline",
+		StartTime:  time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 4, 2, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create offline event: %v", err)
+	}
+	if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: seededID, Uid: offline.UID}); err == nil {
+		t.Fatal("an event of an unlinked calendar has a sync row before the relink")
+	}
+
 	remote[0].Name = "Second Live"
 	remote[0].Color = "#AABBCC"
 	remote[1].Name = "Seeded Live"
@@ -543,6 +558,9 @@ func TestServiceImportRelinksCalendarsAfterAccountRemove(t *testing.T) {
 	}
 	if len(second.ExistingIDs) != 0 {
 		t.Fatalf("re-import ExistingIDs = %+v, want empty", second.ExistingIDs)
+	}
+	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: seededID, Uid: offline.UID}); err != nil || sr.Dirty != 1 || sr.RemoteUrl != "" {
+		t.Fatalf("sync row of the offline event = %+v, %v; want a dirty row without an href", sr, err)
 	}
 
 	calendars, err := q.ListCalendars(ctx)
