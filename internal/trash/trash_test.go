@@ -3,6 +3,7 @@ package trash
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"reflect"
 	"strconv"
 	"testing"
@@ -464,5 +465,68 @@ func TestPurgeOld_OneTransactionForRowsAndLogs(t *testing.T) {
 	}
 	if _, err := events.GetIncludingDeleted(ctx, single.ID); err != nil {
 		t.Errorf("old row after the failed purge: %v, want the rollback to keep it", err)
+	}
+}
+
+// TestService_RestoreAllRestoresTruncationsInAnyOrder selects two
+// truncations of one series with the blocked one first. Restore of that
+// entry refuses with event.ErrNewerTruncation, so RestoreAll tries it again
+// after the newer one. Alone, the blocked entry still refuses.
+func TestService_RestoreAllRestoresTruncationsInAnyOrder(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	events := event.NewService(db, q)
+	svc := NewService(events, todo.NewService(db, q), journal.NewService(db, q))
+	ctx := context.Background()
+
+	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
+	master, err := events.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Standup", StartTime: start, EndTime: start.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	for _, day := range []int{5, 3} {
+		if err := events.DeleteFromInstance(ctx, 1, master.UID, start.AddDate(0, 0, day)); err != nil {
+			t.Fatalf("truncate at day %d: %v", day, err)
+		}
+	}
+	listTruncations := func() (blocked, free []Entry) {
+		t.Helper()
+		entries, err := svc.List(ctx, 1)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		for _, e := range entries {
+			switch {
+			case e.Kind != KindEventSeriesTail:
+			case e.NewerTruncationID != 0:
+				blocked = append(blocked, e)
+			default:
+				free = append(free, e)
+			}
+		}
+		return blocked, free
+	}
+	blocked, free := listTruncations()
+	if len(blocked) != 1 || len(free) != 1 {
+		t.Fatalf("truncations = %d blocked, %d free; want 1 and 1", len(blocked), len(free))
+	}
+
+	if n, err := svc.RestoreAll(ctx, blocked); !errors.Is(err, event.ErrNewerTruncation) || n != 0 {
+		t.Fatalf("RestoreAll(blocked alone) = %d, %v; want 0, ErrNewerTruncation", n, err)
+	}
+	if n, err := svc.RestoreAll(ctx, append(blocked, free...)); err != nil || n != 2 {
+		t.Fatalf("RestoreAll(blocked first) = %d, %v; want 2, nil", n, err)
+	}
+	if blocked, free := listTruncations(); len(blocked)+len(free) != 0 {
+		t.Errorf("truncations after RestoreAll = %d, want 0", len(blocked)+len(free))
+	}
+	got, err := events.Get(ctx, master.ID)
+	if err != nil {
+		t.Fatalf("get master: %v", err)
+	}
+	if got.RecurrenceRule != "FREQ=DAILY;COUNT=10" {
+		t.Errorf("RRULE after RestoreAll = %q, want the rule before the truncations", got.RecurrenceRule)
 	}
 }
