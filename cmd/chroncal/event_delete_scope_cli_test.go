@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/douglasdemoura/chroncal/internal/app"
 )
 
 func addDailySeries(t *testing.T, title, date string) {
@@ -414,6 +417,7 @@ func TestEventUpdate_CalendarWithoutSeriesNamesIt(t *testing.T) {
 // seedLegacyOverrideInHome stores a daily series in Work and an override
 // of its second occurrence in Home with no master there (a legacy
 // override). It returns the UID and the row ID of the legacy override.
+// Home has an account link, so the startup heal keeps the row there.
 func seedLegacyOverrideInHome(t *testing.T) (string, int64) {
 	t.Helper()
 	for _, name := range []string{"Work", "Home"} {
@@ -421,6 +425,7 @@ func seedLegacyOverrideInHome(t *testing.T) (string, int64) {
 			t.Fatalf("calendar create %s: %v", name, err)
 		}
 	}
+	linkCalendarForLegacyOverride(t, "Home")
 	addDailySeries(t, "Standup", "2026-04-06")
 	got, _, err := runChroncalCommand(t, "event", "get", "1", "--output", "json")
 	if err != nil {
@@ -623,6 +628,7 @@ func TestEventGet_TwoLegacyOverridesShowTheWinner(t *testing.T) {
 	if _, _, err := runChroncalCommand(t, "calendar", "create", "Other"); err != nil {
 		t.Fatalf("calendar create Other: %v", err)
 	}
+	linkCalendarForLegacyOverride(t, "Other")
 	ics := filepath.Join(t.TempDir(), "legacy2.ics")
 	body := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + uid +
 		"\r\nDTSTAMP:20260401T000000Z\r\nRECURRENCE-ID:20260407T090000Z\r\nDTSTART:20260407T110000Z\r\nDTEND:20260407T113000Z\r\n" +
@@ -765,5 +771,31 @@ func TestEventDelete_SeriesWithCalendarReachesTheService(t *testing.T) {
 	}
 	if _, _, err := runChroncalCommand(t, "event", "get", orphan, "--recurrence-id", "2026-04-07T09:00:00Z"); err == nil {
 		t.Fatal("the orphan row is live after its series delete")
+	}
+}
+
+// linkCalendarForLegacyOverride gives the calendar name an account link. The
+// startup heal moves the legacy overrides of a calendar with no link into
+// the calendar of their series (issue #862). A test of the code paths for a
+// legacy override links its calendar, so the row stays, as for a pull of a
+// linked calendar.
+func linkCalendarForLegacyOverride(t *testing.T, name string) {
+	t.Helper()
+	a, err := app.New(os.Getenv("CHRONCAL_DB"))
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	ctx := context.Background()
+	res, err := a.DB.ExecContext(ctx, `INSERT INTO accounts (name, server_url, auth_type, username) VALUES ('legacy-acct-' || ?, 'https://example.com', 'basic', 'u')`, name)
+	if err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	accountID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("account LastInsertId: %v", err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `UPDATE calendars SET account_id = ?, remote_url = '/' || name || '/' WHERE name = ?`, accountID, name); err != nil {
+		t.Fatalf("link calendar %s: %v", name, err)
 	}
 }

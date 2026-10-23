@@ -449,16 +449,22 @@ func TestCalendarDeleteAbortsWhenEventCountUnknown(t *testing.T) {
 	}
 
 	// Break the events table so the count query fails, like an I/O error
-	// would. Only the count reads it at this stage of the command.
+	// would. A view with no deleted_at column takes its place. The startup
+	// heal of legacy overrides reads the columns of the view, so the open
+	// works, and only the count fails at this stage of the command.
 	func() {
 		a, err := app.New(dbPath)
 		if err != nil {
 			t.Fatalf("app.New: %v", err)
 		}
 		defer a.Close()
-		if _, err := a.DB.ExecContext(context.Background(),
-			"ALTER TABLE events RENAME TO events_hidden"); err != nil {
-			t.Fatalf("hide events: %v", err)
+		for _, stmt := range []string{
+			"ALTER TABLE events RENAME TO events_hidden",
+			"CREATE VIEW events AS SELECT id, uid, calendar_id, recurrence_id FROM events_hidden",
+		} {
+			if _, err := a.DB.ExecContext(context.Background(), stmt); err != nil {
+				t.Fatalf("hide events: %v", err)
+			}
 		}
 		t.Cleanup(func() {
 			b, berr := app.New(dbPath)
@@ -466,9 +472,13 @@ func TestCalendarDeleteAbortsWhenEventCountUnknown(t *testing.T) {
 				t.Fatalf("app.New for restore: %v", berr)
 			}
 			defer b.Close()
-			if _, err := b.DB.ExecContext(context.Background(),
-				"ALTER TABLE events_hidden RENAME TO events"); err != nil {
-				t.Fatalf("restore events: %v", err)
+			for _, stmt := range []string{
+				"DROP VIEW events",
+				"ALTER TABLE events_hidden RENAME TO events",
+			} {
+				if _, err := b.DB.ExecContext(context.Background(), stmt); err != nil {
+					t.Fatalf("restore events: %v", err)
+				}
 			}
 		})
 	}()

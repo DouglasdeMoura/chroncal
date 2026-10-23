@@ -103,23 +103,33 @@ func waitingAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calend
 }
 
 // noteEntry is one resource that the doctor lists but cannot push: a push
-// failure that is no wedge, or an edit that no series owns.
+// failure that is no wedge, an edit that no series owns, or a legacy
+// override that the startup heal kept.
 type noteEntry struct {
-	state        string // "push_failure" or "unowned"
+	state        string // "push_failure", "unowned", or "legacy_override"
 	calendarID   int64
 	calendarName string
 	uid          string
 	ownerType    string
 	count        int64  // push_failure only
-	reason       string // the last push error, or storage.NoSeriesOwnerMsg
+	reason       string // the last push error, storage.NoSeriesOwnerMsg, or legacyOverrideMsg
+	// rowID and ownerCalendarName are for legacy_override only: the
+	// override row and the calendar of the series that owns it.
+	rowID             int64
+	ownerCalendarName string
 }
+
+// legacyOverrideMsg is the reason of a legacy_override note.
+const legacyOverrideMsg = "an override with no master in this calendar"
 
 // notesAll collects the push failures and the unowned edits of the
 // calendars cals. A push failure of a wedged resource stays out: the wedged
 // line names its count already. A calendar with no account link cannot
 // push, so its old push failures stay out, as in the sync status. Its
 // unowned edits stay in: the edit of a legacy override goes to the calendar
-// of a master, and that calendar can have a link.
+// of a master, and that calendar can have a link. A legacy override shows in
+// any calendar: the startup heal keeps the rows of a linked calendar, and
+// the rows that a check of the heal stops.
 func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar, wedged []doctorEntry) ([]noteEntry, error) {
 	type key struct {
 		calendarID int64
@@ -128,6 +138,10 @@ func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar
 	isWedged := make(map[key]bool, len(wedged))
 	for _, en := range wedged {
 		isWedged[key{en.wedged.CalendarID, en.wedged.UID}] = true
+	}
+	names := make(map[int64]string, len(cals))
+	for _, cal := range cals {
+		names[cal.ID] = cal.Name
 	}
 	var notes []noteEntry
 	for _, cal := range cals {
@@ -157,6 +171,21 @@ func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar
 				uid: uid, ownerType: "event", reason: storage.NoSeriesOwnerMsg,
 			})
 		}
+		legacy, err := svc.LegacyOverrides(ctx, cal.ID)
+		if err != nil {
+			return nil, fmt.Errorf("calendar %q: %w", cal.Name, err)
+		}
+		for _, l := range legacy {
+			owner, ok := names[l.OwnerCalendarID]
+			if !ok {
+				owner = fmt.Sprint(l.OwnerCalendarID)
+			}
+			notes = append(notes, noteEntry{
+				state: "legacy_override", calendarID: cal.ID, calendarName: cal.Name,
+				uid: l.UID, ownerType: "event", reason: legacyOverrideMsg,
+				rowID: l.ID, ownerCalendarName: owner,
+			})
+		}
 	}
 	return notes, nil
 }
@@ -177,10 +206,10 @@ func diagnoseAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calen
 }
 
 // runDoctorList prints one line per resource that waits, per push failure,
-// and per unowned edit, then one line per wedged resource across all
-// calendars. JSON and YAML return an array, [] when no calendar holds any of
+// per unowned edit, and per legacy override, then one line per wedged
+// resource across all calendars. JSON and YAML return an array, [] when no calendar holds any of
 // them, like every sibling read command. The state key of each item is
-// "wedged", "waiting", "push_failure", or "unowned".
+// "wedged", "waiting", "push_failure", "unowned", or "legacy_override".
 func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Calendar) error {
 	entries, err := diagnoseAll(context.Background(), svc, cals)
 	if err != nil {
@@ -228,8 +257,12 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 				"owner_type":    n.ownerType,
 				"reason":        n.reason,
 			}
-			if n.state == "push_failure" {
+			switch n.state {
+			case "push_failure":
 				item["push_fail_count"] = n.count
+			case "legacy_override":
+				item["id"] = n.rowID
+				item["owner_calendar_name"] = n.ownerCalendarName
 			}
 			items = append(items, item)
 		}
@@ -244,6 +277,12 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 		if n.state == "push_failure" {
 			fmt.Fprintf(out, "calendar %q uid %s (%s): %d failed push attempt(s); last error: %s\n",
 				safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), n.count, safeText(n.reason))
+			continue
+		}
+		if n.state == "legacy_override" {
+			fmt.Fprintf(out, "calendar %q uid %s (%s): row %d is %s; the series in calendar %q owns it. Move it there with: chroncal event update %d --calendar %q\n",
+				safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), n.rowID, n.reason,
+				safeText(n.ownerCalendarName), n.rowID, safeText(n.ownerCalendarName))
 			continue
 		}
 		fmt.Fprintf(out, "calendar %q uid %s (%s): the edit stays local: %s\n",

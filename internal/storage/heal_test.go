@@ -16,6 +16,7 @@ func TestHealSteps_DeclaredOrder(t *testing.T) {
 		"backfill alarm uids",
 		"purge libical diagnostic x-props",
 		"normalize alarm repeat pairs",
+		"move legacy event overrides home",
 	}
 	if len(healSteps) != len(want) {
 		t.Fatalf("healSteps has %d steps, want %d (%v); add the step here and to want",
@@ -77,8 +78,8 @@ func TestHeal_ErrorNamesFailingStep(t *testing.T) {
 
 // seedDamagedRows writes one row per heal concern, as an upgrade from an
 // older build leaves them: an alarm without a UID, a libical diagnostic
-// x-property, and an alarm with a REPEAT/DURATION pair the parsers reject
-// today.
+// x-property, an alarm with a REPEAT/DURATION pair the parsers reject
+// today, and a legacy override in a calendar with no master of its UID.
 func seedDamagedRows(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
@@ -121,6 +122,21 @@ func seedDamagedRows(t *testing.T, db *sql.DB) {
 		 VALUES ('event', ?, 'X-LIC-ERROR', 'parse error')`,
 		eventID); err != nil {
 		t.Fatalf("insert x-property: %v", err)
+	}
+
+	res, err = db.ExecContext(ctx, `INSERT INTO calendars (name) VALUES ('heal-seed-legacy')`)
+	if err != nil {
+		t.Fatalf("insert calendar: %v", err)
+	}
+	legacyCalendarID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("calendar LastInsertId: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, all_day, status, transp, sequence, priority, recurrence_id)
+		 VALUES ('heal-seed-event', ?, 'Heal seed', '2026-04-01T00:00:00Z', '2026-04-01T01:00:00Z', 0, 'CONFIRMED', 'OPAQUE', 0, 0, '2026-04-01T00:00:00Z')`,
+		legacyCalendarID); err != nil {
+		t.Fatalf("insert legacy override: %v", err)
 	}
 }
 

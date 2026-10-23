@@ -156,6 +156,31 @@ func (s *Service) UnownedEdits(ctx context.Context, calendarID int64) ([]string,
 	return uids, nil
 }
 
+// LegacyOverride is a live override row in a calendar with no master of its
+// UID (see storage.LegacyOverride). OwnerCalendarID names the calendar of the
+// series that owns it. A move of the row to that calendar heals it.
+type LegacyOverride struct {
+	ID              int64
+	UID             string
+	OwnerCalendarID int64
+}
+
+// LegacyOverrides lists the live legacy overrides of calendarID that a series
+// owns. The startup heal moves the rows of a local calendar home, so the
+// list holds the rows that it keeps: mostly the rows of a linked calendar.
+// The sync doctor shows them.
+func (s *Service) LegacyOverrides(ctx context.Context, calendarID int64) ([]LegacyOverride, error) {
+	rows, err := s.q.ListLegacyEventOverridesInCalendar(ctx, calendarID)
+	if err != nil {
+		return nil, fmt.Errorf("list legacy overrides: %w", err)
+	}
+	out := make([]LegacyOverride, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, LegacyOverride{ID: r.ID, UID: r.Uid, OwnerCalendarID: r.OwnerCalendarID})
+	}
+	return out, nil
+}
+
 // WaitingResource is a sync row whose push waits for another step, for
 // example the resolution of a move conflict. A wait is no failure. Reason
 // names the step. The list derives it from the kind of the wait and the

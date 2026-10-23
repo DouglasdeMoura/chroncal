@@ -421,6 +421,27 @@ FROM events
 WHERE calendar_id = sqlc.arg(calendar_id) AND uid = sqlc.arg(uid)
   AND (deleted_at IS NULL OR CAST(sqlc.arg(include_deleted) AS BOOLEAN));
 
+-- name: ListLocalLegacyEventOverrideUIDs :many
+-- The calendars with no account link that hold a legacy override, with its
+-- UID: an override row, live or in the trash, in a calendar with no master
+-- row of its UID (see storage.LegacyOverride). A calendar with a sync row or
+-- a tombstone of the UID stays out, so the heal of legacy overrides makes
+-- no server write. The heal reads it on each startup. The override filter
+-- comes first, so a database with no legacy override reads few rows.
+SELECT DISTINCT e.calendar_id, e.uid
+FROM events AS e
+JOIN calendars AS c ON c.id = e.calendar_id
+WHERE e.recurrence_id != ''
+  AND (c.account_id IS NULL OR c.account_id = 0)
+  AND NOT EXISTS (
+    SELECT 1 FROM events AS m
+    WHERE m.calendar_id = e.calendar_id AND m.uid = e.uid AND m.recurrence_id = '')
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_resources AS r WHERE r.calendar_id = e.calendar_id AND r.uid = e.uid)
+  AND NOT EXISTS (
+    SELECT 1 FROM tombstones AS t WHERE t.calendar_id = e.calendar_id AND t.uid = e.uid)
+ORDER BY e.calendar_id, e.uid;
+
 -- name: ListTrashedEventsByUID :many
 -- The rows of one UID in the trash, in every calendar. The restore by UID
 -- reads it to find the logs that still name a row, and the orphan rows of
@@ -488,6 +509,16 @@ DELETE FROM event_series_deletes WHERE EXISTS (
     SELECT 1 FROM events AS m
     WHERE m.id IN (sqlc.slice(master_ids))
       AND m.calendar_id = event_series_deletes.calendar_id AND m.uid = event_series_deletes.uid);
+
+-- name: ListLegacyEventOverridesInCalendar :many
+-- The live legacy overrides of one calendar that a series owns, with the
+-- calendar of the owner (see the view event_series_rows). The startup heal
+-- moves the rows of a local calendar home. The rows that it keeps stay
+-- here, and the sync doctor lists them.
+SELECT s.id, s.uid, s.owner_calendar_id FROM event_series_rows AS s
+WHERE s.calendar_id = sqlc.arg(calendar_id) AND s.deleted_at IS NULL
+  AND s.recurrence_id != '' AND s.owner_calendar_id != s.calendar_id
+ORDER BY s.uid, s.id;
 
 -- name: ListUnownedEditUIDs :many
 -- The UIDs of one calendar with a live override row that no series owns
