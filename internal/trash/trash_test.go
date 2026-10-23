@@ -638,7 +638,7 @@ func TestService_RestoreAllReportsAStaleEntryOfAnotherSeries(t *testing.T) {
 	ctx := context.Background()
 
 	start := time.Date(2026, 5, 4, 9, 0, 0, 0, time.UTC)
-	var ids []int64
+	ids := make([]int64, 0, 2)
 	for _, title := range []string{"A", "B"} {
 		e, err := events.Create(ctx, event.CreateParams{CalendarID: 1, Title: title, StartTime: start, EndTime: start.Add(time.Hour)})
 		if err != nil {
