@@ -1161,13 +1161,15 @@ func (q *Queries) ListEventsByUIDAndRecurrenceID(ctx context.Context, arg ListEv
 }
 
 const listLegacyEventOverrideUIDsInCalendar = `-- name: ListLegacyEventOverrideUIDsInCalendar :many
-SELECT CAST(MIN(s.id) AS INTEGER) AS id, s.uid, s.owner_calendar_id, COUNT(*) AS row_count
+SELECT CAST(MIN(CASE WHEN s.deleted_at IS NULL THEN s.id END) AS INTEGER) AS id,
+    s.uid, s.owner_calendar_id, COUNT(*) AS row_count
 FROM event_series_rows AS s
 JOIN events AS m ON m.calendar_id = s.owner_calendar_id AND m.uid = s.uid
   AND m.recurrence_id = '' AND m.deleted_at IS NULL
-WHERE s.calendar_id = ?1 AND s.deleted_at IS NULL
+WHERE s.calendar_id = ?1
   AND s.recurrence_id != '' AND s.owner_calendar_id != s.calendar_id
 GROUP BY s.uid, s.owner_calendar_id
+HAVING SUM(s.deleted_at IS NULL) > 0
 ORDER BY s.uid
 `
 
@@ -1180,10 +1182,11 @@ type ListLegacyEventOverrideUIDsInCalendarRow struct {
 
 // The UIDs of one calendar with a live legacy override that the series of a
 // live master owns (see the view event_series_rows). Each row gives the
-// calendar of the owner, the lowest row ID, and the count of rows. The
-// startup heal moves the rows of a local calendar home. The rows that it
-// keeps stay here, and the sync doctor lists them. A move of one row takes
-// the other rows of the UID with it, so the doctor needs one row ID.
+// calendar of the owner, the lowest live row ID, and the count of rows, the
+// rows in the trash included. The startup heal moves the rows of a local
+// calendar home. The rows that it keeps stay here, and the sync doctor
+// lists them. A move of one live row takes the other rows of the UID with
+// it, so the doctor needs one live row ID.
 func (q *Queries) ListLegacyEventOverrideUIDsInCalendar(ctx context.Context, calendarID int64) ([]ListLegacyEventOverrideUIDsInCalendarRow, error) {
 	rows, err := q.db.QueryContext(ctx, listLegacyEventOverrideUIDsInCalendar, calendarID)
 	if err != nil {
