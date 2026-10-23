@@ -389,10 +389,12 @@ func TestSyncDoctorListsPushFailuresAndUnownedEdits(t *testing.T) {
 	}
 }
 
-// TestSyncDoctorListsLegacyOverride checks that the doctor lists a legacy
-// override that the startup heal keeps, with the command that moves it home
-// (issue #862). The row is in a linked calendar, so the heal does not move
-// it. After the move that the hint names, the doctor lists nothing.
+// TestSyncDoctorListsLegacyOverride checks that the doctor lists the legacy
+// overrides that the startup heal keeps, one line for each UID, with the
+// command that moves them home (issue #862). The rows are in a linked
+// calendar, so the heal does not move them. A UID whose master is in the
+// trash has no series to move to, so it does not show. After the move that
+// the hint names, the doctor lists nothing.
 func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	a, err := app.New(dbPath)
@@ -409,12 +411,18 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 		 SELECT 'legacy-cli@example.com', id, 't', '2026-05-11T09:00:00Z', '2026-05-11T10:00:00Z', 'FREQ=WEEKLY' FROM calendars WHERE name = 'Home'`,
 		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
 		 SELECT 'legacy-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z' FROM calendars WHERE name = 'Linked'`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+		 SELECT 'legacy-cli@example.com', id, 't', '2026-05-25T09:30:00Z', '2026-05-25T10:30:00Z', '2026-05-25T09:00:00Z' FROM calendars WHERE name = 'Linked'`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule, deleted_at)
+		 SELECT 'trashed-cli@example.com', id, 't', '2026-05-11T09:00:00Z', '2026-05-11T10:00:00Z', 'FREQ=WEEKLY', '2026-05-01T00:00:00Z' FROM calendars WHERE name = 'Home'`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+		 SELECT 'trashed-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z' FROM calendars WHERE name = 'Linked'`,
 	} {
 		if _, err := a.DB.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("seed %q: %v", stmt, err)
 		}
 	}
-	if err := a.DB.QueryRowContext(ctx, `SELECT id FROM events WHERE recurrence_id != '' AND uid = 'legacy-cli@example.com'`).Scan(&rowID); err != nil {
+	if err := a.DB.QueryRowContext(ctx, `SELECT MIN(id) FROM events WHERE recurrence_id != '' AND uid = 'legacy-cli@example.com'`).Scan(&rowID); err != nil {
 		t.Fatalf("read row id: %v", err)
 	}
 	a.Close()
@@ -423,7 +431,7 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
 	}
-	want := fmt.Sprintf(`calendar "Linked" uid legacy-cli@example.com (event): row %d is an override with no master in this calendar; the series in calendar "Home" owns it. Move it there with: chroncal event update %d --calendar "Home"`, rowID, rowID)
+	want := fmt.Sprintf(`calendar "Linked" uid legacy-cli@example.com (event): 2 override row(s) with no master in this calendar; the series in calendar "Home" owns them. Move them there with: chroncal event update %d --calendar "Home"`, rowID)
 	if !strings.Contains(stdout, want) {
 		t.Errorf("output %q misses %q", stdout, want)
 	}
@@ -436,7 +444,7 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &items); err != nil {
 		t.Fatalf("decode %q: %v", stdout, err)
 	}
-	if len(items) != 1 || items[0]["state"] != "legacy_override" || items[0]["id"] != float64(rowID) ||
+	if len(items) != 1 || items[0]["state"] != "legacy_override" || items[0]["id"] != float64(rowID) || items[0]["rows"] != float64(2) ||
 		items[0]["owner_calendar_name"] != "Home" || items[0]["calendar_name"] != "Linked" {
 		t.Fatalf("items = %v, want one legacy_override item", items)
 	}

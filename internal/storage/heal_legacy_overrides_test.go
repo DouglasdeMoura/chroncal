@@ -191,6 +191,17 @@ func TestHealLegacyOverrides_KeepsRows(t *testing.T) {
 		{"two live masters", func(t *testing.T, f legacyFixture) {
 			f.event(t, f.calendar(t, "N"), "", false)
 		}},
+		{"open move conflict in the scope of the move", func(t *testing.T, f legacyFixture) {
+			n := f.calendar(t, "N")
+			if _, err := f.db.Exec(`INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, move_source_calendar_id) VALUES (?, 'event', 1, ?, '', '', '', ?)`, n, legacyUID, f.m); err != nil {
+				t.Fatalf("insert move conflict: %v", err)
+			}
+		}},
+		{"tombstone of the uid in the owner calendar", func(t *testing.T, f legacyFixture) {
+			if _, err := f.db.Exec(`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (?, ?, '/cal/x.ics')`, f.m, legacyUID); err != nil {
+				t.Fatalf("insert tombstone: %v", err)
+			}
+		}},
 		{"open conflict in the owner calendar", func(t *testing.T, f legacyFixture) {
 			if _, err := f.db.Exec(`INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag) VALUES (?, 'event', 1, ?, '', '', '')`, f.m, legacyUID); err != nil {
 				t.Fatalf("insert conflict: %v", err)
@@ -239,5 +250,26 @@ func TestOpenHealsLegacyOverrides(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("rows in L after reopen = %d, want 0", n)
+	}
+}
+
+// TestHealLegacyOverrides_ClearsUnownedEdit checks that a stale edit_unowned
+// flag of a moved row goes, also for a local owner calendar. An edit of the
+// row set it while two calendars held a live master.
+func TestHealLegacyOverrides_ClearsUnownedEdit(t *testing.T) {
+	t.Parallel()
+	f := newLegacyFixture(t)
+	if _, err := f.db.Exec(`UPDATE events SET edit_unowned = 1 WHERE calendar_id = ?`, f.l); err != nil {
+		t.Fatalf("set edit_unowned: %v", err)
+	}
+
+	f.heal(t)
+
+	var flagged int
+	if err := f.db.QueryRow(`SELECT COUNT(*) FROM events WHERE uid = ? AND edit_unowned = 1`, legacyUID).Scan(&flagged); err != nil {
+		t.Fatalf("count flags: %v", err)
+	}
+	if flagged != 0 {
+		t.Errorf("rows with edit_unowned after the heal = %d, want 0", flagged)
 	}
 }

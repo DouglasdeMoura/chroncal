@@ -17,7 +17,7 @@ var (
 // IsReadOnly reports whether a calendars.remote_access value marks a
 // read-only server collection.
 func IsReadOnly(remoteAccess string) bool {
-	return strings.EqualFold(strings.TrimSpace(remoteAccess), "read")
+	return storage.CalendarReadOnly(remoteAccess)
 }
 
 // EnsureWritable rejects user-originated mutations that the linked remote

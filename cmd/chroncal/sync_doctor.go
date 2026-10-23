@@ -13,7 +13,7 @@ import (
 
 // syncDoctorCmd lists wedged sync resources and offers the confirmed escape
 // push. The list also shows the rows that wait, the rows with a failed push,
-// and the edits that no series owns (issue #862). A wedged resource fails export on a deterministic hydration error.
+// the edits that no series owns, and the legacy overrides (issue #862). A wedged resource fails export on a deterministic hydration error.
 // Every sync then retries it and no edit under its UID reaches the server
 // (issue #568). The push mode omits the unreadable relations from the PUT.
 // The user accepts that loss with an explicit confirmation.
@@ -24,10 +24,12 @@ func syncDoctorCmd() *cobra.Command {
 		Short: "Find and recover wedged sync resources",
 		Long: `List local resources whose unreadable data wedges the sync.
 
-The list also shows three other kinds of resources:
+The list also shows four other kinds of resources:
   - a resource whose push waits for another step;
   - a resource whose last push failed;
-  - an edit that stays local, because no series owns the edited row.
+  - an edit that stays local, because no series owns the edited row;
+  - a legacy override: an override in a calendar with no master of its
+    UID. The line gives the command that moves it to its series.
 
 A wedged resource stays dirty forever. Every sync retries it and fails on
 the same unreadable relation, and no edit under its UID reaches the server.
@@ -113,9 +115,11 @@ type noteEntry struct {
 	ownerType    string
 	count        int64  // push_failure only
 	reason       string // the last push error, storage.NoSeriesOwnerMsg, or legacyOverrideMsg
-	// rowID and ownerCalendarName are for legacy_override only: the
-	// override row and the calendar of the series that owns it.
+	// rowID, rows, and ownerCalendarName are for legacy_override only: the
+	// lowest override row of the UID, the count of its rows, and the
+	// calendar of the series that owns them.
 	rowID             int64
+	rows              int64
 	ownerCalendarName string
 }
 
@@ -183,7 +187,7 @@ func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar
 			notes = append(notes, noteEntry{
 				state: "legacy_override", calendarID: cal.ID, calendarName: cal.Name,
 				uid: l.UID, ownerType: "event", reason: legacyOverrideMsg,
-				rowID: l.ID, ownerCalendarName: owner,
+				rowID: l.ID, rows: l.Rows, ownerCalendarName: owner,
 			})
 		}
 	}
@@ -262,6 +266,7 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 				item["push_fail_count"] = n.count
 			case "legacy_override":
 				item["id"] = n.rowID
+				item["rows"] = n.rows
 				item["owner_calendar_name"] = n.ownerCalendarName
 			}
 			items = append(items, item)
@@ -280,8 +285,8 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 			continue
 		}
 		if n.state == "legacy_override" {
-			fmt.Fprintf(out, "calendar %q uid %s (%s): row %d is %s; the series in calendar %q owns it. Move it there with: chroncal event update %d --calendar %q\n",
-				safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), n.rowID, n.reason,
+			fmt.Fprintf(out, "calendar %q uid %s (%s): %d override row(s) with no master in this calendar; the series in calendar %q owns them. Move them there with: chroncal event update %d --calendar %q\n",
+				safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), n.rows,
 				safeText(n.ownerCalendarName), n.rowID, safeText(n.ownerCalendarName))
 			continue
 		}
