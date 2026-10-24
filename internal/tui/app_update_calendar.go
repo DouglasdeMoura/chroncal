@@ -12,6 +12,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
+	"github.com/douglasdemoura/chroncal/internal/model"
 )
 
 func (m Model) handleCalendarsLoaded(msg calendarsLoadedMsg) (tea.Model, tea.Cmd) {
@@ -194,7 +195,7 @@ func (m Model) handleCalendarImportRequested(msg CalendarImportRequestedMsg) (te
 		calendarID := request.CalendarID
 		created := false
 		if calendarID == 0 {
-			cal, err := m.app.Calendars.Create(ctx, request.NewName, request.NewColor, "")
+			cal, err := m.app.Calendars.Create(ctx, request.NewName, model.NormalizeHexColor(request.NewColor), "")
 			if err != nil {
 				return calendarImportFinishedMsg{Generation: request.Generation, Err: fmt.Errorf("create destination calendar: %w", err)}
 			}
@@ -342,6 +343,14 @@ func (m Model) handleCalendarSaved(msg CalendarSavedMsg) (tea.Model, tea.Cmd) {
 	// Keep the dialog open until the mutation succeeds so we can
 	// show validation errors (e.g. duplicate name) on the form.
 	saved := msg
+	// Store the color in the form of the CLI: uppercase hex (issue #889).
+	// A color that differs only in case from the stored color keeps the
+	// stored form, so an edit does not mark the color of a synced
+	// calendar dirty.
+	color := model.NormalizeHexColor(saved.Color)
+	if stored, ok := m.calendars[saved.ID]; ok && saved.ID != 0 && strings.EqualFold(stored.Color, color) {
+		color = stored.Color
+	}
 	return m, func() tea.Msg {
 		ctx := context.Background()
 		var (
@@ -349,9 +358,9 @@ func (m Model) handleCalendarSaved(msg CalendarSavedMsg) (tea.Model, tea.Cmd) {
 			err error
 		)
 		if saved.ID == 0 {
-			cal, err = m.app.Calendars.Create(ctx, saved.Name, saved.Color, saved.Description)
+			cal, err = m.app.Calendars.Create(ctx, saved.Name, color, saved.Description)
 		} else {
-			cal, err = m.app.Calendars.Update(ctx, saved.ID, saved.Name, saved.Color, saved.Description)
+			cal, err = m.app.Calendars.Update(ctx, saved.ID, saved.Name, color, saved.Description)
 		}
 		if err != nil {
 			return calendarMutationDoneMsg{err: err}
@@ -370,7 +379,11 @@ func (m Model) handleCalendarSaved(msg CalendarSavedMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		return calendarMutationDoneMsg{err: nil}
+		var createdID int64
+		if saved.ID == 0 {
+			createdID = cal.ID
+		}
+		return calendarMutationDoneMsg{err: nil, createdID: createdID}
 	}
 }
 
@@ -546,5 +559,9 @@ func (m Model) handleCalendarMutationDone(msg calendarMutationDoneMsg) (tea.Mode
 		return m, nil
 	}
 	// m.calendarManagerOpen = false (Removed to keep it open)
+	if m.calendarManagerOpen && msg.createdID != 0 {
+		// The inspector shows the new calendar after the reload (issue #889).
+		m.calendarManager = m.calendarManager.SelectAfterReload(msg.createdID)
+	}
 	return m, tea.Batch(m.loadCalendars(), m.loadEvents())
 }

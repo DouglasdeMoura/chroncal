@@ -108,10 +108,10 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 		return m, func() tea.Msg {
 			for _, e := range entries {
 				if err := m.app.Trash.Purge(context.Background(), e); err != nil {
-					return trashActionDoneMsg{action: "purged", title: title, err: err}
+					return trashActionDoneMsg{action: "purged", title: title, err: err, total: len(entries)}
 				}
 			}
-			return trashActionDoneMsg{action: "purged", title: title, err: nil}
+			return trashActionDoneMsg{action: "purged", title: title, err: nil, total: len(entries)}
 		}
 	case pendingActionCalendarKeepLocal:
 		id := act.target.calendarID

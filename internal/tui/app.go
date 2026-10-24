@@ -71,6 +71,8 @@ type eventCreatedMsg struct {
 type calendarMutationDoneMsg struct {
 	err        error
 	keepEditor bool
+	// createdID is the ID of the calendar that a create made, else 0.
+	createdID int64
 }
 
 // calendarOrderSavedMsg reports the result of a persist of a sidebar reorder.
@@ -670,7 +672,8 @@ type trashActionDoneMsg struct {
 	title  string
 	err    error
 	// done and total count the entries of a bulk restore. A failed restore
-	// with done > 0 is a partial restore, and the toast says so.
+	// with done > 0 is a partial restore, and the toast says so. total also
+	// counts the entries of a purge.
 	done, total int
 }
 

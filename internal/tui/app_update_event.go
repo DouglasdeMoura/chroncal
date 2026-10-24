@@ -642,9 +642,9 @@ func (m Model) handleTrashActionDone(msg trashActionDoneMsg) (tea.Model, tea.Cmd
 	cmds := []tea.Cmd{m.loadTrash(), m.loadEvents()}
 	switch msg.action {
 	case "restored":
-		cmds = append(cmds, m.toast.Restored(msg.title))
+		cmds = append(cmds, m.toast.RestoredCount(msg.title, msg.total))
 	case "purged":
-		cmds = append(cmds, m.toast.Purged(msg.title))
+		cmds = append(cmds, m.toast.PurgedCount(msg.title, msg.total))
 	}
 	return m, tea.Batch(cmds...)
 }

@@ -36,7 +36,9 @@ func (m Model) handleSyncAllPlanned(msg syncAllPlannedMsg) (tea.Model, tea.Cmd) 
 		m = m.endCancellableOp()
 		m.statusToken++
 		m.syncStatus = "No connected calendars to sync"
-		return m, m.expireStatusAfter(6*time.Second, m.statusToken)
+		// Reload the rows anyway. The sync key also shows the rows that
+		// the CLI or the background service wrote (issue #889).
+		return m, tea.Batch(m.expireStatusAfter(6*time.Second, m.statusToken), m.loadCalendars(), m.loadEvents())
 	}
 	m.syncTargets = msg.targets
 	m.syncTotals = syncTotals{}
