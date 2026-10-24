@@ -354,38 +354,57 @@ func TestTrashDetailLines_NamesTheTruncationToRestoreFirst(t *testing.T) {
 	}
 }
 
-// TestTrashDetailLines_RestoreNoteWrapsInANarrowPane checks that the
-// restore-order note shows in full at the width of the detail pane. The note
-// wraps, so the cutoff at its end does not go (issue #871).
-func TestTrashDetailLines_RestoreNoteWrapsInANarrowPane(t *testing.T) {
+// detailNoteValue returns the value of the detail line with the label, and
+// the continuation lines below it. It also fails the test when a line is
+// wider than w.
+func detailNoteValue(t *testing.T, lines []string, label string, w, lw int) string {
+	t.Helper()
+	indent := strings.Repeat(" ", labelColWidth(label, lw))
+	var values []string
+	for i, line := range lines {
+		plain := ansi.Strip(line)
+		if got := ansi.StringWidth(plain); got > w {
+			t.Errorf("w=%d lw=%d: line %q is %d cells wide", w, lw, plain, got)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(plain), label+" ") {
+			continue
+		}
+		values = append(values, strings.TrimPrefix(strings.TrimSpace(plain), label))
+		for _, cont := range lines[i+1:] {
+			c := ansi.Strip(cont)
+			if !strings.HasPrefix(c, indent) || strings.TrimSpace(c[:len(indent)]) != "" || c[len(indent)] == ' ' {
+				break
+			}
+			values = append(values, c)
+		}
+		break
+	}
+	return strings.Join(strings.Fields(strings.Join(values, " ")), " ")
+}
+
+// TestTrashDetailLines_NotesWrapInANarrowPane checks that the restore-order
+// note and the purge note show in full at the width of the detail pane. The
+// notes wrap, so the cutoff and the row IDs at their end do not go (issue
+// #871). The test covers the label width of the wide and the narrow layout.
+func TestTrashDetailLines_NotesWrapInANarrowPane(t *testing.T) {
 	newer := time.Date(2026, 11, 3, 13, 0, 0, 0, time.UTC)
-	e := trash.Entry{
+	blocked := trash.Entry{
 		Kind: trash.KindEventSeriesTail, ID: 1, Title: "Series",
 		CutoffTime:        time.Date(2026, 11, 10, 13, 0, 0, 0, time.UTC),
 		NewerTruncationID: 2, NewerTruncationCutoff: newer,
 	}
-	want := "restore the truncation with cutoff " + newer.Local().Format("Mon, Jan 2 15:04") + " first"
-	for _, w := range []int{40, 60} {
-		lines := trashDetailLines(e, CalendarInfo{}, w, 11, nil)
-		var values []string
-		for i, line := range lines {
-			plain := ansi.Strip(line)
-			if got := ansi.StringWidth(plain); got > w {
-				t.Errorf("w=%d: line %q is %d cells wide", w, plain, got)
+	kept := trash.Entry{Kind: trash.KindEvent, ID: 3, Title: "Series", KeptOverrideIDs: []int64{12, 13}}
+	restoreNote := "restore the truncation with cutoff " + newer.Local().Format("Mon, Jan 2 15:04") + " first"
+	for _, lw := range []int{9, 11} {
+		for _, w := range []int{40, 60} {
+			lines := trashDetailLines(blocked, CalendarInfo{}, w, lw, nil)
+			if got := detailNoteValue(t, lines, "Restore", w, lw); got != restoreNote {
+				t.Errorf("w=%d lw=%d: restore note = %q, want %q", w, lw, got, restoreNote)
 			}
-			if strings.HasPrefix(strings.TrimSpace(plain), "Restore") {
-				values = append(values, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(plain), "Restore")))
-				for _, cont := range lines[i+1:] {
-					c := ansi.Strip(cont)
-					if !strings.HasPrefix(c, strings.Repeat(" ", 13)) {
-						break
-					}
-					values = append(values, strings.TrimSpace(c))
-				}
+			lines = trashDetailLines(kept, CalendarInfo{}, w, lw, nil)
+			if got := detailNoteValue(t, lines, "Purge", w, lw); got != kept.KeptNote() {
+				t.Errorf("w=%d lw=%d: purge note = %q, want %q", w, lw, got, kept.KeptNote())
 			}
-		}
-		if got := strings.Join(values, " "); got != want {
-			t.Errorf("w=%d: restore note = %q, want %q", w, got, want)
 		}
 	}
 }
