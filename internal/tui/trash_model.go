@@ -374,7 +374,8 @@ func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
 
 func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 	switch {
-	case key.Matches(msg, m.keys.Mark):
+	case key.Matches(msg, m.keys.Mark) && m.shell.FocusZone() == ListZoneList:
+		// Space on a focused button presses it through the shell.
 		return m.toggleMark(), nil
 	case key.Matches(msg, m.keys.MarkAll):
 		return m.toggleMarkAll(), nil
