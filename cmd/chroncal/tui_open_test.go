@@ -238,6 +238,19 @@ func TestResolveTUIOpenEvent_AtEdgeCases(t *testing.T) {
 		t.Fatalf("create all-day series: %v", err)
 	}
 
+	// 22:00 in Sao Paulo is 01:00 UTC on the next day.
+	nightStart := time.Date(2026, 10, 19, 1, 0, 0, 0, time.UTC)
+	night, err := a.Events.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Night shift", StartTime: nightStart, EndTime: nightStart.Add(8 * time.Hour),
+		RecurrenceRule: "FREQ=DAILY;COUNT=5",
+	})
+	if err != nil {
+		t.Fatalf("create overnight series: %v", err)
+	}
+	if _, err := resolveTUIOpenEvent(ctx, a, trip.UID, "", "2026-10-22"); err == nil || !strings.Contains(err.Error(), "no occurrence on 2026-10-22") {
+		t.Fatalf("a date with no occurrence gave %v, want an error", err)
+	}
+
 	tests := []struct {
 		name      string
 		ref, at   string
@@ -245,6 +258,7 @@ func TestResolveTUIOpenEvent_AtEdgeCases(t *testing.T) {
 		wantStart time.Time
 	}{
 		{"slot of a far override", master.UID, "2026-10-19T12:00:00Z", moved.ID, far},
+		{"overnight occurrence that starts on the date", night.UID, "2026-10-20", night.ID, nightStart.AddDate(0, 0, 2)},
 		{"date of a legacy override", master.UID, "2026-10-20", legacy.ID, legacySlot},
 		{"second day of an all-day occurrence", trip.UID, "2026-10-26", trip.ID, allDay.AddDate(0, 0, 7)},
 	}

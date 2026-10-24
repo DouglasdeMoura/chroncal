@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
@@ -34,6 +36,10 @@ func resolveTUIOpenEvent(ctx context.Context, a *app.App, ref, recurrenceID, at 
 		return event.Event{}, err
 	} else if ok {
 		return occ, nil
+	} else if dateOnly && isSeriesMaster(ev) {
+		// The series has no occurrence on that date. Do not show a made-up
+		// occurrence at 00:00 (issue #878).
+		return event.Event{}, errInvalidInputf("--at: the series has no occurrence on %s", when.Format(time.DateOnly))
 	}
 	span := ev.EndTime.Sub(ev.StartTime)
 	ev.StartTime = when
@@ -49,12 +55,12 @@ func resolveTUIOpenEvent(ctx context.Context, a *app.App, ref, recurrenceID, at 
 //
 //   - A timestamp takes the override whose RECURRENCE-ID is that time, then
 //     the occurrence that starts at that time.
-//   - A date takes the first occurrence that the TUI grid shows on that
-//     local date.
+//   - A date takes the first occurrence that starts on that local date,
+//     then the first occurrence that the TUI grid shows on that date.
 //
 // An override gives its own row, so the TUI shows its own fields.
 func findSeriesOccurrence(ctx context.Context, a *app.App, master event.Event, when time.Time, dateOnly bool) (event.Event, bool, error) {
-	if master.RecurrenceID != "" || (master.RecurrenceRule == "" && master.RDates == "") {
+	if !isSeriesMaster(master) {
 		return event.Event{}, false, nil
 	}
 	if !dateOnly {
@@ -62,7 +68,8 @@ func findSeriesOccurrence(ctx context.Context, a *app.App, master event.Event, w
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return event.Event{}, false, err
 		}
-		if override != nil {
+		// The grid does not show a cancelled override.
+		if override != nil && !strings.EqualFold(override.Status, "CANCELLED") {
 			return *override, true, nil
 		}
 	}
@@ -73,6 +80,7 @@ func findSeriesOccurrence(ctx context.Context, a *app.App, master event.Event, w
 		return event.Event{}, false, err
 	}
 	dayKey := when.Local().Format(time.DateOnly)
+	var shown event.Event
 	for _, x := range expanded {
 		if x.UID != master.UID {
 			continue
@@ -85,42 +93,36 @@ func findSeriesOccurrence(ctx context.Context, a *app.App, master event.Event, w
 			// A generated occurrence keeps the times of the master.
 			occ.EndTime = x.InstanceTime.Add(occ.EndTime.Sub(occ.StartTime))
 			occ.StartTime = x.InstanceTime
-		} else if owned, err := ownsOverride(ctx, a, master, occ); err != nil {
-			return event.Event{}, false, err
-		} else if !owned {
+		} else if occ.CalendarID != master.CalendarID {
+			// A legacy override can sit in another calendar (issue #842).
+			owned, err := a.Events.IsSeriesRowOf(ctx, master.CalendarID, occ.ID)
+			if err != nil {
+				return event.Event{}, false, err
+			}
+			if !owned {
+				continue
+			}
+		}
+		if !dateOnly {
+			if occ.StartTime.Equal(when) {
+				return occ, true, nil
+			}
 			continue
 		}
-		if dateOnly && showsOnDate(occ, dayKey) || !dateOnly && occ.StartTime.Equal(when) {
+		days := tui.EventCalendarDays(occ)
+		if days[0].Format(time.DateOnly) == dayKey {
 			return occ, true, nil
 		}
-	}
-	return event.Event{}, false, nil
-}
-
-// ownsOverride reports whether the series of master owns the override row.
-// A legacy override can sit in another calendar (issue #842).
-func ownsOverride(ctx context.Context, a *app.App, master, row event.Event) (bool, error) {
-	if row.CalendarID == master.CalendarID {
-		return true, nil
-	}
-	_, override, err := a.Events.SeriesOccurrence(ctx, master.CalendarID, master.UID, row.RecurrenceID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, err
-	}
-	return override != nil && override.ID == row.ID, nil
-}
-
-// showsOnDate reports whether the TUI grid shows ev on the date dayKey.
-func showsOnDate(ev event.Event, dayKey string) bool {
-	for _, d := range tui.EventCalendarDays(ev) {
-		if d.Format(time.DateOnly) == dayKey {
-			return true
+		if shown.ID == 0 && slices.ContainsFunc(days, func(d time.Time) bool { return d.Format(time.DateOnly) == dayKey }) {
+			shown = occ
 		}
 	}
-	return false
+	return shown, shown.ID != 0, nil
+}
+
+// isSeriesMaster reports whether ev is the master of a recurring series.
+func isSeriesMaster(ev event.Event) bool {
+	return ev.RecurrenceID == "" && (ev.RecurrenceRule != "" || ev.RDates != "")
 }
 
 // parseTUIAt parses the --at flag. It accepts an RFC 3339 timestamp, a
