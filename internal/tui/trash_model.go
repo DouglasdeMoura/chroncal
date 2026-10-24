@@ -432,9 +432,11 @@ func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 		return m.refresh(), nil
 	}
 	if idx, ok := m.shell.ActionAtPosition(msg.X, msg.Y); ok {
-		// A disabled action gives no command and keeps the selection.
-		_, cmd := m.shell.ClickAction(idx)
-		return m.focusList(), cmd
+		// A click on a disabled action fires nothing and keeps the focus.
+		if _, cmd := m.shell.ClickAction(idx); cmd != nil {
+			return m.focusList(), cmd
+		}
+		return m, nil
 	}
 	return m, nil
 }

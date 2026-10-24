@@ -545,20 +545,36 @@ func TestTrashModel_ActionsPutTheFocusOnTheList(t *testing.T) {
 		t.Fatalf("no screen cell for action %d", idx)
 		return nil
 	}
+	purgeAllKey := tea.KeyPressMsg{Code: 'X', Text: "X"}
+	clickPurgeAll := func(m TrashModel) tea.Msg {
+		for y := 0; y < 30; y++ {
+			for x := 0; x < 120; x++ {
+				if _, ok := m.shell.TitleActionAtPosition(x, y); ok {
+					return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}
+				}
+			}
+		}
+		t.Fatal("no screen cell for the Purge All button")
+		return nil
+	}
 	m0 := newTrashForTest().SetEntries(trashFixture(), nil)
 	for _, tc := range []struct {
-		name    string
-		keys    []tea.Msg
-		restore bool
+		name     string
+		keys     []tea.Msg
+		restore  bool
+		purgeAll bool
 	}{
-		{"r from the list", []tea.Msg{restoreKey}, true},
-		{"x from the list", []tea.Msg{purgeKey}, false},
-		{"r from the Purge button", []tea.Msg{tab, tab, restoreKey}, true},
-		{"x from the Restore button", []tea.Msg{tab, purgeKey}, false},
-		{"Enter on the Restore button", []tea.Msg{tab, enter}, true},
-		{"Enter on the Purge button", []tea.Msg{tab, tab, enter}, false},
-		{"click on the Restore button", []tea.Msg{click(m0, 0)}, true},
-		{"click on the Purge button", []tea.Msg{click(m0, 1)}, false},
+		{"r from the list", []tea.Msg{restoreKey}, true, false},
+		{"x from the list", []tea.Msg{purgeKey}, false, false},
+		{"r from the Purge button", []tea.Msg{tab, tab, restoreKey}, true, false},
+		{"x from the Restore button", []tea.Msg{tab, purgeKey}, false, false},
+		{"Enter on the Restore button", []tea.Msg{tab, enter}, true, false},
+		{"Enter on the Purge button", []tea.Msg{tab, tab, enter}, false, false},
+		{"click on the Restore button", []tea.Msg{click(m0, 0)}, true, false},
+		{"click on the Purge button", []tea.Msg{click(m0, 1)}, false, false},
+		{"X from the Purge button", []tea.Msg{tab, tab, purgeAllKey}, false, true},
+		{"Enter on the Purge All button", []tea.Msg{tab, tab, tab, enter}, false, true},
+		{"click on Purge All from the Purge button", []tea.Msg{tab, tab, clickPurgeAll(m0)}, false, true},
 	} {
 		m := m0
 		var cmd tea.Cmd
@@ -574,6 +590,12 @@ func TestTrashModel_ActionsPutTheFocusOnTheList(t *testing.T) {
 				t.Errorf("%s: restore of %+v, want the purge or the entry with ID 1", tc.name, msg.Entries)
 			}
 		case TrashPurgeRequestedMsg:
+			if tc.purgeAll {
+				if len(msg.Entries) != len(trashFixture()) {
+					t.Errorf("%s: purge of %d entries, want all %d", tc.name, len(msg.Entries), len(trashFixture()))
+				}
+				break
+			}
 			if tc.restore || len(msg.Entries) != 1 || msg.Entries[0].ID != 1 {
 				t.Errorf("%s: purge of %+v, want the restore or the entry with ID 1", tc.name, msg.Entries)
 			}
