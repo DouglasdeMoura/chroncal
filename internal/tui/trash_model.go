@@ -379,18 +379,19 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 	case key.Matches(msg, m.keys.MarkAll):
 		return m.toggleMarkAll(), nil
 	}
+	// The restore and purge keys fire the action and keep the focus where
+	// it is. The focus does not move to the button: a refused restore or a
+	// canceled purge then leaves the list keys working (issue #880).
 	acts := m.buildActions()
 	switch {
 	case key.Matches(msg, m.keys.Restore):
 		if len(acts) > 0 {
-			m.shell = m.shell.FocusAction(0)
-			return m.refresh(), acts[0].Msg
+			return m, acts[0].Msg
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Purge):
 		if len(acts) > 1 {
-			m.shell = m.shell.FocusAction(1)
-			return m.refresh(), acts[1].Msg
+			return m, acts[1].Msg
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.PurgeAll):
