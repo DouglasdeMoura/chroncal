@@ -1566,7 +1566,7 @@ func (q *Queries) SetSyncResourceWait(ctx context.Context, arg SetSyncResourceWa
 	return err
 }
 
-const settleUntakeableEditsInCalendar = `-- name: SettleUntakeableEditsInCalendar :exec
+const settleUntakeableEditsInCalendar = `-- name: SettleUntakeableEditsInCalendar :execrows
 UPDATE sync_resources SET dirty = 0, etag = ''
 WHERE sync_resources.calendar_id = ?1
   AND sync_resources.dirty = 1
@@ -1592,16 +1592,20 @@ WHERE sync_resources.calendar_id = ?1
 // cannot take the edit: a read-only collection, or a collection that does
 // not list the component of the row (remote_components). An edit while the
 // calendar had no account marked such a row (issue #876). No push sends
-// it, so the row would stay dirty with no end. The etag goes too, so the
-// next pull reads the server body. A row with an open conflict and a moved
+// it, so the row would stay dirty with no end. The etag goes too, and the
+// engine clears the sync token, so the next pull reads the server body. A
+// row with an open conflict and a moved
 // copy keep their mark: the conflict and the move rules own them. The
 // pass of a calendar with relink_pending runs it.
-func (q *Queries) SettleUntakeableEditsInCalendar(ctx context.Context, calendarID int64) error {
-	_, err := q.db.ExecContext(ctx, settleUntakeableEditsInCalendar, calendarID)
-	return err
+func (q *Queries) SettleUntakeableEditsInCalendar(ctx context.Context, calendarID int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, settleUntakeableEditsInCalendar, calendarID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const settleUntakeableTombstonesInCalendar = `-- name: SettleUntakeableTombstonesInCalendar :exec
+const settleUntakeableTombstonesInCalendar = `-- name: SettleUntakeableTombstonesInCalendar :execrows
 DELETE FROM tombstones
 WHERE tombstones.calendar_id = ?1
   AND tombstones.remote_url != ''
@@ -1618,9 +1622,12 @@ WHERE tombstones.calendar_id = ?1
 // #876). The tombstone pass skips a read-only calendar, so no DELETE ever
 // goes out. The item stays in the local trash. A move tombstone stays: the
 // move rules own it. The pass of a calendar with relink_pending runs it.
-func (q *Queries) SettleUntakeableTombstonesInCalendar(ctx context.Context, calendarID int64) error {
-	_, err := q.db.ExecContext(ctx, settleUntakeableTombstonesInCalendar, calendarID)
-	return err
+func (q *Queries) SettleUntakeableTombstonesInCalendar(ctx context.Context, calendarID int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, settleUntakeableTombstonesInCalendar, calendarID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertDirtySyncResourceOfCalendar = `-- name: UpsertDirtySyncResourceOfCalendar :exec
