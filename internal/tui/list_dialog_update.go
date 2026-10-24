@@ -102,24 +102,6 @@ func (m ListDialogModel) FocusAction(idx int) ListDialogModel {
 	return m
 }
 
-// ActivateFocused returns the command for whichever zone currently has focus
-// (the focused action button, or the title-action button).
-func (m ListDialogModel) ActivateFocused() tea.Cmd {
-	switch m.focusZone {
-	case ListZoneActions:
-		if m.focusedAction >= 0 && m.focusedAction < len(m.actions) &&
-			!m.actions[m.focusedAction].Disabled {
-			return m.actions[m.focusedAction].Msg
-		}
-	case ListZoneTitleAction:
-		if m.titleAction != nil && !m.titleAction.Disabled {
-			return m.titleAction.Msg
-		}
-	case ListZoneList, ListZoneCustom:
-	}
-	return nil
-}
-
 // Activate fires the focused button (FireAction or FireTitleAction). With
 // no button to fire, the focus does not change.
 func (m ListDialogModel) Activate() (ListDialogModel, tea.Cmd) {
@@ -133,14 +115,37 @@ func (m ListDialogModel) Activate() (ListDialogModel, tea.Cmd) {
 	return m, nil
 }
 
+// ActivateByKey is Activate for the Enter binding (Enter or Space). Space
+// does not fire a danger button: a destructive action fires only by Enter,
+// a click, or its own key.
+func (m ListDialogModel) ActivateByKey(msg tea.KeyPressMsg) (ListDialogModel, tea.Cmd) {
+	if msg.String() == "space" && m.focusedDanger() {
+		return m, nil
+	}
+	return m.Activate()
+}
+
+// focusedDanger reports whether the focused button is a danger button.
+func (m ListDialogModel) focusedDanger() bool {
+	switch m.focusZone {
+	case ListZoneActions:
+		return m.focusedAction >= 0 && m.focusedAction < len(m.actions) && m.actions[m.focusedAction].Danger
+	case ListZoneTitleAction:
+		return m.titleAction != nil && m.titleAction.Danger
+	case ListZoneList, ListZoneCustom:
+	}
+	return false
+}
+
 // FireAction returns the command of the action-bar button idx and puts the
 // focus on the list. Every path that fires a button uses it: a hotkey,
 // Enter or Space, and a click. An action can end with a prompt that the
 // user cancels, or with a refusal. The list keys must then work, so no
-// button keeps the focus after it fires (issue #909). A disabled or a
-// missing button fires nothing and keeps the focus.
+// button keeps the focus after it fires (issue #909). An index out of
+// range, a disabled button, or a button with no command fires nothing and
+// keeps the focus.
 func (m ListDialogModel) FireAction(idx int) (ListDialogModel, tea.Cmd) {
-	if idx < 0 || idx >= len(m.actions) || m.actions[idx].Disabled {
+	if idx < 0 || idx >= len(m.actions) || m.actions[idx].Disabled || m.actions[idx].Msg == nil {
 		return m, nil
 	}
 	m.focusZone = ListZoneList
@@ -149,7 +154,7 @@ func (m ListDialogModel) FireAction(idx int) (ListDialogModel, tea.Cmd) {
 
 // FireTitleAction is FireAction for the button of the title line.
 func (m ListDialogModel) FireTitleAction() (ListDialogModel, tea.Cmd) {
-	if m.titleAction == nil || m.titleAction.Disabled {
+	if m.titleAction == nil || m.titleAction.Disabled || m.titleAction.Msg == nil {
 		return m, nil
 	}
 	m.focusZone = ListZoneList
@@ -293,10 +298,10 @@ func (m ListDialogModel) actionBarOrigin() (int, int) {
 }
 
 // TitleActionAtPosition reports whether (x, y) lies within the title-line
-// action button and, if so, returns its command.
-func (m ListDialogModel) TitleActionAtPosition(x, y int) (tea.Cmd, bool) {
+// action button. FireTitleAction fires the button.
+func (m ListDialogModel) TitleActionAtPosition(x, y int) bool {
 	if m.titleAction == nil || m.titleAction.Disabled || m.width <= 0 || m.height <= 0 {
-		return nil, false
+		return false
 	}
 	boxW, boxH := m.boxSize()
 	innerW := max(boxW-5, 10)
@@ -304,14 +309,14 @@ func (m ListDialogModel) TitleActionAtPosition(x, y int) (tea.Cmd, bool) {
 	dialogY := (m.height - boxH) / 2
 	titleY := dialogY + 2
 	if y != titleY {
-		return nil, false
+		return false
 	}
 	btnW := lipgloss.Width(renderTitleActionButton(*m.titleAction, false))
 	btnStartX := dialogX + 2 + innerW - btnW
 	if x < btnStartX || x >= btnStartX+btnW {
-		return nil, false
+		return false
 	}
-	return m.titleAction.Msg, true
+	return true
 }
 
 // HandleKey is the shell's handler for keys it cares about (navigation, tab,
@@ -344,7 +349,7 @@ func (m ListDialogModel) HandleKey(msg tea.KeyPressMsg, onClose func() tea.Msg) 
 		m.body.GotoBottom()
 		return m, nil, true
 	case key.Matches(msg, m.keys.Enter):
-		m, cmd := m.Activate()
+		m, cmd := m.ActivateByKey(msg)
 		return m, cmd, true
 	}
 	return m, nil, false

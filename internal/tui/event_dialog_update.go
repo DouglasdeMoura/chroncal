@@ -196,7 +196,7 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 				return m.fireRSVP(m.focusedRSVP)
 			}
 		case zoneAction, zoneTitleAction:
-			shell, cmd := m.shell.Activate()
+			shell, cmd := m.shell.ActivateByKey(msg)
 			m.shell = shell
 			return m.refresh(), cmd
 		}
@@ -205,15 +205,15 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 	// The Edit, Duplicate, and Delete keys fire their action through the
 	// shell (FireAction), so the focus goes to the list.
 	case key.Matches(msg, m.keys.Edit):
-		if _, ok := m.selectedEvent(); ok && len(acts) > 0 {
+		if _, ok := m.selectedEvent(); ok {
 			return m.fireAction(0)
 		}
 	case key.Matches(msg, m.keys.Duplicate):
-		if _, ok := m.selectedEvent(); ok && len(acts) > 1 {
+		if _, ok := m.selectedEvent(); ok {
 			return m.fireAction(1)
 		}
 	case key.Matches(msg, m.keys.Delete):
-		if _, ok := m.selectedEvent(); ok && len(acts) > 2 {
+		if _, ok := m.selectedEvent(); ok {
 			return m.fireAction(2)
 		}
 	case key.Matches(msg, m.keys.Create):
@@ -245,7 +245,7 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		return m, nil
 	}
 
-	if _, ok := m.shell.TitleActionAtPosition(msg.X, msg.Y); ok {
+	if m.shell.TitleActionAtPosition(msg.X, msg.Y) {
 		shell, cmd := m.shell.FireTitleAction()
 		m.shell = shell
 		m.rsvpFocused = false
@@ -264,7 +264,7 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 	if idx, ok := m.shell.ActionAtPosition(msg.X, msg.Y); ok {
 		return m.fireAction(idx)
 	}
-	if idx, _, hit := m.hitRSVPBtn(msg.X, msg.Y); hit {
+	if idx, hit := m.hitRSVPBtn(msg.X, msg.Y); hit {
 		return m.fireRSVP(idx)
 	}
 	return m, nil
@@ -291,14 +291,14 @@ func (m EventDialogModel) fireRSVP(idx int) (EventDialogModel, tea.Cmd) {
 	return m.refresh(), rsvp[idx].msg
 }
 
-func (m EventDialogModel) hitRSVPBtn(x, y int) (int, tea.Cmd, bool) {
+func (m EventDialogModel) hitRSVPBtn(x, y int) (int, bool) {
 	rsvp := m.rsvpActions()
 	if len(rsvp) == 0 {
-		return 0, nil, false
+		return 0, false
 	}
 	ev, ok := m.selectedEvent()
 	if !ok {
-		return 0, nil, false
+		return 0, false
 	}
 	cal := m.calendars[ev.CalendarID]
 	rw := eventMetaURLRewriter(cal)
@@ -306,26 +306,26 @@ func (m EventDialogModel) hitRSVPBtn(x, y int) (int, tea.Cmd, bool) {
 	rsvpLine := m.renderRSVPLine(att, rsvp, m.detailWidth())
 	_, rowIdx := eventDetailLines(ev, cal, m.detailWidth(), m.labelWidth(), rsvpLine, rw)
 	if rowIdx < 0 {
-		return 0, nil, false
+		return 0, false
 	}
 
 	rsvpY, ok := m.shell.BodyRowScreenY(rowIdx)
 	if !ok {
-		return 0, nil, false
+		return 0, false
 	}
 	ox, _ := m.shell.DetailsOrigin()
 	rsvpX := ox + labelColWidth("Your RSVP", m.labelWidth())
 	btnW := rsvpButtonWidth()
 
 	if y != rsvpY {
-		return 0, nil, false
+		return 0, false
 	}
 	cx := rsvpX
-	for i, a := range rsvp {
+	for i := range rsvp {
 		if x >= cx && x < cx+btnW {
-			return i, a.msg, true
+			return i, true
 		}
 		cx += btnW + 1
 	}
-	return 0, nil, false
+	return 0, false
 }

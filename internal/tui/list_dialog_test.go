@@ -104,9 +104,9 @@ func TestListDialog_TabIncludesTitleAction(t *testing.T) {
 	if got := m.FocusZone(); got != ListZoneTitleAction {
 		t.Fatalf("expected title action focus after 4 tabs, got %v", got)
 	}
-	cmd := m.ActivateFocused()
+	_, cmd := m.Activate()
 	if cmd == nil || cmd() != "title" {
-		t.Errorf("ActivateFocused on title action did not return title-action msg")
+		t.Errorf("Activate on title action did not return title-action msg")
 	}
 	m = m.CycleZone(true)
 	if got := m.FocusZone(); got != ListZoneList {
@@ -123,9 +123,9 @@ func TestListDialog_ShiftTabReversesFromList(t *testing.T) {
 	}
 }
 
-func TestListDialog_ActivateFocusedReturnsActionMsg(t *testing.T) {
+func TestListDialog_ActivateReturnsActionMsg(t *testing.T) {
 	m := makeListDialogFixture().FocusAction(1)
-	cmd := m.ActivateFocused()
+	_, cmd := m.Activate()
 	if cmd == nil {
 		t.Fatal("expected command from focused action")
 	}
@@ -144,7 +144,7 @@ func TestListDialog_DisabledActionsCannotReceiveFocusOrActivate(t *testing.T) {
 	if got := m.FocusedAction(); got != 1 {
 		t.Fatalf("Tab focused action %d, want enabled action 1", got)
 	}
-	cmd := m.ActivateFocused()
+	_, cmd := m.Activate()
 	if cmd == nil || cmd() != "cancel" {
 		t.Fatal("enabled Cancel action did not activate")
 	}
