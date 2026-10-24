@@ -1227,3 +1227,82 @@ func TestServiceImportRefusesACollectionThatAnotherCalendarLinks(t *testing.T) {
 		t.Fatalf("Import of the free collection = %+v, %v; want one created", result, err)
 	}
 }
+
+// TestServiceAccountRemoveKeepsTheEditOfASyncedItem edits a synced event
+// while its calendar has no account. The edit must mark the sync row, and
+// the row must keep its href and its etag, so the push after the relink
+// sends the edit with If-Match (issue #876). Else the server keeps the old
+// body, and a later server edit overwrites the local edit with no conflict.
+func TestServiceAccountRemoveKeepsTheEditOfASyncedItem(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return []caldav.RemoteCalendar{{Path: "/cal/work/", Name: "Work", SupportedComponentSet: []string{"VEVENT"}}}, nil
+	}
+	params := CreateParams{Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic"}
+	cred := auth.Credential{Username: "alice", Password: "secret"}
+	account, err := svc.Create(ctx, params, cred, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	discovery, err := svc.Discover(ctx, account.ID, store)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	imported, err := svc.Import(ctx, discovery, []string{"/cal/work/"})
+	if err != nil || len(imported.CreatedIDs) != 1 {
+		t.Fatalf("Import = %+v, %v; want one created", imported, err)
+	}
+	calID := imported.CreatedIDs[0]
+	evtSvc := event.NewService(db, q)
+	evt, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: calID, Title: "Orig title",
+		StartTime: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), EndTime: time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create event: %v", err)
+	}
+	// The event is on the server: its row has an href and an etag.
+	if _, err := db.ExecContext(ctx, `UPDATE sync_resources SET dirty = 0, remote_url = '/cal/work/e.ics', etag = '"e1"' WHERE calendar_id = ? AND uid = ?`, calID, evt.UID); err != nil {
+		t.Fatalf("seed sync row: %v", err)
+	}
+	if err := svc.Delete(ctx, account.ID, store); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := evtSvc.Update(ctx, evt.ID, event.UpdateParams{
+		Title: "Edited while unlinked", StartTime: evt.StartTime, EndTime: evt.EndTime,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	offline, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: calID, Title: "Made offline",
+		StartTime: time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC), EndTime: time.Date(2026, 4, 2, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("create offline event: %v", err)
+	}
+	if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calID, Uid: offline.UID}); err == nil {
+		t.Fatal("an event made while the calendar has no account has a sync row; want the row from the relink (issue #866)")
+	}
+	again, err := svc.Create(ctx, params, cred, store)
+	if err != nil {
+		t.Fatalf("re-Create: %v", err)
+	}
+	if discovery, err = svc.Discover(ctx, again.ID, store); err != nil {
+		t.Fatalf("re-Discover: %v", err)
+	}
+	if relinked, err := svc.Import(ctx, discovery, []string{"/cal/work/"}); err != nil || len(relinked.CreatedIDs) != 1 || relinked.CreatedIDs[0] != calID {
+		t.Fatalf("re-Import = %+v, %v; want the relink of %d", relinked, err, calID)
+	}
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calID, Uid: evt.UID})
+	if err != nil || sr.Dirty != 1 || sr.RemoteUrl != "/cal/work/e.ics" || sr.Etag != `"e1"` {
+		t.Fatalf("sync row of the edited event = %+v, %v; want a dirty row with its href and etag", sr, err)
+	}
+	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calID, Uid: offline.UID}); err != nil || sr.Dirty != 1 || sr.RemoteUrl != "" {
+		t.Fatalf("sync row of the offline event = %+v, %v; want a dirty row without an href", sr, err)
+	}
+}
