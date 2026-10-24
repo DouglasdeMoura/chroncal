@@ -146,7 +146,7 @@ Put the red on the background. Compute a contrast label with `oklch.ContrastingF
 
 Color carries one signal: destructive or not. Focus highlight carries the other signal: which button Enter triggers. Do not mix those two signals.
 
-`Form.SetSubmitVariant` defaults to `Button`. Only a destructive prompt needs to opt in with `ConfirmDialogModel.Destructive()`.
+`Form.SetSubmitVariant` defaults to `Button`. Only a destructive prompt needs to opt in with `ConfirmDialogModel.Destructive()`. A choice dialog with only destructive choices opts in with `ChoiceDialogModel.Destructive()`. Each choice then uses `ButtonDanger`, and Cancel gets the focus.
 
 For a custom button that does not use `Form`, render with `ButtonStyles.Normal` (or `.Danger` for a destructive button). Do not use a more prominent style. There is no such style.
 

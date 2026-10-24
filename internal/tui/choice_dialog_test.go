@@ -141,3 +141,40 @@ func TestChoiceDialogClickEmitsSelectedChoice(t *testing.T) {
 		})
 	}
 }
+
+// TestChoiceDialogDestructiveFocusesCancel guards issue #877. A destructive
+// choice dialog gives the focus to Cancel, so a quick Enter cancels. Each
+// choice uses ButtonDanger.
+func TestChoiceDialogDestructiveFocusesCancel(t *testing.T) {
+	plain := NewChoiceDialogModel(
+		`Delete "Team Standup"?`,
+		ActiveTheme(),
+		"This event", "This and following", "All events",
+	)
+	m := plain.Destructive()
+
+	if got, want := m.form.Focused(), m.form.cancelIndex(); got != want {
+		t.Fatalf("focused control = %d, want cancel index %d", got, want)
+	}
+	if m.form.submitVariant != ButtonDanger {
+		t.Errorf("submit variant = %v, want ButtonDanger", m.form.submitVariant)
+	}
+	for _, b := range m.form.actionButtons {
+		if b.Variant != ButtonDanger {
+			t.Errorf("button %q variant = %v, want ButtonDanger", b.Label, b.Variant)
+		}
+	}
+	for _, b := range plain.form.actionButtons {
+		if b.Variant != Button {
+			t.Errorf("Destructive changed the source dialog: button %q variant = %v", b.Label, b.Variant)
+		}
+	}
+
+	_, cmd := m.Update(keyPressMsg("enter"))
+	if cmd == nil {
+		t.Fatal("enter produced no command, want cancel")
+	}
+	if msg, ok := cmd().(ChoiceDialogResultMsg); !ok || msg.Choice != -1 {
+		t.Fatalf("enter produced %#v, want ChoiceDialogResultMsg{Choice: -1}", cmd())
+	}
+}
