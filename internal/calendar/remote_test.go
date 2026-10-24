@@ -1025,3 +1025,45 @@ func TestConnect_MarksTheLocalItemsDirty(t *testing.T) {
 		t.Fatalf("sync row = %+v, %v; want a dirty event row without an href", sr, err)
 	}
 }
+
+// TestConnect_RefusesACollectionThatAnotherCalendarLinks links two local
+// calendars to one collection. The second link must refuse, or each item of
+// the collection shows twice (issue #874). The check matches the collection
+// in another case of the host, with no trailing slash, and with the user
+// in another case. A different user can link the collection.
+func TestConnect_RefusesACollectionThatAnotherCalendarLinks(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	first, err := svc.Get(ctx, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	link := RemoteLink{RemoteURL: "https://example.com/dav/calendars/work/", Username: "user", AuthType: "basic"}
+	if err := svc.Connect(ctx, first, link, auth.Credential{Username: "user", Password: "pass"}, &memCredStore{}); err != nil {
+		t.Fatalf("Connect first: %v", err)
+	}
+	second, err := svc.Create(ctx, "Second", "#00ff00", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	again := RemoteLink{RemoteURL: "https://EXAMPLE.com/dav/calendars/work", Username: "User", AuthType: "basic"}
+	if _, _, err := svc.ConnectTarget(ctx, second, again); !errors.Is(err, ErrCollectionLinked) {
+		t.Fatalf("ConnectTarget = %v; want ErrCollectionLinked", err)
+	}
+	err = svc.Connect(ctx, second, again, auth.Credential{Username: "User", Password: "pass"}, &memCredStore{})
+	if !errors.Is(err, ErrCollectionLinked) || !strings.Contains(err.Error(), `"Personal"`) {
+		t.Fatalf("Connect second = %v; want ErrCollectionLinked that names the first calendar", err)
+	}
+	got, err := svc.Get(ctx, second.ID)
+	if err != nil || got.AccountID != 0 || got.RemoteURL != "" {
+		t.Fatalf("second calendar = %+v, %v; want no link", got, err)
+	}
+	// A relink of the first calendar to its own collection stays possible.
+	if err := svc.Connect(ctx, first, link, auth.Credential{Username: "user", Password: "new"}, &memCredStore{}); err != nil {
+		t.Fatalf("relink first: %v", err)
+	}
+	other := RemoteLink{RemoteURL: link.RemoteURL, Username: "other", AuthType: "basic"}
+	if err := svc.Connect(ctx, second, other, auth.Credential{Username: "other", Password: "pass"}, &memCredStore{}); err != nil {
+		t.Fatalf("Connect with another user: %v", err)
+	}
+}

@@ -20,7 +20,7 @@ Core data services:
 - **event** - CRUD, search, export, recurrence queries, soft-delete, restore, purge
 - **todo** - CRUD, search, completion, soft-delete, restore, purge
 - **journal** - CRUD, search, soft-delete, restore, purge
-- **calendar** - CRUD, color control, remote-link metadata, and `Apply` for the `[[calendars]]` entries of `config.toml` (issue #809). `initApp` calls `Apply` on every launch. `Apply` creates a missing calendar and updates a declared color, description, or `local_path`. It never deletes a calendar.
+- **calendar** - CRUD, color control, remote-link metadata, and `Apply` for the `[[calendars]]` entries of `config.toml` (issue #809). `initApp` calls `Apply` on every launch. `Apply` creates a missing calendar and updates a declared color, description, or `local_path`. It never deletes a calendar. One remote collection links to one local calendar only (issue #874). `Connect`, the account import, and the account selection refuse a collection that a calendar of another account links with the same user (`CheckCollectionFree`, `ErrCollectionLinked`).
 - **alarm** - Check due alarms. Fire, dismiss, and snooze alarms
 - **recurrence** - Expand recurring events, todos, and journals. Apply overrides
 - **trash** - Mixed soft-delete view of events, todos, and journals (list, restore, purge)

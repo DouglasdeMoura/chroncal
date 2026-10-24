@@ -107,6 +107,11 @@ func (s *Service) ConnectTarget(ctx context.Context, cal Calendar, link RemoteLi
 	if err != nil {
 		return 0, "", err
 	}
+	// The check runs before the prompt for a secret, so the user does no
+	// work for a link that Connect refuses (issue #874).
+	if err := CheckCollectionFree(ctx, s.q, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID}); err != nil {
+		return 0, "", err
+	}
 	fingerprint := auth.AccountFingerprint(serverURL, NormalizeAuthType(link.AuthType), link.Username)
 	existing, reuse, err := s.reusableConnectAccount(ctx, cal)
 	if err != nil {
@@ -120,7 +125,9 @@ func (s *Service) ConnectTarget(ctx context.Context, cal Calendar, link RemoteLi
 
 // Connect links a calendar to a remote CalDAV URL and stores the credential.
 // When the calendar is already linked to a hidden account, Connect updates
-// that account in place; otherwise it creates a new hidden account.
+// that account in place; otherwise it creates a new hidden account. Connect
+// refuses a collection that another local calendar links with the same user
+// (ErrCollectionLinked).
 func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cred auth.Credential, credStore auth.CredentialStore) error {
 	lockedCal, release, err := s.lockRemoteLifecycle(ctx, cal.ID)
 	if err != nil {
@@ -163,6 +170,9 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		}
 		defer tx.Rollback()
 		qtx := s.q.WithTx(tx)
+		if err := CheckCollectionFree(ctx, qtx, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID}); err != nil {
+			return err
+		}
 		if err := qtx.UpdateAccount(ctx, storage.UpdateAccountParams{
 			ID:        existing.ID,
 			Name:      existing.Name,
@@ -217,6 +227,13 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	}
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
+	// One collection links to one local calendar only (issue #874). Connect
+	// does not reuse the account of another calendar. A removal of that
+	// account would then unlink this calendar too, and a selection change
+	// of that account could delete it.
+	if err := CheckCollectionFree(ctx, qtx, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID}); err != nil {
+		return err
+	}
 	accountName := hiddenAccountName(cal.ID)
 	for suffix := 2; ; suffix++ {
 		if _, lookupErr := qtx.GetAccountByName(ctx, accountName); errors.Is(lookupErr, sql.ErrNoRows) {

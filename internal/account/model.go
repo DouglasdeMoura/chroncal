@@ -90,6 +90,10 @@ type DiscoveredCalendar struct {
 	Imported   bool
 	Importable bool
 	Missing    bool
+	// LinkedBy names the local calendar of another account that links
+	// the collection already (issue #874). An import of the collection
+	// refuses, so a selection of all collections skips it.
+	LinkedBy string
 }
 
 // Discovery is a complete collection inventory for one account.

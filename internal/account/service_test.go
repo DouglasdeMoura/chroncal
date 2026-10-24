@@ -14,6 +14,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/synclock"
@@ -1160,5 +1161,69 @@ func TestServiceImportRelinkMarksAMovedCopyDirty(t *testing.T) {
 	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: seededID, Uid: copyEvt.UID})
 	if err != nil || sr.Dirty != 1 || sr.RemoteUrl != "" {
 		t.Fatalf("sync row of the copy = %+v, %v; want a dirty row", sr, err)
+	}
+}
+
+// TestServiceImportRefusesACollectionThatAnotherCalendarLinks links a local
+// calendar to a collection through its own account, as `calendar update
+// --remote-url` does. A discovery of a second account of the same user must
+// name that calendar, and Import and ReconcileSelection must refuse the
+// collection (issue #874). Else each item of the collection shows twice.
+func TestServiceImportRefusesACollectionThatAnotherCalendarLinks(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return []caldav.RemoteCalendar{
+			{Path: "/cal/work/", Name: "Work", SupportedComponentSet: []string{"VEVENT"}},
+			{Path: "/cal/home/", Name: "Home", SupportedComponentSet: []string{"VEVENT"}},
+		}, nil
+	}
+	hidden, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "__calendar_1", ServerUrl: "https://cal.example.test", AuthType: "basic", Username: "Alice",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: 1, AccountID: &hidden.ID, RemoteUrl: storage.StringToNullable("https://cal.example.test/cal/work"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	created, err := svc.Create(ctx, CreateParams{
+		Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic",
+	}, auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	discovery, err := svc.Discover(ctx, created.ID, store)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	linkedBy := map[string]string{}
+	for _, item := range discovery.Calendars {
+		linkedBy[item.Path] = item.LinkedBy
+	}
+	if linkedBy["/cal/work/"] != "Personal" || linkedBy["/cal/home/"] != "" {
+		t.Fatalf("LinkedBy = %v; want Personal for /cal/work/ only", linkedBy)
+	}
+	if _, err := svc.Import(ctx, discovery, []string{"/cal/home/", "/cal/work/"}); !errors.Is(err, calendar.ErrCollectionLinked) {
+		t.Fatalf("Import = %v; want ErrCollectionLinked", err)
+	}
+	if _, err := svc.ReconcileSelection(ctx, discovery, SelectionParams{
+		SelectedPaths: []string{"/cal/home/", "/cal/work/"},
+	}, store); !errors.Is(err, calendar.ErrCollectionLinked) {
+		t.Fatalf("ReconcileSelection = %v; want ErrCollectionLinked", err)
+	}
+	rows, err := q.ListCalendarsByAccount(ctx, &created.ID)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("account calendars = %d, %v; want none after the refusals", len(rows), err)
+	}
+	result, err := svc.Import(ctx, discovery, []string{"/cal/home/"})
+	if err != nil || len(result.CreatedIDs) != 1 {
+		t.Fatalf("Import of the free collection = %+v, %v; want one created", result, err)
 	}
 }

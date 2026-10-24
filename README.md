@@ -454,6 +454,8 @@ An account stores one credential. It discovers every CalDAV calendar collection 
 
 `account calendars set` replaces the exact local selection. After confirmation, Chroncal deletes deselected calendars and their downloaded data. It never deletes the remote collections. If you deselect the current default calendar, pass `--default` with a retained local calendar or a new remote collection. The command syncs new collections before it returns.
 
+One remote collection links to one local calendar only. `account calendars list` shows a collection that another local calendar links as `linked by <calendar>`. `account add` and `--all` skip such a collection. `--calendar` refuses it with an error. Remove the other link first, for example with `calendar update <calendar> --disconnect-remote`. The check compares the collection URL and the user name of the account. It ignores the case of the user name.
+
 If you select none, the command also removes the empty account and credential. `account remove` deletes the credential and remote links. It keeps downloaded calendars as local copies.
 
 `account credentials` rotates the stored secret of a basic or bearer account. It reads the new value from `CHRONCAL_PASSWORD` (basic) or `CHRONCAL_BEARER_TOKEN` (bearer). For a basic account, `--password-cmd` stores a command instead of a password. See [Command-retrieved passwords](#command-retrieved-passwords). `account reauth` repeats the Google OAuth consent flow for an oauth2 account; the client secret comes from `GOOGLE_CLIENT_SECRET` or the stored value, and `--oauth-client-id` replaces the stored client ID. Neither command accepts a secret as a CLI flag.
@@ -546,6 +548,8 @@ For script setup, the commands read credentials from environment variables, not 
 A basic account also accepts `--password-cmd` or `CHRONCAL_PASSWORD_CMD`. The value is a command, not a secret, so a flag is safe. See [Command-retrieved passwords](#command-retrieved-passwords).
 
 Pass `--disconnect-remote` on `update` to remove the remote link of a calendar.
+
+`--remote-url` refuses a collection that another local calendar links with the same user. Two links of one collection show each item twice. The link makes a new account for the calendar. It does not reuse the account of the other calendar.
 
 `calendar create --default-alarm` and `calendar update --default-alarm` set
 the per-calendar default alarms. See [Default alarms](#default-alarms).
