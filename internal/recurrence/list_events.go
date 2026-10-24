@@ -336,7 +336,7 @@ func expandedEventKind(s *Service) recurringKind[storage.Event, ExpandedEvent, E
 		instTime:       func(i ExpandedEvent) time.Time { return i.InstanceTime },
 		applyInstance:  func(i ExpandedEvent) ExpandedEvent { return i },
 		uid:            func(r storage.Event) string { return seriesKey(r.CalendarID, r.Uid) },
-		dateOnly:       func(r storage.Event) bool { return r.AllDay == 1 },
+		dateOnly:       eventRowDateOnly,
 		status:         func(r storage.Event) string { return r.Status },
 		recurrenceID:   func(r storage.Event) string { return r.RecurrenceID },
 		overridesByUID: s.eventOverridesByUID,
@@ -347,6 +347,10 @@ func expandedEventKind(s *Service) recurringKind[storage.Event, ExpandedEvent, E
 		},
 	}
 }
+
+// eventRowDateOnly reports whether an event row is all-day, so it uses
+// the date-only window (timeutil.WindowFor).
+func eventRowDateOnly(r storage.Event) bool { return r.AllDay == 1 }
 
 // expandRecurringRows expands recurring event rows into Event instances with
 // StartTime/EndTime adjusted to each occurrence. For each master, overrides
@@ -364,7 +368,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 			return e
 		},
 		uid:            func(r storage.Event) string { return seriesKey(r.CalendarID, r.Uid) },
-		dateOnly:       func(r storage.Event) bool { return r.AllDay == 1 },
+		dateOnly:       eventRowDateOnly,
 		status:         func(r storage.Event) string { return r.Status },
 		recurrenceID:   func(r storage.Event) string { return r.RecurrenceID },
 		overridesByUID: s.eventOverridesByUID,

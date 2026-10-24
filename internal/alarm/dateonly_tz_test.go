@@ -173,21 +173,20 @@ func TestTodoAlarm_InstanceKeepsDueForm(t *testing.T) {
 }
 
 // TestTodoTrigger_MixedEndEveryZone checks a RELATED=END trigger of a todo
-// with a timed DTSTART and a date-only DUE. The end mixes the two forms,
-// so the trigger keeps the instant reading. It does not move by the zone
-// offset.
+// with a timed DTSTART and a date-only DUE. The end is the DUE, so the
+// trigger counts from local midnight of the DUE date.
 func TestTodoTrigger_MixedEndEveryZone(t *testing.T) {
 	testutil.ForEachLocalZone(t, func(t *testing.T) {
-		start := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+		start := time.Date(2026, 10, 27, 15, 0, 0, 0, time.UTC)
 		inst := recurrence.ExpandedTodo{
-			Todo:         todo.Todo{StartDate: start.Format(time.RFC3339), DueDate: "2026-10-29"},
+			Todo:         todo.Todo{StartDate: start.Format(time.RFC3339), DueDate: "2026-10-28"},
 			InstanceTime: start,
 		}
 		got, err := computeTodoTriggerTimeForInstance(inst, model.Alarm{TriggerValue: "-PT1H", Related: "END"})
 		if err != nil {
 			t.Fatalf("computeTodoTriggerTimeForInstance: %v", err)
 		}
-		if want := time.Date(2026, 10, 28, 23, 0, 0, 0, time.UTC); !got.Equal(want) {
+		if want := time.Date(2026, 10, 27, 23, 0, 0, 0, time.Local); !got.Equal(want) {
 			t.Fatalf("trigger = %s, want %s", got, want)
 		}
 	})

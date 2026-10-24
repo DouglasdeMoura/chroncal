@@ -123,6 +123,9 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 		}
 
 		for _, inst := range instances {
+			// Move the DUE and DTSTART of the todo to the occurrence.
+			// Each keeps its own form, so a date-only DUE stays a date.
+			instanceTodo := recurrence.TodoAtInstance(inst)
 			for _, a := range alarms {
 				triggerAt, err := computeTodoTriggerTimeForInstance(inst, a)
 				if err != nil {
@@ -137,10 +140,6 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 				}
 
 				triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
-
-				// Move the DUE and DTSTART of the todo to the occurrence.
-				// Each keeps its own form, so a date-only DUE stays a date.
-				instanceTodo := recurrence.TodoAtInstance(inst)
 
 				for _, tt := range triggers {
 					if tt.After(now) {
@@ -282,8 +281,8 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 	// at DUE; otherwise fall back to START+DURATION.
 	//
 	// dateOnly tells whether base is a date-only value (see
-	// relativeTrigger). A DTSTART+DUE end mixes the two values, so it is
-	// date-only only when both values are date-only.
+	// relativeTrigger). A DTSTART+DUE end is the DUE of the occurrence
+	// (DUE plus the shift of the occurrence), so the form of DUE decides.
 	dateOnly := inst.AnchorIsDateOnly()
 	if alarm.Related == "END" {
 		start := inst.ParseStartDate()
@@ -291,7 +290,7 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 		switch {
 		case !start.IsZero() && !due.IsZero():
 			base = inst.InstanceTime.Add(due.Sub(start))
-			dateOnly = timeutil.IsDateOnly(inst.StartDate) && timeutil.IsDateOnly(inst.DueDate)
+			dateOnly = timeutil.IsDateOnly(inst.DueDate)
 		case !due.IsZero():
 			base = inst.InstanceTime
 		case inst.Duration != "":

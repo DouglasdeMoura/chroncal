@@ -17,6 +17,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/notify"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // alarmStateKind tells which table a state ID refers to. The alarm list
@@ -907,17 +908,14 @@ func todoDueAlarmToDueAlarm(tda alarm.TodoDueAlarm) alarm.DueAlarm {
 		Title:    tda.Todo.Summary,
 		Location: tda.Todo.Location,
 	}
+	// A date-only value is stored as an all-day event is, so the
+	// notification shows its date (event.Event.LocalStart).
 	dateStr := tda.Todo.DueDate
 	if dateStr == "" {
 		dateStr = tda.Todo.StartDate
 	}
-	if dateStr != "" {
-		if t, err := time.Parse(time.RFC3339, dateStr); err == nil {
-			evt.StartTime = t
-		} else if t, err := time.Parse("2006-01-02", dateStr); err == nil {
-			evt.StartTime = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
-		}
-	}
+	evt.StartTime = timeutil.ParseDate(dateStr)
+	evt.AllDay = timeutil.IsDateOnly(dateStr)
 	return alarm.DueAlarm{
 		Alarm:     tda.Alarm,
 		TriggerAt: tda.TriggerAt,
