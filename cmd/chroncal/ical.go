@@ -248,11 +248,8 @@ type icalImportOutcome struct {
 	err error
 }
 
-// landed counts the items that the run wrote. An unchanged item is not
-// written (issue #883), so it does not count.
 func (o icalImportOutcome) landed() int {
-	s := o.summary
-	return s.NewEvents + s.UpdatedEvents + s.NewTodos + s.UpdatedTodos + s.NewJournals + s.UpdatedJournals
+	return len(o.summary.Events) + len(o.summary.Todos) + len(o.summary.Journals)
 }
 
 func (o icalImportOutcome) json() map[string]any {

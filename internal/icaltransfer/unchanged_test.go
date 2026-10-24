@@ -218,3 +218,35 @@ func TestImport_UnchangedItemOfASyncedCalendarStaysClean(t *testing.T) {
 		t.Errorf("dirty resources = %d, want 0", dirty)
 	}
 }
+
+// TestImport_UnchangedItemIgnoresTheOrderOfSets imports a file whose
+// categories and attendees are not in the stored order. The store reads
+// both in a sorted order, so the order alone is no change.
+func TestImport_UnchangedItemIgnoresTheOrderOfSets(t *testing.T) {
+	ctx := context.Background()
+	a := newTestApp(t)
+	cal, err := a.Calendars.Create(ctx, "Fast", "", "")
+	if err != nil {
+		t.Fatalf("create calendar: %v", err)
+	}
+	data, err := os.ReadFile("testdata/unchanged.ics")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	unsorted := strings.Replace(string(data), "CATEGORIES:import,test", "CATEGORIES:work,alpha", 1)
+	unsorted = strings.Replace(unsorted, "ATTENDEE;CN=Carol;PARTSTAT=ACCEPTED:mailto:carol@example.com",
+		"ATTENDEE;CN=Zed:mailto:zed@example.com\nATTENDEE;CN=Amy:mailto:amy@example.com\nATTENDEE;CN=Carol;PARTSTAT=ACCEPTED:mailto:carol@example.com", 1)
+	if unsorted == string(data) {
+		t.Fatal("fixture edit did not apply")
+	}
+	importFixture(t, a, cal.ID, []byte(unsorted))
+	want := sequences(t, a)
+
+	s := importFixture(t, a, cal.ID, []byte(unsorted))
+	if got := unchangedCount(s); got != 5 {
+		t.Errorf("unchanged = %d, want 5", got)
+	}
+	if got := sequences(t, a); !slices.Equal(got, want) {
+		t.Errorf("sequences = %v, want %v", got, want)
+	}
+}
