@@ -5,6 +5,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 -- name: ListAlarmsByEventID :many
 SELECT * FROM event_alarms WHERE event_id = ? ORDER BY id;
 
+-- name: ListAlarmsByEventIDs :many
+-- The TUI loads the alarms of the expanded rows in one query (issue #912).
+SELECT * FROM event_alarms
+WHERE event_id IN (sqlc.slice(event_ids))
+ORDER BY event_id, id;
+
 -- name: ListDistinctAlarmTriggers :many
 -- The action list mirrors model.FireableAlarmAction. Keep the two in
 -- lockstep. A preserved sync-only action never fires, so its trigger

@@ -2,6 +2,7 @@ package recurrence
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -175,12 +176,22 @@ type ExpandOption func(*expandOptions)
 
 type expandOptions struct {
 	skipCategories bool
+	withAlarms     bool
 }
 
 // SkipCategories omits the batch category load. Use this when the caller
 // does not need Event.Categories (for example alarm checks).
 func SkipCategories() ExpandOption {
 	return func(o *expandOptions) { o.skipCategories = true }
+}
+
+// WithAlarms fills Event.Alarms of each result in batch queries. A
+// generated occurrence keeps the master ID, so it gets the alarms of the
+// master. An override gets its own alarms. The event view loads the same
+// rows by ID. The TUI uses it for the detail pane of the day dialog (issue
+// #912).
+func WithAlarms() ExpandOption {
+	return func(o *expandOptions) { o.withAlarms = true }
 }
 
 // ListExpandedEvents returns events with their instances in a date range.
@@ -273,11 +284,35 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 				}
 			}
 		}
+
+		if o.withAlarms {
+			alarms, err := event.LoadAlarmsByEventIDs(ctx, s.q, uniqueIDs(ids))
+			if err != nil {
+				return nil, fmt.Errorf("load alarms: %w", err)
+			}
+			for i := range results {
+				results[i].Alarms = alarms[results[i].ID]
+			}
+		}
 	}
 
 	sortExpandedEvents(results)
 
 	return results, nil
+}
+
+// uniqueIDs returns ids without repeats, in first-seen order. Each
+// occurrence of a series repeats the ID of its master.
+func uniqueIDs(ids []int64) []int64 {
+	seen := make(map[int64]bool, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // sortExpandedEvents orders instances by their local calendar day. The day
