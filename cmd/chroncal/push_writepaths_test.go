@@ -340,6 +340,52 @@ func TestRestorePushLeavesAnotherSeriesOfTheUID(t *testing.T) {
 	}
 }
 
+// recordPushes runs args with a stub push that passes, and returns the
+// calendars that the command pushes.
+func recordPushes(t *testing.T, args ...string) []int64 {
+	t.Helper()
+	var pushed []int64
+	prev := pushCalendarAfterWrite
+	pushCalendarAfterWrite = func(a *app.App, calendarID int64, _, _ io.Writer) {
+		pushed = append(pushed, calendarID)
+		if _, err := a.DB.ExecContext(context.Background(), `UPDATE sync_resources SET dirty = 0 WHERE calendar_id = ? AND uid = 'u'`, calendarID); err != nil {
+			t.Errorf("clear dirty: %v", err)
+		}
+	}
+	defer func() { pushCalendarAfterWrite = prev }()
+	if err := runWriteCommand(t, eventCmd(), args...); err != nil {
+		t.Fatalf("%v: %v", args, err)
+	}
+	return pushed
+}
+
+// TestRestoreByUIDLeavesAnotherSeriesOfTheUID restores a series by its UID.
+// Another calendar holds another series of the UID, with a pending edit
+// and a row in the trash. The restore does not bring back that row, so the
+// push leaves that calendar alone (issue #842).
+func TestRestoreByUIDLeavesAnotherSeriesOfTheUID(t *testing.T) {
+	_, ids, rowID := restorePushFixture(t, []string{"Mine", "Other"},
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule) VALUES ('u', %[1]d, 'Row', '2026-05-11T09:00:00Z', '2026-05-11T10:00:00Z', 'FREQ=WEEKLY')`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule) VALUES ('u', %[2]d, 'Other', '2026-05-11T12:00:00Z', '2026-05-11T13:00:00Z', 'FREQ=DAILY')`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at) VALUES ('u', %[2]d, 'Other gone', '2026-05-12T12:30:00Z', '2026-05-12T13:30:00Z', '2026-05-12T12:00:00Z', '2026-05-01T00:00:00Z')`,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag) VALUES (%[1]d, 'u', 'event', '/cal/m/u.ics', 'e1')`,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty) VALUES (%[2]d, 'u', 'event', '/cal/o/u.ics', 'e2', 1)`,
+	)
+	stubPushSeam(t)
+	if err := runWriteCommand(t, eventCmd(), "event", "delete", fmt.Sprint(rowID), "--series", "--yes"); err != nil {
+		t.Fatalf("event delete --series: %v", err)
+	}
+	if got := recordPushes(t, "event", "restore", fmt.Sprint(rowID)); fmt.Sprint(got) != fmt.Sprint([]int64{ids[0]}) {
+		t.Errorf("restore by ID: pushed = %v, want [%d]", got, ids[0])
+	}
+	if err := runWriteCommand(t, eventCmd(), "event", "delete", fmt.Sprint(rowID), "--series", "--yes"); err != nil {
+		t.Fatalf("event delete --series: %v", err)
+	}
+	if got := recordPushes(t, "event", "restore", "u"); fmt.Sprint(got) != fmt.Sprint([]int64{ids[0]}) {
+		t.Errorf("restore by UID: pushed = %v, want [%d]", got, ids[0])
+	}
+}
+
 func assertPushed(t *testing.T, pushed []int64, want int64) {
 	t.Helper()
 	for _, id := range pushed {
