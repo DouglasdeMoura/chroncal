@@ -376,11 +376,10 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Mark) && m.shell.FocusZone() == ListZoneList:
 		return m.toggleMark(), nil
-	case key.Matches(msg, m.keys.Mark) && m.shell.FocusZone() == ListZoneTitleAction:
-		// Space on the Purge All button puts the focus on the list and
-		// marks the selected row there. On a Restore or Purge button,
-		// Space goes to the shell (ActivateByKey), which never fires a
-		// danger button.
+	case key.Matches(msg, m.keys.Mark) && m.shell.FocusedDanger():
+		// Space never fires a danger button (Purge, Purge All). It puts
+		// the focus on the list and marks the selected row there. On the
+		// Restore button, Space goes to the shell and presses it.
 		m.shell = m.shell.SetFocusZone(ListZoneList)
 		return m.toggleMark(), nil
 	case key.Matches(msg, m.keys.MarkAll):
@@ -393,16 +392,25 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Restore):
 		shell, cmd := m.shell.FireAction(0)
+		if cmd == nil {
+			return m, nil
+		}
 		m.shell = shell
 		return m.refresh(), cmd
 	case key.Matches(msg, m.keys.Purge):
 		shell, cmd := m.shell.FireAction(1)
+		if cmd == nil {
+			return m, nil
+		}
 		m.shell = shell
 		return m.refresh(), cmd
 	case key.Matches(msg, m.keys.PurgeAll):
 		// Purge All lives in the title bar, not the action row. The shell
 		// has no title button for an empty trash, so it fires nothing.
 		shell, cmd := m.shell.FireTitleAction()
+		if cmd == nil {
+			return m, nil
+		}
 		m.shell = shell
 		return m.refresh(), cmd
 	}

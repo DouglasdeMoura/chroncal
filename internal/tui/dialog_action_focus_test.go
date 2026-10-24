@@ -188,21 +188,22 @@ func TestEventDialog_RSVPAndTitleButtonPutTheFocusOnTheList(t *testing.T) {
 }
 
 // TestSpaceNeverFiresADangerButton checks that Space on a focused danger
-// button fires nothing and keeps the focus. Enter, a click, or the key of
-// the action fires it (issue #909).
+// button fires nothing and puts the focus on the list. In the trash, Space
+// then marks the selected row. Enter, a click, or the key of the action
+// fires the button (issue #909).
 func TestSpaceNeverFiresADangerButton(t *testing.T) {
 	space := tea.KeyPressMsg{Code: ' ', Text: " "}
 	ev := eventDialogForFocus().focusStop(tabStop{kind: zoneAction, idx: 2})
 	ev, cmd := ev.Update(space)
-	if cmd != nil || ev.currentZone() != zoneAction {
-		t.Errorf("Space on the Delete button: command %v, zone %d, want no command and the button", cmd, ev.currentZone())
+	if cmd != nil || ev.currentZone() != zoneList {
+		t.Errorf("Space on the Delete button: command %v, zone %d, want no command and the list", cmd, ev.currentZone())
 	}
 
 	tr := newTrashForTest().SetEntries(trashFixture(), nil)
 	tr.shell = tr.shell.FocusAction(1)
 	tr, cmd = tr.Update(space)
-	if cmd != nil || tr.shell.FocusZone() != ListZoneActions || len(tr.marked) != 0 {
-		t.Errorf("Space on the Purge button: command %v, zone %v, marks %v, want nothing", cmd, tr.shell.FocusZone(), tr.marked)
+	if cmd != nil || tr.shell.FocusZone() != ListZoneList || !tr.marked[entryKey(trashFixture()[0])] {
+		t.Errorf("Space on the Purge button: command %v, zone %v, marks %v, want the mark of the first row and the list", cmd, tr.shell.FocusZone(), tr.marked)
 	}
 }
 
