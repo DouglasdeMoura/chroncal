@@ -2,7 +2,6 @@ package todo
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -22,16 +21,31 @@ var ErrOverrideExists = errors.New("todo: the occurrence already has an override
 
 // OverrideRow returns the override row of the occurrence recurrenceID of
 // the series uid, live or in the trash. found is false when no row exists.
-// The lookup takes the exact recurrenceID first, then its UTC RFC 3339 form.
+// See overrideRow for the spellings of recurrenceID that it finds.
 func (s *Service) OverrideRow(ctx context.Context, uid, recurrenceID string) (id int64, trashed, found bool, err error) {
+	return overrideRow(ctx, s.q, uid, recurrenceID)
+}
+
+// overrideRow looks up the override row of the occurrence recurrenceID. A
+// stored RECURRENCE-ID can have another spelling of the same time, so the
+// lookup takes the exact recurrenceID, its UTC RFC 3339 form, and, for a
+// time at UTC midnight, its date-only form.
+func overrideRow(ctx context.Context, q *storage.Queries, uid, recurrenceID string) (id int64, trashed, found bool, err error) {
 	ids := []string{recurrenceID}
 	if at, err := timeutil.ParseRecurrenceID(recurrenceID); err == nil {
-		if canonical := at.UTC().Format(time.RFC3339); canonical != recurrenceID {
-			ids = append(ids, canonical)
+		at = at.UTC()
+		ids = append(ids, at.Format(time.RFC3339))
+		if at.Equal(at.Truncate(24 * time.Hour)) {
+			ids = append(ids, at.Format("2006-01-02"))
 		}
 	}
+	seen := map[string]bool{}
 	for _, rid := range ids {
-		row, err := s.q.GetTodoCalendarByUIDAndRecurrenceID(ctx, storage.GetTodoCalendarByUIDAndRecurrenceIDParams{Uid: uid, RecurrenceID: rid})
+		if seen[rid] {
+			continue
+		}
+		seen[rid] = true
+		row, err := q.GetTodoCalendarByUIDAndRecurrenceID(ctx, storage.GetTodoCalendarByUIDAndRecurrenceIDParams{Uid: uid, RecurrenceID: rid})
 		found, err := storage.Found(err)
 		if err != nil {
 			return 0, false, false, err
@@ -43,7 +57,7 @@ func (s *Service) OverrideRow(ctx context.Context, uid, recurrenceID string) (id
 	return 0, false, false, nil
 }
 
-// UpdateInstance creates the override of one occurrence of the recurring
+// CreateOverride creates the override of one occurrence of the recurring
 // todo uid (issue #887). recurrenceID is the UTC RFC 3339 time of the
 // occurrence. p holds every field of the override. The caller fills p from
 // the generated occurrence (recurrence.TodoOccurrence) and applies the
@@ -53,7 +67,7 @@ func (s *Service) OverrideRow(ctx context.Context, uid, recurrenceID string) (id
 // another calendar returns ErrInstanceCalendarMove. An override row at the
 // occurrence returns ErrOverrideExists when it is live, and
 // ErrOccurrenceInTrash when it is in the trash.
-func (s *Service) UpdateInstance(ctx context.Context, uid, recurrenceID string, p UpdateParams) (Todo, error) {
+func (s *Service) CreateOverride(ctx context.Context, uid, recurrenceID string, p UpdateParams) (Todo, error) {
 	p.Status, p.Class = defaults(p.Status, p.Class)
 	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
 	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
@@ -115,7 +129,7 @@ func (s *Service) DeleteInstance(ctx context.Context, uid, recurrenceID string, 
 }
 
 // createOverrideTx writes the override row of the occurrence recurrenceID
-// of the series uid from p. See UpdateInstance for the rules.
+// of the series uid from p. See CreateOverride for the rules.
 func createOverrideTx(ctx context.Context, qtx *storage.Queries, uid, recurrenceID string, p UpdateParams) (Todo, error) {
 	at, err := timeutil.ParseRecurrenceID(recurrenceID)
 	if err != nil {
@@ -132,14 +146,14 @@ func createOverrideTx(ctx context.Context, qtx *storage.Queries, uid, recurrence
 	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
 		return Todo{}, ErrInstanceCalendarMove
 	}
-	prior, err := qtx.GetTodoCalendarByUIDAndRecurrenceID(ctx, storage.GetTodoCalendarByUIDAndRecurrenceIDParams{Uid: uid, RecurrenceID: recurrenceID})
+	_, trashed, found, err := overrideRow(ctx, qtx, uid, recurrenceID)
 	switch {
-	case err == nil && prior.Trashed == 1:
-		return Todo{}, ErrOccurrenceInTrash
-	case err == nil:
-		return Todo{}, ErrOverrideExists
-	case !errors.Is(err, sql.ErrNoRows):
+	case err != nil:
 		return Todo{}, fmt.Errorf("check override: %w", err)
+	case found && trashed:
+		return Todo{}, ErrOccurrenceInTrash
+	case found:
+		return Todo{}, ErrOverrideExists
 	}
 
 	r, err := qtx.CreateTodo(ctx, storage.CreateTodoParams{

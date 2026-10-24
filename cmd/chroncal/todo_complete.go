@@ -39,7 +39,7 @@ one. The other occurrences do not change.`,
 				// fields of the occurrence, completed (issue #887).
 				p := todoParamsOf(t)
 				p.Status, p.CompletedAt = "COMPLETED", ""
-				t, err = a.Todos.UpdateInstance(ctx, t.UID, t.RecurrenceID, p)
+				t, err = a.Todos.CreateOverride(ctx, t.UID, t.RecurrenceID, p)
 			} else {
 				t, err = a.Todos.Complete(ctx, t.ID)
 			}

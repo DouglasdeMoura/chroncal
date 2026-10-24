@@ -105,6 +105,18 @@ func TestTodoOccurrenceErrorsNameTheCause(t *testing.T) {
 		t.Fatalf("todo add output %q: %v", stdout, err)
 	}
 
+	stdout, _, err = runChroncalCommand(t, "todo", "add", "Cancelled", "--due", "2026-10-24",
+		"--recurrence-rule", "FREQ=WEEKLY", "--status", "CANCELLED", "-o", "json")
+	if err != nil {
+		t.Fatalf("todo add cancelled: %v", err)
+	}
+	var cancelled struct {
+		UID string `json:"uid"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &cancelled); err != nil {
+		t.Fatalf("todo add output %q: %v", stdout, err)
+	}
+
 	tests := []struct {
 		args []string
 		want string
@@ -115,6 +127,7 @@ func TestTodoOccurrenceErrorsNameTheCause(t *testing.T) {
 		{[]string{"todo", "complete", "no-such-uid", "--recurrence-id", "2026-10-24T00:00:00Z"}, "todo no-such-uid not found"},
 		{[]string{"todo", "update", uid, "--recurrence-id", "2026-10-31T00:00:00Z", "--recurrence-rule", "FREQ=DAILY"}, "--recurrence-rule changes the series"},
 		{[]string{"todo", "update", uid, "--recurrence-id", "tomorrow"}, "invalid RFC 3339 timestamp"},
+		{[]string{"todo", "complete", cancelled.UID, "--recurrence-id", "2026-10-31T00:00:00Z"}, "is cancelled, so it has no occurrences"},
 	}
 	for _, tc := range tests {
 		_, _, err := runChroncalCommand(t, tc.args...)

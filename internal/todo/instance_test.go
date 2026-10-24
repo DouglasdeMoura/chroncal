@@ -27,10 +27,10 @@ func occurrenceParams() UpdateParams {
 	return UpdateParams{Summary: "Weekly review", DueDate: "2026-10-31", CalendarID: 1}
 }
 
-// TestUpdateInstance_CreatesTheOverride locks in issue #887. The override
+// TestCreateOverride_CreatesTheOverride locks in issue #887. The override
 // of one occurrence is a new row with the UID of the series and the
 // RECURRENCE-ID of the occurrence. The master does not change.
-func TestUpdateInstance_CreatesTheOverride(t *testing.T) {
+func TestCreateOverride_CreatesTheOverride(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
 	ctx := context.Background()
@@ -38,9 +38,9 @@ func TestUpdateInstance_CreatesTheOverride(t *testing.T) {
 
 	p := occurrenceParams()
 	p.Status = "COMPLETED"
-	got, err := svc.UpdateInstance(ctx, "weekly", "2026-10-31T00:00:00Z", p)
+	got, err := svc.CreateOverride(ctx, "weekly", "2026-10-31T00:00:00Z", p)
 	if err != nil {
-		t.Fatalf("UpdateInstance: %v", err)
+		t.Fatalf("CreateOverride: %v", err)
 	}
 	if got.ID == master.ID || got.UID != "weekly" || got.RecurrenceID != "2026-10-31T00:00:00Z" {
 		t.Fatalf("override = %+v, want a new row of the series", got)
@@ -59,21 +59,21 @@ func TestUpdateInstance_CreatesTheOverride(t *testing.T) {
 		t.Errorf("master changed: %+v", after)
 	}
 
-	if _, err := svc.UpdateInstance(ctx, "weekly", "2026-10-31T00:00:00Z", p); !errors.Is(err, ErrOverrideExists) {
-		t.Errorf("second UpdateInstance error = %v, want ErrOverrideExists", err)
+	if _, err := svc.CreateOverride(ctx, "weekly", "2026-10-31T00:00:00Z", p); !errors.Is(err, ErrOverrideExists) {
+		t.Errorf("second CreateOverride error = %v, want ErrOverrideExists", err)
 	}
 }
 
-// TestUpdateInstance_RefusesAMoveToAnotherCalendar keeps the occurrence in
+// TestCreateOverride_RefusesAMoveToAnotherCalendar keeps the occurrence in
 // the calendar of its series.
-func TestUpdateInstance_RefusesAMoveToAnotherCalendar(t *testing.T) {
+func TestCreateOverride_RefusesAMoveToAnotherCalendar(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
 	seedWeekly(t, svc)
 
 	p := occurrenceParams()
 	p.CalendarID = 99
-	if _, err := svc.UpdateInstance(context.Background(), "weekly", "2026-10-31T00:00:00Z", p); !errors.Is(err, ErrInstanceCalendarMove) {
+	if _, err := svc.CreateOverride(context.Background(), "weekly", "2026-10-31T00:00:00Z", p); !errors.Is(err, ErrInstanceCalendarMove) {
 		t.Errorf("error = %v, want ErrInstanceCalendarMove", err)
 	}
 }
@@ -103,8 +103,8 @@ func TestDeleteInstance_HidesTheOccurrenceAndRestores(t *testing.T) {
 	if err != nil || !found || !trashed || id != gone.ID {
 		t.Errorf("OverrideRow = %d, %v, %v, %v; want the row in the trash", id, trashed, found, err)
 	}
-	if _, err := svc.UpdateInstance(ctx, "weekly", "2026-10-31T00:00:00Z", occurrenceParams()); !errors.Is(err, ErrOccurrenceInTrash) {
-		t.Errorf("UpdateInstance of a deleted occurrence = %v, want ErrOccurrenceInTrash", err)
+	if _, err := svc.CreateOverride(ctx, "weekly", "2026-10-31T00:00:00Z", occurrenceParams()); !errors.Is(err, ErrOccurrenceInTrash) {
+		t.Errorf("CreateOverride of a deleted occurrence = %v, want ErrOccurrenceInTrash", err)
 	}
 
 	if err := svc.RestoreByID(ctx, gone.ID); err != nil {
@@ -123,9 +123,9 @@ func TestOverrideRow_TakesTheUTCForm(t *testing.T) {
 	svc := NewService(db, q)
 	ctx := context.Background()
 	seedWeekly(t, svc)
-	created, err := svc.UpdateInstance(ctx, "weekly", "2026-10-30T21:00:00-03:00", occurrenceParams())
+	created, err := svc.CreateOverride(ctx, "weekly", "2026-10-30T21:00:00-03:00", occurrenceParams())
 	if err != nil {
-		t.Fatalf("UpdateInstance: %v", err)
+		t.Fatalf("CreateOverride: %v", err)
 	}
 	if created.RecurrenceID != "2026-10-31T00:00:00Z" {
 		t.Errorf("stored RECURRENCE-ID = %q, want the UTC form", created.RecurrenceID)
@@ -133,5 +133,26 @@ func TestOverrideRow_TakesTheUTCForm(t *testing.T) {
 	id, trashed, found, err := svc.OverrideRow(ctx, "weekly", "2026-10-30T21:00:00-03:00")
 	if err != nil || !found || trashed || id != created.ID {
 		t.Errorf("OverrideRow = %d, %v, %v, %v; want the live override", id, trashed, found, err)
+	}
+}
+
+// TestOverrideRow_TakesTheDateOnlyForm finds an override whose stored
+// RECURRENCE-ID is date-only, so a second override of the occurrence is
+// never written.
+func TestOverrideRow_TakesTheDateOnlyForm(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	ctx := context.Background()
+	seedWeekly(t, svc)
+	stored, err := svc.UpsertByUID(ctx, UpsertParams{UID: "weekly", CalendarID: 1, Summary: "Imported", DueDate: "2026-10-31", RecurrenceID: "2026-10-31"})
+	if err != nil {
+		t.Fatalf("seed override: %v", err)
+	}
+	id, trashed, found, err := svc.OverrideRow(ctx, "weekly", "2026-10-31T00:00:00Z")
+	if err != nil || !found || trashed || id != stored.ID {
+		t.Errorf("OverrideRow = %d, %v, %v, %v; want the date-only override", id, trashed, found, err)
+	}
+	if _, err := svc.CreateOverride(ctx, "weekly", "2026-10-31T00:00:00Z", occurrenceParams()); !errors.Is(err, ErrOverrideExists) {
+		t.Errorf("CreateOverride error = %v, want ErrOverrideExists", err)
 	}
 }

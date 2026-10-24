@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
@@ -14,11 +15,12 @@ import (
 // --recurrence-id (issue #887). With a recurrence ID and a series UID, it
 // returns the override row of the occurrence. When the occurrence has no
 // row yet, it returns the generated occurrence and create is true. The
-// caller then writes the override with todo.Service.UpdateInstance or
+// caller then writes the override with todo.Service.CreateOverride or
 // todo.Service.DeleteInstance.
 //
 // The error names the cause: no todo of the UID, a todo that does not
-// recur, a time that is not an occurrence, or an override in the trash.
+// recur, a cancelled series, a time that is not an occurrence, or an
+// override in the trash.
 func resolveTodoOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string) (t todo.Todo, create bool, err error) {
 	if recurrenceID == "" {
 		t, err := resolveTodo(ctx, a, ref, "")
@@ -55,6 +57,9 @@ func resolveTodoOccurrence(ctx context.Context, a *app.App, ref, recurrenceID st
 	if !ok {
 		if master.RecurrenceRule == "" && master.RDates == "" {
 			return todo.Todo{}, false, errInvalidInputf("todo %s does not recur, so --recurrence-id does not apply", ref)
+		}
+		if strings.EqualFold(master.Status, "CANCELLED") {
+			return todo.Todo{}, false, errInvalidInputf("the series of todo %s is cancelled, so it has no occurrences", ref)
 		}
 		return todo.Todo{}, false, errInvalidInputf("--recurrence-id %s is not an occurrence of todo %s", at.Format(time.RFC3339), ref)
 	}
