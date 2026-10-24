@@ -79,7 +79,9 @@ func TestUpdateOfAGoneObjectIsCreatedAgain(t *testing.T) {
 
 // TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit is the server-wins case of
 // TestUpdateOfAGoneObjectIsCreatedAgain. The push sends no create, and the
-// pull moves the event to the trash.
+// pull moves the event to the trash. The pass reports no error and records
+// no conflict: the GET after the 412 finds no object, and the delete is the
+// side that a server-wins pass keeps (issue #884).
 func TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit(t *testing.T) {
 	t.Parallel()
 	engine, _, srv, calA, _ := newICloudPairEngine(t)
@@ -91,8 +93,11 @@ func TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit(t *testing.T) {
 
 	putsBefore, _ := srv.counts()
 	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || res.Pushed != 0 || res.Deleted != 1 {
-		t.Fatalf("pass of A = %+v, %v; want no push and the remote delete applied", res, err)
+	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, and the remote delete applied", res, err)
+	}
+	if n, err := engine.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{CalendarID: calA, Uid: evt.UID}); err != nil || n != 0 {
+		t.Fatalf("open conflicts = %d, %v; want none", n, err)
 	}
 	if puts, _ := srv.counts(); puts != putsBefore+1 || srv.has(path) {
 		t.Fatalf("PUTs = %d (want %d), object = %v; want no create", puts, putsBefore+1, srv.has(path))

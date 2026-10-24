@@ -391,6 +391,8 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 				case putConflictRecordFailed:
 					// No row exists, so nothing is counted. errs already
 					// carries the failure to the caller.
+				case putConflictServerDeleted:
+					// The pull of the pass applies the remote delete.
 				}
 				if outcome != putConflictRecreate {
 					continue
@@ -1904,6 +1906,11 @@ const (
 	// row lost its href and its etag, and the caller sends a create (issue
 	// #866).
 	putConflictRecreate
+	// putConflictServerDeleted means a server-wins pass met an update of an
+	// object that another client deleted. The pass keeps the delete: the
+	// row stays dirty, and the pull of the pass moves the item to the
+	// trash (issue #884).
+	putConflictServerDeleted
 )
 
 // handlePutConflict settles one 412 Precondition Failed answer. It records
@@ -1916,7 +1923,8 @@ const (
 // server ETag the row has no safe server side. The failure surfaces as an
 // error (see recordConflictRow). Prompt mode and the opportunistic push stop
 // after the record. A server-wins pass adopts the server version and marks
-// the row resolved. Every failure on that path leaves the row open, so the
+// the row resolved. When the object is gone, a server-wins pass records
+// nothing and keeps the remote delete (putConflictServerDeleted). Every failure on that path leaves the row open, so the
 // user can still resolve it by hand. See issue #610.
 func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, calendarID int64, res storage.SyncResource, putPath string, icalData []byte, strategy ConflictStrategy, opportunistic bool) (putConflictOutcome, []ImportWarning, []error) {
 	var errs []error
@@ -1995,6 +2003,14 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 		}
 		logImportWarnings(e.logger, []ImportWarning{w})
 		return putConflictRecreate, []ImportWarning{w}, errs
+	}
+	if res.RemoteUrl != "" && caldav.IsAbsent(fetchErr) {
+		// A server-wins pass keeps the remote delete. The object is gone,
+		// so no conflict row can hold a server side. The row stays dirty,
+		// and the pull of the same pass moves the item to the trash. The
+		// push reports no error (issue #884).
+		e.logger.Info("keep the remote delete: server wins", "uid", res.Uid)
+		return putConflictServerDeleted, nil, errs
 	}
 	if fetchErr != nil {
 		e.logger.Warn("fetch server resource for conflict record failed", "uid", res.Uid, "error", fetchErr)
