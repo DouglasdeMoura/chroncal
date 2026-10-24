@@ -471,6 +471,10 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		return nil, err
 	}
 	result = &SyncResult{CalendarID: cal.ID}
+	strategy, err = e.relinkStrategy(ctx, cal, strategy)
+	if err != nil {
+		return nil, err
+	}
 
 	e.logger.Info("sync started", "calendar_id", calendarID, "remote_url", remoteURL)
 
@@ -547,6 +551,10 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 				result.AutoResolved += resolved
 			}
 		}
+	}
+
+	if cal.RelinkPending != 0 && len(result.Errors) == 0 {
+		e.settleRelink(ctx, calendarID)
 	}
 
 	// Cleanup stale tombstones
@@ -1125,6 +1133,45 @@ func detectOwnerType(result icalPkg.ImportResult) string {
 		return ownerTypeJournal
 	}
 	return ownerTypeEvent
+}
+
+// relinkStrategy returns the strategy of a pass of cal. A calendar that an
+// account removal unlinked has relink_pending (issue #876). After its
+// relink, it can hold a local edit or a delete of a pushed item that no
+// push sent. A server-wins pass would adopt the server body over that
+// edit. While such a change exists, the pass uses ConflictPrompt: a 412
+// records an open conflict, and the edit stays dirty. The relink also
+// clears the mark of a row that the collection cannot take
+// (SettleUntakeableEditsInCalendar).
+func (e *Engine) relinkStrategy(ctx context.Context, cal storage.Calendar, strategy ConflictStrategy) (ConflictStrategy, error) {
+	if cal.RelinkPending == 0 {
+		return strategy, nil
+	}
+	if err := e.q.SettleUntakeableEditsInCalendar(ctx, cal.ID); err != nil {
+		return strategy, fmt.Errorf("settle the edits that the collection cannot take: %w", err)
+	}
+	has, err := e.q.HasUnsentServerChangesInCalendar(ctx, cal.ID)
+	if err != nil {
+		return strategy, fmt.Errorf("read the unsent changes: %w", err)
+	}
+	if has != 0 && strategy == ConflictServerWins {
+		e.logger.Info("relinked calendar keeps its unsent changes: prompt strategy", "calendar_id", cal.ID)
+		return ConflictPrompt, nil
+	}
+	return strategy, nil
+}
+
+// settleRelink clears relink_pending of calendarID after a clean pass that
+// left no unsent change of a pushed item. Later passes then use the
+// configured strategy again. A failure keeps the flag for the next pass.
+func (e *Engine) settleRelink(ctx context.Context, calendarID int64) {
+	has, err := e.q.HasUnsentServerChangesInCalendar(ctx, calendarID)
+	if err != nil || has != 0 {
+		return
+	}
+	if err := e.q.ClearCalendarRelinkPending(ctx, calendarID); err != nil {
+		e.logger.Warn("clear relink pending failed", "calendar_id", calendarID, "error", err)
+	}
 }
 
 func (e *Engine) updateSyncHealth(ctx context.Context, calendarID int64, attemptedAt string, result *SyncResult, runErr error) error {

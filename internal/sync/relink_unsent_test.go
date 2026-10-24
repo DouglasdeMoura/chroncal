@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/douglasdemoura/chroncal/internal/calendar"
@@ -29,9 +30,9 @@ func unlinkAndEdit(t *testing.T, engine *Engine, q *storage.Queries, calA int64,
 
 // TestRelinkKeepsAnEditFromTheUnlinkedTime edits a pushed event while its
 // calendar has no account, and the server edits the event too. After the
-// relink, the first pass must keep the local edit: it records an open
-// conflict and the row stays dirty. A server-wins pass would adopt the
-// server body (issue #876).
+// relink, a server-wins pass must keep the local edit: it records an open
+// conflict and the row stays dirty, and the calendar keeps relink_pending.
+// Without the rule the pass adopts the server body (issue #876).
 func TestRelinkKeepsAnEditFromTheUnlinkedTime(t *testing.T) {
 	t.Parallel()
 	engine, q, srv, calA, _ := newICloudPairEngine(t)
@@ -50,13 +51,17 @@ func TestRelinkKeepsAnEditFromTheUnlinkedTime(t *testing.T) {
 		t.Fatalf("seed sync token: %v", err)
 	}
 
-	strategy, err := firstSyncStrategy(ctx, q, calA, ConflictServerWins)
-	if err != nil || strategy != ConflictPrompt {
-		t.Fatalf("first strategy = %v, %v; want ConflictPrompt", strategy, err)
+	for pass := 1; pass <= 2; pass++ {
+		res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
+		if err != nil || res.AutoResolved != 0 {
+			t.Fatalf("pass %d = %+v, %v; want no automatic resolution", pass, res, err)
+		}
 	}
-	res, err := engine.SyncCalendar(ctx, calA, strategy)
-	if err != nil || res.Conflicts != 1 {
-		t.Fatalf("first pass = %+v, %v; want one open conflict", res, err)
+	if n, err := q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{CalendarID: calA, Uid: evt.UID}); err != nil || n != 1 {
+		t.Fatalf("open conflicts = %d, %v; want one", n, err)
+	}
+	if cal, err := q.GetCalendar(ctx, calA); err != nil || cal.RelinkPending != 1 {
+		t.Fatalf("relink_pending = %d, %v; want 1 while the edit waits", cal.RelinkPending, err)
 	}
 	wantLive(t, engine, evtID, calA, "Dentist (local)")
 	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID}); err != nil || sr.Dirty != 1 {
@@ -64,21 +69,41 @@ func TestRelinkKeepsAnEditFromTheUnlinkedTime(t *testing.T) {
 	}
 }
 
-// TestFirstSyncStrategyKeepsTheFallback checks a calendar with no unsent
-// change of a pushed item. The first pass then keeps the fallback strategy.
-func TestFirstSyncStrategyKeepsTheFallback(t *testing.T) {
+// TestRelinkPendingClearsAfterACleanPass relinks a calendar with an edit
+// from the time without an account, and no server change. The pass pushes
+// the edit and clears relink_pending, so later passes use the configured
+// strategy again (issue #876).
+func TestRelinkPendingClearsAfterACleanPass(t *testing.T) {
 	t.Parallel()
-	engine, q, _, calA, _ := newICloudPairEngine(t)
-	createPushedEvent(t, engine, calA)
-	if strategy, err := firstSyncStrategy(context.Background(), q, calA, ConflictServerWins); err != nil || strategy != ConflictServerWins {
-		t.Fatalf("first strategy = %v, %v; want ConflictServerWins", strategy, err)
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	accountID, evtID := unlinkAndEdit(t, engine, q, calA, "Dentist (local)")
+	if err := calendar.NewService(engine.db, q).LinkToAccount(ctx, calA, accountID, "/cal/a/"); err != nil {
+		t.Fatalf("LinkToAccount: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET sync_token = 'tok0' WHERE id = ?`, calA); err != nil {
+		t.Fatalf("seed sync token: %v", err)
+	}
+	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
+	if err != nil || res.Pushed != 1 || len(res.Errors) != 0 {
+		t.Fatalf("pass = %+v, %v; want the edit pushed", res, err)
+	}
+	evt, err := engine.events.Get(ctx, evtID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if body := srv.body("/cal/a/" + evt.UID + ".ics"); !strings.Contains(body, "SUMMARY:Dentist (local)") {
+		t.Fatalf("server body = %q; want the edit", body)
+	}
+	if cal, err := q.GetCalendar(ctx, calA); err != nil || cal.RelinkPending != 0 {
+		t.Fatalf("relink_pending = %d, %v; want 0 after the clean pass", cal.RelinkPending, err)
 	}
 }
 
 // TestRelinkToAReadOnlyCollectionSettlesTheEdit edits a pushed event while
 // its calendar has no account, and the collection is read-only at the
-// relink. No push can send the edit, so the relink clears the mark and the
-// etag, and the next pull reads the server body (issue #876).
+// relink. No push can send the edit, so the pass clears the mark and the
+// etag, and the pull reads the server body (issue #876).
 func TestRelinkToAReadOnlyCollectionSettlesTheEdit(t *testing.T) {
 	t.Parallel()
 	engine, q, _, calA, _ := newICloudPairEngine(t)
@@ -96,6 +121,13 @@ func TestRelinkToAReadOnlyCollectionSettlesTheEdit(t *testing.T) {
 	}
 	if err := calendar.NewService(engine.db, q).LinkToAccount(ctx, calA, accountID, "/cal/a/"); err != nil {
 		t.Fatalf("LinkToAccount: %v", err)
+	}
+	cal, err := q.GetCalendar(ctx, calA)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if _, err := engine.relinkStrategy(ctx, cal, ConflictServerWins); err != nil {
+		t.Fatalf("relinkStrategy: %v", err)
 	}
 	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
 	if err != nil || sr.Dirty != 0 || sr.Etag != "" || sr.RemoteUrl == "" {

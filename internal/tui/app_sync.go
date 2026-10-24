@@ -337,14 +337,7 @@ func syncSummary(label string, t syncTotals) string {
 // the rest unsynced.
 func syncNewlyLinkedCalendars(ctx context.Context, svc *syncpkg.Service, ids []int64, strategy syncpkg.ConflictStrategy) (synced, warnings int, syncErr error) {
 	for _, calendarID := range ids {
-		first, err := svc.FirstSyncStrategy(ctx, calendarID, strategy)
-		if err != nil {
-			if syncErr == nil {
-				syncErr = err
-			}
-			continue
-		}
-		syncResult, err := svc.SyncCalendar(ctx, calendarID, first)
+		syncResult, err := svc.SyncCalendar(ctx, calendarID, strategy)
 		if syncResult != nil {
 			warnings += len(syncResult.Warnings)
 		}

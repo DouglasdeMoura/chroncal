@@ -155,9 +155,11 @@ WHERE id = ?;
 
 -- name: ClearRemoteLinksByAccount :exec
 -- Account remove sets account_id to NULL. It keeps remote_url and remote_name
--- so a later account add can re-link the same rows.
+-- so a later account add can re-link the same rows. relink_pending keeps the
+-- edits of that time for the relink (issue #876).
 UPDATE calendars SET
     account_id = NULL,
+    relink_pending = 1,
     ctag = '',
     sync_token = '',
     last_sync_at = '',
@@ -174,6 +176,7 @@ WHERE account_id = ?;
 -- name: ClearRemoteLinkByCalendar :exec
 UPDATE calendars SET
     account_id = NULL,
+    relink_pending = 0,
     remote_url = '',
     ctag = '',
     sync_token = '',
@@ -188,6 +191,10 @@ UPDATE calendars SET
     remote_missing = 0,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?;
+
+-- name: ClearCalendarRelinkPending :exec
+-- The relink of the calendar settled its unsent changes (issue #876).
+UPDATE calendars SET relink_pending = 0 WHERE id = ?;
 
 -- name: RenameCalendar :exec
 -- Changes only the name (and updated_at). Calendar migration uses this to

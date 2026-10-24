@@ -50,6 +50,7 @@ type Calendar struct {
 	RemoteMissing       int64
 	DefaultAlarms       *string
 	LocalPath           string
+	RelinkPending       int64
 }
 
 type CredentialLocation struct {
