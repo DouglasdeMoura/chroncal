@@ -270,8 +270,8 @@ func (e *Engine) pullFullSnapshot(ctx context.Context, client *caldav.Client, ca
 	// A persist failure makes this pull incomplete, with the same
 	// accounting as the sync-collection path: the failed resource keeps its
 	// old etag so the next snapshot re-fetches the change, and the error
-	// below withholds the healthy-sync stamp (LastSyncAt stays unset and
-	// LastSyncError records why). This path stores no sync-token by
+	// below withholds the healthy-sync stamp (LastSyncAt does not advance,
+	// and LastSyncError records why). This path stores no sync-token by
 	// construction, so no token can advance past the failure. The surfaced
 	// error is what stops a persist that never converges on a fallback
 	// server from masquerading as a clean sync.

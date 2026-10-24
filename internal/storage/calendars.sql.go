@@ -729,11 +729,11 @@ func (q *Queries) UpdateCalendarOwnerEmail(ctx context.Context, arg UpdateCalend
 
 const updateCalendarSyncHealth = `-- name: UpdateCalendarSyncHealth :exec
 UPDATE calendars SET
-    last_sync_attempted_at = ?,
-    last_sync_at = ?,
-    last_sync_error = ?,
+    last_sync_attempted_at = ?1,
+    last_sync_at = COALESCE(?2, last_sync_at),
+    last_sync_error = ?3,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ?
+WHERE id = ?4
 `
 
 type UpdateCalendarSyncHealthParams struct {
@@ -743,6 +743,9 @@ type UpdateCalendarSyncHealthParams struct {
 	ID                  int64
 }
 
+// Record one sync attempt. A NULL last_sync_at keeps the stored value: a
+// failed run keeps the time of the last good sync, and last_sync_error
+// records the failure beside it. See issue #886.
 func (q *Queries) UpdateCalendarSyncHealth(ctx context.Context, arg UpdateCalendarSyncHealthParams) error {
 	_, err := q.db.ExecContext(ctx, updateCalendarSyncHealth,
 		arg.LastSyncAttemptedAt,

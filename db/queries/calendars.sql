@@ -37,12 +37,15 @@ UPDATE calendars SET
 WHERE id = ?;
 
 -- name: UpdateCalendarSyncHealth :exec
+-- Record one sync attempt. A NULL last_sync_at keeps the stored value: a
+-- failed run keeps the time of the last good sync, and last_sync_error
+-- records the failure beside it. See issue #886.
 UPDATE calendars SET
-    last_sync_attempted_at = ?,
-    last_sync_at = ?,
-    last_sync_error = ?,
+    last_sync_attempted_at = sqlc.narg(last_sync_attempted_at),
+    last_sync_at = COALESCE(sqlc.narg(last_sync_at), last_sync_at),
+    last_sync_error = sqlc.narg(last_sync_error),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ?;
+WHERE id = sqlc.arg(id);
 
 -- name: LinkCalendarToAccount :exec
 UPDATE calendars SET
