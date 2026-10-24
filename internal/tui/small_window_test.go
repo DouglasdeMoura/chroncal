@@ -166,13 +166,15 @@ func TestPickerInspectorClickFollowsNarrowGap(t *testing.T) {
 	y := 3 + max(h-4, 1)
 	x := 0
 	for i, a := range m.shell.actions {
-		next, _ := m.HandleInspectorClick(x, y, w, h)
+		next, cmd := m.HandleInspectorClick(x, y, w, h)
 		if a.Disabled {
 			x += actionButtonWidth(bs, a)
 			continue
 		}
-		if got := next.shell.FocusedAction(); got != i || next.shell.FocusZone() != ListZoneActions {
-			t.Fatalf("click at x=%d focused action %d (zone %v), want %d", x, got, next.shell.FocusZone(), i)
+		// A fired button records its index and puts the focus on the list
+		// (FireAction, issue #909).
+		if got := next.shell.FocusedAction(); got != i || cmd == nil || next.shell.FocusZone() != ListZoneList {
+			t.Fatalf("click at x=%d fired action %d (command %v, zone %v), want %d", x, got, cmd != nil, next.shell.FocusZone(), i)
 		}
 		x += actionButtonWidth(bs, a)
 	}
