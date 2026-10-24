@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -88,7 +89,23 @@ func TestRestoreByUIDOfALiveSeriesWithAnOccurrenceInTheTrash(t *testing.T) {
 		[]string{"event", "add", "Daily", "--calendar", "Work", "--date", "2026-05-18", "--time", "09:00", "--rrule", "FREQ=DAILY;COUNT=3"},
 	)
 	uid := cliRowUID(t, dbPath, "events", 1)
-	if _, stderr, err := runChroncalCommand(t, "event", "update", uid, "--recurrence-id", "2026-05-19T12:00:00Z", "--title", "Moved"); err != nil {
+	// The second occurrence, from the stored start in UTC. The add reads
+	// --time in the local zone, so a fixed value would depend on TZ.
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	var start string
+	if err := a.DB.QueryRowContext(context.Background(), `SELECT start_time FROM events WHERE id = 1`).Scan(&start); err != nil {
+		t.Fatalf("read start: %v", err)
+	}
+	a.Close()
+	first, err := time.Parse(time.RFC3339, start)
+	if err != nil {
+		t.Fatalf("parse start %q: %v", start, err)
+	}
+	second := first.Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	if _, stderr, err := runChroncalCommand(t, "event", "update", uid, "--recurrence-id", second, "--title", "Moved"); err != nil {
 		t.Fatalf("event update: %v (stderr: %s)", err, stderr)
 	}
 	if _, stderr, err := runChroncalCommand(t, "event", "delete", "2", "--yes"); err != nil {
@@ -103,7 +120,7 @@ func TestRestoreByUIDOfALiveSeriesWithAnOccurrenceInTheTrash(t *testing.T) {
 	}
 
 	// A live series of the UID in two calendars.
-	a, err := app.New(dbPath)
+	a, err = app.New(dbPath)
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
 	}
