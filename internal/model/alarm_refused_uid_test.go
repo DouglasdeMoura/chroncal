@@ -1,42 +1,22 @@
 package model
 
 import (
-	"errors"
 	"slices"
 	"testing"
 )
 
 func TestWithoutRefusedAlarmUIDs(t *testing.T) {
-	in := []Alarm{{UID: "free"}, {UID: "held"}, {UID: "free"}, {UID: ""}}
-	var asked []string
-	held := func(uids []string) (map[string]bool, error) {
-		asked = uids
-		return map[string]bool{"held": true}, nil
-	}
-	got, err := WithoutRefusedAlarmUIDs(in, held)
-	if err != nil {
-		t.Fatalf("WithoutRefusedAlarmUIDs: %v", err)
-	}
+	in := []Alarm{{UID: "a"}, {UID: "b"}, {UID: "a"}, {UID: ""}}
+	got := WithoutRefusedAlarmUIDs(in)
 	uids := make([]string, 0, len(got))
 	for _, a := range got {
 		uids = append(uids, a.UID)
 	}
-	if want := []string{"free", "", "", ""}; !slices.Equal(uids, want) {
+	if want := []string{"a", "b", "", ""}; !slices.Equal(uids, want) {
 		t.Errorf("UIDs = %q, want %q", uids, want)
 	}
-	if want := []string{"free", "held", "free"}; !slices.Equal(asked, want) {
-		t.Errorf("asked = %q, want %q", asked, want)
-	}
-	if in[1].UID != "held" {
-		t.Errorf("input changed: %q", in[1].UID)
-	}
-
-	boom := errors.New("boom")
-	if _, err := WithoutRefusedAlarmUIDs(in, func([]string) (map[string]bool, error) { return nil, boom }); !errors.Is(err, boom) {
-		t.Errorf("error = %v, want %v", err, boom)
-	}
-	if _, err := WithoutRefusedAlarmUIDs([]Alarm{{}}, func([]string) (map[string]bool, error) { return nil, boom }); err != nil {
-		t.Errorf("no UIDs: error = %v, want no lookup", err)
+	if in[2].UID != "a" {
+		t.Errorf("input changed: %q", in[2].UID)
 	}
 }
 
@@ -58,9 +38,23 @@ func TestPairAlarms(t *testing.T) {
 			want:     []AlarmPair{{Stored: 1}, {Stored: 0, ByContent: true}},
 		},
 		{
-			name:     "different UIDs never pair",
+			name:     "different UIDs pair by content in the third pass",
+			stored:   []Alarm{alarmAt("minted", "-PT15M")},
+			incoming: []Alarm{alarmAt("file", "-PT15M")},
+			want:     []AlarmPair{{Stored: 0, ByContent: true}},
+		},
+		{
+			// Alarm a must not take the row with no UID: the backfill
+			// would put a on a second row of the item.
+			name:     "a UID that a stored row has skips rows with no UID",
+			stored:   []Alarm{alarmAt("a", "-PT15M"), alarmAt("", "-PT5M")},
+			incoming: []Alarm{alarmAt("a", "-PT5M"), alarmAt("b", "-PT15M")},
+			want:     []AlarmPair{{Stored: 0}, {Stored: -1}},
+		},
+		{
+			name:     "different content never pairs across UIDs",
 			stored:   []Alarm{alarmAt("a", "-PT15M")},
-			incoming: []Alarm{alarmAt("b", "-PT15M")},
+			incoming: []Alarm{alarmAt("b", "-PT5M")},
 			want:     []AlarmPair{{Stored: -1}},
 		},
 		{

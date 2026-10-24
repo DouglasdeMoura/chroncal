@@ -217,10 +217,7 @@ func (s *Service) ReplaceAlarmsForSync(ctx context.Context, todoID int64, alarms
 	if err != nil {
 		return err
 	}
-	alarms, err = model.WithoutRefusedAlarmUIDs(alarms, AlarmUIDsHeldElsewhere(ctx, qtx, todoID))
-	if err != nil {
-		return err
-	}
+	alarms = model.WithoutRefusedAlarmUIDs(alarms)
 
 	pairs := model.PairAlarms(existing, alarms)
 	matched := make([]bool, len(existing))
@@ -265,20 +262,6 @@ func (s *Service) ReplaceAlarmsForSync(ctx context.Context, todoID int64, alarms
 	return nil
 }
 
-// AlarmUIDsHeldElsewhere returns the check of model.WithoutRefusedAlarmUIDs
-// for the alarms of todoID. The alarm write and the import comparison use
-// it.
-func AlarmUIDsHeldElsewhere(ctx context.Context, q *storage.Queries, todoID int64) func(uids []string) (map[string]bool, error) {
-	return func(uids []string) (map[string]bool, error) {
-		args := make([]*string, len(uids))
-		for i := range uids {
-			args[i] = &uids[i]
-		}
-		rows, err := q.ListTodoAlarmUIDsHeldByOtherTodos(ctx, storage.ListTodoAlarmUIDsHeldByOtherTodosParams{TodoID: todoID, Uids: args})
-		return storage.HeldUIDSet(rows), err
-	}
-}
-
 // loadExistingTodoAlarms loads a todo's alarms with attendees and
 // X-properties inside the transaction for merge match.
 func loadExistingTodoAlarms(ctx context.Context, qtx *storage.Queries, todoID int64) ([]model.Alarm, error) {
@@ -318,8 +301,9 @@ func loadExistingTodoAlarms(ctx context.Context, qtx *storage.Queries, todoID in
 func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, a model.Alarm, ex model.Alarm) error {
 	// Backfill the UID of a stored row that carries none. A preserved
 	// foreign alarm keeps its empty UID, so the backfill writes nothing
-	// for it (issue #586).
-	if uid := model.AlarmUIDForWrite(a); ex.UID == "" && uid != "" {
+	// for it (issue #586). A row that the third pass of model.PairAlarms
+	// pairs takes the UID of the incoming alarm (issue #922).
+	if uid := model.AlarmUIDForWrite(a); uid != "" && (ex.UID == "" || (a.UID != "" && a.UID != ex.UID)) {
 		if err := qtx.UpdateTodoAlarmUID(ctx, storage.UpdateTodoAlarmUIDParams{
 			Uid: storage.StringToNullable(uid),
 			ID:  ex.ID,
@@ -391,8 +375,8 @@ func updateTodoAlarmInPlace(ctx context.Context, qtx *storage.Queries, todoID in
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeTodoAlarm, ex.ID, a.XProperties)
 }
 
-// isUniqueUIDViolation reports whether an insert failed on the global
-// alarm-UID unique index.
+// isUniqueUIDViolation reports whether an insert failed on the alarm-UID
+// unique index.
 func isUniqueUIDViolation(err error) bool {
 	if err == nil {
 		return false
@@ -401,9 +385,10 @@ func isUniqueUIDViolation(err error) bool {
 	return strings.Contains(msg, "UNIQUE constraint failed") && strings.Contains(msg, ".uid")
 }
 
-// createNewTodoAlarm creates a new todo alarm and its attendees. On a global
-// UID collision (for example a server that duplicates a todo with its VALARM
-// UIDs), mint a fresh local UID. Do not fail the sync forever.
+// createNewTodoAlarm creates a new todo alarm and its attendees. An alarm
+// UID is unique in its todo (migration 063), so a collision is not
+// expected. On a collision, mint a fresh local UID. Do not fail the sync
+// forever.
 func createNewTodoAlarm(ctx context.Context, qtx *storage.Queries, todoID int64, a model.Alarm) error {
 	if err := model.CheckStorableAlarmAction(a.Action); err != nil {
 		return fmt.Errorf("create alarm: %w", err)

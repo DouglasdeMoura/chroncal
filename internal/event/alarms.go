@@ -167,26 +167,13 @@ func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, ex.ID, a.XProperties)
 }
 
-// AlarmUIDsHeldElsewhere returns the check of model.WithoutRefusedAlarmUIDs
-// for the alarms of eventID. The alarm write and the import comparison use
-// it.
-func AlarmUIDsHeldElsewhere(ctx context.Context, q *storage.Queries, eventID int64) func(uids []string) (map[string]bool, error) {
-	return func(uids []string) (map[string]bool, error) {
-		args := make([]*string, len(uids))
-		for i := range uids {
-			args[i] = &uids[i]
-		}
-		rows, err := q.ListEventAlarmUIDsHeldByOtherEvents(ctx, storage.ListEventAlarmUIDsHeldByOtherEventsParams{EventID: eventID, Uids: args})
-		return storage.HeldUIDSet(rows), err
-	}
-}
-
 // syncMatchedAlarm syncs a matched alarm's UID and ACKNOWLEDGED state.
 func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
 	// Backfill the UID of a stored row that carries none. A preserved
 	// foreign alarm keeps its empty UID, so the backfill writes nothing
-	// for it (issue #586).
-	if uid := alarmUID(a); ex.UID == "" && uid != "" {
+	// for it (issue #586). A row that the third pass of model.PairAlarms
+	// pairs takes the UID of the incoming alarm (issue #922).
+	if uid := alarmUID(a); uid != "" && (ex.UID == "" || (a.UID != "" && a.UID != ex.UID)) {
 		if err := qtx.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{
 			Uid: storage.StringToNullable(uid),
 			ID:  ex.ID,
@@ -214,8 +201,8 @@ func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, 
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, ex.ID, a.XProperties)
 }
 
-// isUniqueUIDViolation reports whether an insert failed on the global
-// alarm-UID unique index.
+// isUniqueUIDViolation reports whether an insert failed on the alarm-UID
+// unique index.
 func isUniqueUIDViolation(err error) bool {
 	if err == nil {
 		return false
@@ -224,10 +211,11 @@ func isUniqueUIDViolation(err error) bool {
 	return strings.Contains(msg, "UNIQUE constraint failed") && strings.Contains(msg, ".uid")
 }
 
-// createNewAlarm creates a new alarm and its attendees. Alarm UIDs are
-// globally unique. Servers sometimes duplicate an event (same VALARM UIDs on
-// both copies), which would otherwise fail this event's sync forever. On
-// collision, mint a fresh local UID instead.
+// createNewAlarm creates a new alarm and its attendees. An alarm UID is
+// unique in its event (migration 063). model.WithoutRefusedAlarmUIDs clears
+// a second use of a UID in one list, so a collision is not expected. On a
+// collision, mint a fresh local UID instead, so the sync of the event does
+// not fail forever.
 func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm) error {
 	if err := model.CheckStorableAlarmAction(a.Action); err != nil {
 		return fmt.Errorf("create alarm: %w", err)
@@ -249,10 +237,9 @@ func createNewAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a 
 	}
 	row, err := qtx.CreateAlarm(ctx, params)
 	if isUniqueUIDViolation(err) {
-		// A server can send the same VALARM UID on two resources. Retry
-		// through the shared rule, so the retry does not stamp a minted
-		// UID on a preserved foreign alarm (issue #586). The rule mints
-		// for a fireable action and yields an empty value otherwise.
+		// Retry through the shared rule, so the retry does not stamp a
+		// minted UID on a preserved foreign alarm (issue #586). The rule
+		// mints for a fireable action and yields an empty value otherwise.
 		retry := a
 		retry.UID = ""
 		params.Uid = storage.StringToNullable(model.AlarmUIDForWrite(retry))
@@ -403,10 +390,7 @@ func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, a
 	if err != nil {
 		return err
 	}
-	alarms, err = model.WithoutRefusedAlarmUIDs(alarms, AlarmUIDsHeldElsewhere(ctx, qtx, eventID))
-	if err != nil {
-		return err
-	}
+	alarms = model.WithoutRefusedAlarmUIDs(alarms)
 
 	// Pair incoming alarms with existing ones (model.PairAlarms). Each
 	// existing alarm takes one incoming alarm at most, so duplicates work.
