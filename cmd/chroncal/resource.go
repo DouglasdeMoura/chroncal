@@ -21,12 +21,13 @@ import (
 // exactly the fields that the shared verb builders read. No builder then
 // depends on a domain type.
 type row struct {
-	// ID is 0 for an occurrence of a series that has no row yet. See
-	// resource.delOccurrence.
 	ID         int64
 	UID        string
 	CalendarID int64
 	Summary    string
+	// Occurrence marks an occurrence of a series that has no row yet. ID
+	// is then 0, and the delete goes through resource.delOccurrence.
+	Occurrence bool
 }
 
 // resource adapts one domain service to the shared delete, restore, and
@@ -63,7 +64,7 @@ type resource struct {
 	del       func(ctx context.Context, a *app.App, target row) (int64, error)
 	delSeries func(ctx context.Context, a *app.App, target row) ([]int64, error)
 	// delOccurrence deletes one occurrence of a series that has no row yet:
-	// resolve returned a row with ID 0. It returns the calendar that the
+	// resolve returned a row with Occurrence set. It returns the calendar that the
 	// delete wrote and the ID of the row in the trash. nil when resolve
 	// never returns such a row.
 	delOccurrence func(ctx context.Context, a *app.App, ref, recurrenceID string) (calendarID, id int64, err error)
@@ -182,6 +183,8 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 	switch {
 	case opts.Series:
 		question = fmt.Sprintf("Delete the entire recurring series %q (master + all overrides)?", safeText(target.Summary))
+	case target.Occurrence:
+		question = fmt.Sprintf("Delete the occurrence of %q at %s?", safeText(target.Summary), opts.RecurrenceID)
 	case opts.RecurrenceID != "":
 		question = fmt.Sprintf("Delete override instance of %q at %s?", safeText(target.Summary), opts.RecurrenceID)
 	}
@@ -201,7 +204,7 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 	}
 
 	var pushCalendarID int64
-	if target.ID == 0 && r.delOccurrence != nil {
+	if target.Occurrence && r.delOccurrence != nil {
 		pushCalendarID, target.ID, err = r.delOccurrence(ctx, a, args[0], opts.RecurrenceID)
 	} else {
 		pushCalendarID, err = r.del(ctx, a, target)

@@ -417,12 +417,12 @@ chroncal todo purge-deleted  [--older-than DURATION] [--yes]
 
 Todo flags: `--due`, `--start`, `--duration`, `--location`, `--description`, `--calendar`, `--status`, `--progress`, `--class`, `--priority`, `--url`, `--categories`, `--geo`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--alarm`, `--attendee`, `--organizer`, `--contact`, `--resource`, `--comment`, `--related-to`
 
-`--recurrence-id <RFC3339>` with the UID of a recurring todo names one occurrence:
+`--recurrence-id <RFC3339 or YYYY-MM-DD>` with the UID of a recurring todo names one occurrence:
 
 - `todo update` edits that occurrence. `todo complete` completes it. When the occurrence has no override yet, chroncal creates one from the occurrence. The series and the other occurrences do not change.
 - `todo delete` deletes that occurrence. chroncal writes an EXDATE on the master and puts the override in the trash. `todo restore <id>` brings the occurrence back.
 - An occurrence stays in the calendar of its series. `--recurrence-rule`, `--exception-date-times`, and `--recurrence-date-times` apply to the series, so `todo update` refuses them on a new override.
-- A new override does not copy the alarms and the other child rows of the series. Set them with the flags, for example `--alarm`.
+- A new override takes the alarms, the attendees, and the other child rows of the series. A flag such as `--alarm` then replaces them on the override only.
 - A time that is not an occurrence of the series gives an error that says so. A todo that does not recur gives an error too.
 
 ### Journals

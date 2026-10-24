@@ -57,6 +57,11 @@ func TestTodoOccurrenceCommands(t *testing.T) {
 		t.Fatalf("second delete error = %v, want the trash note", err)
 	}
 
+	// A date-only RECURRENCE-ID names the occurrence too.
+	if _, _, err := runChroncalCommand(t, "todo", "update", uid, "--recurrence-id", "2026-10-24", "--priority", "3"); err != nil {
+		t.Fatalf("todo update with a date-only recurrence ID: %v", err)
+	}
+
 	stdout, _, err = runChroncalCommand(t, "todo", "list", "--from", "2026-10-01", "--to", "2026-12-31", "-o", "json")
 	if err != nil {
 		t.Fatalf("todo list: %v", err)
@@ -126,7 +131,7 @@ func TestTodoOccurrenceErrorsNameTheCause(t *testing.T) {
 		{[]string{"todo", "delete", single.UID, "--recurrence-id", "2026-10-24T00:00:00Z", "--yes"}, "does not recur"},
 		{[]string{"todo", "complete", "no-such-uid", "--recurrence-id", "2026-10-24T00:00:00Z"}, "todo no-such-uid not found"},
 		{[]string{"todo", "update", uid, "--recurrence-id", "2026-10-31T00:00:00Z", "--recurrence-rule", "FREQ=DAILY"}, "--recurrence-rule changes the series"},
-		{[]string{"todo", "update", uid, "--recurrence-id", "tomorrow"}, "invalid RFC 3339 timestamp"},
+		{[]string{"todo", "update", uid, "--recurrence-id", "tomorrow"}, "use RFC 3339 or YYYY-MM-DD"},
 		{[]string{"todo", "complete", cancelled.UID, "--recurrence-id", "2026-10-31T00:00:00Z"}, "is cancelled, so it has no occurrences"},
 	}
 	for _, tc := range tests {
@@ -134,5 +139,23 @@ func TestTodoOccurrenceErrorsNameTheCause(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%v: error = %v, want %q", tc.args, err, tc.want)
 		}
+	}
+}
+
+// TestTodoOccurrenceInTheTrashOfATrashedSeries names the series when its
+// master is in the trash too. A restore of the override alone would leave
+// an override with no series.
+func TestTodoOccurrenceInTheTrashOfATrashedSeries(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	uid := addWeeklyTodo(t)
+	if _, _, err := runChroncalCommand(t, "todo", "delete", uid, "--recurrence-id", "2026-10-31T00:00:00Z", "--yes"); err != nil {
+		t.Fatalf("todo delete occurrence: %v", err)
+	}
+	if _, _, err := runChroncalCommand(t, "todo", "delete", uid, "--series", "--yes"); err != nil {
+		t.Fatalf("todo delete series: %v", err)
+	}
+	_, _, err := runChroncalCommand(t, "todo", "complete", uid, "--recurrence-id", "2026-10-31T00:00:00Z")
+	if err == nil || !strings.Contains(err.Error(), "the series of todo "+uid+" is in the trash") {
+		t.Fatalf("error = %v, want the series in the trash", err)
 	}
 }

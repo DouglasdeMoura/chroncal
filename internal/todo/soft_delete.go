@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
@@ -304,7 +305,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			return fmt.Errorf("begin tx: %w", err)
 		}
 		defer tx.Rollback()
-		if err := deleteOverrideTx(ctx, tx, s.q.WithTx(tx), td); err != nil {
+		if err := deleteOverrideTx(ctx, s.q.WithTx(tx), td); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -318,10 +319,13 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// deleteOverrideTx soft-deletes the override td in tx. It adds the EXDATE
-// of the occurrence to the master and records it, so a restore can remove
-// it again. Delete and DeleteInstance share it.
-func deleteOverrideTx(ctx context.Context, tx *sql.Tx, qtx *storage.Queries, td Todo) error {
+// deleteOverrideTx soft-deletes the override td through the transaction of
+// qtx. It adds the EXDATE of the occurrence to the master and records it,
+// so a restore can remove it again. When the master already holds that
+// EXDATE, the delete adds nothing and records nothing: a restore must never
+// strip an EXDATE that a delete did not add (issue #86). Delete and
+// DeleteInstance share it.
+func deleteOverrideTx(ctx context.Context, qtx *storage.Queries, td Todo) error {
 	master, err := qtx.GetTodoByUID(ctx, td.UID)
 	// A genuine lookup error (for example SQLITE_BUSY) must not collapse
 	// into the "no master" path. That path would soft-delete the override
@@ -341,21 +345,24 @@ func deleteOverrideTx(ctx context.Context, tx *sql.Tx, qtx *storage.Queries, td 
 			// path treats the same parse failure as fatal.
 			return fmt.Errorf("parse recurrence_id %q: %w", td.RecurrenceID, parseErr)
 		}
-		existing = append(existing, recIDTime)
-		if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
-			Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
-			ID:      master.ID,
-		}); err != nil {
-			return fmt.Errorf("update exdates: %w", err)
-		}
-		// Record provenance so restore knows this EXDATE was
-		// delete-added (and may be stripped) rather than imported.
-		if err := qtx.RecordTodoExdateDelete(ctx, storage.RecordTodoExdateDeleteParams{
-			CalendarID:   master.CalendarID,
-			Uid:          td.UID,
-			RecurrenceID: td.RecurrenceID,
-		}); err != nil {
-			return fmt.Errorf("record exdate delete: %w", err)
+		held := slices.ContainsFunc(existing, recIDTime.Equal)
+		if !held {
+			existing = append(existing, recIDTime)
+			if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
+				Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
+				ID:      master.ID,
+			}); err != nil {
+				return fmt.Errorf("update exdates: %w", err)
+			}
+			// Record provenance so restore knows this EXDATE was
+			// delete-added (and may be stripped) rather than imported.
+			if err := qtx.RecordTodoExdateDelete(ctx, storage.RecordTodoExdateDeleteParams{
+				CalendarID:   master.CalendarID,
+				Uid:          td.UID,
+				RecurrenceID: td.RecurrenceID,
+			}); err != nil {
+				return fmt.Errorf("record exdate delete: %w", err)
+			}
 		}
 	}
 
@@ -365,7 +372,7 @@ func deleteOverrideTx(ctx context.Context, tx *sql.Tx, qtx *storage.Queries, td 
 	// Mark the master dirty — its EXDATE was modified — inside the same
 	// transaction. A failed mark then rolls the EXDATE change back. The
 	// path does not commit a change that is never pushed (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, td.CalendarID, td.UID, "todo"); err != nil {
+	if err := qtx.MarkResourceDirty(ctx, td.CalendarID, td.UID, "todo"); err != nil {
 		return fmt.Errorf("mark resource dirty: %w", err)
 	}
 	return nil
