@@ -34,7 +34,7 @@ var todoResource = resource{
 			return occ.CalendarID, occ.ID, a.Todos.Delete(ctx, occ.ID)
 		}
 		t, err := a.Todos.DeleteInstance(ctx, occ.UID, occ.RecurrenceID, todoParamsOf(occ))
-		return t.CalendarID, t.ID, err
+		return t.CalendarID, t.ID, occurrenceWriteErr(err)
 	},
 	delSeries: func(ctx context.Context, a *app.App, target row) ([]int64, error) {
 		return []int64{target.CalendarID}, a.Todos.DeleteSeries(ctx, target.UID)

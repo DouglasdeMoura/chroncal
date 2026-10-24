@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -39,8 +41,11 @@ func resolveTodoOccurrence(ctx context.Context, a *app.App, ref, recurrenceID st
 	if found && trashed {
 		// A restore of the row alone while its master is in the trash
 		// gives an override with no series, so the hint names the series.
-		if _, err := a.Todos.GetByUID(ctx, ref); err != nil {
+		switch _, err := a.Todos.GetByUID(ctx, ref); {
+		case errors.Is(err, sql.ErrNoRows):
 			return todo.Todo{}, false, errInvalidInputf("the series of todo %s is in the trash; \"chroncal todo restore %s\" brings it back", ref, ref)
+		case err != nil:
+			return todo.Todo{}, false, err
 		}
 		return todo.Todo{}, false, errInvalidInputf("the occurrence %s of todo %s is in the trash as todo %d; \"chroncal todo restore %d\" brings it back", recurrenceID, ref, id, id)
 	}
@@ -73,6 +78,18 @@ func resolveTodoOccurrence(ctx context.Context, a *app.App, ref, recurrenceID st
 		return todo.Todo{}, false, errInvalidInputf("--recurrence-id %s is not an occurrence of todo %s", at.Format(time.RFC3339), ref)
 	}
 	return occ, true, nil
+}
+
+// occurrenceWriteErr gives an invalid-input error for the refusals of
+// todo.Service.CreateOverride and DeleteInstance. A sync pull between the
+// lookup and the write can cause them.
+func occurrenceWriteErr(err error) error {
+	for _, refusal := range []error{todo.ErrNotOccurrence, todo.ErrOverrideExists, todo.ErrOccurrenceInTrash} {
+		if errors.Is(err, refusal) {
+			return errInvalidInputf("%v", err)
+		}
+	}
+	return err
 }
 
 // todoParamsOf returns the update parameters that keep every field of t.

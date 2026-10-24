@@ -168,21 +168,17 @@ func TodoAtInstance(i ExpandedTodo) todo.Todo {
 // false when master does not recur or has no occurrence at at. EXDATEs
 // apply.
 func TodoOccurrence(master todo.Todo, at time.Time) (todo.Todo, bool) {
-	if master.RecurrenceRule == "" && master.RDates == "" {
+	want := at.UTC()
+	rid := want.Format(time.RFC3339)
+	// todo.OccursAt holds the rule, so the CLI and CreateOverride agree.
+	if !todo.OccursAt(master, rid) {
 		return todo.Todo{}, false
 	}
-	want := at.UTC()
-	for _, inst := range ExpandTodo(master, want, want.Add(time.Second)) {
-		if !inst.InstanceTime.Equal(want) {
-			continue
-		}
-		t := TodoAtInstance(inst)
-		t.ID = 0
-		t.RecurrenceID = want.Format(time.RFC3339)
-		t.RecurrenceRule, t.ExDates, t.RDates = "", "", ""
-		return t, true
-	}
-	return todo.Todo{}, false
+	t := TodoAtInstance(ExpandedTodo{Todo: master, InstanceTime: want})
+	t.ID = 0
+	t.RecurrenceID = rid
+	t.RecurrenceRule, t.ExDates, t.RDates = "", "", ""
+	return t, true
 }
 
 // expandRecurringTodoRows expands recurring todo rows into Todo instances with

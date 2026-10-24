@@ -40,6 +40,7 @@ one. The other occurrences do not change.`,
 				p := todoParamsOf(t)
 				p.Status, p.CompletedAt = "COMPLETED", ""
 				t, err = a.Todos.CreateOverride(ctx, t.UID, t.RecurrenceID, p)
+				err = occurrenceWriteErr(err)
 			} else {
 				t, err = a.Todos.Complete(ctx, t.ID)
 			}
