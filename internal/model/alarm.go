@@ -341,6 +341,20 @@ func WithoutRefusedAlarmUIDs(alarms []Alarm) []Alarm {
 	return out
 }
 
+// PairedAlarmUID returns the UID that the store writes on the stored alarm
+// ex of a pair by content with the incoming alarm a, and whether a write is
+// necessary. A stored alarm with no UID gets the UID of AlarmUIDForWrite.
+// A stored alarm with another UID takes the UID of a, from the third pass
+// of PairAlarms (issue #922). An incoming alarm with no UID keeps the
+// stored UID. The event and the todo services share this rule.
+func PairedAlarmUID(a, ex Alarm) (string, bool) {
+	uid := AlarmUIDForWrite(a)
+	if uid == "" || uid == ex.UID || (ex.UID != "" && a.UID == "") {
+		return "", false
+	}
+	return uid, true
+}
+
 // AlarmPair names the stored alarm that an incoming alarm takes. Stored
 // is an index into the stored alarms, or -1 for no stored alarm. ByContent
 // is true for a pair by equal content and false for a pair by UID.
@@ -354,9 +368,8 @@ type AlarmPair struct {
 // the todo services and the import comparison share this rule.
 //
 // The first pass pairs by equal content, in the order of incoming. Two
-// non-empty UIDs that differ never pair: the UID identifies the alarm, and
-// a pair of different alarms would attach the alarm state to the wrong
-// alarm. An incoming alarm with no UID also skips a stored alarm whose UID
+// non-empty UIDs that differ do not pair in this pass, so an alarm with its
+// own UID first takes its own row. An incoming alarm with no UID also skips a stored alarm whose UID
 // another incoming alarm has, because that stored alarm belongs to it. An
 // incoming alarm whose UID a stored alarm has skips the stored alarms with
 // no UID: its UID would go on a second row of the item.
@@ -365,11 +378,14 @@ type AlarmPair struct {
 // keeps its row, and its alarm state stays.
 //
 // The third pass pairs an incoming alarm that has a UID and no pair with a
-// stored alarm of equal content that has no pair. No other incoming alarm
-// may have the UID of that stored alarm. The stored alarm then takes the
-// UID of the incoming alarm, and its alarm state stays. Before migration
-// 063, the store kept a minted UID when another item held the UID of the
-// file, and this pass gives such a row the UID of the file (issue #922).
+// stored alarm of equal content that has no pair. The stored alarm then
+// takes the UID of the incoming alarm (PairedAlarmUID), and its alarm state
+// stays. Before migration 063, the store kept a minted UID when another
+// item held the UID of the file, and this pass gives such a row the UID of
+// the file (issue #922). A minted UID cannot be told from an authored UID,
+// so the pass applies to every write. An alarm that another client
+// replaces with an alarm of equal content and a new UID therefore keeps
+// its alarm state, for example a dismiss of an occurrence.
 func PairAlarms(stored, incoming []Alarm) []AlarmPair {
 	pairs := make([]AlarmPair, len(incoming))
 	used := make([]bool, len(stored))
@@ -414,7 +430,9 @@ func PairAlarms(stored, incoming []Alarm) []AlarmPair {
 			continue
 		}
 		for j, ex := range stored {
-			if !used[j] && !claimed[ex.UID] && a.ContentEqual(ex) {
+			// A stored alarm whose UID an incoming alarm has is never
+			// free here: the first two passes pair it with that alarm.
+			if !used[j] && a.ContentEqual(ex) {
 				pairs[i], used[j] = AlarmPair{Stored: j, ByContent: true}, true
 				break
 			}

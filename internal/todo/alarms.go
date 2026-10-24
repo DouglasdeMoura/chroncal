@@ -299,16 +299,14 @@ func loadExistingTodoAlarms(ctx context.Context, qtx *storage.Queries, todoID in
 
 // syncMatchedTodoAlarm syncs a content-matched alarm's UID and ACKNOWLEDGED state.
 func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, a model.Alarm, ex model.Alarm) error {
-	// Backfill the UID of a stored row that carries none. A preserved
-	// foreign alarm keeps its empty UID, so the backfill writes nothing
-	// for it (issue #586). A row that the third pass of model.PairAlarms
-	// pairs takes the UID of the incoming alarm (issue #922).
-	if uid := model.AlarmUIDForWrite(a); uid != "" && (ex.UID == "" || (a.UID != "" && a.UID != ex.UID)) {
+	// Write the UID of model.PairedAlarmUID. A preserved foreign alarm
+	// keeps its empty UID (issue #586).
+	if uid, write := model.PairedAlarmUID(a, ex); write {
 		if err := qtx.UpdateTodoAlarmUID(ctx, storage.UpdateTodoAlarmUIDParams{
 			Uid: storage.StringToNullable(uid),
 			ID:  ex.ID,
 		}); err != nil {
-			return fmt.Errorf("backfill alarm uid: %w", err)
+			return fmt.Errorf("set alarm uid: %w", err)
 		}
 	}
 	if a.Acknowledged != ex.Acknowledged && model.ValidateAcknowledged(a.Acknowledged) {
