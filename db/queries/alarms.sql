@@ -5,9 +5,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *;
 -- name: ListAlarmsByEventID :many
 SELECT * FROM event_alarms WHERE event_id = ? ORDER BY id;
 
--- name: ListAlarmsByEventIDs :many
--- The TUI loads the alarms of the expanded rows in one query (issue #912).
-SELECT * FROM event_alarms
+-- name: ListAlarmSummariesByEventIDs :many
+-- The TUI shows the alarms of the expanded rows (issue #912). It needs the
+-- display fields only, not the attach data.
+SELECT event_id, action, trigger_value, related FROM event_alarms
 WHERE event_id IN (sqlc.slice(event_ids))
 ORDER BY event_id, id;
 

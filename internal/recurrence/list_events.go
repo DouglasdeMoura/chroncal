@@ -2,7 +2,6 @@ package recurrence
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -185,11 +184,12 @@ func SkipCategories() ExpandOption {
 	return func(o *expandOptions) { o.skipCategories = true }
 }
 
-// WithAlarms fills Event.Alarms of each result in batch queries. A
-// generated occurrence keeps the master ID, so it gets the alarms of the
-// master. An override gets its own alarms. The event view loads the same
-// rows by ID. The TUI uses it for the detail pane of the day dialog (issue
-// #912).
+// WithAlarms fills Event.Alarms of each result with a display summary of
+// its alarms (event.LoadAlarmSummaries), in one query. A generated
+// occurrence keeps the master ID, so it gets the alarms of the master. An
+// override gets its own alarms. The event view loads the same rows by ID.
+// A load error leaves Alarms unset, as the attendee load does. The TUI
+// uses it for the detail pane of the day dialog (issue #912).
 func WithAlarms() ExpandOption {
 	return func(o *expandOptions) { o.withAlarms = true }
 }
@@ -252,9 +252,14 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	results = append(results, recurResults...)
 
 	if len(results) > 0 {
-		ids := make([]int64, len(results))
+		// Each occurrence of a series repeats the ID of its master.
+		ids := make([]int64, 0, len(results))
+		seen := make(map[int64]bool, len(results))
 		for i := range results {
-			ids[i] = results[i].ID
+			if !seen[results[i].ID] {
+				seen[results[i].ID] = true
+				ids = append(ids, results[i].ID)
+			}
 		}
 
 		if !o.skipCategories {
@@ -286,12 +291,10 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 		}
 
 		if o.withAlarms {
-			alarms, err := event.LoadAlarmsByEventIDs(ctx, s.q, uniqueIDs(ids))
-			if err != nil {
-				return nil, fmt.Errorf("load alarms: %w", err)
-			}
-			for i := range results {
-				results[i].Alarms = alarms[results[i].ID]
+			if alarms, err := event.LoadAlarmSummaries(ctx, s.q, ids); err == nil {
+				for i := range results {
+					results[i].Alarms = alarms[results[i].ID]
+				}
 			}
 		}
 	}
@@ -299,20 +302,6 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	sortExpandedEvents(results)
 
 	return results, nil
-}
-
-// uniqueIDs returns ids without repeats, in first-seen order. Each
-// occurrence of a series repeats the ID of its master.
-func uniqueIDs(ids []int64) []int64 {
-	seen := make(map[int64]bool, len(ids))
-	out := make([]int64, 0, len(ids))
-	for _, id := range ids {
-		if !seen[id] {
-			seen[id] = true
-			out = append(out, id)
-		}
-	}
-	return out
 }
 
 // sortExpandedEvents orders instances by their local calendar day. The day

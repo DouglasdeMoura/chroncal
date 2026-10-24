@@ -53,25 +53,27 @@ func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm,
 	return buildAlarmsWithAttendees(ctx, s.q, rows)
 }
 
-// LoadAlarmsByEventIDs returns the alarms of each event ID, with their
-// attendees and X-properties, in batch queries. An event with no alarm has
-// no key. The recurrence service calls it to fill the expanded rows of the
-// TUI (issue #912).
-func LoadAlarmsByEventIDs(ctx context.Context, q *storage.Queries, eventIDs []int64) (map[int64][]model.Alarm, error) {
+// LoadAlarmSummaries returns a display summary of the alarms of each event
+// ID in one query: the action, the trigger, and the RELATED value. It loads
+// no attach data, attendees, or X-properties, so a summary is for display
+// only. An event with no alarm has no key. The recurrence service calls it
+// for the expanded rows of the TUI (issue #912).
+func LoadAlarmSummaries(ctx context.Context, q *storage.Queries, eventIDs []int64) (map[int64][]model.Alarm, error) {
 	if len(eventIDs) == 0 {
 		return nil, nil
 	}
-	rows, err := q.ListAlarmsByEventIDs(ctx, eventIDs)
-	if err != nil {
-		return nil, err
-	}
-	alarms, err := buildAlarmsWithAttendees(ctx, q, rows)
+	rows, err := q.ListAlarmSummariesByEventIDs(ctx, eventIDs)
 	if err != nil {
 		return nil, err
 	}
 	byEvent := make(map[int64][]model.Alarm, len(eventIDs))
-	for _, a := range alarms {
-		byEvent[a.EventID] = append(byEvent[a.EventID], a)
+	for _, r := range rows {
+		byEvent[r.EventID] = append(byEvent[r.EventID], model.Alarm{
+			EventID:      r.EventID,
+			Action:       r.Action,
+			TriggerValue: r.TriggerValue,
+			Related:      r.Related,
+		})
 	}
 	return byEvent, nil
 }

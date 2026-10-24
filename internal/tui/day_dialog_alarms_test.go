@@ -21,8 +21,11 @@ func TestDayDialogShowsAlarmsOfSelectedEvent(t *testing.T) {
 	ctx := context.Background()
 	cals, err := a.Calendars.List(ctx)
 	require.NoError(t, err)
-	now := time.Now()
-	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	// A fixed day away from a DST change. The month view loads its range.
+	day := time.Date(2026, 5, 13, 0, 0, 0, 0, time.Local)
+	m.viewMode = viewMonth
+	m.calendar.cursor = day
+	m.calendar.month = time.Date(2026, 5, 1, 0, 0, 0, 0, time.Local)
 	ev, err := a.Events.Create(ctx, event.CreateParams{CalendarID: cals[0].ID, Title: "Standup",
 		StartTime: day.Add(9 * time.Hour), EndTime: day.Add(10 * time.Hour)})
 	require.NoError(t, err)
@@ -33,4 +36,12 @@ func TestDayDialogShowsAlarmsOfSelectedEvent(t *testing.T) {
 	require.True(t, m.dialogOpen)
 	plain := ansi.Strip(m.dialog.shell.View())
 	require.True(t, strings.Contains(plain, "2 min"), "the detail pane does not list the alarm:\n%s", plain)
+
+	// A duplicate from the day dialog copies no alarms, as before.
+	sel, ok := m.dialog.selectedEvent()
+	require.True(t, ok)
+	require.NotEmpty(t, sel.Alarms)
+	m, _ = step(t, m, EventDuplicateMsg{Event: sel})
+	require.True(t, m.formOpen)
+	require.Empty(t, m.form.alarms, "the duplicate copied the alarm summary")
 }

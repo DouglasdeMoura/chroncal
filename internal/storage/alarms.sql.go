@@ -85,34 +85,45 @@ func (q *Queries) DeleteAlarmsByEventID(ctx context.Context, eventID int64) erro
 	return err
 }
 
-const listAlarmsByEventID = `-- name: ListAlarmsByEventID :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM event_alarms WHERE event_id = ? ORDER BY id
+const listAlarmSummariesByEventIDs = `-- name: ListAlarmSummariesByEventIDs :many
+SELECT event_id, action, trigger_value, related FROM event_alarms
+WHERE event_id IN (/*SLICE:event_ids*/?)
+ORDER BY event_id, id
 `
 
-func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]EventAlarm, error) {
-	rows, err := q.db.QueryContext(ctx, listAlarmsByEventID, eventID)
+type ListAlarmSummariesByEventIDsRow struct {
+	EventID      int64
+	Action       string
+	TriggerValue string
+	Related      string
+}
+
+// The TUI shows the alarms of the expanded rows (issue #912). It needs the
+// display fields only, not the attach data.
+func (q *Queries) ListAlarmSummariesByEventIDs(ctx context.Context, eventIds []int64) ([]ListAlarmSummariesByEventIDsRow, error) {
+	query := listAlarmSummariesByEventIDs
+	var queryParams []interface{}
+	if len(eventIds) > 0 {
+		for _, v := range eventIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:event_ids*/?", strings.Repeat(",?", len(eventIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:event_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []EventAlarm
+	var items []ListAlarmSummariesByEventIDsRow
 	for rows.Next() {
-		var i EventAlarm
+		var i ListAlarmSummariesByEventIDsRow
 		if err := rows.Scan(
-			&i.ID,
 			&i.EventID,
 			&i.Action,
 			&i.TriggerValue,
-			&i.Description,
-			&i.Repeat,
-			&i.Duration,
 			&i.Related,
-			&i.Summary,
-			&i.Uid,
-			&i.Acknowledged,
-			&i.AttachUri,
-			&i.AttachFmttype,
-			&i.AttachBinary,
 		); err != nil {
 			return nil, err
 		}
@@ -127,25 +138,12 @@ func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]Eve
 	return items, nil
 }
 
-const listAlarmsByEventIDs = `-- name: ListAlarmsByEventIDs :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM event_alarms
-WHERE event_id IN (/*SLICE:event_ids*/?)
-ORDER BY event_id, id
+const listAlarmsByEventID = `-- name: ListAlarmsByEventID :many
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM event_alarms WHERE event_id = ? ORDER BY id
 `
 
-// The TUI loads the alarms of the expanded rows in one query (issue #912).
-func (q *Queries) ListAlarmsByEventIDs(ctx context.Context, eventIds []int64) ([]EventAlarm, error) {
-	query := listAlarmsByEventIDs
-	var queryParams []interface{}
-	if len(eventIds) > 0 {
-		for _, v := range eventIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:event_ids*/?", strings.Repeat(",?", len(eventIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:event_ids*/?", "NULL", 1)
-	}
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]EventAlarm, error) {
+	rows, err := q.db.QueryContext(ctx, listAlarmsByEventID, eventID)
 	if err != nil {
 		return nil, err
 	}
