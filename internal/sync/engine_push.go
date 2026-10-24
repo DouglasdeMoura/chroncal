@@ -23,8 +23,11 @@ type pushResult struct {
 	// skippedPendingDeletes counts the rows that the push held back
 	// because a pending delete of their UID waits in the calendar.
 	skippedPendingDeletes int
-	errors                []error
-	warnings              []ImportWarning
+	// deleted counts the remote deletes that a server-wins pass applied
+	// after a 412 (applyServerDelete).
+	deleted  int
+	errors   []error
+	warnings []ImportWarning
 }
 
 // push uploads the dirty resources of one calendar. strategy is the
@@ -392,7 +395,8 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 					// No row exists, so nothing is counted. errs already
 					// carries the failure to the caller.
 				case putConflictServerDeleted:
-					// The pull of the pass applies the remote delete.
+					// applyServerDelete applied the remote delete.
+					result.deleted++
 				}
 				if outcome != putConflictRecreate {
 					continue
@@ -1908,8 +1912,7 @@ const (
 	putConflictRecreate
 	// putConflictServerDeleted means a server-wins pass met an update of an
 	// object that another client deleted. The pass keeps the delete: the
-	// row stays dirty, and the pull of the pass moves the item to the
-	// trash (issue #884).
+	// item goes to the trash, and the sync row goes (issue #884).
 	putConflictServerDeleted
 )
 
@@ -1988,9 +1991,8 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 		if open > 0 {
 			return putConflictRecordFailed, nil, append(errs, fmt.Errorf("update %s: the server deleted the item, and its conflict is open; resolve the conflict (chroncal sync conflicts)", res.Uid))
 		}
-		if strategy == ConflictServerWins && !opportunistic {
-			outcome, warnings := e.keepServerDelete(res, putPath)
-			return outcome, warnings, errs
+		if strategy == ConflictServerWins {
+			return e.applyServerDelete(ctx, calendarID, res, putPath, errs)
 		}
 		n, err := e.q.ForgetGoneServerObject(ctx, storage.ForgetGoneServerObjectParams{CalendarID: calendarID, Uid: res.Uid, RemoteUrl: res.RemoteUrl})
 		if err != nil {
@@ -2087,22 +2089,35 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 	return putConflictAutoResolved, warnings, errs
 }
 
-// keepServerDelete settles an update whose object another client deleted,
-// on a server-wins pass. The pass keeps the remote delete: no conflict row
-// can hold a server side, so the push records none and reports no error.
-// The row stays dirty, and the pull of the same pass decides: it moves the
-// item to the trash when the server no longer lists it (issue #884). The
-// warning names only what the push did, so it stays true whatever the pull
-// decides.
-func (e *Engine) keepServerDelete(res storage.SyncResource, putPath string) (putConflictOutcome, []ImportWarning) {
-	e.logger.Info("keep the remote delete: server wins", "uid", res.Uid)
+// applyServerDelete settles an update whose object another client deleted,
+// on a server-wins pass. The pass keeps the remote delete, and it applies
+// the delete here, as the pull does for a remote delete on a server-wins
+// pass (deleteLocalResourceByUID): the item goes to the trash, and the
+// sync row goes. No conflict row can hold a server side, so the push
+// records none and reports no error (issue #884). A local write during the
+// PUT changed the row: the next pass acts on the current row. A tombstone
+// of the UID keeps the rows, and the tombstone pass sends its DELETE.
+func (e *Engine) applyServerDelete(ctx context.Context, calendarID int64, res storage.SyncResource, putPath string, errs []error) (putConflictOutcome, []ImportWarning, []error) {
+	current, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: res.Uid})
+	if found, ferr := storage.Found(err); ferr != nil {
+		return putConflictRecordFailed, nil, append(errs, fmt.Errorf("re-read sync resource %s: %w", res.Uid, ferr))
+	} else if !found || current.Rev != res.Rev || current.RemoteUrl != res.RemoteUrl {
+		return putConflictRecordFailed, nil, errs
+	}
+	outcome, err := e.deleteLocalResourceByUID(ctx, calendarID, res.OwnerType, res.Uid, false)
+	if err != nil {
+		return putConflictRecordFailed, nil, append(errs, fmt.Errorf("apply the remote delete of %s: %w", res.Uid, err))
+	}
+	if outcome != remoteDeleteDone {
+		return putConflictServerDeleted, nil, errs
+	}
 	w := ImportWarning{
 		Path:    putPath,
 		UID:     res.Uid,
-		Message: "the server has no object at this href; a server-wins pass does not send the local edit, and the pull follows the server",
+		Message: "the server deleted this item; server wins, so the item and its unsent edit are in the trash",
 	}
 	logImportWarnings(e.logger, []ImportWarning{w})
-	return putConflictServerDeleted, []ImportWarning{w}
+	return putConflictServerDeleted, []ImportWarning{w}, errs
 }
 
 // pendingSiblingDelete reports whether a tombstone of uid waits in a
