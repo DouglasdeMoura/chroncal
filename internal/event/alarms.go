@@ -207,6 +207,16 @@ func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, ex.ID, a.XProperties)
 }
 
+// AlarmUIDHeldElsewhere returns the check of model.WithoutRefusedAlarmUIDs
+// for the alarms of eventID. The alarm write and the import comparison use
+// it.
+func AlarmUIDHeldElsewhere(ctx context.Context, q *storage.Queries, eventID int64) func(uid string) (bool, error) {
+	return func(uid string) (bool, error) {
+		n, err := q.EventAlarmUIDHeldByAnotherEvent(ctx, storage.EventAlarmUIDHeldByAnotherEventParams{Uid: &uid, EventID: eventID})
+		return n != 0, err
+	}
+}
+
 // syncMatchedAlarm syncs a matched alarm's UID and ACKNOWLEDGED state.
 func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
 	// Backfill the UID of a stored row that carries none. A preserved
@@ -426,6 +436,10 @@ func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, a
 	// model.PrepareAlarmsForWrite. Both callers in this file do.
 	// Load existing alarms with attendees for content matching.
 	existing, err := loadExistingAlarms(ctx, qtx, eventID)
+	if err != nil {
+		return err
+	}
+	alarms, err = model.WithoutRefusedAlarmUIDs(alarms, AlarmUIDHeldElsewhere(ctx, qtx, eventID))
 	if err != nil {
 		return err
 	}

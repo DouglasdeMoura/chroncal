@@ -259,18 +259,18 @@ func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, 
 	return items, nil
 }
 
-const todoAlarmUIDHeldByAnotherRow = `-- name: TodoAlarmUIDHeldByAnotherRow :one
-SELECT EXISTS(SELECT 1 FROM todo_alarms WHERE uid = ? AND id <> ?)
+const todoAlarmUIDHeldByAnotherTodo = `-- name: TodoAlarmUIDHeldByAnotherTodo :one
+SELECT EXISTS(SELECT 1 FROM todo_alarms WHERE uid = ? AND todo_id <> ?)
 `
 
-type TodoAlarmUIDHeldByAnotherRowParams struct {
-	Uid *string
-	ID  int64
+type TodoAlarmUIDHeldByAnotherTodoParams struct {
+	Uid    *string
+	TodoID int64
 }
 
-// The import comparison uses this. See EventAlarmUIDHeldByAnotherRow.
-func (q *Queries) TodoAlarmUIDHeldByAnotherRow(ctx context.Context, arg TodoAlarmUIDHeldByAnotherRowParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, todoAlarmUIDHeldByAnotherRow, arg.Uid, arg.ID)
+// See EventAlarmUIDHeldByAnotherEvent.
+func (q *Queries) TodoAlarmUIDHeldByAnotherTodo(ctx context.Context, arg TodoAlarmUIDHeldByAnotherTodoParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, todoAlarmUIDHeldByAnotherTodo, arg.Uid, arg.TodoID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err

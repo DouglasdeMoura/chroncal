@@ -217,6 +217,10 @@ func (s *Service) ReplaceAlarmsForSync(ctx context.Context, todoID int64, alarms
 	if err != nil {
 		return err
 	}
+	alarms, err = model.WithoutRefusedAlarmUIDs(alarms, AlarmUIDHeldElsewhere(ctx, qtx, todoID))
+	if err != nil {
+		return err
+	}
 
 	matched := make([]bool, len(existing))
 	var unmatched []model.Alarm
@@ -259,6 +263,16 @@ func (s *Service) ReplaceAlarmsForSync(ctx context.Context, todoID int64, alarms
 	}
 	s.markDirtyByID(ctx, todoID)
 	return nil
+}
+
+// AlarmUIDHeldElsewhere returns the check of model.WithoutRefusedAlarmUIDs
+// for the alarms of todoID. The alarm write and the import comparison use
+// it.
+func AlarmUIDHeldElsewhere(ctx context.Context, q *storage.Queries, todoID int64) func(uid string) (bool, error) {
+	return func(uid string) (bool, error) {
+		n, err := q.TodoAlarmUIDHeldByAnotherTodo(ctx, storage.TodoAlarmUIDHeldByAnotherTodoParams{Uid: &uid, TodoID: todoID})
+		return n != 0, err
+	}
 }
 
 // loadExistingTodoAlarms loads a todo's alarms with attendees and
