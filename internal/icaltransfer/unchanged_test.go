@@ -251,3 +251,33 @@ func TestImport_UnchangedItemIgnoresTheOrderOfSets(t *testing.T) {
 		t.Errorf("sequences = %v, want %v", got, want)
 	}
 }
+
+// TestImport_UnchangedJournalWithTwoDescriptions imports a journal with two
+// DESCRIPTION properties twice. The store joins them, so the second import
+// finds no change.
+func TestImport_UnchangedJournalWithTwoDescriptions(t *testing.T) {
+	ctx := context.Background()
+	a := newTestApp(t)
+	cal, err := a.Calendars.Create(ctx, "Fast", "", "")
+	if err != nil {
+		t.Fatalf("create calendar: %v", err)
+	}
+	data, err := os.ReadFile("testdata/unchanged.ics")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	two := strings.Replace(string(data), "DESCRIPTION:Line one", "DESCRIPTION:First part\nDESCRIPTION:Line one", 1)
+	if two == string(data) {
+		t.Fatal("fixture edit did not apply")
+	}
+	importFixture(t, a, cal.ID, []byte(two))
+	want := sequences(t, a)
+
+	s := importFixture(t, a, cal.ID, []byte(two))
+	if s.UnchangedJournals != 1 {
+		t.Errorf("unchanged journals = %d, want 1", s.UnchangedJournals)
+	}
+	if got := sequences(t, a); !slices.Equal(got, want) {
+		t.Errorf("sequences = %v, want %v", got, want)
+	}
+}

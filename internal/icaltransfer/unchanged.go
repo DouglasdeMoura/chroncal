@@ -174,6 +174,9 @@ func unchangedJournal(ctx context.Context, a *app.App, mode *storage.Import, old
 		j.CreatedAt, j.UpdatedAt, j.DeletedAt = time.Time{}, time.Time{}, nil
 		j.Categories = sortedCategories(j.Categories)
 		j.Attendees = sortedAttendees(j.Attendees)
+		// The store keeps the joined Description only, so the split of
+		// the parsed DESCRIPTION properties is no change.
+		j.Descriptions = nil
 		return func() ([]byte, error) { return ical.ExportJournals([]journal.Journal{j}, "") }
 	}
 	return sameExport(form(old), form(j))
