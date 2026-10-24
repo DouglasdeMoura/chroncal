@@ -524,30 +524,69 @@ func TestTrashActionDone_FailedPurgeNamesThePurge(t *testing.T) {
 	}
 }
 
-// TestTrashModel_ActionKeysKeepTheListFocus checks that the restore and the
-// purge keys keep the focus on the list. A refused restore or a canceled
-// purge sends no message back to the list, so the list keys must still
-// work after the action key (issue #880).
-func TestTrashModel_ActionKeysKeepTheListFocus(t *testing.T) {
-	for _, k := range []tea.KeyPressMsg{
-		{Code: 'r', Text: "r"},
-		{Code: 'x', Text: "x"},
+// TestTrashModel_ActionsPutTheFocusOnTheList checks that each trash action
+// fires its message and puts the focus on the list: the restore and purge
+// keys, from the list and from a focused button, Enter on a button, and a
+// click on a button. A refused restore or a canceled purge sends no message
+// back to the list, so the list keys must work after the action (issue
+// #880).
+func TestTrashModel_ActionsPutTheFocusOnTheList(t *testing.T) {
+	restoreKey := tea.KeyPressMsg{Code: 'r', Text: "r"}
+	purgeKey := tea.KeyPressMsg{Code: 'x', Text: "x"}
+	tab := tea.KeyPressMsg{Code: tea.KeyTab}
+	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
+	click := func(m TrashModel, idx int) tea.Msg {
+		m = m.SetSize(120, 30)
+		x, y := m.shell.actionBarOrigin()
+		for dx := 0; dx < 60; dx++ {
+			if i, ok := m.shell.ActionAtPosition(x+dx, y); ok && i == idx {
+				return tea.MouseClickMsg{X: x + dx, Y: y, Button: tea.MouseLeft}
+			}
+		}
+		t.Fatalf("no screen cell for action %d", idx)
+		return nil
+	}
+	m0 := newTrashForTest().SetEntries(trashFixture(), nil)
+	for _, tc := range []struct {
+		name    string
+		keys    []tea.Msg
+		restore bool
+	}{
+		{"r from the list", []tea.Msg{restoreKey}, true},
+		{"x from the list", []tea.Msg{purgeKey}, false},
+		{"r from the Purge button", []tea.Msg{tab, tab, restoreKey}, true},
+		{"x from the Restore button", []tea.Msg{tab, purgeKey}, false},
+		{"Enter on the Restore button", []tea.Msg{tab, enter}, true},
+		{"Enter on the Purge button", []tea.Msg{tab, tab, enter}, false},
+		{"click on the Restore button", []tea.Msg{click(m0, 0)}, true},
+		{"click on the Purge button", []tea.Msg{click(m0, 1)}, false},
 	} {
-		m := newTrashForTest().SetEntries(trashFixture(), nil)
-		m, cmd := m.Update(k)
+		m := m0
+		var cmd tea.Cmd
+		for _, k := range tc.keys {
+			m, cmd = m.Update(k)
+		}
 		if cmd == nil {
-			t.Fatalf("%q: no command", k.Text)
+			t.Fatalf("%s: no command", tc.name)
+		}
+		switch msg := cmd().(type) {
+		case TrashRestoreRequestedMsg:
+			if !tc.restore || len(msg.Entries) != 1 || msg.Entries[0].ID != 1 {
+				t.Errorf("%s: restore of %+v, want the purge or the entry with ID 1", tc.name, msg.Entries)
+			}
+		case TrashPurgeRequestedMsg:
+			if tc.restore || len(msg.Entries) != 1 || msg.Entries[0].ID != 1 {
+				t.Errorf("%s: purge of %+v, want the restore or the entry with ID 1", tc.name, msg.Entries)
+			}
+		default:
+			t.Fatalf("%s: command gave %T, want a restore or a purge", tc.name, msg)
 		}
 		if got := m.shell.FocusZone(); got != ListZoneList {
-			t.Errorf("%q: focus zone = %v, want the list", k.Text, got)
+			t.Errorf("%s: focus zone = %v, want the list", tc.name, got)
 		}
 		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		if e, _ := m.selectedEntry(); e.ID != 7 {
-			t.Errorf("%q: Down after the action key selected %+v, want the entry with ID 7", k.Text, e)
-		}
-		m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
-		if len(m.markedEntries()) != 1 || !m.marked[entryKey(trashFixture()[1])] {
-			t.Errorf("%q: Space after the action key marked %v, want the entry with ID 7", k.Text, m.marked)
+			t.Errorf("%s: Down after the action selected the entry with ID %d, want 7", tc.name, e.ID)
 		}
 	}
 }

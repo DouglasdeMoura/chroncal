@@ -200,6 +200,12 @@ func (m ListDialogModel) ClickRow(idx int) ListDialogModel {
 	return m
 }
 
+// FocusList moves the focus to the list zone. The selection does not change.
+func (m ListDialogModel) FocusList() ListDialogModel {
+	m.focusZone = ListZoneList
+	return m
+}
+
 // ClickAction focuses an enabled action and returns its command.
 func (m ListDialogModel) ClickAction(idx int) (ListDialogModel, tea.Cmd) {
 	if idx < 0 || idx >= len(m.actions) || m.actions[idx].Disabled {

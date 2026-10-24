@@ -379,19 +379,20 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 	case key.Matches(msg, m.keys.MarkAll):
 		return m.toggleMarkAll(), nil
 	}
-	// The restore and purge keys fire the action and keep the focus where
-	// it is. The focus does not move to the button: a refused restore or a
-	// canceled purge then leaves the list keys working (issue #880).
+	// Each action fires and puts the focus on the list: the restore and
+	// purge keys, Enter on a button, and a click on a button. A refused
+	// restore or a canceled purge sends no message back to the trash, so
+	// the list keys must work after the action (issue #880).
 	acts := m.buildActions()
 	switch {
 	case key.Matches(msg, m.keys.Restore):
 		if len(acts) > 0 {
-			return m, acts[0].Msg
+			return m.focusList(), acts[0].Msg
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Purge):
 		if len(acts) > 1 {
-			return m, acts[1].Msg
+			return m.focusList(), acts[1].Msg
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.PurgeAll):
@@ -399,14 +400,23 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 		// fire its msg directly. purgeAllTitleAction returns nil for
 		// an empty trash, so the guard mirrors what the button hides.
 		if action := m.purgeAllTitleAction(); action != nil {
-			return m, action.Msg
+			return m.focusList(), action.Msg
 		}
 		return m, nil
 	}
 
 	shell, cmd, _ := m.shell.HandleKey(msg, func() tea.Msg { return TrashDialogClosedMsg{} })
 	m.shell = shell
+	if cmd != nil && key.Matches(msg, m.shell.Keys().Enter) {
+		return m.focusList(), cmd
+	}
 	return m.refresh(), cmd
+}
+
+// focusList puts the focus on the list after an action fires.
+func (m TrashModel) focusList() TrashModel {
+	m.shell = m.shell.FocusList()
+	return m.refresh()
 }
 
 func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
@@ -414,7 +424,7 @@ func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 		return m, nil
 	}
 	if cmd, ok := m.shell.TitleActionAtPosition(msg.X, msg.Y); ok {
-		return m, cmd
+		return m.focusList(), cmd
 	}
 	if idx, ok := m.shell.RowAtPosition(msg.X, msg.Y); ok {
 		m.shell = m.shell.ClickRow(idx)
@@ -423,6 +433,9 @@ func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 	if idx, ok := m.shell.ActionAtPosition(msg.X, msg.Y); ok {
 		shell, cmd := m.shell.ClickAction(idx)
 		m.shell = shell
+		if cmd != nil {
+			return m.focusList(), cmd
+		}
 		return m.refresh(), cmd
 	}
 	return m, nil
