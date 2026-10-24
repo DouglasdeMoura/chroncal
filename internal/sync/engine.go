@@ -492,6 +492,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 			result.AutoResolved = pushResult.autoResolved
 			result.SkippedConflicts = pushResult.skippedConflicts
 			result.SkippedPendingDeletes = pushResult.skippedPendingDeletes
+			result.Deleted += pushResult.deleted
 			result.Errors = append(result.Errors, pushResult.errors...)
 			result.Warnings = append(result.Warnings, pushResult.warnings...)
 		}
@@ -504,7 +505,7 @@ func (e *Engine) SyncCalendar(ctx context.Context, calendarID int64, strategy Co
 		result.Errors = append(result.Errors, fmt.Errorf("pull: %w", err))
 	} else {
 		result.Pulled = pullResult.pulled
-		result.Deleted = pullResult.deleted
+		result.Deleted += pullResult.deleted
 		result.Errors = append(result.Errors, pullResult.errors...)
 		result.Warnings = append(result.Warnings, pullResult.warnings...)
 	}
