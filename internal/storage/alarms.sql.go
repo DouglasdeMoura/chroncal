@@ -253,6 +253,53 @@ func (q *Queries) ListDistinctAlarmTriggers(ctx context.Context) ([]string, erro
 	return items, nil
 }
 
+const listEventAlarmUIDsHeldByOtherEvents = `-- name: ListEventAlarmUIDsHeldByOtherEvents :many
+SELECT DISTINCT uid FROM event_alarms
+WHERE event_id <> ?1 AND uid IN (/*SLICE:uids*/?)
+`
+
+type ListEventAlarmUIDsHeldByOtherEventsParams struct {
+	EventID int64
+	Uids    []*string
+}
+
+// Before migration 063, the store minted a UID for an alarm when an alarm
+// of another event held the UID of the file. model.PairAlarms uses this
+// set as the evidence of such a minted UID (issue #922).
+func (q *Queries) ListEventAlarmUIDsHeldByOtherEvents(ctx context.Context, arg ListEventAlarmUIDsHeldByOtherEventsParams) ([]*string, error) {
+	query := listEventAlarmUIDsHeldByOtherEvents
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.EventID)
+	if len(arg.Uids) > 0 {
+		for _, v := range arg.Uids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:uids*/?", strings.Repeat(",?", len(arg.Uids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:uids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*string
+	for rows.Next() {
+		var uid *string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		items = append(items, uid)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventIDsWithAlarms = `-- name: ListEventIDsWithAlarms :many
 SELECT DISTINCT event_id FROM event_alarms
 WHERE event_id IN (/*SLICE:event_ids*/?)

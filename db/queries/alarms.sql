@@ -57,3 +57,10 @@ WHERE id = ? AND event_id = ?;
 -- alarms must not apply (issue #815).
 SELECT DISTINCT event_id FROM event_alarms
 WHERE event_id IN (sqlc.slice(event_ids));
+
+-- name: ListEventAlarmUIDsHeldByOtherEvents :many
+-- Before migration 063, the store minted a UID for an alarm when an alarm
+-- of another event held the UID of the file. model.PairAlarms uses this
+-- set as the evidence of such a minted UID (issue #922).
+SELECT DISTINCT uid FROM event_alarms
+WHERE event_id <> sqlc.arg(event_id) AND uid IN (sqlc.slice(uids));

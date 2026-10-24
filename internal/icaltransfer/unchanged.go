@@ -107,18 +107,23 @@ func sortedAttendees(attendees []model.Attendee) []model.Attendee {
 // alarms, so the order of the VALARMs is no change. A parsed alarm with no
 // UID clears the UID of its stored alarm, because the store gave that UID.
 // A file UID that differs from the UID of its stored alarm stays, so the
-// change counts.
+// change counts. A pair of the third pass is such a change: the write
+// gives the stored alarm the UID of the file.
 //
-// ok is false when an alarm has no pair: the write then creates or
-// deletes an alarm, so the item changes.
-func comparableAlarms(stored, parsed []model.Alarm) (outStored, outParsed []model.Alarm, ok bool) {
+// ok is false when an alarm has no pair or a lookup fails: the write then
+// creates or deletes an alarm, so the item changes.
+func comparableAlarms(stored, parsed []model.Alarm, heldElsewhere func(uids []string) (map[string]bool, error)) (outStored, outParsed []model.Alarm, ok bool) {
 	parsed = model.WithoutRefusedAlarmUIDs(parsed)
 	if len(parsed) != len(stored) {
 		return nil, nil, false
 	}
+	held, err := heldElsewhere(model.AlarmUIDs(parsed))
+	if err != nil {
+		return nil, nil, false
+	}
 	outStored = slices.Clone(stored)
 	outParsed = make([]model.Alarm, len(stored))
-	for i, p := range model.PairAlarms(stored, parsed) {
+	for i, p := range model.PairAlarms(stored, parsed, held) {
 		if p.Stored < 0 {
 			return nil, nil, false
 		}
@@ -146,7 +151,9 @@ func unchangedEvent(ctx context.Context, a *app.App, mode *storage.Import, old, 
 	}
 	old.Categories = timeutil.JoinCategoryList(cats)
 	var ok bool
-	old.Alarms, e.Alarms, ok = comparableAlarms(old.Alarms, e.Alarms)
+	old.Alarms, e.Alarms, ok = comparableAlarms(old.Alarms, e.Alarms, func(uids []string) (map[string]bool, error) {
+		return event.AlarmUIDsHeldElsewhere(ctx, a.Queries, old.ID, uids)
+	})
 	if !ok {
 		return false
 	}
@@ -173,7 +180,9 @@ func unchangedTodo(ctx context.Context, a *app.App, mode *storage.Import, old, t
 	}
 	old.Categories = timeutil.JoinCategoryList(cats)
 	var ok bool
-	old.Alarms, t.Alarms, ok = comparableAlarms(old.Alarms, t.Alarms)
+	old.Alarms, t.Alarms, ok = comparableAlarms(old.Alarms, t.Alarms, func(uids []string) (map[string]bool, error) {
+		return todo.AlarmUIDsHeldElsewhere(ctx, a.Queries, old.ID, uids)
+	})
 	if !ok {
 		return false
 	}

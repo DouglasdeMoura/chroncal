@@ -175,6 +175,51 @@ func (q *Queries) ListFireableTodoAlarmsByTodoIDs(ctx context.Context, todoIds [
 	return items, nil
 }
 
+const listTodoAlarmUIDsHeldByOtherTodos = `-- name: ListTodoAlarmUIDsHeldByOtherTodos :many
+SELECT DISTINCT uid FROM todo_alarms
+WHERE todo_id <> ?1 AND uid IN (/*SLICE:uids*/?)
+`
+
+type ListTodoAlarmUIDsHeldByOtherTodosParams struct {
+	TodoID int64
+	Uids   []*string
+}
+
+// See ListEventAlarmUIDsHeldByOtherEvents.
+func (q *Queries) ListTodoAlarmUIDsHeldByOtherTodos(ctx context.Context, arg ListTodoAlarmUIDsHeldByOtherTodosParams) ([]*string, error) {
+	query := listTodoAlarmUIDsHeldByOtherTodos
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.TodoID)
+	if len(arg.Uids) > 0 {
+		for _, v := range arg.Uids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:uids*/?", strings.Repeat(",?", len(arg.Uids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:uids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*string
+	for rows.Next() {
+		var uid *string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		items = append(items, uid)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTodoAlarmsByTodoID = `-- name: ListTodoAlarmsByTodoID :many
 SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM todo_alarms WHERE todo_id = ? ORDER BY id
 `
