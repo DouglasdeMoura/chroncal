@@ -335,15 +335,15 @@ func buildCalendarCell(d time.Time, isToday, isSelected, inMonth bool, events []
 	}
 	if overflow > 0 && len(pills) > 0 {
 		// A narrow cell drops the word "more", then the space. A wrapped
-		// label makes the cell one row taller than the grid. A hard cut
-		// keeps the start of the count.
+		// label makes the cell one row taller than the grid. A count that
+		// still does not fit ends in an ellipsis, not in a wrong number.
 		label := fmt.Sprintf(" +%d more", overflow)
 		for _, short := range []string{fmt.Sprintf(" +%d", overflow), fmt.Sprintf("+%d", overflow)} {
 			if lipgloss.Width(label) > cellW {
 				label = short
 			}
 		}
-		label = ansi.Truncate(label, cellW, "")
+		label = ansi.Truncate(label, cellW, "…")
 		pills[len(pills)-1] = lipgloss.NewStyle().Faint(true).
 			Width(cellW).Render(label)
 	}

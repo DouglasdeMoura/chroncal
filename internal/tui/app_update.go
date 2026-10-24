@@ -19,16 +19,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 
-	// A window below the minimum size shows only the notice. A key or a
-	// click then does nothing, so it cannot act on the hidden layout.
-	// ctrl+c still reaches the quit guard.
+	// A window below the minimum size shows only the notice. A key, a
+	// paste, or a click then does nothing, so it cannot act on the hidden
+	// layout. ctrl+c quits at once: a quit confirm would not show.
 	if m.windowTooSmall() {
 		switch in := msg.(type) {
 		case tea.KeyPressMsg:
-			if in.String() != "ctrl+c" {
-				return m, nil
+			if in.String() == "ctrl+c" {
+				m.oauthFlow.Abort() // release any in-flight OAuth listener
+				return m, tea.Quit
 			}
-		case tea.MouseMsg:
+			return m, nil
+		case tea.PasteMsg, tea.MouseMsg:
 			return m, nil
 		}
 	}
