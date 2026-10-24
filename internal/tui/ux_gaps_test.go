@@ -165,3 +165,17 @@ func TestPartialPurgeToastNamesTheCount(t *testing.T) {
 	got := next.(Model)
 	require.Contains(t, got.toast.reason, "purged 2 of 3")
 }
+
+// TestCalendarColorCaseIsNotADirtyDraft checks that a color that differs
+// only in case from the opened color does not make a dirty draft. The
+// palette writes a lowercase swatch over a stored uppercase color.
+func TestCalendarColorCaseIsNotADirtyDraft(t *testing.T) {
+	d := NewCalendarDialogModel(CalendarDialogParams{ID: 2, Name: "Beta", Color: "#A6E3A1", ManagerEmbedded: true}, ActiveTheme()).SetSize(120, 40)
+	require.False(t, d.dirtyMetadata())
+	cf, ok := d.form.Field(cdIdxColor).(*ColorField)
+	require.True(t, ok)
+	cf.hex.SetValue("#a6e3a1")
+	require.False(t, d.dirtyMetadata(), "a case change of the color made a dirty draft")
+	cf.hex.SetValue("#112233")
+	require.True(t, d.dirtyMetadata())
+}
