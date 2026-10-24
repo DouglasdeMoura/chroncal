@@ -80,3 +80,29 @@ func TestPairAlarms(t *testing.T) {
 		})
 	}
 }
+
+func TestPairedAlarmUID(t *testing.T) {
+	tests := []struct {
+		name      string
+		a, ex     Alarm
+		wantUID   string
+		wantWrite bool
+	}{
+		{"same UID", alarmAt("a", "-PT15M"), alarmAt("a", "-PT15M"), "", false},
+		{"stored row with no UID", alarmAt("a", "-PT15M"), alarmAt("", "-PT15M"), "a", true},
+		{"third pass takes the incoming UID", alarmAt("file", "-PT15M"), alarmAt("minted", "-PT15M"), "file", true},
+		{"incoming with no UID keeps the stored UID", alarmAt("", "-PT15M"), alarmAt("minted", "-PT15M"), "", false},
+		{"foreign alarm keeps no UID", Alarm{Action: "X-APPLE-SOUND"}, Alarm{Action: "X-APPLE-SOUND"}, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uid, write := PairedAlarmUID(tt.a, tt.ex)
+			if write != tt.wantWrite || (write && uid != tt.wantUID) {
+				t.Errorf("PairedAlarmUID = %q, %v; want %q, %v", uid, write, tt.wantUID, tt.wantWrite)
+			}
+		})
+	}
+	if uid, write := PairedAlarmUID(alarmAt("", "-PT15M"), alarmAt("", "-PT15M")); !write || uid == "" {
+		t.Errorf("fireable alarm with no UID on both sides = %q, %v; want a minted UID", uid, write)
+	}
+}

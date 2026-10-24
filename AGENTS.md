@@ -120,9 +120,9 @@ An alarm UID is unique in its event or its todo (migration 063, issue #922). Two
 
 - The first pass pairs by content. Two different non-empty UIDs do not pair. An alarm with no UID skips a row whose UID another incoming alarm has. An alarm whose UID a stored row has skips the rows with no UID.
 - The second pass pairs by UID, so an edited alarm keeps its row and its alarm state.
-- The third pass pairs an alarm that has a UID and no pair with a row of equal content that has no pair. The row takes the UID of the alarm and keeps its alarm state. Before migration 063, the store kept a minted UID when another item held the UID of the file. This pass gives such a row the UID of the file.
+- The third pass pairs an alarm that has a UID and no pair with a row of equal content that has no pair. The row takes the UID of the alarm (`model.PairedAlarmUID`) and keeps its alarm state. Before migration 063, the store kept a minted UID when another item held the UID of the file. This pass gives such a row the UID of the file. A minted UID cannot be told from an authored UID, so the pass applies to every write.
 
-Fix the two rules in `internal/model/alarm.go`, not per caller.
+Fix the rules in `internal/model/alarm.go`, not per caller.
 
 `CheckMissed` returns three slices: stored event alarms, todo alarms, and default alarms. Its forward window includes the default triggers, or a long default lead time never enters the window and `alarm missed` reports nothing.
 

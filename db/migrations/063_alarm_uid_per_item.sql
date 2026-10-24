@@ -13,7 +13,8 @@ CREATE UNIQUE INDEX idx_todo_alarms_todo_uid ON todo_alarms(todo_id, uid) WHERE 
 -- +goose Down
 -- The old indexes refuse a UID on two items. The row with the lowest ID
 -- keeps the UID, and the other rows lose it. The startup heal gives a new
--- UID to a fireable alarm with no UID.
+-- UID to a fireable alarm with no UID. A preserved foreign alarm keeps no
+-- UID, because the store does not mint a UID for it (issue #586).
 DROP INDEX IF EXISTS idx_event_alarms_event_uid;
 UPDATE event_alarms SET uid = NULL
 WHERE uid IS NOT NULL
