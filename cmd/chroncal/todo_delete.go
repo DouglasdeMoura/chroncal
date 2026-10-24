@@ -18,11 +18,8 @@ var todoResource = resource{
 		if err != nil {
 			return row{}, err
 		}
-		if create {
-			// The occurrence has no row yet: delOccurrence writes it.
-			t.ID = 0
-		}
-		return row{ID: t.ID, UID: t.UID, CalendarID: t.CalendarID, Summary: t.Summary}, nil
+		// An occurrence with no row yet has ID 0; delOccurrence writes it.
+		return row{ID: t.ID, UID: t.UID, CalendarID: t.CalendarID, Summary: t.Summary, Occurrence: create}, nil
 	},
 	del: func(ctx context.Context, a *app.App, target row) (int64, error) {
 		return target.CalendarID, a.Todos.Delete(ctx, target.ID)
@@ -74,18 +71,21 @@ var todoResource = resource{
 }
 
 func todoDeleteCmd() *cobra.Command {
-	return newDeleteCmd(todoResource, verbHelp{
+	cmd := newDeleteCmd(todoResource, verbHelp{
 		short: "Delete a todo",
 		long: `Delete a single todo, one occurrence of a recurring todo, or an entire
 recurring series.
 
 With --recurrence-id and the UID of a recurring todo, the command deletes
-one occurrence. The trash keeps the occurrence, so "chroncal todo restore"
-brings it back.`,
+one occurrence, with or without an override row. The trash keeps the
+occurrence, so "chroncal todo restore" brings it back.`,
 		example: `  chroncal todo delete 7
   chroncal todo delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
   chroncal todo delete weekly-review-uid --series`,
 	})
+	// A todo occurrence needs no override row (issue #887).
+	cmd.Flags().Lookup("recurrence-id").Usage = "target one occurrence of a recurring todo (RFC 3339 timestamp)"
+	return cmd
 }
 
 // todoRestorePush lists the candidate calendars of a todo restore of uid

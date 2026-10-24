@@ -68,8 +68,9 @@ occurrence. When the occurrence has no override yet, the command creates one
 from the occurrence. The series and the other occurrences do not change. An
 occurrence cannot move to another calendar, and the series flags
 (--recurrence-rule, --exception-date-times, --recurrence-date-times) do not
-apply to a new override. A new override does not copy the alarms and the other child
-rows of the series; set them with the flags.`,
+apply to a new override. A new override takes the alarms, the attendees,
+and the other child rows of the series. A flag such as --alarm then
+replaces them on the override only.`,
 		Example: `  # Change the summary
   chroncal todo update 1 --summary "Updated task name"
 
