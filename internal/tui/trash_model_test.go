@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/douglasdemoura/chroncal/internal/trash"
@@ -409,6 +410,28 @@ func TestTrashDetailLines_NotesWrapInANarrowPane(t *testing.T) {
 				t.Errorf("w=%d lw=%d: purge note = %q, want %q", w, lw, got, kept.KeptNote())
 			}
 		}
+	}
+}
+
+// TestDetailWrappedLines_TooNarrowForTheLabel checks a pane too narrow for
+// the label column. The label shows on its own line, and the value wraps at
+// the full width, so the note still shows in full (issue #871).
+func TestDetailWrappedLines_TooNarrowForTheLabel(t *testing.T) {
+	note := "restore the truncation with cutoff Tue, Nov 3 10:00 first"
+	lines := detailWrappedLines(lipgloss.NewStyle(), "Restore", note, 11, 10)
+	if got := ansi.Strip(lines[0]); got != "Restore" {
+		t.Errorf("first line = %q, want the label", got)
+	}
+	var values []string
+	for _, line := range lines[1:] {
+		plain := ansi.Strip(line)
+		if ansi.StringWidth(plain) > 10 {
+			t.Errorf("line %q is wider than 10 cells", plain)
+		}
+		values = append(values, plain)
+	}
+	if got := strings.Join(values, " "); got != note {
+		t.Errorf("value = %q, want %q", got, note)
 	}
 }
 
