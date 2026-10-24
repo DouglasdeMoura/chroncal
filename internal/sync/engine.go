@@ -1197,9 +1197,13 @@ func (e *Engine) settleRelink(ctx context.Context, calendarID int64) {
 func (e *Engine) updateSyncHealth(ctx context.Context, calendarID int64, attemptedAt string, result *SyncResult, runErr error) error {
 	lastSyncAt := ""
 	lastSyncError := summarizeSyncError(result, runErr)
-	if runErr == nil && len(result.Errors) == 0 {
+	if runErr == nil && (result == nil || len(result.Errors) == 0) {
 		lastSyncAt = attemptedAt
 		lastSyncError = ""
+	} else if lastSyncError == "" {
+		// A failed run with no error text still counts as a failure. An
+		// empty error would look clean next to the kept last_sync_at.
+		lastSyncError = "sync failed"
 	}
 
 	return e.q.UpdateCalendarSyncHealth(ctx, storage.UpdateCalendarSyncHealthParams{
@@ -1274,7 +1278,7 @@ func summarizeSyncError(result *SyncResult, runErr error) string {
 	if runErr != nil {
 		return runErr.Error()
 	}
-	if len(result.Errors) == 0 {
+	if result == nil || len(result.Errors) == 0 {
 		return ""
 	}
 	if len(result.Errors) == 1 {
