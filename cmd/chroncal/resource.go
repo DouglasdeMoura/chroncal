@@ -84,6 +84,10 @@ type resource struct {
 	purgeByID    func(ctx context.Context, a *app.App, id int64) error
 	purgeDeleted func(ctx context.Context, a *app.App, cutoff time.Time) (int64, error)
 
+	// liveUID reports whether a live row of the UID exists. A restore by UID
+	// that brings back no row reads it for its error message.
+	liveUID func(ctx context.Context, a *app.App, uid string) bool
+
 	// errNotDeleted is the domain sentinel error. Restore and purge map it
 	// to the "not_found" error code.
 	errNotDeleted error
@@ -373,6 +377,11 @@ func seriesRestoreCandidates(ctx context.Context, uid string, rowCalendarID int6
 // brought back no row. A live row is not in the trash, so the message says
 // that. Else the row is gone, or no delete of it can come back. Pass the
 // ID of a restore by ID, or the UID of a restore by UID.
+//
+// A restore by UID reverses a delete of the UID. A live item of the UID can
+// still have a row in the trash, for example one occurrence. The message
+// then sends the user to the restore by ID. The code stays "not_found",
+// the code of this error before, because a script can read it.
 func restoreNotDeletedErr(ctx context.Context, a *app.App, r resource, id int64, uid string) error {
 	if uid == "" {
 		if _, deleted, err := r.purgeCandidate(ctx, a, id); err == nil && !deleted {
@@ -380,8 +389,9 @@ func restoreNotDeletedErr(ctx context.Context, a *app.App, r resource, id int64,
 		}
 		return errNotFoundf("%s %d not found (may have been purged)", r.name, id)
 	}
-	if _, err := r.resolve(ctx, a, uid, ""); err == nil || errors.Is(err, event.ErrAmbiguousUID) {
-		return errNotFoundf("no %s with uid %q is in the trash; it is live", r.name, safeText(uid))
+	if r.liveUID(ctx, a, uid) {
+		return errNotFoundf("%s %q is live, and no delete of the UID can come back by UID; restore a row in the trash by its ID (see %s list --include-deleted)",
+			r.name, safeText(uid), r.name)
 	}
 	return errNotFoundf("%s %q not found (may have been purged)", r.name, safeText(uid))
 }

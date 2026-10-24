@@ -174,14 +174,14 @@ func trashMarked(title string, deletedAt *time.Time) string {
 }
 
 // jsonInstanceTime names the occurrence of an item in a list: the
-// instance time of an occurrence that the expansion made, or else the
-// recurrence ID of an override. It returns "" for an item that is no
-// occurrence. The value is a valid --recurrence-id.
-func jsonInstanceTime(instance time.Time, recurrenceID string) string {
-	if !instance.IsZero() {
-		return instance.UTC().Format(time.RFC3339)
+// RECURRENCE-ID of an occurrence or an override that the expansion gives,
+// in UTC RFC 3339. It returns "" for another item. The value is a valid
+// --recurrence-id.
+func jsonInstanceTime(recurrenceTime time.Time) string {
+	if recurrenceTime.IsZero() {
+		return ""
 	}
-	return recurrenceID
+	return recurrenceTime.UTC().Format(time.RFC3339)
 }
 
 // jsonDeletedAt formats the soft-delete time of a row in the trash. It
@@ -218,7 +218,7 @@ func toJSONEvent(e event.Event) jsonEvent {
 		RDates:         e.RDates,
 		RecurrenceID:   e.RecurrenceID,
 		Geo:            e.Geo,
-		InstanceTime:   jsonInstanceTime(e.InstanceTime, e.RecurrenceID),
+		InstanceTime:   jsonInstanceTime(e.RecurrenceTime),
 		CreatedAt:      e.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:      e.UpdatedAt.UTC().Format(time.RFC3339),
 		DeletedAt:      jsonDeletedAt(e.DeletedAt),
@@ -577,7 +577,7 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 		URL: t.URL, Categories: t.Categories,
 		RecurrenceRule: t.RecurrenceRule, ExDates: t.ExDates, RDates: t.RDates,
 		RecurrenceID: t.RecurrenceID, Timezone: t.Timezone, Geo: t.Geo,
-		InstanceTime: jsonInstanceTime(t.InstanceTime, t.RecurrenceID),
+		InstanceTime: jsonInstanceTime(t.RecurrenceTime),
 		Sequence:     t.Sequence,
 		CreatedAt:    t.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:    t.UpdatedAt.UTC().Format(time.RFC3339),
@@ -691,6 +691,7 @@ type jsonJournal struct {
 	ExDates        string           `json:"exdates,omitempty"`
 	RDates         string           `json:"rdates,omitempty"`
 	RecurrenceID   string           `json:"recurrence_id,omitempty"`
+	InstanceTime   string           `json:"instance_time,omitempty"`
 	Timezone       string           `json:"timezone,omitempty"`
 	Sequence       int64            `json:"sequence"`
 	CreatedAt      string           `json:"created_at"`
@@ -710,7 +711,7 @@ func toJSONJournal(j journal.Journal) jsonJournal {
 		StartDate: j.StartDate, Status: j.Status, Class: j.Class,
 		URL: j.URL, Categories: j.Categories,
 		RecurrenceRule: j.RecurrenceRule, ExDates: j.ExDates, RDates: j.RDates,
-		RecurrenceID: j.RecurrenceID, Timezone: j.Timezone,
+		RecurrenceID: j.RecurrenceID, InstanceTime: jsonInstanceTime(j.RecurrenceTime), Timezone: j.Timezone,
 		Sequence:  j.Sequence,
 		CreatedAt: j.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: j.UpdatedAt.UTC().Format(time.RFC3339),

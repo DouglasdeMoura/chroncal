@@ -63,7 +63,7 @@ func TestRestoreOfALiveRowSaysThatItIsNotInTheTrash(t *testing.T) {
 				t.Errorf("restore by ID: err %v, stderr %q", err, stderr)
 			}
 			_, stderr, err = runChroncalCommand(t, tc.name, "restore", uid)
-			if err == nil || !strings.Contains(stderr, fmt.Sprintf("no %s with uid %q is in the trash; it is live", tc.name, uid)) {
+			if err == nil || !strings.Contains(stderr, fmt.Sprintf("%s %q is live, and no delete of the UID can come back by UID; restore a row in the trash by its ID (see %s list --include-deleted)", tc.name, uid, tc.name)) {
 				t.Errorf("restore by UID: err %v, stderr %q", err, stderr)
 			}
 			_, stderr, err = runChroncalCommand(t, tc.name, "restore", "999")
@@ -71,6 +71,90 @@ func TestRestoreOfALiveRowSaysThatItIsNotInTheTrash(t *testing.T) {
 				t.Errorf("restore of a missing row: err %v, stderr %q", err, stderr)
 			}
 		})
+	}
+}
+
+// TestRestoreByUIDOfALiveSeriesWithAnOccurrenceInTheTrash checks the case
+// that the restore by UID cannot take: the series is live, and one
+// occurrence is in the trash. The message must not say that nothing is in
+// the trash. It sends the user to the restore by ID, which works. A UID
+// with a live series in two calendars gets the same message.
+func TestRestoreByUIDOfALiveSeriesWithAnOccurrenceInTheTrash(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	cliSeed(t,
+		[]string{"event", "add", "Daily", "--calendar", "Work", "--date", "2026-05-18", "--time", "09:00", "--rrule", "FREQ=DAILY;COUNT=3"},
+	)
+	uid := cliRowUID(t, dbPath, "events", 1)
+	if _, stderr, err := runChroncalCommand(t, "event", "update", uid, "--recurrence-id", "2026-05-19T12:00:00Z", "--title", "Moved"); err != nil {
+		t.Fatalf("event update: %v (stderr: %s)", err, stderr)
+	}
+	if _, stderr, err := runChroncalCommand(t, "event", "delete", "2", "--yes"); err != nil {
+		t.Fatalf("event delete: %v (stderr: %s)", err, stderr)
+	}
+	want := fmt.Sprintf("event %q is live, and no delete of the UID can come back by UID; restore a row in the trash by its ID", uid)
+	if _, stderr, err := runChroncalCommand(t, "event", "restore", uid); err == nil || !strings.Contains(stderr, want) {
+		t.Errorf("restore by UID: err %v, stderr %q, want %q", err, stderr, want)
+	}
+	if _, stderr, err := runChroncalCommand(t, "event", "restore", "2"); err != nil {
+		t.Errorf("restore by ID: %v (stderr: %s)", err, stderr)
+	}
+
+	// A live series of the UID in two calendars.
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	if _, err := a.DB.ExecContext(context.Background(), `INSERT INTO calendars (name) VALUES ('Home')`); err != nil {
+		t.Fatalf("insert calendar: %v", err)
+	}
+	if _, err := a.DB.ExecContext(context.Background(), `INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule)
+		SELECT ?, id, 'Copy', '2026-05-18T12:00:00Z', '2026-05-18T13:00:00Z', 'FREQ=DAILY' FROM calendars WHERE name = 'Home'`, uid); err != nil {
+		t.Fatalf("insert copy: %v", err)
+	}
+	a.Close()
+	if _, stderr, err := runChroncalCommand(t, "event", "restore", uid); err == nil || !strings.Contains(stderr, want) {
+		t.Errorf("restore by UID in two calendars: err %v, stderr %q, want %q", err, stderr, want)
+	}
+}
+
+// TestListJSONInstanceTimeIsCanonical checks two edge cases of
+// instance_time. An override with a date-only recurrence ID gives the UTC
+// RFC 3339 form, like a generated occurrence. A master with an RRULE that
+// does not parse is no occurrence, so it has no instance_time.
+func TestListJSONInstanceTimeIsCanonical(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	cliSeed(t,
+		[]string{"todo", "add", "Chore", "--calendar", "Work", "--due", "2026-05-18", "--rrule", "FREQ=DAILY;COUNT=3"},
+		[]string{"event", "add", "Broken", "--calendar", "Work", "--date", "2026-05-18", "--time", "09:00", "--rrule", "FREQ=DAILY;COUNT=3"},
+	)
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO todos (uid, calendar_id, summary, due_date, recurrence_id)
+		 SELECT uid, calendar_id, 'Chore moved', '2026-05-19', '2026-05-19' FROM todos WHERE summary = 'Chore'`,
+		`UPDATE events SET recurrence_rule = 'NOT-A-RULE' WHERE title = 'Broken'`,
+	} {
+		if _, err := a.DB.ExecContext(context.Background(), stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	a.Close()
+
+	stdout, stderr, err := runChroncalCommand(t, "todo", "list", "--from", "2026-05-17", "--to", "2026-05-22", "--output", "json")
+	if err != nil {
+		t.Fatalf("todo list: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stdout, `"instance_time": "2026-05-19T00:00:00Z"`) || strings.Contains(stdout, `"instance_time": "2026-05-19"`) {
+		t.Errorf("todo list %q: want the override instance_time in UTC RFC 3339", stdout)
+	}
+	stdout, stderr, err = runChroncalCommand(t, "event", "list", "--from", "2026-05-18", "--to", "2026-05-18", "--output", "json")
+	if err != nil {
+		t.Fatalf("event list: %v (stderr: %s)", err, stderr)
+	}
+	if !strings.Contains(stdout, `"title": "Broken"`) || strings.Contains(stdout, "instance_time") {
+		t.Errorf("event list %q: want the broken master with no instance_time", stdout)
 	}
 }
 
@@ -212,6 +296,7 @@ func TestListJSONNamesTheOccurrence(t *testing.T) {
 		[]string{"event", "add", "Daily", "--calendar", "Work", "--date", "2026-05-18", "--time", "09:00", "--rrule", "FREQ=DAILY;COUNT=3"},
 		[]string{"event", "add", "Once", "--calendar", "Work", "--date", "2026-05-18", "--time", "12:00"},
 		[]string{"todo", "add", "Chore", "--calendar", "Work", "--due", "2026-05-18", "--rrule", "FREQ=DAILY;COUNT=3"},
+		[]string{"journal", "add", "Diary", "--calendar", "Work", "--date", "2026-05-18", "--rrule", "FREQ=DAILY;COUNT=3"},
 	)
 	for _, tc := range []struct {
 		name, titleKey string
@@ -219,6 +304,7 @@ func TestListJSONNamesTheOccurrence(t *testing.T) {
 	}{
 		{"event", "title", []string{"event", "list", "--from", "2026-05-18", "--to", "2026-05-21", "--output", "json"}},
 		{"todo", "summary", []string{"todo", "list", "--from", "2026-05-17", "--to", "2026-05-22", "--output", "json"}},
+		{"journal", "summary", []string{"journal", "list", "--from", "2026-05-17", "--to", "2026-05-22", "--output", "json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr, err := runChroncalCommand(t, tc.args...)

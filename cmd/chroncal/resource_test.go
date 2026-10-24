@@ -23,6 +23,9 @@ func TestResourceVerbsWired(t *testing.T) {
 		if r.restoreByID == nil {
 			t.Errorf("%s.restoreByID is nil", r.name)
 		}
+		if r.liveUID == nil {
+			t.Errorf("%s.liveUID is nil", r.name)
+		}
 		if r.restoreByUID == nil {
 			t.Errorf("%s.restoreByUID is nil", r.name)
 		}

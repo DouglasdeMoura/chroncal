@@ -695,6 +695,12 @@ func (s *Service) ListOverridesByUID(ctx context.Context, uid string) ([]Todo, e
 
 // Converters
 
+// FromStorage converts a database row to a Todo. The recurrence service
+// uses it for the rows of a list.
+func FromStorage(r storage.Todo) Todo {
+	return fromStorage(r)
+}
+
 func fromStorage(r storage.Todo) Todo {
 	var deletedAt *time.Time
 	if r.DeletedAt != nil && *r.DeletedAt != "" {

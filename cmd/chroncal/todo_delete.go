@@ -67,6 +67,13 @@ var todoResource = resource{
 		n, err := a.Todos.PurgeDeleted(ctx, cutoff)
 		return int64(n), err
 	},
+	liveUID: func(ctx context.Context, a *app.App, uid string) bool {
+		if _, err := a.Todos.GetByUID(ctx, uid); err == nil {
+			return true
+		}
+		overrides, err := a.Todos.ListOverridesByUID(ctx, uid)
+		return err == nil && len(overrides) > 0
+	},
 	errNotDeleted: todo.ErrNotDeleted,
 }
 
