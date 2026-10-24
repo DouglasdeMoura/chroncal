@@ -152,6 +152,10 @@ func (e *collectionLinkedError) Is(target error) bool { return target == ErrColl
 
 func (e *collectionLinkedError) InvalidInput() bool { return true }
 
+// CollectionLinkedError returns ErrCollectionLinked with the name of the
+// other calendar.
+func CollectionLinkedError(name string) error { return &collectionLinkedError{name: name} }
+
 // CheckCollectionFree returns ErrCollectionLinked, with the name of the other
 // calendar, when FindCollectionLink finds a link of the collection.
 func CheckCollectionFree(ctx context.Context, q *storage.Queries, remoteURL, serverURL, username string, scope CollectionLinkScope) error {
@@ -160,7 +164,7 @@ func CheckCollectionFree(ctx context.Context, q *storage.Queries, remoteURL, ser
 		return err
 	}
 	if linked {
-		return &collectionLinkedError{name: other.Name}
+		return CollectionLinkedError(other.Name)
 	}
 	return nil
 }

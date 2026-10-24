@@ -445,3 +445,36 @@ func TestMigrateRefusesDirectoryFedSource(t *testing.T) {
 		t.Fatalf("migrate of a directory-fed source: error = %v, want ErrLocalPathLink", err)
 	}
 }
+
+// TestMigrateCalendarToAccount_RefusesALinkedCollection links the chosen
+// collection to another local calendar first. The move must refuse it, as
+// Import does, or each item of the collection shows twice (issue #874).
+func TestMigrateCalendarToAccount_RefusesALinkedCollection(t *testing.T) {
+	svc, q, _, acct := newMigrationFixture(t)
+	ctx := context.Background()
+
+	hidden, err := q.CreateAccount(ctx, storage.CreateAccountParams{
+		Name: "__calendar_9", ServerUrl: "https://apidata.googleusercontent.com", AuthType: "oauth2", Username: "me@example.test",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	other, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "Other", Color: "#000000"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
+		ID: other.ID, AccountID: &hidden.ID,
+		RemoteUrl: storage.StringToNullable("https://apidata.googleusercontent.com/cal/me/work"),
+	}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+
+	_, err = svc.MigrateCalendarToAccount(ctx, 1, discoveryFor(acct, "/cal/me/work/", "Work"), "/cal/me/work/")
+	if !errors.Is(err, calendar.ErrCollectionLinked) {
+		t.Fatalf("Migrate = %v; want ErrCollectionLinked", err)
+	}
+	if !calendarExists(t, q, 1) {
+		t.Fatal("the source calendar is gone after the refusal")
+	}
+}

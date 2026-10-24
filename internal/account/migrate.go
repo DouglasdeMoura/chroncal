@@ -255,7 +255,16 @@ func (s *Service) resolveDestinationCalendar(
 	}
 
 	// No local row yet: create one exactly as Import does, reserving a
-	// non-colliding local name while the source still holds its own.
+	// non-colliding local name while the source still holds its own. As
+	// Import does, refuse a collection that another local calendar links
+	// (issue #874).
+	links, err := calendar.LoadCollectionLinks(ctx, qtx)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := checkCollectionFree(links, discovery.Account, chosen.Path); err != nil {
+		return 0, false, err
+	}
 	all, err := qtx.ListCalendars(ctx)
 	if err != nil {
 		return 0, false, fmt.Errorf("list calendar names: %w", err)

@@ -58,6 +58,10 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 		taken[row.Name] = struct{}{}
 	}
 	unlinkedByURL := uniqueUnlinkedByRemoteIdentity(allCalendars, discovery.Account.ServerURL, s.declared)
+	links, err := calendar.LoadCollectionLinks(ctx, qtx)
+	if err != nil {
+		return ImportResult{}, err
+	}
 
 	result := ImportResult{}
 	selected := make(map[string]struct{}, len(selectedPaths))
@@ -78,7 +82,7 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 			result.ExistingIDs = append(result.ExistingIDs, id)
 			continue
 		}
-		if err := checkCollectionFree(ctx, qtx, discovery.Account, path); err != nil {
+		if err := checkCollectionFree(links, discovery.Account, path); err != nil {
 			return ImportResult{}, fmt.Errorf("import calendar %q: %w", item.Name, err)
 		}
 		if id, ok := unlinkedByURL[key]; ok {
@@ -107,10 +111,13 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 
 // checkCollectionFree refuses a collection that a calendar of another
 // account links with the same user (issue #874). Two links of one
-// collection pull each item into two calendars.
-func checkCollectionFree(ctx context.Context, qtx *storage.Queries, acct Account, path string) error {
-	return calendar.CheckCollectionFree(ctx, qtx, path, acct.ServerURL, acct.Username,
-		calendar.CollectionLinkScope{AccountID: acct.ID})
+// collection pull each item into two calendars. links comes from
+// calendar.LoadCollectionLinks, read one time for a batch of paths.
+func checkCollectionFree(links *calendar.CollectionLinks, acct Account, path string) error {
+	if other, linked := links.Find(path, acct.ServerURL, acct.Username, calendar.CollectionLinkScope{AccountID: acct.ID}); linked {
+		return calendar.CollectionLinkedError(other.Name)
+	}
+	return nil
 }
 
 // uniqueUnlinkedByRemoteIdentity maps a remote identity to one unlinked local

@@ -110,7 +110,9 @@ func (m Model) finishCalendarMoveDiscovery(msg calendarMoveDiscoveryReadyMsg) (M
 	}
 	collections := make([]account.DiscoveredCalendar, 0, len(msg.discovery.Calendars))
 	for _, remote := range msg.discovery.Calendars {
-		if remote.Importable && remote.Access != caldav.CalendarAccessRead {
+		// A collection that another local calendar links cannot take the
+		// move (issue #874).
+		if remote.Importable && remote.Access != caldav.CalendarAccessRead && remote.LinkedBy == "" {
 			collections = append(collections, remote)
 		}
 	}
