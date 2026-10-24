@@ -26,23 +26,21 @@ var journalResource = resource{
 	delSeries: func(ctx context.Context, a *app.App, target row) ([]int64, error) {
 		return []int64{target.CalendarID}, a.Journals.DeleteSeries(ctx, target.UID)
 	},
-	restoreByID: func(ctx context.Context, a *app.App, id int64) ([]int64, error) {
+	restoreByID: func(ctx context.Context, a *app.App, id int64) (restorePush, error) {
 		if err := a.Journals.RestoreByID(ctx, id); err != nil {
-			return nil, err
+			return restorePush{}, err
 		}
 		r, err := a.Journals.GetIncludingDeleted(ctx, id)
 		if err != nil {
-			// The restore committed. The push is best-effort, so a failed
-			// read skips it, and the next sync sends the rows.
-			return nil, nil
+			return restorePush{err: err}, nil
 		}
-		return journalRestorePushCalendars(ctx, a, r.UID, r.CalendarID), nil
+		return journalRestorePush(ctx, a, r.UID, r.CalendarID), nil
 	},
-	restoreByUID: func(ctx context.Context, a *app.App, uid string) ([]int64, error) {
+	restoreByUID: func(ctx context.Context, a *app.App, uid string) (restorePush, error) {
 		if err := a.Journals.RestoreByUID(ctx, uid); err != nil {
-			return nil, err
+			return restorePush{}, err
 		}
-		return journalRestorePushCalendars(ctx, a, uid, 0), nil
+		return journalRestorePush(ctx, a, uid, 0), nil
 	},
 	purgeCandidate: func(ctx context.Context, a *app.App, id int64) (row, bool, error) {
 		j, err := a.Journals.GetIncludingDeleted(ctx, id)
@@ -70,20 +68,20 @@ entire recurring series.`,
 	})
 }
 
-// journalRestorePushCalendars returns the calendars that the push after a
-// restore of uid sends (see restorePushCalendars). The candidates are
-// rowCalendarID (0 for none), the calendar of the master, and the
-// calendars of the live overrides of the UID. A failed read drops its
-// candidates: the push is best-effort.
-func journalRestorePushCalendars(ctx context.Context, a *app.App, uid string, rowCalendarID int64) []int64 {
-	candidates := []int64{rowCalendarID}
-	if m, err := a.Queries.GetJournalByUIDIncludingDeleted(ctx, uid); err == nil {
-		candidates = append(candidates, m.CalendarID)
-	}
-	if overrides, err := a.Journals.ListOverridesByUID(ctx, uid); err == nil {
-		for _, o := range overrides {
-			candidates = append(candidates, o.CalendarID)
-		}
-	}
-	return restorePushCalendars(ctx, a, uid, candidates)
+// journalRestorePush lists the candidate calendars of a journal restore of uid
+// (see seriesRestoreCandidates).
+func journalRestorePush(ctx context.Context, a *app.App, uid string, rowCalendarID int64) restorePush {
+	return seriesRestoreCandidates(ctx, uid, rowCalendarID,
+		func(ctx context.Context, uid string) (int64, error) {
+			m, err := a.Queries.GetJournalByUIDIncludingDeleted(ctx, uid)
+			return m.CalendarID, err
+		},
+		func(ctx context.Context, uid string) ([]int64, error) {
+			rows, err := a.Queries.ListJournalOverridesByUID(ctx, uid)
+			ids := make([]int64, 0, len(rows))
+			for _, r := range rows {
+				ids = append(ids, r.CalendarID)
+			}
+			return ids, err
+		})
 }

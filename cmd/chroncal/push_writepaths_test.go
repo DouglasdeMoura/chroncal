@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +15,6 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/config"
-	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 // stubPushSeam replaces the opportunistic-push seam with a recorder that
@@ -216,50 +217,126 @@ func linkCLICalendar(t *testing.T, a *app.App, calendarID int64) {
 	t.Helper()
 	ctx := context.Background()
 	var accountID int64
-	if err := a.DB.QueryRowContext(ctx, `SELECT id FROM accounts WHERE name = 'push-test'`).Scan(&accountID); err != nil {
+	err := a.DB.QueryRowContext(ctx, `SELECT id FROM accounts WHERE name = 'push-test'`).Scan(&accountID)
+	if errors.Is(err, sql.ErrNoRows) {
 		res, err := a.DB.ExecContext(ctx, `INSERT INTO accounts (name, server_url, auth_type, username) VALUES ('push-test', 'https://example.invalid', 'basic', 'u')`)
 		if err != nil {
 			t.Fatalf("insert account: %v", err)
 		}
-		accountID, _ = res.LastInsertId()
+		if accountID, err = res.LastInsertId(); err != nil {
+			t.Fatalf("account id: %v", err)
+		}
+	} else if err != nil {
+		t.Fatalf("read account: %v", err)
 	}
 	if _, err := a.DB.ExecContext(ctx, `UPDATE calendars SET account_id = ?, remote_url = '/cal/' || id || '/' WHERE id = ?`, accountID, calendarID); err != nil {
 		t.Fatalf("link calendar: %v", err)
 	}
 }
 
-// TestRestorePushCalendarsOrder checks the push set after a restore of a
-// legacy override: the calendar with the dirty row first, then the calendar
-// with the tombstone. A calendar with no sync state of the UID, for example
-// the calendar of another series of the UID, stays out.
-func TestRestorePushCalendarsOrder(t *testing.T) {
-	a, err := app.New(testutil.DBPath(t))
+// restorePushFixture links one calendar for each name of names, runs the
+// seed statements (%[1]d, %[2]d, ... name the calendars in order), and
+// returns the calendar IDs and the ID of the row with the title "Row".
+func restorePushFixture(t *testing.T, names []string, seed ...string) (string, []int64, int64) {
+	t.Helper()
+	dbPath := setupCalendarCLITestEnv(t)
+	a, err := app.New(dbPath)
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
 	}
 	defer a.Close()
 	ctx := context.Background()
-	ids := make([]int64, 0, 3)
-	for _, name := range []string{"Tomb", "Other", "Dirty"} {
+	ids := make([]int64, 0, len(names))
+	args := make([]any, 0, len(names))
+	for _, name := range names {
 		cal, err := a.Calendars.Create(ctx, name, "#7C3AED", "")
 		if err != nil {
 			t.Fatalf("calendar create: %v", err)
 		}
+		linkCLICalendar(t, a, cal.ID)
 		ids = append(ids, cal.ID)
+		args = append(args, cal.ID)
 	}
-	tomb, other, dirty := ids[0], ids[1], ids[2]
-	for _, stmt := range []string{
-		fmt.Sprintf(`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, dirty) VALUES (%d, 'u', 'event', '/d/u.ics', 1)`, dirty),
-		fmt.Sprintf(`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, dirty) VALUES (%d, 'u', 'event', '/o/u.ics', 0)`, other),
-		fmt.Sprintf(`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (%d, 'u', '/t/u.ics')`, tomb),
-	} {
+	for _, stmt := range seed {
+		stmt = fmt.Sprintf(stmt, args...)
 		if _, err := a.DB.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("seed %q: %v", stmt, err)
 		}
 	}
-	got := restorePushCalendars(ctx, a, "u", []int64{tomb, other, 0, dirty, tomb})
-	if len(got) != 2 || got[0] != dirty || got[1] != tomb {
-		t.Errorf("push calendars = %v, want [%d %d]", got, dirty, tomb)
+	var rowID int64
+	if err := a.DB.QueryRowContext(ctx, `SELECT id FROM events WHERE title = 'Row'`).Scan(&rowID); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	return dbPath, ids, rowID
+}
+
+// recordRestorePushes deletes the row rowID, then restores it and returns
+// the calendars that the restore pushes. A pass of the stub push clears
+// the dirty flag of the calendar, as a real push does.
+func recordRestorePushes(t *testing.T, rowID int64, pass bool) []int64 {
+	t.Helper()
+	stubPushSeam(t)
+	if err := runWriteCommand(t, eventCmd(), "event", "delete", fmt.Sprint(rowID), "--yes"); err != nil {
+		t.Fatalf("event delete: %v", err)
+	}
+	var pushed []int64
+	prev := pushCalendarAfterWrite
+	pushCalendarAfterWrite = func(a *app.App, calendarID int64, _, _ io.Writer) {
+		pushed = append(pushed, calendarID)
+		if pass {
+			if _, err := a.DB.ExecContext(context.Background(), `UPDATE sync_resources SET dirty = 0 WHERE calendar_id = ? AND uid = 'u'`, calendarID); err != nil {
+				t.Errorf("clear dirty: %v", err)
+			}
+		}
+	}
+	t.Cleanup(func() { pushCalendarAfterWrite = prev })
+	if err := runWriteCommand(t, eventCmd(), "event", "restore", fmt.Sprint(rowID)); err != nil {
+		t.Fatalf("event restore: %v", err)
+	}
+	return pushed
+}
+
+// TestRestoreOfALegacyOverridePushesTheTargetFirst restores a legacy
+// override. The restore marks the calendar of the master dirty and keeps
+// the tombstone in the calendar of the row. The push sends the master
+// calendar first. It sends the calendar of the row only after the master
+// calendar holds the item, because that push deletes a server object.
+func TestRestoreOfALegacyOverridePushesTheTargetFirst(t *testing.T) {
+	for _, pass := range []bool{true, false} {
+		t.Run(fmt.Sprintf("target push passes=%v", pass), func(t *testing.T) {
+			_, ids, rowID := restorePushFixture(t, []string{"Master", "Legacy"},
+				`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule) VALUES ('u', %[1]d, 'Series', '2026-05-11T09:00:00Z', '2026-05-11T10:00:00Z', 'FREQ=WEEKLY')`,
+				`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id) VALUES ('u', %[2]d, 'Row', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z')`,
+				`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag) VALUES (%[1]d, 'u', 'event', '/cal/m/u.ics', 'e1')`,
+				// The old server object of the legacy row waits for its delete.
+				`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (%[2]d, 'u', '/cal/l/u.ics')`,
+			)
+			master, legacy := ids[0], ids[1]
+			want := []int64{master}
+			if pass {
+				want = append(want, legacy)
+			}
+			if got := recordRestorePushes(t, rowID, pass); fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Errorf("pushed = %v, want %v (Master %d, Legacy %d)", got, want, master, legacy)
+			}
+		})
+	}
+}
+
+// TestRestorePushLeavesAnotherSeriesOfTheUID restores an override of a
+// series. Another calendar holds another series of the UID with a pending
+// edit (issue #842). The push of the restore sends the calendar of the
+// restored series only.
+func TestRestorePushLeavesAnotherSeriesOfTheUID(t *testing.T) {
+	_, ids, rowID := restorePushFixture(t, []string{"Mine", "Other"},
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule) VALUES ('u', %[1]d, 'Series', '2026-05-11T09:00:00Z', '2026-05-11T10:00:00Z', 'FREQ=WEEKLY')`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id) VALUES ('u', %[1]d, 'Row', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z')`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule) VALUES ('u', %[2]d, 'Other', '2026-05-11T12:00:00Z', '2026-05-11T13:00:00Z', 'FREQ=DAILY')`,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag) VALUES (%[1]d, 'u', 'event', '/cal/m/u.ics', 'e1')`,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, etag, dirty) VALUES (%[2]d, 'u', 'event', '/cal/o/u.ics', 'e2', 1)`,
+	)
+	if got := recordRestorePushes(t, rowID, true); fmt.Sprint(got) != fmt.Sprint([]int64{ids[0]}) {
+		t.Errorf("pushed = %v, want [%d] (Other %d)", got, ids[0], ids[1])
 	}
 }
 

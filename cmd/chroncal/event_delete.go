@@ -13,6 +13,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 // eventResource adapts the event service to the shared verb builders.
@@ -82,23 +83,29 @@ var eventResource = resource{
 		}
 		return meta.PushCalendarIDs(target.CalendarID), nil
 	},
-	restoreByID: func(ctx context.Context, a *app.App, id int64) ([]int64, error) {
+	restoreByID: func(ctx context.Context, a *app.App, id int64) (restorePush, error) {
+		// Read the row first: its calendar names the series of the push.
+		// A failed read leaves the error to the restore.
+		e, readErr := a.Events.GetIncludingDeleted(ctx, id)
 		if err := a.Events.RestoreByID(ctx, id); err != nil {
-			return nil, err
+			return restorePush{}, err
 		}
-		e, err := a.Events.GetIncludingDeleted(ctx, id)
-		if err != nil {
-			// The restore committed. The push is best-effort, so a failed
-			// read skips it, and the next sync sends the rows.
-			return nil, nil
+		if readErr != nil {
+			return restorePush{err: readErr}, nil
 		}
-		return eventRestorePushCalendars(ctx, a, e.UID), nil
+		return eventRestorePush(ctx, a, e.UID, []int64{e.CalendarID}, nil), nil
 	},
-	restoreByUID: func(ctx context.Context, a *app.App, uid string) ([]int64, error) {
+	restoreByUID: func(ctx context.Context, a *app.App, uid string) (restorePush, error) {
+		// The rows that can come back are in the trash now.
+		trashed, readErr := a.Queries.ListTrashedEventsByUID(ctx, uid)
 		if err := a.Events.RestoreByUID(ctx, uid); err != nil {
-			return nil, err
+			return restorePush{}, err
 		}
-		return eventRestorePushCalendars(ctx, a, uid), nil
+		calendarIDs := make([]int64, 0, len(trashed))
+		for _, r := range trashed {
+			calendarIDs = append(calendarIDs, r.CalendarID)
+		}
+		return eventRestorePush(ctx, a, uid, calendarIDs, readErr), nil
 	},
 	purgeCandidate: func(ctx context.Context, a *app.App, id int64) (row, bool, error) {
 		e, err := a.Events.GetIncludingDeleted(ctx, id)
@@ -412,14 +419,26 @@ func seriesDeleteErr(ctx context.Context, a *app.App, target row, err error) err
 	return err
 }
 
-// eventRestorePushCalendars returns the calendars that the push after a
-// restore of uid sends (see restorePushCalendars). The candidates are the
-// calendars that hold a row of the UID. A failed read returns no calendar:
-// the push is best-effort.
-func eventRestorePushCalendars(ctx context.Context, a *app.App, uid string) []int64 {
-	ids, err := a.Queries.ListEventCalendarIDsByUID(ctx, uid)
-	if err != nil {
-		return nil
+// eventRestorePush lists the candidate calendars of an event restore of
+// uid: calendarIDs, the calendars of the restored rows, and the calendar of
+// the series that owns the rows of each (see GetSeriesMasterOfCalendar).
+// The calendar of another series of the UID stays out (issue #842), so its
+// push sends no unrelated edits. readErr is a failed read before the
+// restore.
+func eventRestorePush(ctx context.Context, a *app.App, uid string, calendarIDs []int64, readErr error) restorePush {
+	p := restorePush{uid: uid, err: readErr}
+	if readErr != nil {
+		return p
 	}
-	return restorePushCalendars(ctx, a, uid, ids)
+	for _, id := range calendarIDs {
+		p.candidates = append(p.candidates, id)
+		m, err := a.Queries.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{CalendarID: id, Uid: uid, IncludeDeleted: true})
+		if found, err := storage.Found(err); err != nil {
+			p.err = err
+			return p
+		} else if found {
+			p.candidates = append(p.candidates, m.CalendarID)
+		}
+	}
+	return p
 }
