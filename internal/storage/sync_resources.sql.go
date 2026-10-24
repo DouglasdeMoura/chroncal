@@ -629,10 +629,10 @@ AS INTEGER) AS has_changes
 `
 
 // Report whether a calendar holds a local change of a pushed item that no
-// push sent: a dirty row with an href, or a tombstone with an href. The
-// first pass after a link uses the prompt strategy then, so a server-wins
-// pass does not drop an edit made while the calendar had no account
-// (issue #876).
+// push sent: a dirty row with an href, or a tombstone with an href. A pass
+// of a calendar with relink_pending uses the prompt strategy then, so a
+// server-wins pass does not drop an edit made while the calendar had no
+// account (issue #876).
 func (q *Queries) HasUnsentServerChangesInCalendar(ctx context.Context, calendarID int64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, hasUnsentServerChangesInCalendar, calendarID)
 	var has_changes int64
@@ -1573,21 +1573,29 @@ WHERE sync_resources.calendar_id = ?1
   AND sync_resources.remote_url != ''
   AND EXISTS (
     SELECT 1 FROM calendars c
-    WHERE c.id = sync_resources.calendar_id AND c.account_id IS NOT NULL AND c.account_id != 0
+    WHERE c.id = sync_resources.calendar_id AND c.relink_pending = 1
+      AND c.account_id IS NOT NULL AND c.account_id != 0
       AND (lower(trim(c.remote_access)) = 'read'
            OR (trim(c.remote_components) != ''
                AND instr(',' || upper(replace(c.remote_components, ' ', '')) || ',',
                          ',' || CASE sync_resources.owner_type WHEN 'todo' THEN 'VTODO' WHEN 'journal' THEN 'VJOURNAL' ELSE 'VEVENT' END || ',') = 0))
   )
+  AND NOT EXISTS (
+    SELECT 1 FROM sync_conflicts sc
+    WHERE sc.calendar_id = sync_resources.calendar_id AND sc.uid = sync_resources.uid AND sc.resolved_at IS NULL)
+  AND NOT EXISTS (
+    SELECT 1 FROM tombstones t
+    WHERE t.uid = sync_resources.uid AND t.moved_to_calendar_id = sync_resources.calendar_id)
 `
 
-// Clear the mark of each pushed row of a linked calendar whose collection
+// Clear the mark of each pushed row of a relinked calendar whose collection
 // cannot take the edit: a read-only collection, or a collection that does
 // not list the component of the row (remote_components). An edit while the
 // calendar had no account marked such a row (issue #876). No push sends
 // it, so the row would stay dirty with no end. The etag goes too, so the
-// next pull reads the server body again. A link runs it after
-// MarkLocalItemsDirtyInCalendar.
+// next pull reads the server body. A row with an open conflict and a moved
+// copy keep their mark: the conflict and the move rules own them. The
+// pass of a calendar with relink_pending runs it.
 func (q *Queries) SettleUntakeableEditsInCalendar(ctx context.Context, calendarID int64) error {
 	_, err := q.db.ExecContext(ctx, settleUntakeableEditsInCalendar, calendarID)
 	return err

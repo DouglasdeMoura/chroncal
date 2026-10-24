@@ -159,7 +159,12 @@ func (q *Queries) ReconcileAfterRestore(ctx context.Context, calendarID int64, u
 // never pushes the edit (issue #876). An item with no sync row gets its row
 // from the relink (issue #866).
 func markCalendarDirty(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
-	cal, err := New(db).GetCalendar(ctx, calendarID)
+	// The mark runs on each edit, so it reads the columns of the two
+	// predicates only.
+	var cal Calendar
+	err := db.QueryRowContext(ctx,
+		`SELECT account_id, relink_pending, local_path FROM calendars WHERE id = ?`, calendarID,
+	).Scan(&cal.AccountID, &cal.RelinkPending, &cal.LocalPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -962,11 +967,12 @@ func CalendarUnlinkedByAccountDelete(cal Calendar) bool {
 
 // CalendarAwaitsRelink reports whether cal lost its account to an account
 // delete and can link again. The delete keeps the sync rows and the
-// tombstones too (ClearRemoteLinksByAccount), so an edit in that time marks
-// its row (issue #876). A calendar with a local directory stays local
-// (issue #809): no link takes it again, so it gets no mark.
+// tombstones too, and it sets relink_pending (ClearRemoteLinksByAccount).
+// An edit in that time marks its row (issue #876). A calendar with a local
+// directory stays local (issue #809): no link takes it again, so it gets
+// no mark.
 func CalendarAwaitsRelink(cal Calendar) bool {
-	return CalendarUnlinkedByAccountDelete(cal) && strings.TrimSpace(cal.LocalPath) == ""
+	return !CalendarLinked(cal) && cal.RelinkPending != 0 && strings.TrimSpace(cal.LocalPath) == ""
 }
 
 // MoveResolveLockSet returns the resolve function of synclock.Calendars for

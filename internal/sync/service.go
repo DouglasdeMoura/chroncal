@@ -37,28 +37,6 @@ func (s *Service) SyncCalendar(ctx context.Context, calendarID int64, strategy C
 	return s.engine.SyncCalendar(ctx, calendarID, strategy)
 }
 
-// FirstSyncStrategy returns the strategy of the first pass after a link of
-// calendarID. A relink after an account removal can find a local edit or a
-// delete of a pushed item that no push sent (issue #876). A server-wins pass
-// would adopt the server body over that edit. The pass then uses
-// ConflictPrompt, so a 412 records an open conflict and the edit stays
-// dirty. Else the pass uses fallback.
-func (s *Service) FirstSyncStrategy(ctx context.Context, calendarID int64, fallback ConflictStrategy) (ConflictStrategy, error) {
-	return firstSyncStrategy(ctx, s.q, calendarID, fallback)
-}
-
-// firstSyncStrategy is the body of Service.FirstSyncStrategy.
-func firstSyncStrategy(ctx context.Context, q *storage.Queries, calendarID int64, fallback ConflictStrategy) (ConflictStrategy, error) {
-	has, err := q.HasUnsentServerChangesInCalendar(ctx, calendarID)
-	if err != nil {
-		return fallback, fmt.Errorf("read the unsent changes of calendar %d: %w", calendarID, err)
-	}
-	if has != 0 {
-		return ConflictPrompt, nil
-	}
-	return fallback, nil
-}
-
 // PushLocalEdits pushes unpushed local changes for one calendar with no
 // pull. Intended for opportunistic save-time sync from CLI/TUI mutations.
 // A 412 records a conflict and keeps the local edit dirty; this path never

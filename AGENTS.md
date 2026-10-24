@@ -29,11 +29,12 @@ Integration packages and infrastructure packages do not use the `NewService` sha
 
 - **sync** - CalDAV sync engine. Detect and resolve conflicts (`NewService` with extra dependencies). Write paths push through `PushLocalEdits`; a 412 records a conflict and keeps the edit dirty. The conflict strategy governs full passes only. A resolved conflict row stays, so `sync resolve --pick local` can restore the recorded local body. One exception applies. A new move of the UID drops the resolved move rows of the earlier move in its account. Their recorded bodies describe a move that no longer exists. A create PUT sends `If-None-Match: *`, so it never overwrites an object. A dirty row wins over a remote delete: the pull and a 412 on a gone object drop its href, and the push creates the object again. A server-wins pass, a read-only calendar, and a row with an open conflict keep the delete. A link of a local calendar gives each local item a dirty row (`MarkLocalItemsDirtyInCalendar`).
 
-  An account removal keeps `remote_url`, the sync rows, and the tombstones (issue #876). These rules apply:
+  An account removal keeps `remote_url`, the sync rows, and the tombstones, and it sets `calendars.relink_pending` (issue #876). These rules apply:
 
-  - An edit marks the existing sync row of the item (`storage.CalendarAwaitsRelink`). A calendar with a local directory gets no mark.
-  - The relink clears the mark of a row that the collection cannot take (`SettleUntakeableEditsInCalendar`).
-  - The first pass after the relink uses the prompt strategy when an unsent change of a pushed item exists (`Service.FirstSyncStrategy`).
+  - While the calendar has no account, an edit marks the existing sync row of the item (`storage.CalendarAwaitsRelink`). A calendar with a local directory gets no mark.
+  - A pass of the relinked calendar clears the mark of a row that the collection cannot take (`SettleUntakeableEditsInCalendar`).
+  - While an unsent change of a pushed item exists, a server-wins pass uses the prompt strategy (`Engine.relinkStrategy`).
+  - A clean pass with no unsent change clears the flag (`Engine.settleRelink`).
 - **caldav** - Low-level CalDAV client (discovery, REPORT, PROPFIND, VFREEBUSY). Constructor: `NewClient`
 - **freebusy** - Local free/busy results plus a remote CalDAV query. Plain functions (`Compute`)
 - **auth** - Credential store (OS keyring, optional plaintext). OAuth2 PKCE. Plain functions
