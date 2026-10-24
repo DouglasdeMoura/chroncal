@@ -305,9 +305,8 @@ func StorableAlarmAction(action string) bool {
 //
 // The rule governs a write from now on. It does not repair a row an
 // earlier build already stamped: that row holds a non-empty UID, so this
-// function keeps it and syncMatchedAlarm backfills an empty value only.
-// A minted UID cannot be told from an authored one after the fact, so no
-// repair is possible.
+// function keeps it. A pair by content keeps the stored UID, unless the
+// incoming alarm has another UID (PairedAlarmUID).
 func AlarmUIDForWrite(a Alarm) string {
 	if a.UID != "" {
 		return a.UID
@@ -368,11 +367,12 @@ type AlarmPair struct {
 // the todo services and the import comparison share this rule.
 //
 // The first pass pairs by equal content, in the order of incoming. Two
-// non-empty UIDs that differ do not pair in this pass, so an alarm with its
-// own UID first takes its own row. An incoming alarm with no UID also skips a stored alarm whose UID
-// another incoming alarm has, because that stored alarm belongs to it. An
-// incoming alarm whose UID a stored alarm has skips the stored alarms with
-// no UID: its UID would go on a second row of the item.
+// non-empty UIDs that differ do not pair in this pass. An alarm with its
+// own UID then takes its own row first. An incoming alarm with no UID
+// skips a stored alarm whose UID another incoming alarm has, because that
+// stored alarm belongs to it. An incoming alarm whose UID a stored alarm
+// has skips the stored alarms with no UID. Its UID would go on a second
+// row of the item.
 //
 // The second pass pairs the rest by an equal UID. An edited alarm then
 // keeps its row, and its alarm state stays.
@@ -381,11 +381,11 @@ type AlarmPair struct {
 // stored alarm of equal content that has no pair. The stored alarm then
 // takes the UID of the incoming alarm (PairedAlarmUID), and its alarm state
 // stays. Before migration 063, the store kept a minted UID when another
-// item held the UID of the file, and this pass gives such a row the UID of
-// the file (issue #922). A minted UID cannot be told from an authored UID,
-// so the pass applies to every write. An alarm that another client
-// replaces with an alarm of equal content and a new UID therefore keeps
-// its alarm state, for example a dismiss of an occurrence.
+// item held the UID of the file. This pass gives such a row the UID of the
+// file (issue #922). A minted UID cannot be told from an authored UID, so
+// the pass applies to every write. Thus an alarm keeps its alarm state
+// when another client replaces it with an alarm of equal content and a
+// new UID. For example, a dismiss of an occurrence stays.
 func PairAlarms(stored, incoming []Alarm) []AlarmPair {
 	pairs := make([]AlarmPair, len(incoming))
 	used := make([]bool, len(stored))
