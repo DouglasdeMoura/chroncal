@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -182,21 +183,31 @@ func eventDedupKey(e event.Event) string {
 }
 
 // loadTrash queries the trash aggregator across all visible calendars
-// and hands the result to the trash model via trashLoadedMsg.
+// and hands the result to the trash model via trashLoadedMsg. The merged
+// list is newest-first, as each trash.Service.List result is (issue #879).
+// The calendars are read in ID order, so entries with the same deletion
+// time keep one order from one load to the next.
 func (m Model) loadTrash() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		var out []trash.Entry
+		ids := make([]int64, 0, len(m.calendars))
 		for id := range m.calendars {
-			if m.hiddenCalendars[id] {
-				continue
+			if !m.hiddenCalendars[id] {
+				ids = append(ids, id)
 			}
+		}
+		slices.Sort(ids)
+		var out []trash.Entry
+		for _, id := range ids {
 			entries, err := m.app.Trash.List(ctx, id)
 			if err != nil {
 				return trashLoadedMsg{err: err}
 			}
 			out = append(out, entries...)
 		}
+		slices.SortStableFunc(out, func(a, b trash.Entry) int {
+			return b.DeletedAt.Compare(a.DeletedAt)
+		})
 		return trashLoadedMsg{entries: out}
 	}
 }
