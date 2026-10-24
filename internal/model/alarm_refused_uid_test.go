@@ -24,6 +24,12 @@ func alarmAt(uid, trigger string) Alarm {
 	return Alarm{UID: uid, Action: "DISPLAY", TriggerValue: trigger, Related: "START"}
 }
 
+// unverified returns a with the mark of migration 063.
+func unverified(a Alarm) Alarm {
+	a.UIDUnverified = true
+	return a
+}
+
 func TestPairAlarms(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -45,24 +51,34 @@ func TestPairAlarms(t *testing.T) {
 			want:     []AlarmPair{{Stored: -1}},
 		},
 		{
-			// Another item holds the UID of the file: the store minted
-			// the stored UID before migration 063.
+			// Another item holds the UID of the file, and a build before
+			// migration 063 wrote the stored UID: the store minted it.
 			name:     "a UID that another item holds takes a minted row",
-			stored:   []Alarm{alarmAt("minted", "-PT15M")},
+			stored:   []Alarm{unverified(alarmAt("minted", "-PT15M"))},
 			incoming: []Alarm{alarmAt("file", "-PT15M")},
 			held:     map[string]bool{"file": true},
 			want:     []AlarmPair{{Stored: 0, ByContent: true, TakeUID: true}},
 		},
 		{
+			// A build from migration 063 on wrote the stored UID, so a
+			// client authored it. A change to a UID that another item
+			// holds is a new alarm.
+			name:     "the evidence needs the mark of migration 063",
+			stored:   []Alarm{alarmAt("authored", "-PT15M")},
+			incoming: []Alarm{alarmAt("file", "-PT15M")},
+			held:     map[string]bool{"file": true},
+			want:     []AlarmPair{{Stored: -1}},
+		},
+		{
 			name:     "the evidence needs equal content",
-			stored:   []Alarm{alarmAt("minted", "-PT15M")},
+			stored:   []Alarm{unverified(alarmAt("minted", "-PT15M"))},
 			incoming: []Alarm{alarmAt("file", "-PT5M")},
 			held:     map[string]bool{"file": true},
 			want:     []AlarmPair{{Stored: -1}},
 		},
 		{
 			name:     "the evidence skips a row that another alarm claims",
-			stored:   []Alarm{alarmAt("a", "-PT15M")},
+			stored:   []Alarm{unverified(alarmAt("a", "-PT15M"))},
 			incoming: []Alarm{alarmAt("file", "-PT15M"), alarmAt("a", "-PT5M")},
 			held:     map[string]bool{"file": true},
 			want:     []AlarmPair{{Stored: -1}, {Stored: 0}},

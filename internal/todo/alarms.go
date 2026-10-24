@@ -115,6 +115,7 @@ func fromStorageTodoAlarm(r storage.TodoAlarm) model.Alarm {
 		AttachURI:     storage.NullableToString(r.AttachUri),
 		AttachBinary:  r.AttachBinary,
 		AttachFmtType: storage.NullableToString(r.AttachFmttype),
+		UIDUnverified: r.UidUnverified != 0,
 	}
 }
 
@@ -329,6 +330,11 @@ func syncMatchedTodoAlarm(ctx context.Context, qtx *storage.Queries, p model.Ala
 			ID:  ex.ID,
 		}); err != nil {
 			return fmt.Errorf("set alarm uid: %w", err)
+		}
+	} else if ex.UIDUnverified && a.UID != "" && a.UID == ex.UID {
+		// The file confirms the UID, so the mark of migration 063 goes.
+		if err := qtx.ConfirmTodoAlarmUID(ctx, ex.ID); err != nil {
+			return fmt.Errorf("confirm alarm uid: %w", err)
 		}
 	}
 	if a.Acknowledged != ex.Acknowledged && model.ValidateAcknowledged(a.Acknowledged) {

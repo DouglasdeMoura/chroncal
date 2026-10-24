@@ -36,6 +36,9 @@ type Alarm struct {
 	AttachFmtType string // FMTTYPE param for ATTACH (e.g. "audio/basic")
 	Attendees     []AlarmAttendee
 	XProperties   []XProperty // X-* extension props, round-trip only
+	// UIDUnverified marks a stored UID that a build before migration 063
+	// wrote. It can be a minted UID (issue #922). Store only, not content.
+	UIDUnverified bool
 }
 
 // ContentEqual returns true if two alarms have identical content (all fields
@@ -394,12 +397,18 @@ type AlarmPair struct {
 //
 // The third pass repairs a UID that the store minted before migration 063
 // (issue #922). The store then minted a UID for an alarm only when an alarm
-// of another item held the UID of the file. heldElsewhere holds the
-// incoming UIDs that an alarm of another item has. An incoming alarm with
-// such a UID and no pair takes a stored alarm of equal content with
-// another UID and no pair. The stored alarm takes the UID of the incoming
-// alarm and keeps its alarm state. Without that evidence, two different
-// UIDs never pair.
+// of another item held the UID of the file. Two facts are the evidence of
+// a minted UID:
+//   - The stored alarm has the mark of migration 063 (UIDUnverified), so
+//     a build that could mint wrote its UID.
+//   - An alarm of another item has the incoming UID. heldElsewhere holds
+//     those UIDs.
+//
+// An incoming alarm with no pair and that evidence takes a stored alarm of
+// equal content with another UID and no pair. The stored alarm takes the
+// UID of the incoming alarm and keeps its alarm state. Without the
+// evidence, two different UIDs never pair. A UID that a build from
+// migration 063 on writes never has the mark.
 func PairAlarms(stored, incoming []Alarm, heldElsewhere map[string]bool) []AlarmPair {
 	pairs := make([]AlarmPair, len(incoming))
 	used := make([]bool, len(stored))
@@ -444,7 +453,7 @@ func PairAlarms(stored, incoming []Alarm, heldElsewhere map[string]bool) []Alarm
 			continue
 		}
 		for j, ex := range stored {
-			if !used[j] && ex.UID != "" && ex.UID != a.UID && !claimed[ex.UID] && a.ContentEqual(ex) {
+			if !used[j] && ex.UIDUnverified && ex.UID != "" && ex.UID != a.UID && !claimed[ex.UID] && a.ContentEqual(ex) {
 				pairs[i], used[j] = AlarmPair{Stored: j, ByContent: true, TakeUID: true}, true
 				break
 			}
