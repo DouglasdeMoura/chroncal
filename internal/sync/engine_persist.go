@@ -13,12 +13,14 @@ import (
 
 	"github.com/emersion/go-ical"
 
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/todo"
+	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
 // persistImported saves parsed iCal data to the local database using the same
@@ -147,6 +149,16 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 	for _, t := range result.Todos {
 		if err := e.inTx(ctx, func(tx *sql.Tx) error {
 			todos := e.todos.WithTx(tx)
+			// Another client can move the item between two server
+			// calendars and keep its UID. The local rows of the UID then
+			// follow the server into this calendar by the rules of a
+			// calendar move (issue #911).
+			if _, err := todos.FollowUIDToCalendar(ctx, t.UID, calendarID); err != nil {
+				if isMoveRefusal(err) {
+					return &followRefusal{uid: t.UID, ownerType: "todo", err: err}
+				}
+				return fmt.Errorf("follow todo %q: %w", t.UID, err)
+			}
 			saved, err := todos.UpsertByUID(ctx, todo.UpsertParams{
 				UID: t.UID, CalendarID: calendarID,
 				Summary: t.Summary, Description: t.Description, Location: t.Location,
@@ -208,6 +220,16 @@ func (e *Engine) persistImported(ctx context.Context, calendarID int64, result i
 	for _, j := range result.Journals {
 		if err := e.inTx(ctx, func(tx *sql.Tx) error {
 			journals := e.journals.WithTx(tx)
+			// Another client can move the item between two server
+			// calendars and keep its UID. The local rows of the UID then
+			// follow the server into this calendar by the rules of a
+			// calendar move (issue #911).
+			if _, err := journals.FollowUIDToCalendar(ctx, j.UID, calendarID); err != nil {
+				if isMoveRefusal(err) {
+					return &followRefusal{uid: j.UID, ownerType: "journal", err: err}
+				}
+				return fmt.Errorf("follow journal %q: %w", j.UID, err)
+			}
 			saved, err := journals.UpsertByUID(ctx, journal.UpsertParams{
 				UID: j.UID, CalendarID: calendarID,
 				Summary: j.Summary, Description: j.Description,
@@ -655,20 +677,21 @@ func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, to
 		return uid, false, warnings, nil
 	}
 
-	// A todo or a journal whose UID lives in another calendar stays out of
-	// this calendar: the upsert never moves a row (issue #911). The pull
-	// skips the body with a warning, so the rest of the pull goes on and
-	// the sync-token advances. The body counts as present on the server,
-	// so no prune deletes it.
-	if w, skip, err := e.uidOfOtherCalendar(ctx, calendarID, uid, res.href, importResult); err != nil {
-		return uid, false, warnings, err
-	} else if skip {
-		logImportWarnings(e.logger, []ImportWarning{w})
-		return uid, false, append(warnings, w), nil
-	}
-
 	// Persist imported data to the database
 	revs, alarmWarnings, persistErr := e.persistImported(ctx, calendarID, importResult)
+	var refusal *followRefusal
+	if errors.As(persistErr, &refusal) {
+		// The rows of the UID stay in their calendar, so the body stays
+		// out of this one. No sync row records it: a sync row with no
+		// local rows would send a delete of the server copy. The body
+		// counts as present on the server, so no prune runs.
+		if e.followWarningOnce(calendarID, uid, res.etag) {
+			w := ImportWarning{Path: res.href, UID: uid, Message: refusal.Error() + "; the pull keeps the server copy out of this calendar"}
+			logImportWarnings(e.logger, []ImportWarning{w})
+			warnings = append(warnings, w)
+		}
+		return uid, false, warnings, nil
+	}
 	if persistErr != nil {
 		// A changed body we fetched but couldn't store (transient SQLite
 		// busy/lock, or a malformed component a Replace* rejects). Leave the
@@ -785,27 +808,48 @@ func (e *Engine) openConflictBlocksImport(ctx context.Context, calendarID int64,
 	return open.RowDirty != 0, true
 }
 
-// uidOfOtherCalendar reports whether the todo or the journal of a fetched
-// body has a UID that a row of another calendar holds (issue #911). It
-// gives the warning of the skip. An event UID is per calendar, so an
-// event never skips here.
-func (e *Engine) uidOfOtherCalendar(ctx context.Context, calendarID int64, uid, href string, result icalPkg.ImportResult) (ImportWarning, bool, error) {
-	var err error
-	switch {
-	case len(result.Todos) > 0:
-		err = storage.CheckUIDInOneCalendar(ctx, e.q, "todo", uid, calendarID, func(ctx context.Context) (int64, error) {
-			return e.q.GetTodoCalendarOfUIDOutside(ctx, storage.GetTodoCalendarOfUIDOutsideParams{Uid: uid, CalendarID: calendarID})
-		})
-	case len(result.Journals) > 0:
-		err = storage.CheckUIDInOneCalendar(ctx, e.q, "journal", uid, calendarID, func(ctx context.Context) (int64, error) {
-			return e.q.GetJournalCalendarOfUIDOutside(ctx, storage.GetJournalCalendarOfUIDOutsideParams{Uid: uid, CalendarID: calendarID})
-		})
+// followRefusal reports that the local rows of a todo or a journal UID
+// live in another calendar, and that the rules of a calendar move refuse
+// to bring them into the pulled calendar (issue #911): for example a
+// read-only calendar, or an open conflict of the UID. The pull then skips
+// the body and keeps the rows where they are.
+type followRefusal struct {
+	uid       string
+	ownerType string
+	err       error
+}
+
+func (f *followRefusal) Error() string {
+	return fmt.Sprintf("the %s %s lives in another calendar, and the move into this calendar stops: %v", f.ownerType, f.uid, f.err)
+}
+
+func (f *followRefusal) Unwrap() error { return f.err }
+
+// isMoveRefusal reports whether err is a rule of a calendar move, and not a
+// failure of the database. A rule holds on the next pass too, so the pull
+// skips the body. A failure fails the resource, so the pull tries again.
+func isMoveRefusal(err error) bool {
+	var occurrence *uidmove.OccurrenceMoveError
+	return errors.Is(err, calendaraccess.ErrReadOnly) ||
+		errors.Is(err, calendaraccess.ErrUnsupportedComponent) ||
+		errors.Is(err, storage.ErrMoveOpenConflict) ||
+		errors.Is(err, storage.ErrPendingMove) ||
+		errors.As(err, &occurrence)
+}
+
+// followWarningOnce reports whether the skip of a body for a refused
+// follow is new for its calendar, UID, and etag. A full snapshot fetches
+// the same body on every pass, so the engine warns once for each etag.
+func (e *Engine) followWarningOnce(calendarID int64, uid, etag string) bool {
+	e.followWarnMu.Lock()
+	defer e.followWarnMu.Unlock()
+	key := fmt.Sprintf("%d\x00%s", calendarID, uid)
+	if e.followWarned == nil {
+		e.followWarned = map[string]string{}
 	}
-	switch {
-	case errors.Is(err, storage.ErrUIDInOtherCalendar):
-		return ImportWarning{Path: href, UID: uid, Message: err.Error() + "; the pull keeps the server copy out of this calendar"}, true, nil
-	case err != nil:
-		return ImportWarning{}, false, err
+	if seen, ok := e.followWarned[key]; ok && seen == etag {
+		return false
 	}
-	return ImportWarning{}, false, nil
+	e.followWarned[key] = etag
+	return true
 }

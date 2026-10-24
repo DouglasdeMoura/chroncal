@@ -589,6 +589,53 @@ func (s *Service) Complete(ctx context.Context, id int64) (Todo, error) {
 	return t, nil
 }
 
+// maxFollowPasses bounds the moves of FollowUIDToCalendar.
+const maxFollowPasses = 8
+
+// FollowUIDToCalendar moves every row of uid that lives outside calendarID
+// into calendarID, live or in the trash, by the rules of a calendar move
+// (uidmove.Rows.Update), and it returns the calendar that the rows left, or
+// 0. A sync pull calls it before the upsert of a server body (issue #911).
+// Another client can move an item between two server calendars and keep
+// its UID, and the key of a todo spans calendars, so the local rows follow
+// the server. The move also heals a series that an older version split
+// across two calendars. A refusal of the move rules comes back as an
+// error, and no row moves.
+func (s *Service) FollowUIDToCalendar(ctx context.Context, uid string, calendarID int64) (int64, error) {
+	qtx, commit, rollback, err := s.txscope(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer rollback()
+	var first int64
+	// Each pass moves the rows of one other calendar. A UID can sit in
+	// more than one other calendar, so the loop runs until none is left.
+	// The bound stops the loop if a move leaves rows behind.
+	for pass := 0; ; pass++ {
+		if pass == maxFollowPasses {
+			return 0, fmt.Errorf("follow %s: rows stay outside the calendar after %d moves", uid, pass)
+		}
+		from, err := qtx.GetTodoCalendarOfUIDOutside(ctx, storage.GetTodoCalendarOfUIDOutsideParams{Uid: uid, CalendarID: calendarID})
+		found, err := storage.Found(err)
+		if err != nil {
+			return 0, fmt.Errorf("find the calendar of %s: %w", uid, err)
+		}
+		if !found {
+			break
+		}
+		if err := uidMoveRows(qtx, uid).Update(ctx, todoComponent, "todo", "", from, calendarID, func(context.Context, int64) error { return nil }); err != nil {
+			return 0, fmt.Errorf("follow %s from calendar %q: %w", uid, storage.CalendarLabel(ctx, qtx, from), err)
+		}
+		if first == 0 {
+			first = from
+		}
+	}
+	if err := commit(); err != nil {
+		return 0, err
+	}
+	return first, nil
+}
+
 func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error) {
 	p.applyDefaults()
 	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
@@ -652,6 +699,11 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Todo, error)
 		Geo:             storage.StringToNullable(p.Geo),
 		Dtstamp:         storage.StringToNullable(p.DtStamp),
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		// The WHERE of the upsert found the row in another calendar. The
+		// check above stops that case, so only a race gets here.
+		return Todo{}, fmt.Errorf("%w: todo %s", storage.ErrUIDInOtherCalendar, p.UID)
+	}
 	if err != nil {
 		return Todo{}, err
 	}
