@@ -2215,8 +2215,8 @@ func TestRestoreTruncation_OlderFirstRefuses(t *testing.T) {
 	firstMeta, secondMeta, late := truncateAgainAtSameCutoff(t, svc, master, second, third.Add(24*time.Hour))
 	firstLog := truncationLogID(t, svc, master.UID, firstMeta.DeleteToken)
 	var newer *NewerTruncationError
-	if err := svc.restoreTruncationByLogID(ctx, firstLog, 0); !errors.As(err, &newer) || !newer.Cutoff.Equal(second) {
-		t.Fatalf("restore the older first = %v, want NewerTruncationError at %s", err, second)
+	if err := svc.restoreTruncationByLogID(ctx, firstLog, 0); !errors.As(err, &newer) || !newer.Cutoff.Equal(second) || !newer.SameCutoff {
+		t.Fatalf("restore the older first = %#v, want NewerTruncationError at the same cutoff %s", err, second)
 	}
 	wantTrashed(t, svc, true, late.ID)
 	if err := svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, secondMeta.DeleteToken), 0); err != nil {
@@ -2254,8 +2254,8 @@ func TestRestoreTruncation_NewerAtAnEarlierCutoffComesFirst(t *testing.T) {
 	if !errors.As(err, &newer) || !errors.Is(err, ErrNewerTruncation) || !newer.Cutoff.Equal(second) {
 		t.Fatalf("restore the later cutoff first = %v, want NewerTruncationError at %s", err, second)
 	}
-	if newer.AllDay {
-		t.Errorf("NewerTruncationError.AllDay = true for a timed series")
+	if newer.AllDay || newer.SameCutoff {
+		t.Errorf("NewerTruncationError = %#v, want a timed series at another cutoff", newer)
 	}
 	if !strings.Contains(err.Error(), "restore the newer truncation of this series first (cutoff "+second.Format(time.RFC3339)+")") {
 		t.Errorf("text = %q, want the cutoff of the newer truncation", err.Error())

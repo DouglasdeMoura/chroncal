@@ -103,7 +103,7 @@ func (m Model) handleCalendarDaySelected(msg CalendarDaySelectedMsg) (tea.Model,
 }
 
 func (m Model) handleEventEdit(msg EventEditMsg) (tea.Model, tea.Cmd) {
-	if cmd, blocked := m.blockReadOnlyCalendarMutation(msg.Event.CalendarID); blocked {
+	if cmd, blocked := m.blockReadOnlyCalendarMutation("Edit", msg.Event.CalendarID); blocked {
 		return m, cmd
 	}
 	ev := msg.Event
@@ -209,7 +209,7 @@ func (m Model) handleEventDuplicate(msg EventDuplicateMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m Model) handleEventFormSave(msg EventFormSaveMsg) (tea.Model, tea.Cmd) {
-	if cmd, blocked := m.blockReadOnlyCalendarMutation(msg.CalendarID); blocked {
+	if cmd, blocked := m.blockReadOnlyCalendarMutation("Save", msg.CalendarID); blocked {
 		return m, cmd
 	}
 	// editID is read from the live form model, not the message. The
@@ -438,7 +438,7 @@ func (m Model) handleDialogDayChanged(msg DialogDayChangedMsg) (tea.Model, tea.C
 }
 
 func (m Model) handleEventDelete(msg EventDeleteMsg) (tea.Model, tea.Cmd) {
-	if cmd, blocked := m.blockReadOnlyCalendarMutation(msg.Event.CalendarID); blocked {
+	if cmd, blocked := m.blockReadOnlyCalendarMutation("Delete", msg.Event.CalendarID); blocked {
 		return m, cmd
 	}
 	if msg.Event.RecurrenceRule != "" {
@@ -570,13 +570,13 @@ func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 		// UID, or a master that changed. A retry gives the same refusal,
 		// so the entry leaves the stack and never hides the older entries.
 		m.undoStack.Remove(msg.meta)
-		return m, tea.Batch(m.loadEvents(), m.toast.Failed("Undo", msg.err.Error()))
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed("Undo", refusalReason(msg.err)))
 	}
 	if msg.err != nil {
 		// A transient error, for example a busy database or a canceled
 		// context. The entry stays on the stack, so the user can retry.
 		// The toast schedules its own dismiss tick.
-		return m, m.toast.Failed("Undo", msg.err.Error())
+		return m, m.toast.Failed("Undo", refusalReason(msg.err))
 	}
 	// Remove the entry that was actually restored, by identity, not the
 	// current top. A delete that lands while the restore is in flight may

@@ -420,6 +420,8 @@ func TestTrashActionDone_RefusedRestoreNamesTheRestore(t *testing.T) {
 			"Restore failed: restore the truncation with cutoff Tue, Nov 3 10:00 first"},
 		{"all-day", &event.NewerTruncationError{Cutoff: time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC), AllDay: true},
 			"Restore failed: restore the truncation with cutoff Tue, Nov 3 first"},
+		{"same cutoff", &event.NewerTruncationError{Cutoff: time.Date(2026, 11, 3, 13, 0, 0, 0, time.UTC), SameCutoff: true},
+			"Restore failed: restore the newer truncation at the same cutoff first"},
 		{"no cutoff", &event.NewerTruncationError{},
 			"Restore failed: restore the newer truncation of this series first"},
 	} {

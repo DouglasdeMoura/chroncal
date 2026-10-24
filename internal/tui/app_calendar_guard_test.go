@@ -17,7 +17,7 @@ func TestBlockReadOnlyCalendarMutation_ReadOnlyBlocked(t *testing.T) {
 		},
 		toast: NewToastModel(NewTheme(true)),
 	}
-	_, blocked := m.blockReadOnlyCalendarMutation(1)
+	_, blocked := m.blockReadOnlyCalendarMutation("Edit", 1)
 	if !blocked {
 		t.Fatal("read-only calendar should block mutation")
 	}
@@ -31,7 +31,7 @@ func TestBlockReadOnlyCalendarMutation_NonVEVENTBlocked(t *testing.T) {
 		},
 		toast: NewToastModel(NewTheme(true)),
 	}
-	_, blocked := m.blockReadOnlyCalendarMutation(1)
+	_, blocked := m.blockReadOnlyCalendarMutation("Edit", 1)
 	if !blocked {
 		t.Fatal("calendar without VEVENT support should block event mutation")
 	}
@@ -45,7 +45,7 @@ func TestBlockReadOnlyCalendarMutation_JournalOnlyBlocked(t *testing.T) {
 		},
 		toast: NewToastModel(NewTheme(true)),
 	}
-	_, blocked := m.blockReadOnlyCalendarMutation(1)
+	_, blocked := m.blockReadOnlyCalendarMutation("Edit", 1)
 	if !blocked {
 		t.Fatal("calendar advertising only VJOURNAL should block event mutation")
 	}
@@ -59,7 +59,7 @@ func TestBlockReadOnlyCalendarMutation_SupportsVEVENTAllowed(t *testing.T) {
 		},
 		toast: NewToastModel(NewTheme(true)),
 	}
-	_, blocked := m.blockReadOnlyCalendarMutation(1)
+	_, blocked := m.blockReadOnlyCalendarMutation("Edit", 1)
 	if blocked {
 		t.Fatal("calendar with VEVENT support should not block mutation")
 	}
@@ -73,7 +73,7 @@ func TestBlockReadOnlyCalendarMutation_EmptyComponentsAllowed(t *testing.T) {
 		},
 		toast: NewToastModel(NewTheme(true)),
 	}
-	_, blocked := m.blockReadOnlyCalendarMutation(1)
+	_, blocked := m.blockReadOnlyCalendarMutation("Edit", 1)
 	if blocked {
 		t.Fatal("calendar with no advertised components should not block mutation (backward compat)")
 	}
@@ -85,7 +85,7 @@ func TestBlockReadOnlyCalendarMutation_UnknownCalendarAllowed(t *testing.T) {
 		calendars: map[int64]CalendarInfo{},
 		toast:     NewToastModel(NewTheme(true)),
 	}
-	_, blocked := m.blockReadOnlyCalendarMutation(999)
+	_, blocked := m.blockReadOnlyCalendarMutation("Edit", 999)
 	if blocked {
 		t.Fatal("unknown calendar ID should not block (defensive passthrough)")
 	}
