@@ -355,24 +355,27 @@ func TestTrashDetailLines_NamesTheTruncationToRestoreFirst(t *testing.T) {
 }
 
 // detailNoteValue returns the value of the detail line with the label, and
-// the continuation lines below it. It also fails the test when a line is
+// the continuation lines below it. It also fails the test when any line is
 // wider than w.
 func detailNoteValue(t *testing.T, lines []string, label string, w, lw int) string {
 	t.Helper()
 	indent := strings.Repeat(" ", labelColWidth(label, lw))
-	var values []string
-	for i, line := range lines {
+	for _, line := range lines {
 		plain := ansi.Strip(line)
 		if got := ansi.StringWidth(plain); got > w {
 			t.Errorf("w=%d lw=%d: line %q is %d cells wide", w, lw, plain, got)
 		}
+	}
+	var values []string
+	for i, line := range lines {
+		plain := ansi.Strip(line)
 		if !strings.HasPrefix(strings.TrimSpace(plain), label+" ") {
 			continue
 		}
 		values = append(values, strings.TrimPrefix(strings.TrimSpace(plain), label))
 		for _, cont := range lines[i+1:] {
 			c := ansi.Strip(cont)
-			if !strings.HasPrefix(c, indent) || strings.TrimSpace(c[:len(indent)]) != "" || c[len(indent)] == ' ' {
+			if len(c) <= len(indent) || !strings.HasPrefix(c, indent) || c[len(indent)] == ' ' {
 				break
 			}
 			values = append(values, c)
