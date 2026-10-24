@@ -82,9 +82,9 @@ func TestUpdateOfAGoneObjectIsCreatedAgain(t *testing.T) {
 
 // TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit is the server-wins case of
 // TestUpdateOfAGoneObjectIsCreatedAgain. The GET after the 412 finds no
-// object. The push sends no create and reports nothing, and the pull of
-// the same pass reads a full inventory: the object is not listed, so the
-// event goes to the trash. The next pass is quiet (issue #884).
+// object. The push sends no create, reports no error, and gives one
+// warning. The pull of the pass applies the delete, so the event goes to
+// the trash. The next pass is quiet (issue #884).
 func TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit(t *testing.T) {
 	t.Parallel()
 	engine, q, srv, calA, _ := newICloudPairEngine(t)
@@ -96,8 +96,11 @@ func TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit(t *testing.T) {
 
 	putsBefore, _ := srv.counts()
 	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 || len(res.Warnings) != 0 {
-		t.Fatalf("pass of A = %+v, %v; want no push, no error, no warning, and the remote delete applied", res, err)
+	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, one warning, and the remote delete applied", res, err)
+	}
+	if msg := res.Warnings[0].Message; !strings.HasPrefix(msg, "Dentist (local) ("+evt.UID+"): the server no longer has this item") {
+		t.Fatalf("warning = %q; want the summary, the UID, and the reason", msg)
 	}
 	if puts, _ := srv.counts(); puts != putsBefore+1 || srv.has(path) {
 		t.Fatalf("PUTs = %d (want %d), object = %v; want no create", puts, putsBefore+1, srv.has(path))
@@ -127,8 +130,8 @@ func TestServerWinsPassKeepsTheRemoteDeleteOfATodoEdit(t *testing.T) {
 	}
 	putsBefore, _ := srv.counts()
 	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 {
-		t.Fatalf("pass of A = %+v, %v; want no push, no error, and the remote delete applied", res, err)
+	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, one warning, and the remote delete applied", res, err)
 	}
 	if puts, _ := srv.counts(); puts != putsBefore+1 || srv.has(path) {
 		t.Fatalf("PUTs = %d (want %d), object = %v; want no create", puts, putsBefore+1, srv.has(path))
@@ -140,9 +143,9 @@ func TestServerWinsPassKeepsTheRemoteDeleteOfATodoEdit(t *testing.T) {
 
 // TestServerWinsPassAdoptsAnObjectThatTheServerStillLists answers the GET
 // after the 412 with 404, while the server still lists the object. The
-// full inventory of the pull fetches it, and the server-wins pull adopts
-// its body: the event stays live with the server title, and the row is
-// clean. The next pass is quiet (issue #884).
+// push gives the warning, and the pull adopts the server body: the event
+// stays live with the server title, and the row is clean. The next pass is
+// quiet (issue #884).
 func TestServerWinsPassAdoptsAnObjectThatTheServerStillLists(t *testing.T) {
 	t.Parallel()
 	engine, q, srv, calA, _ := newICloudPairEngine(t)
@@ -152,10 +155,14 @@ func TestServerWinsPassAdoptsAnObjectThatTheServerStillLists(t *testing.T) {
 	srv.editRemoteSummary(path, "Dentist (server)")
 	editTitle(t, engine, evt, "Dentist (local)")
 	srv.setGetStatus("/cal/a/", 404)
+	// The fake server lists a changed object in a full inventory only.
+	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET sync_token = '' WHERE id = ?`, calA); err != nil {
+		t.Fatalf("clear sync token: %v", err)
+	}
 
 	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || len(res.Errors) != 0 || res.Pushed != 0 || res.Deleted != 0 {
-		t.Fatalf("pass of A = %+v, %v; want no push, no error, and no delete", res, err)
+	if err != nil || len(res.Errors) != 0 || res.Pushed != 0 || res.Deleted != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, no delete, and one warning", res, err)
 	}
 	wantLive(t, engine, evt.ID, calA, "Dentist (server)")
 	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
@@ -179,11 +186,10 @@ func wantQuietPass(t *testing.T, engine *Engine, srv *icloudFakeServer, calendar
 	}
 }
 
-// TestServerWinsPassWithAnOpenConflictReportsTheDelete gives a gone object
-// an open conflict. The user did not pick a side yet, so the push of a
-// server-wins pass reports the delete as an error, as the prompt pass does
-// (issue #884).
-func TestServerWinsPassWithAnOpenConflictReportsTheDelete(t *testing.T) {
+// TestServerWinsPassWithAnOpenConflictWarns gives a gone object an open
+// conflict. A server-wins pass keeps the remote delete here too: the push
+// gives one warning and no error (issue #884).
+func TestServerWinsPassWithAnOpenConflictWarns(t *testing.T) {
 	t.Parallel()
 	engine, _, srv, calA, _ := newICloudPairEngine(t)
 	ctx := context.Background()
@@ -196,8 +202,8 @@ func TestServerWinsPassWithAnOpenConflictReportsTheDelete(t *testing.T) {
 	}
 	srv.deleteRemote(path)
 	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || len(res.Errors) == 0 || !strings.Contains(errors.Join(res.Errors...).Error(), "its conflict is open") {
-		t.Fatalf("pass of A = %+v, %v; want the error of the open conflict", res, err)
+	if err != nil || len(res.Errors) != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("pass of A = %+v, %v; want no error and one warning", res, err)
 	}
 }
 

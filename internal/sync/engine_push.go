@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-ical"
@@ -392,7 +393,7 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 					// No row exists, so nothing is counted. errs already
 					// carries the failure to the caller.
 				case putConflictServerGone:
-					// The full inventory of the pull settles the row.
+					// The pull of the pass applies the server state.
 				}
 				if outcome != putConflictRecreate {
 					continue
@@ -1907,8 +1908,8 @@ const (
 	// #866).
 	putConflictRecreate
 	// putConflictServerGone means a server-wins pass found no object at the
-	// href of an update. The row stays dirty, and the full inventory of the
-	// pull settles it (deferToFullInventory, issue #884).
+	// href of an update. The row stays dirty, and the pull of the pass
+	// applies the server state (warnServerGone, issue #884).
 	putConflictServerGone
 )
 
@@ -1924,9 +1925,8 @@ const (
 // after the record. A server-wins pass adopts the server version and marks
 // the row resolved. Every failure on that path leaves the row open, so the
 // user can still resolve it by hand. See issue #610. When the GET finds no
-// object at the href of an update, a server-wins pass records no conflict
-// and lets a full inventory of the pull settle the row
-// (deferToFullInventory, issue #884).
+// object at the href of an update, a server-wins pass records nothing and
+// warns; the pull applies the server state (warnServerGone, issue #884).
 func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, calendarID int64, res storage.SyncResource, putPath string, icalData []byte, strategy ConflictStrategy, opportunistic bool) (putConflictOutcome, []ImportWarning, []error) {
 	var errs []error
 
@@ -1976,6 +1976,11 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 		}
 	}
 	if res.RemoteUrl != "" && caldav.IsAbsent(fetchErr) {
+		if strategy == ConflictServerWins && !opportunistic {
+			// A server-wins pass keeps the remote delete, also with an
+			// open conflict (issue #884).
+			return e.warnServerGone(ctx, calendarID, res, putPath, icalData, errs)
+		}
 		// The update met no object: another client deleted it. The local
 		// edit wins over the delete, as on the pull (keepUnpushedEdit). A
 		// server-wins pass keeps the delete: its pull moves the item to
@@ -1987,9 +1992,6 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 		}
 		if open > 0 {
 			return putConflictRecordFailed, nil, append(errs, fmt.Errorf("update %s: the server deleted the item, and its conflict is open; resolve the conflict (chroncal sync conflicts)", res.Uid))
-		}
-		if strategy == ConflictServerWins {
-			return e.deferToFullInventory(ctx, calendarID, res, errs)
 		}
 		n, err := e.q.ForgetGoneServerObject(ctx, storage.ForgetGoneServerObjectParams{CalendarID: calendarID, Uid: res.Uid, RemoteUrl: res.RemoteUrl})
 		if err != nil {
@@ -2086,29 +2088,46 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 	return putConflictAutoResolved, warnings, errs
 }
 
-// deferToFullInventory settles an update whose object the GET after the
-// 412 did not find, on a server-wins pass. One 404 is weak evidence: the
-// server can still list the object. So the push decides nothing: it records
-// no conflict, no error, and no push failure, and the row stays dirty. It
-// clears the sync token of the calendar, so the pull of the same pass reads
-// a full inventory (issue #884). The inventory settles the row:
-//   - A listed object is fetched, and the server-wins pull adopts its body.
-//   - An object that a complete inventory does not list is a remote delete.
-//     The pull moves the item to the trash with its normal code.
-//
-// A local write during the PUT changed the row: the next pass acts on the
-// current row.
-func (e *Engine) deferToFullInventory(ctx context.Context, calendarID int64, res storage.SyncResource, errs []error) (putConflictOutcome, []ImportWarning, []error) {
+// warnServerGone settles an update whose object the GET after the 412 did
+// not find, on a server-wins pass. A server-wins pass keeps the remote
+// delete, so the push sends no edit and records nothing: no conflict, no
+// error, no push failure. The row stays dirty, and the pull of the pass
+// applies the server state (issue #884). The warning is true whatever the
+// pull decides. When the pull cannot settle the row, the warning repeats on
+// each pass, so the row never waits in silence. A local write during the
+// PUT changed the row: the next pass acts on the current row.
+func (e *Engine) warnServerGone(ctx context.Context, calendarID int64, res storage.SyncResource, putPath string, icalData []byte, errs []error) (putConflictOutcome, []ImportWarning, []error) {
 	current, err := e.q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: res.Uid})
 	if found, ferr := storage.Found(err); ferr != nil {
 		return putConflictRecordFailed, nil, append(errs, fmt.Errorf("re-read sync resource %s: %w", res.Uid, ferr))
 	} else if !found || current.Rev != res.Rev || current.RemoteUrl != res.RemoteUrl {
-		return putConflictRecordFailed, nil, errs
+		return putConflictServerGone, nil, errs
 	}
-	if err := e.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{ID: calendarID}); err != nil {
-		return putConflictRecordFailed, nil, append(errs, fmt.Errorf("reset the sync token for %s: %w", res.Uid, err))
+	label := res.Uid
+	if summary := icalSummary(icalData); summary != "" {
+		label = summary + " (" + res.Uid + ")"
 	}
-	return putConflictServerGone, nil, errs
+	w := ImportWarning{
+		Path:    putPath,
+		UID:     res.Uid,
+		Message: label + ": the server no longer has this item, so the local edit is not sent; the pull applies the server state",
+	}
+	logImportWarnings(e.logger, []ImportWarning{w})
+	return putConflictServerGone, []ImportWarning{w}, errs
+}
+
+// icalSummary returns the first SUMMARY value of an iCalendar body, or "".
+func icalSummary(data []byte) string {
+	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		name, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		if prop, _, _ := strings.Cut(name, ";"); strings.EqualFold(prop, "SUMMARY") {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // pendingSiblingDelete reports whether a tombstone of uid waits in a
