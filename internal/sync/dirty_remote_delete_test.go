@@ -2,6 +2,8 @@ package sync
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -118,16 +120,43 @@ func TestServerWinsPassKeepsTheRemoteDeleteOfATodoEdit(t *testing.T) {
 	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || res.Pushed != 1 {
 		t.Fatalf("initial push = %+v, %v; want one push", res, err)
 	}
-	srv.deleteRemote("/cal/a/" + td.UID + ".ics")
+	path := "/cal/a/" + td.UID + ".ics"
+	srv.deleteRemote(path)
 	if _, err := engine.todos.Update(ctx, td.ID, todo.UpdateParams{Summary: "T5 (local)"}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
+	putsBefore, _ := srv.counts()
 	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 {
-		t.Fatalf("pass of A = %+v, %v; want no error and the remote delete applied", res, err)
+	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, one warning, and the remote delete applied", res, err)
+	}
+	if puts, _ := srv.counts(); puts != putsBefore+1 || srv.has(path) {
+		t.Fatalf("PUTs = %d (want %d), object = %v; want no create", puts, putsBefore+1, srv.has(path))
 	}
 	wantTrashed(t, engine, "todos", td.ID)
 	wantNoOpenConflictOrRow(t, q, calA, td.UID)
+}
+
+// TestServerWinsPassWithAnOpenConflictReportsTheDelete gives a gone object
+// an open conflict. The user did not pick a side yet, so the push of a
+// server-wins pass reports the delete as an error, as the prompt pass does
+// (issue #884).
+func TestServerWinsPassWithAnOpenConflictReportsTheDelete(t *testing.T) {
+	t.Parallel()
+	engine, _, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	evt := createPushedEvent(t, engine, calA)
+	path := "/cal/a/" + evt.UID + ".ics"
+	srv.editRemoteSummary(path, "Dentist (server)")
+	editTitle(t, engine, evt, "Dentist (local)")
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || res.Conflicts != 1 {
+		t.Fatalf("push = %+v, %v; want one open conflict", res, err)
+	}
+	srv.deleteRemote(path)
+	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
+	if err != nil || len(res.Errors) == 0 || !strings.Contains(errors.Join(res.Errors...).Error(), "its conflict is open") {
+		t.Fatalf("pass of A = %+v, %v; want the error of the open conflict", res, err)
+	}
 }
 
 // wantTrashed checks that the row id of table is in the trash. Get reads
@@ -148,8 +177,12 @@ func wantNoOpenConflictOrRow(t *testing.T, q *storage.Queries, calendarID int64,
 	if n, err := q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{CalendarID: calendarID, Uid: uid}); err != nil || n != 0 {
 		t.Fatalf("open conflicts = %d, %v; want none", n, err)
 	}
-	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid}); err == nil && (sr.Dirty != 0 || sr.PushFailCount != 0) {
-		t.Fatalf("sync row = %+v; want no dirty row and no push failure after the delete", sr)
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
+	if errors.Is(err, sql.ErrNoRows) {
+		return
+	}
+	if err != nil || sr.Dirty != 0 || sr.PushFailCount != 0 {
+		t.Fatalf("sync row = %+v, %v; want no dirty row and no push failure after the delete", sr, err)
 	}
 }
 
@@ -399,5 +432,31 @@ func TestRemoteDeleteOfAnEditWithAnOpenConflictKeepsTheDelete(t *testing.T) {
 	}
 	if got, err := engine.events.Get(ctx, evt.ID); err == nil && got.DeletedAt == nil {
 		t.Fatalf("event = %+v; want it in the trash", got)
+	}
+}
+
+// TestServerWinsPassWhenThePullKeepsTheItem answers the GET after the 412
+// with 404, while the server still lists the object. The push sends no
+// edit and reports no error, and the pull follows the server: the item
+// stays live, and no false push failure stays on the row (issue #884).
+func TestServerWinsPassWhenThePullKeepsTheItem(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	evt := createPushedEvent(t, engine, calA)
+	path := "/cal/a/" + evt.UID + ".ics"
+	srv.editRemoteSummary(path, "Dentist (server)")
+	editTitle(t, engine, evt, "Dentist (local)")
+	srv.setGetStatus("/cal/a/", 404)
+
+	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
+	if err != nil || len(res.Errors) != 0 || res.Pushed != 0 || len(res.Warnings) == 0 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, and a warning", res, err)
+	}
+	if _, err := engine.events.Get(ctx, evt.ID); err != nil {
+		t.Fatalf("event: %v; want it live", err)
+	}
+	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID}); err != nil || sr.PushFailCount != 0 {
+		t.Fatalf("sync row = %+v, %v; want no push failure", sr, err)
 	}
 }
