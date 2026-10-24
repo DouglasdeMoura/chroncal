@@ -306,9 +306,8 @@ func StorableAlarmAction(action string) bool {
 // The rule governs a write from now on. It does not repair a row an
 // earlier build already stamped: that row holds a non-empty UID, so this
 // function keeps it, and a pair by content writes a UID on a row with no
-// UID only (PairedAlarmUID). A minted UID cannot be told from an authored
-// one after the fact. Migration 064 repairs the minted UIDs of the copies
-// of one item (issue #922).
+// UID only (PairedAlarmUID). The third pass of PairAlarms is the one
+// exception (issue #922).
 func AlarmUIDForWrite(a Alarm) string {
 	if a.UID != "" {
 		return a.UID
@@ -342,22 +341,40 @@ func WithoutRefusedAlarmUIDs(alarms []Alarm) []Alarm {
 	return out
 }
 
+// AlarmUIDs returns the non-empty UIDs of alarms.
+func AlarmUIDs(alarms []Alarm) []string {
+	var uids []string
+	for _, a := range alarms {
+		if a.UID != "" {
+			uids = append(uids, a.UID)
+		}
+	}
+	return uids
+}
+
 // PairedAlarmUID returns the UID that the store writes on the stored alarm
-// ex of a pair by content with the incoming alarm a, and whether a write is
-// necessary. Only a stored alarm with no UID gets a UID, the UID of
+// ex of the pair p by content with the incoming alarm a, and whether a
+// write is necessary. A pair of the third pass of PairAlarms takes the UID
+// of a. Else only a stored alarm with no UID gets a UID, the UID of
 // AlarmUIDForWrite. A preserved foreign alarm keeps its empty UID
 // (issue #586). The event and the todo services share this rule.
-func PairedAlarmUID(a, ex Alarm) (string, bool) {
+func PairedAlarmUID(p AlarmPair, a, ex Alarm) (string, bool) {
+	if p.TakeUID {
+		return a.UID, true
+	}
 	uid := AlarmUIDForWrite(a)
 	return uid, uid != "" && ex.UID == ""
 }
 
 // AlarmPair names the stored alarm that an incoming alarm takes. Stored
 // is an index into the stored alarms, or -1 for no stored alarm. ByContent
-// is true for a pair by equal content and false for a pair by UID.
+// is true for a pair by equal content and false for a pair by UID. TakeUID
+// is true for a pair of the third pass: the stored alarm takes the UID of
+// the incoming alarm.
 type AlarmPair struct {
 	Stored    int
 	ByContent bool
+	TakeUID   bool
 }
 
 // PairAlarms pairs each incoming alarm with a stored alarm. A stored
@@ -365,7 +382,7 @@ type AlarmPair struct {
 // the todo services and the import comparison share this rule.
 //
 // The first pass pairs by equal content, in the order of incoming. Two
-// non-empty UIDs that differ never pair. The UID identifies the alarm, and
+// non-empty UIDs that differ do not pair. The UID identifies the alarm, and
 // a pair of different alarms would attach the alarm state to the wrong
 // alarm. An incoming alarm with no UID skips a stored alarm whose UID
 // another incoming alarm has, because that stored alarm belongs to it. An
@@ -374,7 +391,16 @@ type AlarmPair struct {
 //
 // The second pass pairs the rest by an equal UID. An edited alarm then
 // keeps its row, and its alarm state stays.
-func PairAlarms(stored, incoming []Alarm) []AlarmPair {
+//
+// The third pass repairs a UID that the store minted before migration 063
+// (issue #922). The store then minted a UID for an alarm only when an alarm
+// of another item held the UID of the file. heldElsewhere holds the
+// incoming UIDs that an alarm of another item has. An incoming alarm with
+// such a UID and no pair takes a stored alarm of equal content with
+// another UID and no pair. The stored alarm takes the UID of the incoming
+// alarm and keeps its alarm state. Without that evidence, two different
+// UIDs never pair.
+func PairAlarms(stored, incoming []Alarm, heldElsewhere map[string]bool) []AlarmPair {
 	pairs := make([]AlarmPair, len(incoming))
 	used := make([]bool, len(stored))
 	claimed := make(map[string]bool, len(incoming))
@@ -409,6 +435,17 @@ func PairAlarms(stored, incoming []Alarm) []AlarmPair {
 		for j, ex := range stored {
 			if !used[j] && ex.UID == a.UID {
 				pairs[i], used[j] = AlarmPair{Stored: j}, true
+				break
+			}
+		}
+	}
+	for i, a := range incoming {
+		if pairs[i].Stored >= 0 || !heldElsewhere[a.UID] {
+			continue
+		}
+		for j, ex := range stored {
+			if !used[j] && ex.UID != "" && ex.UID != a.UID && !claimed[ex.UID] && a.ContentEqual(ex) {
+				pairs[i], used[j] = AlarmPair{Stored: j, ByContent: true, TakeUID: true}, true
 				break
 			}
 		}

@@ -118,10 +118,9 @@ Eligibility filters the notification path only. `alarm.ListPendingDefaultAlarms`
 
 An alarm UID is unique in its event or its todo (migration 063, issue #922). Two items can hold the same alarm UID, as RFC 9074 permits. The store refuses a second use of one UID in one item. `model.WithoutRefusedAlarmUIDs` clears such a UID before the alarm write of the event and the todo services, and before the import comparison in `internal/icaltransfer/unchanged.go` (issue #915). The same callers pair the incoming alarms with the stored rows through `model.PairAlarms`:
 
-- The first pass pairs by content. Two different non-empty UIDs never pair. An alarm with no UID skips a row whose UID another incoming alarm has. An alarm whose UID a stored row has skips the rows with no UID.
+- The first pass pairs by content. Two different non-empty UIDs do not pair. An alarm with no UID skips a row whose UID another incoming alarm has. An alarm whose UID a stored row has skips the rows with no UID.
 - The second pass pairs by UID, so an edited alarm keeps its row and its alarm state.
-
-Before migration 063, the store kept a minted UID when another item held the UID of the file. The Go migration 064 (`internal/storage/migration_064_twin_alarm_uids.go`) repairs the copies of one event: the later alarm takes the UID of the earlier alarm with equal content. A todo has no copy, because its UID is unique in its table. Do not make it a startup heal. It would also change two different UIDs that a client wrote.
+- The third pass repairs a UID that the store minted before migration 063. The store then minted a UID only when an alarm of another item held the UID of the file. An alarm with such a UID and no pair takes a row of equal content with another UID. The row takes the UID of the file (`model.PairedAlarmUID`) and keeps its alarm state. Without that evidence, two different UIDs never pair.
 
 Fix the rules in `internal/model/alarm.go`, not per caller.
 
