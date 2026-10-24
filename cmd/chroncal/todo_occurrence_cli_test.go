@@ -44,13 +44,9 @@ func TestTodoOccurrenceCommands(t *testing.T) {
 	if err != nil || !strings.Contains(stdout, `"summary": "Moved review"`) || !strings.Contains(stdout, `"recurrence_id": "2026-11-07T00:00:00Z"`) {
 		t.Fatalf("todo update occurrence = %s, %v", stdout, err)
 	}
-	// The second edit finds the override row. The series flags still do
-	// not apply to it.
+	// The second edit finds the override row.
 	if _, _, err := runChroncalCommand(t, "todo", "update", uid, "--recurrence-id", "2026-11-07T00:00:00Z", "--priority", "2"); err != nil {
 		t.Fatalf("second todo update: %v", err)
-	}
-	if _, _, err := runChroncalCommand(t, "todo", "update", uid, "--recurrence-id", "2026-11-07T00:00:00Z", "--rrule", "FREQ=DAILY"); err == nil || !strings.Contains(err.Error(), "changes the series") {
-		t.Fatalf("todo update --rrule on an override: error = %v, want a refusal", err)
 	}
 
 	if _, _, err := runChroncalCommand(t, "todo", "delete", uid, "--recurrence-id", "2026-11-14T00:00:00Z", "--yes"); err != nil {

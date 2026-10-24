@@ -68,7 +68,7 @@ occurrence. When the occurrence has no override yet, the command creates one
 from the occurrence. The series and the other occurrences do not change. An
 occurrence cannot move to another calendar, and the series flags
 (--recurrence-rule, --exception-date-times, --recurrence-date-times) do not
-apply to it. A new override does not copy the alarms and the other child
+apply to a new override. A new override does not copy the alarms and the other child
 rows of the series; set them with the flags.`,
 		Example: `  # Change the summary
   chroncal todo update 1 --summary "Updated task name"
@@ -108,9 +108,11 @@ rows of the series; set them with the flags.`,
 			if err != nil {
 				return fmt.Errorf("get todo: %w", err)
 			}
-			if recurrenceID != "" {
+			if createOverride {
 				// An override is one occurrence, so the rule and the date
-				// lists of the series do not apply to it.
+				// lists of the series do not apply to it. An existing
+				// override row keeps the flags, so a stray rule on an
+				// imported row can still be cleared.
 				for _, name := range []string{"recurrence-rule", "rrule", "exception-date-times", "exdate", "recurrence-date-times", "rdate"} {
 					if cmd.Flags().Changed(name) {
 						return errInvalidInputf("--%s changes the series; drop --recurrence-id to edit the series", name)
