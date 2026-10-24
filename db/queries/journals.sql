@@ -77,6 +77,10 @@ WHERE id = ? RETURNING *;
 -- must know this. The pull path is safe. The engine excludes
 -- tombstoned UIDs before this query runs (engine.go loads tombstones
 -- first and skips them during pull).
+-- NOTE: the key spans calendars, but the upsert never moves a row to
+-- another calendar (issue #911). The service refuses a UID of another
+-- calendar first. The WHERE of the update keeps the rule here too: a row
+-- of another calendar gives no update and no returned row.
 -- name: UpsertJournalByUID :one
 INSERT INTO journals (
     uid, calendar_id, summary, description,
@@ -84,7 +88,6 @@ INSERT INTO journals (
     recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
-    calendar_id = excluded.calendar_id,
     summary = excluded.summary, description = excluded.description,
     start_date = excluded.start_date,
     status = excluded.status,
@@ -96,6 +99,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     dtstamp = excluded.dtstamp,
     deleted_at = NULL,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE journals.calendar_id = excluded.calendar_id
 RETURNING *;
 
 -- name: UpdateJournalExdates :exec
@@ -234,3 +238,8 @@ SELECT calendar_id FROM journals WHERE id = ?;
 -- trash, and whether the row is in the trash. The key spans calendars.
 -- See issue #841.
 SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM journals WHERE uid = ? AND recurrence_id = ?;
+
+-- name: GetJournalCalendarOfUIDOutside :one
+-- The calendar of one row of a UID outside one calendar, live or in the
+-- trash. The upsert refuses such a UID (issue #911).
+SELECT calendar_id FROM journals WHERE uid = ? AND calendar_id != ? LIMIT 1;
