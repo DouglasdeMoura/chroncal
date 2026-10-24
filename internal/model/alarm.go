@@ -321,36 +321,95 @@ func AlarmUIDForWrite(a Alarm) string {
 // WithoutRefusedAlarmUIDs returns a copy of alarms with each UID that the
 // store cannot keep cleared. Alarm UIDs are unique per table, so the store
 // refuses two cases (issue #915):
-//   - an alarm of another item holds the UID; heldElsewhere reports this
+//   - an alarm of another item holds the UID; heldElsewhere returns the
+//     set of such UIDs from the UIDs that it gets
 //   - an earlier alarm of the same list has the UID
 //
 // The alarm write of the event and the todo services and the import
-// comparison share this rule. An alarm with no UID then pairs with its
-// stored row by content, so the row keeps its UID and its alarm state.
-// Fix the rule here, not per caller.
-func WithoutRefusedAlarmUIDs(alarms []Alarm, heldElsewhere func(uid string) (bool, error)) ([]Alarm, error) {
+// comparison share this rule and PairAlarms. Fix the rules here, not per
+// caller.
+func WithoutRefusedAlarmUIDs(alarms []Alarm, heldElsewhere func(uids []string) (map[string]bool, error)) ([]Alarm, error) {
 	out := slices.Clone(alarms)
-	seen := make(map[string]bool, len(out))
+	var uids []string
+	for _, a := range out {
+		if a.UID != "" {
+			uids = append(uids, a.UID)
+		}
+	}
+	if len(uids) == 0 {
+		return out, nil
+	}
+	held, err := heldElsewhere(uids)
+	if err != nil {
+		return nil, fmt.Errorf("check alarm uids: %w", err)
+	}
+	seen := make(map[string]bool, len(uids))
 	for i := range out {
 		uid := out[i].UID
-		if uid == "" {
-			continue
-		}
-		if seen[uid] {
+		switch {
+		case uid == "":
+		case held[uid] || seen[uid]:
 			out[i].UID = ""
-			continue
+		default:
+			seen[uid] = true
 		}
-		held, err := heldElsewhere(uid)
-		if err != nil {
-			return nil, fmt.Errorf("check alarm uid: %w", err)
-		}
-		if held {
-			out[i].UID = ""
-			continue
-		}
-		seen[uid] = true
 	}
 	return out, nil
+}
+
+// AlarmPair names the stored alarm that an incoming alarm takes. Stored
+// is an index into the stored alarms, or -1 for no stored alarm. ByContent
+// is true for a pair by equal content and false for a pair by UID.
+type AlarmPair struct {
+	Stored    int
+	ByContent bool
+}
+
+// PairAlarms pairs each incoming alarm with a stored alarm. A stored
+// alarm takes one incoming alarm at most. The alarm write of the event and
+// the todo services and the import comparison share this rule.
+//
+// The first pass pairs by equal content, in the order of incoming. Two
+// non-empty UIDs that differ never pair: the UID identifies the alarm, and
+// a pair of different alarms would attach the alarm state to the wrong
+// alarm. An incoming alarm with no UID also skips a stored alarm whose UID
+// another incoming alarm has, because that stored alarm belongs to it.
+//
+// The second pass pairs the rest by an equal UID. An edited alarm then
+// keeps its row, and its alarm state stays.
+func PairAlarms(stored, incoming []Alarm) []AlarmPair {
+	pairs := make([]AlarmPair, len(incoming))
+	used := make([]bool, len(stored))
+	claimed := make(map[string]bool, len(incoming))
+	for _, a := range incoming {
+		if a.UID != "" {
+			claimed[a.UID] = true
+		}
+	}
+	for i, a := range incoming {
+		pairs[i] = AlarmPair{Stored: -1}
+		for j, ex := range stored {
+			if used[j] || (ex.UID != "" && ex.UID != a.UID && (a.UID != "" || claimed[ex.UID])) {
+				continue
+			}
+			if a.ContentEqual(ex) {
+				pairs[i], used[j] = AlarmPair{Stored: j, ByContent: true}, true
+				break
+			}
+		}
+	}
+	for i, a := range incoming {
+		if pairs[i].Stored >= 0 || a.UID == "" {
+			continue
+		}
+		for j, ex := range stored {
+			if !used[j] && ex.UID == a.UID {
+				pairs[i], used[j] = AlarmPair{Stored: j}, true
+				break
+			}
+		}
+	}
+	return pairs
 }
 
 // CheckStorableAlarmAction returns a named error for an action the alarm

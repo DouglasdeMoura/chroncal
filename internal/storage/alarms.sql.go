@@ -85,25 +85,6 @@ func (q *Queries) DeleteAlarmsByEventID(ctx context.Context, eventID int64) erro
 	return err
 }
 
-const eventAlarmUIDHeldByAnotherEvent = `-- name: EventAlarmUIDHeldByAnotherEvent :one
-SELECT EXISTS(SELECT 1 FROM event_alarms WHERE uid = ? AND event_id <> ?)
-`
-
-type EventAlarmUIDHeldByAnotherEventParams struct {
-	Uid     *string
-	EventID int64
-}
-
-// The unique index on uid refuses a UID that an alarm of another event
-// holds. The alarm write and the import comparison then treat the alarm as
-// an alarm with no UID (model.WithoutRefusedAlarmUIDs, issue #915).
-func (q *Queries) EventAlarmUIDHeldByAnotherEvent(ctx context.Context, arg EventAlarmUIDHeldByAnotherEventParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, eventAlarmUIDHeldByAnotherEvent, arg.Uid, arg.EventID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const listAlarmSummariesByEventIDs = `-- name: ListAlarmSummariesByEventIDs :many
 SELECT event_id, action, trigger_value, related FROM event_alarms
 WHERE event_id IN (/*SLICE:event_ids*/?)
@@ -262,6 +243,53 @@ func (q *Queries) ListDistinctAlarmTriggers(ctx context.Context) ([]string, erro
 			return nil, err
 		}
 		items = append(items, trigger_value)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventAlarmUIDsHeldByOtherEvents = `-- name: ListEventAlarmUIDsHeldByOtherEvents :many
+SELECT DISTINCT uid FROM event_alarms
+WHERE event_id <> ?1 AND uid IN (/*SLICE:uids*/?)
+`
+
+type ListEventAlarmUIDsHeldByOtherEventsParams struct {
+	EventID int64
+	Uids    []*string
+}
+
+// The unique index on uid refuses a UID that an alarm of another event
+// holds. The alarm write and the import comparison then treat the alarm as
+// an alarm with no UID (model.WithoutRefusedAlarmUIDs, issue #915).
+func (q *Queries) ListEventAlarmUIDsHeldByOtherEvents(ctx context.Context, arg ListEventAlarmUIDsHeldByOtherEventsParams) ([]*string, error) {
+	query := listEventAlarmUIDsHeldByOtherEvents
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.EventID)
+	if len(arg.Uids) > 0 {
+		for _, v := range arg.Uids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:uids*/?", strings.Repeat(",?", len(arg.Uids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:uids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*string
+	for rows.Next() {
+		var uid *string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		items = append(items, uid)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
