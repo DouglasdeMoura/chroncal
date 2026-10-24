@@ -553,6 +553,17 @@ func (f *Form) SetSubmitVariant(v ButtonVariant) {
 	f.submitVariant = v
 }
 
+// SetActionVariants sets the variant of each action button. It copies the
+// button slice, so a copy of the Form keeps its own variants.
+func (f *Form) SetActionVariants(v ButtonVariant) {
+	buttons := make([]FormActionButton, len(f.actionButtons))
+	copy(buttons, f.actionButtons)
+	for i := range buttons {
+		buttons[i].Variant = v
+	}
+	f.actionButtons = buttons
+}
+
 func (f *Form) OnSubmit(fn func(f *Form) tea.Cmd) {
 	f.onSubmit = fn
 }

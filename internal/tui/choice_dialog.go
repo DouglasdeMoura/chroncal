@@ -34,15 +34,11 @@ func (m ChoiceDialogModel) FocusCancel() ChoiceDialogModel {
 // Destructive marks each choice as destructive (ButtonDanger) and moves the
 // focus to Cancel. Use it when every choice deletes data. A quick Enter then
 // cancels, and the red label shows the user that each choice deletes data.
+// Use FocusCancel alone when no choice is a safe default but no choice
+// deletes data (for example, the edit scope of a calendar move).
 func (m ChoiceDialogModel) Destructive() ChoiceDialogModel {
 	m.form.SetSubmitVariant(ButtonDanger)
-	// Copy the slice: a ChoiceDialogModel copy shares the backing array.
-	buttons := make([]FormActionButton, len(m.form.actionButtons))
-	copy(buttons, m.form.actionButtons)
-	for i := range buttons {
-		buttons[i].Variant = ButtonDanger
-	}
-	m.form.actionButtons = buttons
+	m.form.SetActionVariants(ButtonDanger)
 	return m.FocusCancel()
 }
 
