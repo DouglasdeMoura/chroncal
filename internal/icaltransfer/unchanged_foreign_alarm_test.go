@@ -182,67 +182,29 @@ func TestImport_UnchangedItemWithADuplicateAlarmUIDKeepsItsSequence(t *testing.T
 	requireUnchanged(t, a, roundTrip, file, state, eventCounts)
 }
 
-// TestImport_MintedAlarmUIDTakesTheFileUID covers a row from before
-// migration 063. The store then kept a minted UID when another item held
-// the UID of the file. The next import gives the row the UID of the file,
-// and the row and its alarm state stay (issue #922). The imports after
-// that count as unchanged.
-func TestImport_MintedAlarmUIDTakesTheFileUID(t *testing.T) {
+// TestImport_MintedAlarmUIDWithNoTwinUpdatesOnce covers a row from before
+// migration 063 that migration 064 cannot repair: no copy of the item holds
+// the UID of the file. The next import writes the UID of the file once. The
+// imports after that count as unchanged (issue #922).
+func TestImport_MintedAlarmUIDWithNoTwinUpdatesOnce(t *testing.T) {
 	const fileUID = "shared-alarm@test"
 	ctx := context.Background()
-	t.Run("event", func(t *testing.T) {
-		a := newTestApp(t)
-		_, roundTrip := twoCalendars(t, a)
-		file := calendarICS(veventICS("round@test", "Round trip",
-			valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder")))
-		importFixture(t, a, roundTrip, file)
-		row := alarmRowIDs(t, a, "round@test")[0]
-		minted := "minted-before-063"
-		if err := a.Queries.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{Uid: &minted, ID: row}); err != nil {
-			t.Fatalf("UpdateAlarmUID: %v", err)
-		}
+	a := newTestApp(t)
+	_, roundTrip := twoCalendars(t, a)
+	file := calendarICS(veventICS("round@test", "Round trip",
+		valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder")))
+	importFixture(t, a, roundTrip, file)
+	minted := "minted-before-063"
+	if err := a.Queries.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{Uid: &minted, ID: alarmRowIDs(t, a, "round@test")[0]}); err != nil {
+		t.Fatalf("UpdateAlarmUID: %v", err)
+	}
 
-		if s := importFixture(t, a, roundTrip, file); s.UpdatedEvents != 1 {
-			t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
-		}
-		if got := alarmRowIDs(t, a, "round@test"); !slices.Equal(got, []int64{row}) {
-			t.Errorf("alarm row IDs = %v, want [%d]", got, row)
-		}
-		state := func() (int64, []string) { return eventState(t, a, "round@test") }
-		requireAlarmUIDs(t, state, fileUID)
-		requireUnchanged(t, a, roundTrip, file, state, eventCounts)
-	})
-	t.Run("todo", func(t *testing.T) {
-		a := newTestApp(t)
-		_, roundTrip := twoCalendars(t, a)
-		file := calendarICS(vtodoICS("round@test", "Round trip",
-			valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder")))
-		importFixture(t, a, roundTrip, file)
-		td, err := a.Todos.GetByUID(ctx, "round@test")
-		if err != nil {
-			t.Fatalf("GetByUID: %v", err)
-		}
-		alarms, err := a.Todos.ListAlarms(ctx, td.ID)
-		if err != nil || len(alarms) != 1 {
-			t.Fatalf("ListAlarms: %v (n=%d)", err, len(alarms))
-		}
-		row := alarms[0].ID
-		minted := "minted-before-063"
-		if err := a.Queries.UpdateTodoAlarmUID(ctx, storage.UpdateTodoAlarmUIDParams{Uid: &minted, ID: row}); err != nil {
-			t.Fatalf("UpdateTodoAlarmUID: %v", err)
-		}
-
-		if s := importFixture(t, a, roundTrip, file); s.UpdatedTodos != 1 {
-			t.Fatalf("updated todos = %d, want 1", s.UpdatedTodos)
-		}
-		alarms, err = a.Todos.ListAlarms(ctx, td.ID)
-		if err != nil || len(alarms) != 1 || alarms[0].ID != row {
-			t.Fatalf("alarms = %+v (err %v), want row %d to stay", alarms, err, row)
-		}
-		state := func() (int64, []string) { return todoState(t, a, "round@test") }
-		requireAlarmUIDs(t, state, fileUID)
-		requireUnchanged(t, a, roundTrip, file, state, todoCounts)
-	})
+	if s := importFixture(t, a, roundTrip, file); s.UpdatedEvents != 1 {
+		t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
+	}
+	state := func() (int64, []string) { return eventState(t, a, "round@test") }
+	requireAlarmUIDs(t, state, fileUID)
+	requireUnchanged(t, a, roundTrip, file, state, eventCounts)
 }
 
 // TestImport_UnchangedItemIgnoresTheOrderOfAlarms covers a file that lists

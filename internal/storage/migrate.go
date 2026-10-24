@@ -21,7 +21,7 @@ func NewMigrationProvider(conn *sql.DB) (*goose.Provider, error) {
 		return nil, fmt.Errorf("sub migrations fs: %w", err)
 	}
 	provider, err := goose.NewProvider(goose.DialectSQLite3, conn, migrationsFS,
-		goose.WithGoMigrations(newSpanColumnMigration()))
+		goose.WithGoMigrations(newSpanColumnMigration(), newTwinAlarmUIDMigration()))
 	if err != nil {
 		return nil, fmt.Errorf("create goose provider: %w", err)
 	}
