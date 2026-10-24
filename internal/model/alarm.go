@@ -305,8 +305,10 @@ func StorableAlarmAction(action string) bool {
 //
 // The rule governs a write from now on. It does not repair a row an
 // earlier build already stamped: that row holds a non-empty UID, so this
-// function keeps it. A pair by content keeps the stored UID, unless the
-// incoming alarm has another UID (PairedAlarmUID).
+// function keeps it, and a pair by content writes a UID on a row with no
+// UID only (PairedAlarmUID). A minted UID cannot be told from an authored
+// one after the fact. Migration 064 repairs the minted UIDs of the copies
+// of one item (issue #922).
 func AlarmUIDForWrite(a Alarm) string {
 	if a.UID != "" {
 		return a.UID
@@ -342,16 +344,12 @@ func WithoutRefusedAlarmUIDs(alarms []Alarm) []Alarm {
 
 // PairedAlarmUID returns the UID that the store writes on the stored alarm
 // ex of a pair by content with the incoming alarm a, and whether a write is
-// necessary. A stored alarm with no UID gets the UID of AlarmUIDForWrite.
-// A stored alarm with another UID takes the UID of a, from the third pass
-// of PairAlarms (issue #922). An incoming alarm with no UID keeps the
-// stored UID. The event and the todo services share this rule.
+// necessary. Only a stored alarm with no UID gets a UID, the UID of
+// AlarmUIDForWrite. A preserved foreign alarm keeps its empty UID
+// (issue #586). The event and the todo services share this rule.
 func PairedAlarmUID(a, ex Alarm) (string, bool) {
 	uid := AlarmUIDForWrite(a)
-	if uid == "" || uid == ex.UID || (ex.UID != "" && a.UID == "") {
-		return "", false
-	}
-	return uid, true
+	return uid, uid != "" && ex.UID == ""
 }
 
 // AlarmPair names the stored alarm that an incoming alarm takes. Stored
@@ -367,25 +365,15 @@ type AlarmPair struct {
 // the todo services and the import comparison share this rule.
 //
 // The first pass pairs by equal content, in the order of incoming. Two
-// non-empty UIDs that differ do not pair in this pass. An alarm with its
-// own UID then takes its own row first. An incoming alarm with no UID
-// skips a stored alarm whose UID another incoming alarm has, because that
-// stored alarm belongs to it. An incoming alarm whose UID a stored alarm
-// has skips the stored alarms with no UID. Its UID would go on a second
-// row of the item.
+// non-empty UIDs that differ never pair. The UID identifies the alarm, and
+// a pair of different alarms would attach the alarm state to the wrong
+// alarm. An incoming alarm with no UID skips a stored alarm whose UID
+// another incoming alarm has, because that stored alarm belongs to it. An
+// incoming alarm whose UID a stored alarm has skips the stored alarms with
+// no UID. Its UID would go on a second row of the item.
 //
 // The second pass pairs the rest by an equal UID. An edited alarm then
 // keeps its row, and its alarm state stays.
-//
-// The third pass pairs an incoming alarm that has a UID and no pair with a
-// stored alarm of equal content that has no pair. The stored alarm then
-// takes the UID of the incoming alarm (PairedAlarmUID), and its alarm state
-// stays. Before migration 063, the store kept a minted UID when another
-// item held the UID of the file. This pass gives such a row the UID of the
-// file (issue #922). A minted UID cannot be told from an authored UID, so
-// the pass applies to every write. Thus an alarm keeps its alarm state
-// when another client replaces it with an alarm of equal content and a
-// new UID. For example, a dismiss of an occurrence stays.
 func PairAlarms(stored, incoming []Alarm) []AlarmPair {
 	pairs := make([]AlarmPair, len(incoming))
 	used := make([]bool, len(stored))
@@ -421,19 +409,6 @@ func PairAlarms(stored, incoming []Alarm) []AlarmPair {
 		for j, ex := range stored {
 			if !used[j] && ex.UID == a.UID {
 				pairs[i], used[j] = AlarmPair{Stored: j}, true
-				break
-			}
-		}
-	}
-	for i, a := range incoming {
-		if pairs[i].Stored >= 0 || a.UID == "" {
-			continue
-		}
-		for j, ex := range stored {
-			// A stored alarm whose UID an incoming alarm has is never
-			// free here: the first two passes pair it with that alarm.
-			if !used[j] && a.ContentEqual(ex) {
-				pairs[i], used[j] = AlarmPair{Stored: j, ByContent: true}, true
 				break
 			}
 		}

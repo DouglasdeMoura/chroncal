@@ -230,9 +230,9 @@ func TestEventService_ReplaceAlarms_ContentMatchRespectsUID(t *testing.T) {
 	alarms, _ := svc.ListAlarms(ctx, e.ID)
 	origID := alarms[0].ID
 
-	// Identical content with a different non-empty UID and no other pair:
-	// the third pass of model.PairAlarms gives the row the new UID, so the
-	// row and its alarm_state stay (issue #922).
+	// Identical content but a different non-empty UID is a different alarm:
+	// the old row must be replaced, never content-matched (UID stealing
+	// would attach the old row's alarm_state to the wrong definition).
 	err = svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
 		{UID: "uid-b", Action: "DISPLAY", TriggerValue: "-PT15M"},
 	})
@@ -243,8 +243,8 @@ func TestEventService_ReplaceAlarms_ContentMatchRespectsUID(t *testing.T) {
 	if len(alarms) != 1 {
 		t.Fatalf("alarms = %d, want 1", len(alarms))
 	}
-	if alarms[0].ID != origID {
-		t.Errorf("row ID = %d, want %d: the row must take the new UID", alarms[0].ID, origID)
+	if alarms[0].ID == origID {
+		t.Errorf("row %d was content-matched across differing UIDs; want a new row", origID)
 	}
 	if alarms[0].UID != "uid-b" {
 		t.Errorf("UID = %q, want uid-b", alarms[0].UID)

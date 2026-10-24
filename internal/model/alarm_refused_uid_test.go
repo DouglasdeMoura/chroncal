@@ -38,10 +38,10 @@ func TestPairAlarms(t *testing.T) {
 			want:     []AlarmPair{{Stored: 1}, {Stored: 0, ByContent: true}},
 		},
 		{
-			name:     "different UIDs pair by content in the third pass",
+			name:     "different UIDs never pair",
 			stored:   []Alarm{alarmAt("minted", "-PT15M")},
 			incoming: []Alarm{alarmAt("file", "-PT15M")},
-			want:     []AlarmPair{{Stored: 0, ByContent: true}},
+			want:     []AlarmPair{{Stored: -1}},
 		},
 		{
 			// Alarm a must not take the row with no UID: the backfill
@@ -50,12 +50,6 @@ func TestPairAlarms(t *testing.T) {
 			stored:   []Alarm{alarmAt("a", "-PT15M"), alarmAt("", "-PT5M")},
 			incoming: []Alarm{alarmAt("a", "-PT5M"), alarmAt("b", "-PT15M")},
 			want:     []AlarmPair{{Stored: 0}, {Stored: -1}},
-		},
-		{
-			name:     "different content never pairs across UIDs",
-			stored:   []Alarm{alarmAt("a", "-PT15M")},
-			incoming: []Alarm{alarmAt("b", "-PT5M")},
-			want:     []AlarmPair{{Stored: -1}},
 		},
 		{
 			name:     "no UID pairs by content",
@@ -90,7 +84,7 @@ func TestPairedAlarmUID(t *testing.T) {
 	}{
 		{"same UID", alarmAt("a", "-PT15M"), alarmAt("a", "-PT15M"), "", false},
 		{"stored row with no UID", alarmAt("a", "-PT15M"), alarmAt("", "-PT15M"), "a", true},
-		{"third pass takes the incoming UID", alarmAt("file", "-PT15M"), alarmAt("minted", "-PT15M"), "file", true},
+		{"stored UID stays", alarmAt("file", "-PT15M"), alarmAt("minted", "-PT15M"), "", false},
 		{"incoming with no UID keeps the stored UID", alarmAt("", "-PT15M"), alarmAt("minted", "-PT15M"), "", false},
 		{"foreign alarm keeps no UID", Alarm{Action: "X-APPLE-SOUND"}, Alarm{Action: "X-APPLE-SOUND"}, "", false},
 	}
