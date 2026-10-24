@@ -235,6 +235,21 @@ func (p *UpsertParams) applyDefaults() {
 	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
 }
 
+// WithStoreDefaults returns t with the defaults that UpsertByUID applies
+// before the write. A comparison of an imported todo with its stored row
+// then sees the form that the write stores (issue #883). A COMPLETED todo
+// without a completion time takes storedCompletedAt, not the time of the
+// call. The write would use the current time, so no comparison can match it.
+func (t Todo) WithStoreDefaults(storedCompletedAt string) Todo {
+	t.Status, t.Class = defaults(t.Status, t.Class)
+	if t.CompletedAt == "" {
+		t.CompletedAt = storedCompletedAt
+	}
+	t.CompletedAt = completedAtFor(t.Status, t.CompletedAt)
+	t.PercentComplete = percentCompleteFor(t.Status, t.PercentComplete)
+	return t
+}
+
 // percentCompleteFor reconciles percent-complete with the status. A COMPLETED
 // todo is forced to 100. A stale 100 left over from completion is reset to
 // 0 when the todo is reopened to a non-completed status.

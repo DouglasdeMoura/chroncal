@@ -262,6 +262,15 @@ func (p *UpsertParams) applyDefaults() {
 	normalizeEventTimes(&p.StartTime, &p.EndTime, p.AllDay)
 }
 
+// WithStoreDefaults returns e with the defaults that UpsertByUID applies
+// before the write. A comparison of an imported event with its stored row
+// then sees the form that the write stores (issue #883).
+func (e Event) WithStoreDefaults() Event {
+	applyEventDefaults(&e.Status, &e.Transp, &e.Class)
+	normalizeEventTimes(&e.StartTime, &e.EndTime, e.AllDay)
+	return e
+}
+
 func (p *UpdateParams) applyDefaults() {
 	applyEventDefaults(&p.Status, &p.Transp, &p.Class)
 	normalizeEventTimes(&p.StartTime, &p.EndTime, p.AllDay)

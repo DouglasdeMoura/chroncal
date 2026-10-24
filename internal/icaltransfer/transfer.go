@@ -60,6 +60,11 @@ type Summary struct {
 	NewTodos, UpdatedTodos       int
 	NewJournals, UpdatedJournals int
 
+	// The unchanged counts name the items that match their stored rows.
+	// The import does not write them (issue #883). The item lists above
+	// hold them too.
+	UnchangedEvents, UnchangedTodos, UnchangedJournals int
+
 	// Failed counts components whose own upsert failed (and were therefore
 	// skipped entirely). Child-field failures are recorded as Warnings
 	// instead, since the parent component itself did land.
@@ -207,7 +212,12 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 
 	// Import events.
 	for _, e := range result.Events {
-		_, lookupErr := lookupEvent(ctx, a.Events, calendarID, e.UID, e.RecurrenceID)
+		existing, lookupErr := lookupEvent(ctx, a.Events, calendarID, e.UID, e.RecurrenceID)
+		if lookupErr == nil && unchangedEvent(ctx, a, mode, existing, e) {
+			summary.Events = append(summary.Events, existing)
+			summary.UnchangedEvents++
+			continue
+		}
 		saved, err := a.Events.UpsertByUID(ctx, event.UpsertParams{
 			UID: e.UID, CalendarID: calendarID, Import: mode,
 			Title: e.Title, Description: e.Description, Location: e.Location,
@@ -239,7 +249,12 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 
 	// Import todos.
 	for _, t := range result.Todos {
-		_, lookupErr := lookupTodo(ctx, a.Todos, t.UID, t.RecurrenceID)
+		existing, lookupErr := lookupTodo(ctx, a.Todos, t.UID, t.RecurrenceID)
+		if lookupErr == nil && existing.CalendarID == calendarID && unchangedTodo(ctx, a, mode, existing, t) {
+			summary.Todos = append(summary.Todos, existing)
+			summary.UnchangedTodos++
+			continue
+		}
 		saved, err := a.Todos.UpsertByUID(ctx, todo.UpsertParams{
 			UID: t.UID, CalendarID: calendarID, Import: mode,
 			Summary: t.Summary, Description: t.Description, Location: t.Location,
@@ -271,7 +286,12 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 
 	// Import journals.
 	for _, j := range result.Journals {
-		_, lookupErr := lookupJournal(ctx, a.Journals, j.UID, j.RecurrenceID)
+		existing, lookupErr := lookupJournal(ctx, a.Journals, j.UID, j.RecurrenceID)
+		if lookupErr == nil && existing.CalendarID == calendarID && unchangedJournal(ctx, a, mode, existing, j) {
+			summary.Journals = append(summary.Journals, existing)
+			summary.UnchangedJournals++
+			continue
+		}
 		saved, err := a.Journals.UpsertByUID(ctx, journal.UpsertParams{
 			UID: j.UID, CalendarID: calendarID, Import: mode,
 			Summary: j.Summary, Description: j.Description,

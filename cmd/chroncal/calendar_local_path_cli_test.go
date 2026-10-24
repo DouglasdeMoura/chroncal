@@ -182,15 +182,16 @@ func TestIcalImportWithoutPathUsesCalendarDirectories(t *testing.T) {
 		t.Fatalf("single import output:\n%s", stdout)
 	}
 
-	// Every calendar with a directory. Fastmail is now an update, Work is
-	// new. The batch output names each calendar.
+	// Every calendar with a directory. Fastmail did not change, so the
+	// import writes nothing there (issue #883). Work is new. The batch
+	// output names each calendar.
 	stdout, _, err = runChroncalCommand(t, "ical", "import")
 	if err != nil {
 		t.Fatalf("ical import: %v", err)
 	}
 	for _, want := range []string{
-		"Fastmail (" + fastmailDir + "): Imported 0 new, updated 1 existing",
-		"Work (" + workDir + "): Imported 1 new, updated 0 existing",
+		"Fastmail (" + fastmailDir + "): Imported 0 new, updated 0 existing, 1 unchanged",
+		"Work (" + workDir + "): Imported 1 new, updated 0 existing, 0 unchanged",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("batch output lacks %q:\n%s", want, stdout)

@@ -248,8 +248,11 @@ type icalImportOutcome struct {
 	err error
 }
 
+// landed counts the items that the run wrote. An unchanged item is not
+// written (issue #883), so it does not count.
 func (o icalImportOutcome) landed() int {
-	return len(o.summary.Events) + len(o.summary.Todos) + len(o.summary.Journals)
+	s := o.summary
+	return s.NewEvents + s.UpdatedEvents + s.NewTodos + s.UpdatedTodos + s.NewJournals + s.UpdatedJournals
 }
 
 func (o icalImportOutcome) json() map[string]any {
@@ -257,21 +260,24 @@ func (o icalImportOutcome) json() map[string]any {
 	// values, plus "error". "failed" stays a component count, so a script
 	// can tell a failed calendar from a failed component.
 	out := map[string]any{
-		"calendar_id":      o.target.calendarID,
-		"calendar":         o.target.calendarName,
-		"path":             o.target.path,
-		"events":           toJSONEvents(o.summary.Events),
-		"todos":            toJSONTodos(o.summary.Todos),
-		"journals":         toJSONJournals(o.summary.Journals),
-		"freebusy":         o.freeBusy,
-		"new_events":       o.summary.NewEvents,
-		"updated_events":   o.summary.UpdatedEvents,
-		"new_todos":        o.summary.NewTodos,
-		"updated_todos":    o.summary.UpdatedTodos,
-		"new_journals":     o.summary.NewJournals,
-		"updated_journals": o.summary.UpdatedJournals,
-		"failed":           o.summary.Failed,
-		"warnings":         o.summary.Warnings,
+		"calendar_id":        o.target.calendarID,
+		"calendar":           o.target.calendarName,
+		"path":               o.target.path,
+		"events":             toJSONEvents(o.summary.Events),
+		"todos":              toJSONTodos(o.summary.Todos),
+		"journals":           toJSONJournals(o.summary.Journals),
+		"freebusy":           o.freeBusy,
+		"new_events":         o.summary.NewEvents,
+		"updated_events":     o.summary.UpdatedEvents,
+		"new_todos":          o.summary.NewTodos,
+		"updated_todos":      o.summary.UpdatedTodos,
+		"new_journals":       o.summary.NewJournals,
+		"updated_journals":   o.summary.UpdatedJournals,
+		"unchanged_events":   o.summary.UnchangedEvents,
+		"unchanged_todos":    o.summary.UnchangedTodos,
+		"unchanged_journals": o.summary.UnchangedJournals,
+		"failed":             o.summary.Failed,
+		"warnings":           o.summary.Warnings,
 	}
 	if o.err != nil {
 		out["error"] = o.err.Error()
@@ -364,9 +370,10 @@ func printImportSummary(w io.Writer, o icalImportOutcome, named bool) {
 	if named {
 		fmt.Fprintf(w, "%s (%s): ", safeText(o.target.calendarName), safeText(o.target.path))
 	}
-	fmt.Fprintf(w, "Imported %d new, updated %d existing (%d events, %d todos, %d journals).\n",
+	fmt.Fprintf(w, "Imported %d new, updated %d existing, %d unchanged (%d events, %d todos, %d journals).\n",
 		o.summary.NewEvents+o.summary.NewTodos+o.summary.NewJournals,
 		o.summary.UpdatedEvents+o.summary.UpdatedTodos+o.summary.UpdatedJournals,
+		o.summary.UnchangedEvents+o.summary.UnchangedTodos+o.summary.UnchangedJournals,
 		len(o.summary.Events), len(o.summary.Todos), len(o.summary.Journals))
 	if len(o.freeBusy) > 0 {
 		fmt.Fprintf(w, "Parsed %d VFREEBUSY component(s); they were not imported into local storage.\n", len(o.freeBusy))
