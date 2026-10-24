@@ -54,9 +54,11 @@ type jsonEvent struct {
 	ExDates        string           `json:"exdates,omitempty"`
 	RDates         string           `json:"rdates,omitempty"`
 	RecurrenceID   string           `json:"recurrence_id,omitempty"`
+	InstanceTime   string           `json:"instance_time,omitempty"`
 	Geo            string           `json:"geo,omitempty"`
 	CreatedAt      string           `json:"created_at"`
 	UpdatedAt      string           `json:"updated_at"`
+	DeletedAt      string           `json:"deleted_at,omitempty"`
 	Alarms         []jsonAlarm      `json:"alarms,omitempty"`
 	Attendees      []jsonAttendee   `json:"attendees,omitempty"`
 	Attachments    []jsonAttachment `json:"attachments,omitempty"`
@@ -159,6 +161,38 @@ type jsonCalendar struct {
 	UpdatedAt     string  `json:"updated_at"`
 }
 
+// trashMark prefixes the title of a row in the trash in the text output of
+// a list with --include-deleted. The JSON output has deleted_at instead.
+const trashMark = "[trash] "
+
+// trashMarked returns title with trashMark when deletedAt is set.
+func trashMarked(title string, deletedAt *time.Time) string {
+	if deletedAt == nil {
+		return title
+	}
+	return trashMark + title
+}
+
+// jsonInstanceTime names the occurrence of an item in a list: the
+// instance time of an occurrence that the expansion made, or else the
+// recurrence ID of an override. It returns "" for an item that is no
+// occurrence. The value is a valid --recurrence-id.
+func jsonInstanceTime(instance time.Time, recurrenceID string) string {
+	if !instance.IsZero() {
+		return instance.UTC().Format(time.RFC3339)
+	}
+	return recurrenceID
+}
+
+// jsonDeletedAt formats the soft-delete time of a row in the trash. It
+// returns "" for a live row.
+func jsonDeletedAt(deletedAt *time.Time) string {
+	if deletedAt == nil {
+		return ""
+	}
+	return deletedAt.UTC().Format(time.RFC3339)
+}
+
 func toJSONEvent(e event.Event) jsonEvent {
 	je := jsonEvent{
 		ID:             e.ID,
@@ -184,8 +218,10 @@ func toJSONEvent(e event.Event) jsonEvent {
 		RDates:         e.RDates,
 		RecurrenceID:   e.RecurrenceID,
 		Geo:            e.Geo,
+		InstanceTime:   jsonInstanceTime(e.InstanceTime, e.RecurrenceID),
 		CreatedAt:      e.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:      e.UpdatedAt.UTC().Format(time.RFC3339),
+		DeletedAt:      jsonDeletedAt(e.DeletedAt),
 	}
 	for _, a := range e.Alarms {
 		je.Alarms = append(je.Alarms, jsonAlarm{
@@ -515,11 +551,13 @@ type jsonTodo struct {
 	ExDates         string           `json:"exdates,omitempty"`
 	RDates          string           `json:"rdates,omitempty"`
 	RecurrenceID    string           `json:"recurrence_id,omitempty"`
+	InstanceTime    string           `json:"instance_time,omitempty"`
 	Timezone        string           `json:"timezone,omitempty"`
 	Geo             string           `json:"geo,omitempty"`
 	Sequence        int64            `json:"sequence"`
 	CreatedAt       string           `json:"created_at"`
 	UpdatedAt       string           `json:"updated_at"`
+	DeletedAt       string           `json:"deleted_at,omitempty"`
 	Alarms          []jsonAlarm      `json:"alarms,omitempty"`
 	Attendees       []jsonAttendee   `json:"attendees,omitempty"`
 	Attachments     []jsonAttachment `json:"attachments,omitempty"`
@@ -539,9 +577,11 @@ func toJSONTodo(t todo.Todo) jsonTodo {
 		URL: t.URL, Categories: t.Categories,
 		RecurrenceRule: t.RecurrenceRule, ExDates: t.ExDates, RDates: t.RDates,
 		RecurrenceID: t.RecurrenceID, Timezone: t.Timezone, Geo: t.Geo,
-		Sequence:  t.Sequence,
-		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: t.UpdatedAt.UTC().Format(time.RFC3339),
+		InstanceTime: jsonInstanceTime(t.InstanceTime, t.RecurrenceID),
+		Sequence:     t.Sequence,
+		CreatedAt:    t.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:    t.UpdatedAt.UTC().Format(time.RFC3339),
+		DeletedAt:    jsonDeletedAt(t.DeletedAt),
 	}
 	for _, a := range t.Alarms {
 		jt.Alarms = append(jt.Alarms, jsonAlarm{
@@ -655,6 +695,7 @@ type jsonJournal struct {
 	Sequence       int64            `json:"sequence"`
 	CreatedAt      string           `json:"created_at"`
 	UpdatedAt      string           `json:"updated_at"`
+	DeletedAt      string           `json:"deleted_at,omitempty"`
 	Attendees      []jsonAttendee   `json:"attendees,omitempty"`
 	Attachments    []jsonAttachment `json:"attachments,omitempty"`
 	Comments       []string         `json:"comments,omitempty"`
@@ -673,6 +714,7 @@ func toJSONJournal(j journal.Journal) jsonJournal {
 		Sequence:  j.Sequence,
 		CreatedAt: j.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: j.UpdatedAt.UTC().Format(time.RFC3339),
+		DeletedAt: jsonDeletedAt(j.DeletedAt),
 	}
 	for _, a := range j.Attendees {
 		jj.Attendees = append(jj.Attendees, jsonAttendee{

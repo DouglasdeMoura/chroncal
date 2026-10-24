@@ -934,7 +934,10 @@ system was not running when they became due.
 
 Default alarms (issue #815) are included. A default alarm has no
 event_alarms row, so the report gives the trigger spec instead of an alarm
-ID.`,
+ID.
+
+In the JSON and YAML output, "age_seconds" gives the age of the alarm in
+seconds. "age" gives the same age in nanoseconds.`,
 		Example: `  chroncal alarm missed
   chroncal alarm missed --days 3
   chroncal alarm missed --days 14 --output json`,
@@ -975,38 +978,43 @@ ID.`,
 				// Flat array with a "type" discriminator, matching the
 				// shape of "alarm list"/"alarm check" so the
 				// `... -o json | jq '.[]'` idiom works across all alarm
-				// subcommands (issue #433).
+				// subcommands (issue #433). "age" stays in nanoseconds
+				// (a Go time.Duration), because a script can read it.
+				// "age_seconds" gives the same age in whole seconds.
 				items := make([]map[string]any, 0, len(missedEvents)+len(missedTodos)+len(missedDefaults))
 				for _, m := range missedEvents {
 					items = append(items, map[string]any{
-						"type":       "event",
-						"alarm_id":   m.AlarmID,
-						"title":      m.EventTitle,
-						"trigger_at": m.TriggerAt.UTC().Format(time.RFC3339),
-						"age":        m.Age,
+						"type":        "event",
+						"alarm_id":    m.AlarmID,
+						"title":       m.EventTitle,
+						"trigger_at":  m.TriggerAt.UTC().Format(time.RFC3339),
+						"age":         m.Age,
+						"age_seconds": int64(m.Age / time.Second),
 					})
 				}
 				for _, m := range missedTodos {
 					items = append(items, map[string]any{
-						"type":       "todo",
-						"alarm_id":   m.AlarmID,
-						"title":      m.TodoSummary,
-						"trigger_at": m.TriggerAt.UTC().Format(time.RFC3339),
-						"age":        m.Age,
+						"type":        "todo",
+						"alarm_id":    m.AlarmID,
+						"title":       m.TodoSummary,
+						"trigger_at":  m.TriggerAt.UTC().Format(time.RFC3339),
+						"age":         m.Age,
+						"age_seconds": int64(m.Age / time.Second),
 					})
 				}
 				for _, m := range missedDefaults {
 					// A default alarm has no event_alarms row, so it
 					// carries no alarm ID. The trigger spec identifies it.
 					items = append(items, map[string]any{
-						"type":       "event",
-						"default":    true,
-						"alarm_id":   nil,
-						"action":     m.Action,
-						"trigger":    m.TriggerValue,
-						"title":      m.EventTitle,
-						"trigger_at": m.TriggerAt.UTC().Format(time.RFC3339),
-						"age":        m.Age,
+						"type":        "event",
+						"default":     true,
+						"alarm_id":    nil,
+						"action":      m.Action,
+						"trigger":     m.TriggerValue,
+						"title":       m.EventTitle,
+						"trigger_at":  m.TriggerAt.UTC().Format(time.RFC3339),
+						"age":         m.Age,
+						"age_seconds": int64(m.Age / time.Second),
 					})
 				}
 				return printOutput(w, items)

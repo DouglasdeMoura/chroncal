@@ -243,7 +243,7 @@ func newRestoreCmd(r resource, h verbHelp) *cobra.Command {
 				push, err := r.restoreByID(ctx, a, id)
 				if err != nil {
 					if errors.Is(err, r.errNotDeleted) {
-						return errNotFoundf("%s %d not found (may have been purged)", r.name, id)
+						return restoreNotDeletedErr(ctx, a, r, id, "")
 					}
 					return fmt.Errorf("restore %s: %w", r.name, notFoundErr(err, r.name, id))
 				}
@@ -260,7 +260,7 @@ func newRestoreCmd(r resource, h verbHelp) *cobra.Command {
 			push, err := r.restoreByUID(ctx, a, ref)
 			if err != nil {
 				if errors.Is(err, r.errNotDeleted) {
-					return errNotFoundf("%s %q not found (may have been purged)", r.name, ref)
+					return restoreNotDeletedErr(ctx, a, r, 0, ref)
 				}
 				return fmt.Errorf("restore %s: %w", r.name, notFoundErr(err, r.name, ref))
 			}
@@ -367,6 +367,23 @@ func seriesRestoreCandidates(ctx context.Context, uid string, rowCalendarID int6
 	}
 	p.candidates = append(p.candidates, overrideCalendarIDs...)
 	return p
+}
+
+// restoreNotDeletedErr builds the "not_found" error of a restore that
+// brought back no row. A live row is not in the trash, so the message says
+// that. Else the row is gone, or no delete of it can come back. Pass the
+// ID of a restore by ID, or the UID of a restore by UID.
+func restoreNotDeletedErr(ctx context.Context, a *app.App, r resource, id int64, uid string) error {
+	if uid == "" {
+		if _, deleted, err := r.purgeCandidate(ctx, a, id); err == nil && !deleted {
+			return errNotFoundf("%s %d is not in the trash; it is live", r.name, id)
+		}
+		return errNotFoundf("%s %d not found (may have been purged)", r.name, id)
+	}
+	if _, err := r.resolve(ctx, a, uid, ""); err == nil || errors.Is(err, event.ErrAmbiguousUID) {
+		return errNotFoundf("no %s with uid %q is in the trash; it is live", r.name, safeText(uid))
+	}
+	return errNotFoundf("%s %q not found (may have been purged)", r.name, safeText(uid))
 }
 
 // newPurgeCmd builds the purge verb for one resource. The body refuses a

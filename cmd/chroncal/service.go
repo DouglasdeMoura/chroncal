@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -468,6 +469,13 @@ func uninstallDarwinService(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
+// serviceStatusRun runs the status command argv of the service manager and
+// returns its combined output. It is a package var, so a test can replace
+// the service manager.
+var serviceStatusRun = func(ctx context.Context, argv []string) ([]byte, error) {
+	return exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
+}
+
 func serviceStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -476,52 +484,59 @@ func serviceStatusCmd() *cobra.Command {
 
 On Linux this proxies "systemctl --user status chroncal-alarm.timer".
 On macOS it proxies "launchctl list com.chroncal.alarm".
-On Windows it proxies "schtasks /Query /TN chroncal-alarm /V /FO LIST".`,
-		Example: `  chroncal service status`,
+On Windows it proxies "schtasks /Query /TN chroncal-alarm /V /FO LIST".
+
+With --output json or yaml, the command prints one object:
+  - os: the operating system
+  - command: the command that the status runs ([] when there is none)
+  - exit_code: the exit code of that command
+  - output: the text that the command printed
+  - message: a note when the OS has no service integration
+
+The exit code has the meaning of the tool. For systemctl, 0 is active,
+3 is not active, and 4 is no such unit.`,
+		Example: `  chroncal service status
+  chroncal service status --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := cmd.OutOrStdout()
 
+			var argv []string
 			switch runtime.GOOS {
 			case "linux":
-				out, err := exec.CommandContext(cmd.Context(), "systemctl", "--user", "status", "chroncal-alarm.timer").CombinedOutput()
-				if len(out) > 0 {
-					fmt.Fprint(w, string(out))
-				}
-				if err != nil {
-					// systemctl returns non-zero for inactive services; only
-					// report as an error if there was no output at all.
-					if len(out) == 0 {
-						return fmt.Errorf("systemctl status: %w", err)
-					}
-				}
-				return nil
+				argv = []string{"systemctl", "--user", "status", "chroncal-alarm.timer"}
 			case "darwin":
-				out, err := exec.CommandContext(cmd.Context(), "launchctl", "list", "com.chroncal.alarm").CombinedOutput()
-				if len(out) > 0 {
-					fmt.Fprint(w, string(out))
-				}
-				if err != nil {
-					if len(out) == 0 {
-						return fmt.Errorf("launchctl list: %w", err)
-					}
-				}
-				return nil
+				argv = []string{"launchctl", "list", "com.chroncal.alarm"}
 			case "windows":
-				out, err := exec.CommandContext(cmd.Context(), "schtasks", "/Query", "/TN", windowsTaskName, "/V", "/FO", "LIST").CombinedOutput()
-				if len(out) > 0 {
-					fmt.Fprint(w, string(out))
-				}
-				if err != nil {
-					if len(out) == 0 {
-						return fmt.Errorf("schtasks query: %w", err)
-					}
-				}
-				return nil
+				argv = []string{"schtasks", "/Query", "/TN", windowsTaskName, "/V", "/FO", "LIST"}
 			default:
-				fmt.Fprintf(w, "No native service integration for %s.\n", runtime.GOOS)
-				fmt.Fprintf(w, "Use 'chroncal alarm daemon' to run alarm checks in a loop.\n")
+				msg := fmt.Sprintf("No native service integration for %s.\nUse 'chroncal alarm daemon' to run alarm checks in a loop.\n", runtime.GOOS)
+				if outputFmt != "text" {
+					return printOutput(w, map[string]any{
+						"os": runtime.GOOS, "command": []string{}, "exit_code": 0, "output": "", "message": strings.TrimSpace(msg),
+					})
+				}
+				fmt.Fprint(w, msg)
 				return nil
 			}
+
+			out, err := serviceStatusRun(cmd.Context(), argv)
+			// The tool returns non-zero for a service that does not run.
+			// Report an error only when the tool printed nothing at all.
+			if err != nil && len(out) == 0 {
+				return fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
+			}
+			if outputFmt != "text" {
+				exitCode := 0
+				var exitErr *exec.ExitError
+				if errors.As(err, &exitErr) {
+					exitCode = exitErr.ExitCode()
+				}
+				return printOutput(w, map[string]any{
+					"os": runtime.GOOS, "command": argv, "exit_code": exitCode, "output": string(out),
+				})
+			}
+			fmt.Fprint(w, string(out))
+			return nil
 		},
 	}
 	return cmd

@@ -76,6 +76,7 @@ func journalFromRow(row storage.Journal) journal.Journal {
 		DtStamp:        storage.NullableToString(row.Dtstamp),
 		CreatedAt:      timeutil.ParseDateTime(row.CreatedAt),
 		UpdatedAt:      timeutil.ParseDateTime(row.UpdatedAt),
+		DeletedAt:      deletedAtOf(row.DeletedAt),
 	}
 }
 

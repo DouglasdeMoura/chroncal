@@ -1,0 +1,269 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/douglasdemoura/chroncal/internal/app"
+)
+
+// The tests of this file guard the messages and the JSON fields of issue
+// #888.
+
+// cliSeed adds the calendar Work, then runs each command of cmds.
+func cliSeed(t *testing.T, cmds ...[]string) {
+	t.Helper()
+	if _, stderr, err := runChroncalCommand(t, "calendar", "create", "Work"); err != nil {
+		t.Fatalf("calendar create: %v (stderr: %s)", err, stderr)
+	}
+	for _, args := range cmds {
+		if _, stderr, err := runChroncalCommand(t, args...); err != nil {
+			t.Fatalf("%v: %v (stderr: %s)", args, err, stderr)
+		}
+	}
+}
+
+// cliRowUID reads the UID of the row id of table.
+func cliRowUID(t *testing.T, dbPath, table string, id int64) string {
+	t.Helper()
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	var uid string
+	if err := a.DB.QueryRowContext(context.Background(), `SELECT uid FROM `+table+` WHERE id = ?`, id).Scan(&uid); err != nil {
+		t.Fatalf("read uid: %v", err)
+	}
+	return uid
+}
+
+// TestRestoreOfALiveRowSaysThatItIsNotInTheTrash checks that a restore of a
+// live row names the cause. Before the fix it said "not found (may have
+// been purged)". A missing row keeps the old message.
+func TestRestoreOfALiveRowSaysThatItIsNotInTheTrash(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	cliSeed(t,
+		[]string{"event", "add", "Standup", "--calendar", "Work", "--date", "2026-05-18", "--time", "09:00"},
+		[]string{"todo", "add", "Ship", "--calendar", "Work"},
+		[]string{"journal", "add", "Note", "--calendar", "Work"},
+	)
+	for _, tc := range []struct{ name, table string }{{"event", "events"}, {"todo", "todos"}, {"journal", "journals"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			uid := cliRowUID(t, dbPath, tc.table, 1)
+			_, stderr, err := runChroncalCommand(t, tc.name, "restore", "1")
+			if err == nil || !strings.Contains(stderr, tc.name+" 1 is not in the trash; it is live") {
+				t.Errorf("restore by ID: err %v, stderr %q", err, stderr)
+			}
+			_, stderr, err = runChroncalCommand(t, tc.name, "restore", uid)
+			if err == nil || !strings.Contains(stderr, fmt.Sprintf("no %s with uid %q is in the trash; it is live", tc.name, uid)) {
+				t.Errorf("restore by UID: err %v, stderr %q", err, stderr)
+			}
+			_, stderr, err = runChroncalCommand(t, tc.name, "restore", "999")
+			if err == nil || !strings.Contains(stderr, tc.name+" 999 not found (may have been purged)") {
+				t.Errorf("restore of a missing row: err %v, stderr %q", err, stderr)
+			}
+		})
+	}
+}
+
+// TestSyncResolveOfAnUnknownConflictIsNotFound checks that a resolve of a
+// conflict ID with no row names the cause, not the raw SQL error.
+func TestSyncResolveOfAnUnknownConflictIsNotFound(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	_, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "resolve", "1", "--pick", "local")
+	if err == nil || !strings.Contains(stderr, "no sync conflict with ID 1; run chroncal sync conflicts for the list") {
+		t.Errorf("err %v, stderr %q", err, stderr)
+	}
+	if strings.Contains(stderr, "sql:") {
+		t.Errorf("stderr %q shows the raw SQL error", stderr)
+	}
+	_, stderr, _ = runChroncalCommand(t, "sync", "--allow-plaintext", "resolve", "1", "--pick", "local", "--output", "json")
+	if !strings.Contains(stderr, `"not_found"`) {
+		t.Errorf("JSON stderr %q misses the not_found code", stderr)
+	}
+}
+
+// TestCalendarGetOfANameSaysThatItTakesAnID checks the error of a calendar
+// name where the command takes a numeric ID.
+func TestCalendarGetOfANameSaysThatItTakesAnID(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	for _, args := range [][]string{{"get", "Work"}, {"delete", "Work", "--yes"}} {
+		verb := args[0]
+		_, stderr, err := runChroncalCommand(t, append([]string{"calendar"}, args...)...)
+		want := fmt.Sprintf(`calendar %s takes a numeric calendar ID, not "Work"; run chroncal calendar list to see the IDs`, verb)
+		if err == nil || !strings.Contains(stderr, want) {
+			t.Errorf("calendar %s: err %v, stderr %q, want %q", verb, err, stderr, want)
+		}
+		if strings.Contains(stderr, "strconv") {
+			t.Errorf("calendar %s: stderr %q shows the raw parse error", verb, stderr)
+		}
+	}
+}
+
+// TestServiceStatusJSONIsAnObject checks that service status follows
+// --output json. Before the fix it printed the text of the service manager.
+func TestServiceStatusJSONIsAnObject(t *testing.T) {
+	prevRun := serviceStatusRun
+	t.Cleanup(func() { serviceStatusRun = prevRun })
+	var ran []string
+	serviceStatusRun = func(_ context.Context, argv []string) ([]byte, error) {
+		ran = argv
+		// A shell exit gives a real *exec.ExitError with code 3, the code
+		// of systemctl for a unit that is not active.
+		_, err := exec.CommandContext(context.Background(), "sh", "-c", "exit 3").CombinedOutput()
+		return []byte("inactive (dead)\n"), err
+	}
+	prevFmt := outputFmt
+	outputFmt = "json"
+	t.Cleanup(func() { outputFmt = prevFmt })
+
+	root := &cobra.Command{Use: "chroncal-test"}
+	root.AddCommand(serviceStatusCmd())
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"status"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("service status: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("output %q is not a JSON object: %v", out.String(), err)
+	}
+	if len(ran) == 0 {
+		// The OS has no service integration. The object still has the keys.
+		if got["message"] == nil {
+			t.Errorf("object %v misses the message", got)
+		}
+		return
+	}
+	if got["output"] != "inactive (dead)\n" || got["exit_code"] != float64(3) || got["command"] == nil || got["os"] == nil {
+		t.Errorf("object = %v", got)
+	}
+}
+
+// TestListIncludeDeletedMarksTheTrash checks that a list with
+// --include-deleted marks the rows in the trash, in the text and the JSON.
+func TestListIncludeDeletedMarksTheTrash(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	cliSeed(t,
+		[]string{"event", "add", "Live", "--calendar", "Work", "--date", "2026-05-18", "--time", "09:00"},
+		[]string{"event", "add", "Gone", "--calendar", "Work", "--date", "2026-05-18", "--time", "11:00"},
+		[]string{"event", "delete", "2", "--yes"},
+		[]string{"todo", "add", "Live", "--calendar", "Work"},
+		[]string{"todo", "add", "Gone", "--calendar", "Work"},
+		[]string{"todo", "delete", "2", "--yes"},
+		[]string{"journal", "add", "Live", "--calendar", "Work"},
+		[]string{"journal", "add", "Gone", "--calendar", "Work"},
+		[]string{"journal", "delete", "2", "--yes"},
+	)
+	window := map[string][]string{"event": {"--from", "2026-05-18", "--to", "2026-05-19"}}
+	for _, name := range []string{"event", "todo", "journal"} {
+		t.Run(name, func(t *testing.T) {
+			args := append([]string{name, "list", "--include-deleted"}, window[name]...)
+			for _, extra := range [][]string{nil, {"--compact"}} {
+				stdout, stderr, err := runChroncalCommand(t, append(append([]string{}, args...), extra...)...)
+				if err != nil {
+					t.Fatalf("%v: %v (stderr: %s)", args, err, stderr)
+				}
+				if !strings.Contains(stdout, "[trash] Gone") || strings.Contains(stdout, "[trash] Live") {
+					t.Errorf("%v %v: output %q does not mark only the row in the trash", args, extra, stdout)
+				}
+			}
+			stdout, stderr, err := runChroncalCommand(t, append(args, "--output", "json")...)
+			if err != nil {
+				t.Fatalf("%v --output json: %v (stderr: %s)", args, err, stderr)
+			}
+			var items []map[string]any
+			if err := json.Unmarshal([]byte(stdout), &items); err != nil {
+				t.Fatalf("decode %q: %v", stdout, err)
+			}
+			marked := map[string]bool{}
+			for _, it := range items {
+				title, _ := it["title"].(string)
+				if title == "" {
+					title, _ = it["summary"].(string)
+				}
+				_, has := it["deleted_at"]
+				marked[title] = has
+			}
+			if len(marked) != 2 || !marked["Gone"] || marked["Live"] {
+				t.Errorf("deleted_at marks = %v, want only Gone", marked)
+			}
+		})
+	}
+}
+
+// TestListJSONNamesTheOccurrence checks that each expanded occurrence in
+// the JSON of event list and todo list has instance_time. The value is the
+// recurrence ID of the occurrence, so a script can pass it to
+// --recurrence-id.
+func TestListJSONNamesTheOccurrence(t *testing.T) {
+	setupCalendarCLITestEnv(t)
+	cliSeed(t,
+		[]string{"event", "add", "Daily", "--calendar", "Work", "--date", "2026-05-18", "--time", "09:00", "--rrule", "FREQ=DAILY;COUNT=3"},
+		[]string{"event", "add", "Once", "--calendar", "Work", "--date", "2026-05-18", "--time", "12:00"},
+		[]string{"todo", "add", "Chore", "--calendar", "Work", "--due", "2026-05-18", "--rrule", "FREQ=DAILY;COUNT=3"},
+	)
+	for _, tc := range []struct {
+		name, titleKey string
+		args           []string
+	}{
+		{"event", "title", []string{"event", "list", "--from", "2026-05-18", "--to", "2026-05-21", "--output", "json"}},
+		{"todo", "summary", []string{"todo", "list", "--from", "2026-05-17", "--to", "2026-05-22", "--output", "json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, err := runChroncalCommand(t, tc.args...)
+			if err != nil {
+				t.Fatalf("%v: %v (stderr: %s)", tc.args, err, stderr)
+			}
+			var items []map[string]any
+			if err := json.Unmarshal([]byte(stdout), &items); err != nil {
+				t.Fatalf("decode %q: %v", stdout, err)
+			}
+			seen := map[string]bool{}
+			for _, it := range items {
+				instance, has := it["instance_time"].(string)
+				switch it[tc.titleKey] {
+				case "Once":
+					if has {
+						t.Errorf("single event %v has instance_time", it)
+					}
+				default:
+					if !has || seen[instance] {
+						t.Errorf("occurrence %v has no instance_time of its own", it)
+					}
+					seen[instance] = true
+				}
+			}
+			if len(seen) < 2 {
+				t.Errorf("items %v: want at least two occurrences with instance_time", items)
+			}
+		})
+	}
+	// The instance time of an occurrence names it for an edit.
+	stdout, _, err := runChroncalCommand(t, "event", "list", "--from", "2026-05-19", "--to", "2026-05-19", "--output", "json")
+	if err != nil {
+		t.Fatalf("event list: %v", err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &items); err != nil || len(items) != 1 {
+		t.Fatalf("decode %q: %v", stdout, err)
+	}
+	instance := items[0]["instance_time"].(string)
+	if _, stderr, err := runChroncalCommand(t, "event", "update", items[0]["uid"].(string), "--recurrence-id", instance, "--title", "Moved"); err != nil {
+		t.Fatalf("event update --recurrence-id %s: %v (stderr: %s)", instance, err, stderr)
+	}
+	stdout, _, _ = runChroncalCommand(t, "event", "list", "--from", "2026-05-19", "--to", "2026-05-19", "--output", "json")
+	if !strings.Contains(stdout, `"title": "Moved"`) || !strings.Contains(stdout, `"instance_time": "`+instance+`"`) {
+		t.Errorf("override %q misses the title or the instance_time %s", stdout, instance)
+	}
+}

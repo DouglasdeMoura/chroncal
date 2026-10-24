@@ -929,6 +929,10 @@ The CLI is for shells and language models, not only for hand input. The agent-fr
 
   Codes are `not_found`, `invalid_input`, `aborted`, or `error` (catch-all). The `error` field is the user-facing message. The output strips internal call-chain prefixes (for example `get event:`). Dispatch on `code` and show `error` directly.
 - References accept either the numeric `id` or the string `uid`. Commands take `--recurrence-id <RFC3339>` to address one instance of a recurring series. On `event delete`, the flag deletes that occurrence.
+- In the JSON of `event list` and `todo list`, each occurrence of a recurring series has `instance_time`. The value is the recurrence ID of the occurrence, so you can pass it to `--recurrence-id`. A single item has no `instance_time`.
+- With `--include-deleted`, a row in the trash has `deleted_at` in the JSON of `event list`, `todo list`, and `journal list`. The text output puts `[trash]` before its title.
+- `alarm missed -o json` gives the age of each alarm in `age_seconds`. The older `age` field stays, and it gives the same age in nanoseconds.
+- `service status -o json` prints one object with `os`, `command`, `exit_code`, and `output`. The exit code has the meaning of the service manager. For `systemctl`, `0` is active and `3` is not active.
 - Dates are `YYYY-MM-DD`. These date flags also accept a relative date word:
   - `event add` and `event update`: `--date`, `--end-date`
   - `todo add` and `todo update`: `--due`, `--start`
@@ -969,7 +973,7 @@ chroncal todo    purge-deleted [--older-than DURATION] [--yes]
 chroncal journal purge-deleted [--older-than DURATION] [--yes]
 ```
 
-List soft-deleted candidates with `--include-deleted` on the related `list` command. In the TUI, press `D` to open the mixed "Recently deleted" dialog. The dialog covers all three resource types. `r` restores the cursor row. `x` purges it. Space toggles multi-select so you can restore or purge many rows.
+List soft-deleted candidates with `--include-deleted` on the related `list` command. The list puts `[trash]` before the title of each row in the trash. A restore of a live row fails with "is not in the trash". In the TUI, press `D` to open the mixed "Recently deleted" dialog. The dialog covers all three resource types. `r` restores the cursor row. `x` purges it. Space toggles multi-select so you can restore or purge many rows.
 
 A series can have two or more truncations ("This and following") in the trash. Restore the newest truncation first. An older truncation refuses the restore until then, because the newer truncation recorded the rule that the older one wrote. The detail pane of an older truncation shows a "Restore" line with the cutoff of the truncation to restore first. To restore them all, mark each one and restore them together. A restore of marked entries restores them in the order that they need, for example a master before its occurrences. When it stops at an entry, the message gives the count of restored entries.
 

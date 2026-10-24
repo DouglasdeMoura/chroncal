@@ -73,6 +73,9 @@ By default completed and cancelled todos are hidden unless you pass
 			if outputFmt != "text" {
 				return printOutput(w, toJSONTodos(todos))
 			}
+			for i := range todos {
+				todos[i].Summary = trashMarked(todos[i].Summary, todos[i].DeletedAt)
+			}
 			useCompact, err := listCompact(cmd, compact)
 			if err != nil {
 				return err

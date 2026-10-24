@@ -135,6 +135,16 @@ func TestAlarmMissed_JSONIsFlatArray(t *testing.T) {
 	if strings.Contains(out.String(), `"events"`) || strings.Contains(out.String(), `"todos"`) {
 		t.Fatalf("output still uses map shape with events/todos keys:\n%s", out.String())
 	}
+
+	// "age" stays in nanoseconds for old scripts. "age_seconds" gives the
+	// same age in seconds (issue #888).
+	for _, it := range items {
+		age, ok1 := it["age"].(float64)
+		secs, ok2 := it["age_seconds"].(float64)
+		if !ok1 || !ok2 || secs != float64(int64(time.Duration(age)/time.Second)) || secs < 72*3600-3600 {
+			t.Errorf("item %v: want age_seconds = age / 1e9, about three days", it)
+		}
+	}
 }
 
 // TestAlarmDaemon_RejectsNonPositiveInterval guards against a panic:
