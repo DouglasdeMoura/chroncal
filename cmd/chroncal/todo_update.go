@@ -61,7 +61,14 @@ to the other, clear the current one first (e.g. --due "" --duration 2h).
 
 Setting --status COMPLETED automatically sets the completion timestamp
 and percent-complete to 100. You cannot combine --status COMPLETED with
-a --progress value other than 100.`,
+a --progress value other than 100.
+
+With --recurrence-id and the UID of a recurring todo, the command edits one
+occurrence. When the occurrence has no override yet, the command creates one
+from the occurrence. The series and the other occurrences do not change. An
+occurrence cannot move to another calendar, and the series flags
+(--recurrence-rule, --exception-date-times, --recurrence-date-times) do not
+apply to it.`,
 		Example: `  # Change the summary
   chroncal todo update 1 --summary "Updated task name"
 
@@ -83,7 +90,10 @@ a --progress value other than 100.`,
   chroncal todo update 1 --calendar Work --class CONFIDENTIAL
 
   # Clear the location
-  chroncal todo update 1 --location ""`,
+  chroncal todo update 1 --location ""
+
+  # Move one occurrence of a recurring todo to another day
+  chroncal todo update weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z --due 2026-04-11`,
 		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -93,32 +103,21 @@ a --progress value other than 100.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			existing, err := resolveTodo(ctx, a, args[0], recurrenceID)
+			existing, createOverride, err := resolveTodoOccurrence(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get todo: %w", err)
 			}
-
-			p := todo.UpdateParams{
-				Summary:         existing.Summary,
-				Description:     existing.Description,
-				Location:        existing.Location,
-				DueDate:         existing.DueDate,
-				StartDate:       existing.StartDate,
-				Duration:        existing.Duration,
-				CompletedAt:     existing.CompletedAt,
-				PercentComplete: existing.PercentComplete,
-				Status:          existing.Status,
-				CalendarID:      existing.CalendarID,
-				Priority:        existing.Priority,
-				Class:           existing.Class,
-				URL:             existing.URL,
-				Geo:             existing.Geo,
-				Categories:      existing.Categories,
-				RecurrenceRule:  existing.RecurrenceRule,
-				Timezone:        existing.Timezone,
-				ExDates:         existing.ExDates,
-				RDates:          existing.RDates,
+			if createOverride {
+				// An override is one occurrence, so the rule and the date
+				// lists of the series do not apply to it.
+				for _, name := range []string{"recurrence-rule", "rrule", "exception-date-times", "exdate", "recurrence-date-times", "rdate"} {
+					if cmd.Flags().Changed(name) {
+						return errInvalidInputf("--%s changes the series; drop --recurrence-id to edit the series", name)
+					}
+				}
 			}
+
+			p := todoParamsOf(existing)
 
 			if cmd.Flags().Changed("summary") {
 				p.Summary = summary
@@ -270,7 +269,12 @@ a --progress value other than 100.`,
 				}
 			}
 
-			t, err := a.Todos.Update(ctx, existing.ID, p)
+			var t todo.Todo
+			if createOverride {
+				t, err = a.Todos.UpdateInstance(ctx, existing.UID, existing.RecurrenceID, p)
+			} else {
+				t, err = a.Todos.Update(ctx, existing.ID, p)
+			}
 			if errors.Is(err, todo.ErrInstanceCalendarMove) {
 				// A todo UID has one master in all calendars.
 				return errOccurrenceMove(ctx, a, "todo", existing.UID, existing.RecurrenceID, existing.CalendarID, err)
@@ -379,6 +383,6 @@ a --progress value other than 100.`,
 	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable)")
 	// Aliases
 	registerRecurrenceAliases(cmd, &rrule, &exdates, &rdates)
-	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
+	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target one occurrence of a recurring todo (RFC 3339 timestamp)")
 	return cmd
 }

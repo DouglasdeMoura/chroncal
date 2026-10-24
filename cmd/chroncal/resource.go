@@ -21,6 +21,8 @@ import (
 // exactly the fields that the shared verb builders read. No builder then
 // depends on a domain type.
 type row struct {
+	// ID is 0 for an occurrence of a series that has no row yet. See
+	// resource.delOccurrence.
 	ID         int64
 	UID        string
 	CalendarID int64
@@ -60,6 +62,11 @@ type resource struct {
 	// master.
 	del       func(ctx context.Context, a *app.App, target row) (int64, error)
 	delSeries func(ctx context.Context, a *app.App, target row) ([]int64, error)
+	// delOccurrence deletes one occurrence of a series that has no row yet:
+	// resolve returned a row with ID 0. It returns the calendar that the
+	// delete wrote and the ID of the row in the trash. nil when resolve
+	// never returns such a row.
+	delOccurrence func(ctx context.Context, a *app.App, ref, recurrenceID string) (calendarID, id int64, err error)
 
 	// restoreByID clears the deletion marker on one row. restoreByUID
 	// reverses the delete of the UID by the rule of the resource service.
@@ -193,7 +200,12 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 			fmt.Sprintf("Deleted %s series %q.\n", r.name, safeText(target.UID)))
 	}
 
-	pushCalendarID, err := r.del(ctx, a, target)
+	var pushCalendarID int64
+	if target.ID == 0 && r.delOccurrence != nil {
+		pushCalendarID, target.ID, err = r.delOccurrence(ctx, a, args[0], opts.RecurrenceID)
+	} else {
+		pushCalendarID, err = r.del(ctx, a, target)
+	}
 	if err != nil {
 		return fmt.Errorf("delete %s: %w", r.name, err)
 	}

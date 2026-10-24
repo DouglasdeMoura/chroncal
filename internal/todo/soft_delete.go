@@ -304,53 +304,8 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			return fmt.Errorf("begin tx: %w", err)
 		}
 		defer tx.Rollback()
-		qtx := s.q.WithTx(tx)
-
-		master, err := qtx.GetTodoByUID(ctx, td.UID)
-		// A genuine lookup error (for example SQLITE_BUSY) must not collapse
-		// into the "no master" path. That path would soft-delete the override
-		// and skip its EXDATE/provenance records. Series expansion would then
-		// restore the occurrence (issue #290). Only a missing master (ErrNoRows)
-		// may skip those records.
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("get master: %w", err)
-		}
-		if err == nil {
-			existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
-			recIDTime, parseErr := timeutil.ParseRecurrenceID(td.RecurrenceID)
-			if parseErr != nil {
-				// A malformed recurrence_id cannot be excluded from the
-				// master. A soft-delete of the override would then restore the
-				// occurrence via series expansion. Return an error. The restore
-				// path treats the same parse failure as fatal.
-				return fmt.Errorf("parse recurrence_id %q: %w", td.RecurrenceID, parseErr)
-			}
-			existing = append(existing, recIDTime)
-			if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
-				Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
-				ID:      master.ID,
-			}); err != nil {
-				return fmt.Errorf("update exdates: %w", err)
-			}
-			// Record provenance so restore knows this EXDATE was
-			// delete-added (and may be stripped) rather than imported.
-			if err := qtx.RecordTodoExdateDelete(ctx, storage.RecordTodoExdateDeleteParams{
-				CalendarID:   master.CalendarID,
-				Uid:          td.UID,
-				RecurrenceID: td.RecurrenceID,
-			}); err != nil {
-				return fmt.Errorf("record exdate delete: %w", err)
-			}
-		}
-
-		if err := qtx.SoftDeleteTodo(ctx, id); err != nil {
-			return fmt.Errorf("soft-delete todo: %w", err)
-		}
-		// Mark the master dirty — its EXDATE was modified — inside the same
-		// transaction. A failed mark then rolls the EXDATE change back. The
-		// path does not commit a change that is never pushed (issue #107).
-		if err := storage.MarkResourceDirty(ctx, tx, td.CalendarID, td.UID, "todo"); err != nil {
-			return fmt.Errorf("mark resource dirty: %w", err)
+		if err := deleteOverrideTx(ctx, tx, s.q.WithTx(tx), td); err != nil {
+			return err
 		}
 		return tx.Commit()
 	}
@@ -360,6 +315,59 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	_ = storage.MarkResourceDirty(ctx, s.db, td.CalendarID, td.UID, "todo")
+	return nil
+}
+
+// deleteOverrideTx soft-deletes the override td in tx. It adds the EXDATE
+// of the occurrence to the master and records it, so a restore can remove
+// it again. Delete and DeleteInstance share it.
+func deleteOverrideTx(ctx context.Context, tx *sql.Tx, qtx *storage.Queries, td Todo) error {
+	master, err := qtx.GetTodoByUID(ctx, td.UID)
+	// A genuine lookup error (for example SQLITE_BUSY) must not collapse
+	// into the "no master" path. That path would soft-delete the override
+	// and skip its EXDATE/provenance records. Series expansion would then
+	// restore the occurrence (issue #290). Only a missing master (ErrNoRows)
+	// may skip those records.
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("get master: %w", err)
+	}
+	if err == nil {
+		existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
+		recIDTime, parseErr := timeutil.ParseRecurrenceID(td.RecurrenceID)
+		if parseErr != nil {
+			// A malformed recurrence_id cannot be excluded from the
+			// master. A soft-delete of the override would then restore the
+			// occurrence via series expansion. Return an error. The restore
+			// path treats the same parse failure as fatal.
+			return fmt.Errorf("parse recurrence_id %q: %w", td.RecurrenceID, parseErr)
+		}
+		existing = append(existing, recIDTime)
+		if err := qtx.UpdateTodoExdates(ctx, storage.UpdateTodoExdatesParams{
+			Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
+			ID:      master.ID,
+		}); err != nil {
+			return fmt.Errorf("update exdates: %w", err)
+		}
+		// Record provenance so restore knows this EXDATE was
+		// delete-added (and may be stripped) rather than imported.
+		if err := qtx.RecordTodoExdateDelete(ctx, storage.RecordTodoExdateDeleteParams{
+			CalendarID:   master.CalendarID,
+			Uid:          td.UID,
+			RecurrenceID: td.RecurrenceID,
+		}); err != nil {
+			return fmt.Errorf("record exdate delete: %w", err)
+		}
+	}
+
+	if err := qtx.SoftDeleteTodo(ctx, td.ID); err != nil {
+		return fmt.Errorf("soft-delete todo: %w", err)
+	}
+	// Mark the master dirty — its EXDATE was modified — inside the same
+	// transaction. A failed mark then rolls the EXDATE change back. The
+	// path does not commit a change that is never pushed (issue #107).
+	if err := storage.MarkResourceDirty(ctx, tx, td.CalendarID, td.UID, "todo"); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return nil
 }
 

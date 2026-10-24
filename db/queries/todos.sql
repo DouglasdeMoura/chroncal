@@ -245,7 +245,7 @@ SELECT id FROM todos WHERE calendar_id = ? AND uid = ? ORDER BY id;
 SELECT calendar_id FROM todos WHERE id = ?;
 
 -- name: GetTodoCalendarByUIDAndRecurrenceID :one
--- The calendar of the row of one UID and recurrence ID, live or in the
--- trash, and whether the row is in the trash. The key spans calendars.
--- See issue #841.
-SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM todos WHERE uid = ? AND recurrence_id = ?;
+-- The ID and the calendar of the row of one UID and recurrence ID, live
+-- or in the trash, and whether the row is in the trash. The key spans
+-- calendars. See issue #841 and issue #887.
+SELECT id, calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM todos WHERE uid = ? AND recurrence_id = ?;

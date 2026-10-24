@@ -162,6 +162,29 @@ func TodoAtInstance(i ExpandedTodo) todo.Todo {
 	return t
 }
 
+// TodoOccurrence returns the occurrence of the recurring todo master at
+// at, in the form of a new override: the dates of the occurrence, the
+// RECURRENCE-ID of at, and no rule and no date lists (issue #887). ok is
+// false when master does not recur or has no occurrence at at. EXDATEs
+// apply.
+func TodoOccurrence(master todo.Todo, at time.Time) (todo.Todo, bool) {
+	if master.RecurrenceRule == "" && master.RDates == "" {
+		return todo.Todo{}, false
+	}
+	want := at.UTC()
+	for _, inst := range ExpandTodo(master, want, want.Add(time.Second)) {
+		if !inst.InstanceTime.Equal(want) {
+			continue
+		}
+		t := TodoAtInstance(inst)
+		t.ID = 0
+		t.RecurrenceID = want.Format(time.RFC3339)
+		t.RecurrenceRule, t.ExDates, t.RDates = "", "", ""
+		return t, true
+	}
+	return todo.Todo{}, false
+}
+
 // expandRecurringTodoRows expands recurring todo rows into Todo instances with
 // DueDate/StartDate adjusted to each occurrence. For each master, overrides
 // (rows with a match of RECURRENCE-ID) replace the original RRULE instance.
