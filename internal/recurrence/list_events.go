@@ -190,10 +190,12 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	for _, fn := range opts {
 		fn(&o)
 	}
-	// Non-recurring events in date range.
+	// Non-recurring events in date range. The query reads the window of
+	// both kinds of event. The loop keeps each event with its own window.
+	qFrom, qTo := timeutil.CoverWindow(from, to)
 	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
-		StartTime: to.UTC().Format(time.RFC3339),   // start_time < to
-		EndTime:   from.UTC().Format(time.RFC3339), // end_time > from
+		StartTime: qTo.UTC().Format(time.RFC3339),   // start_time < to
+		EndTime:   qFrom.UTC().Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
@@ -217,6 +219,9 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 			continue
 		}
 		evt := event.FromStorage(row)
+		if !evt.Overlaps(from, to) {
+			continue
+		}
 		results = append(results, ExpandedEvent{
 			Event:        evt,
 			InstanceTime: evt.StartTime,
@@ -275,15 +280,16 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 	return results, nil
 }
 
-// sortExpandedEvents orders instances by their local calendar day. It places
+// sortExpandedEvents orders instances by their local calendar day. The day
+// of an all-day instance is its date (see instanceDay). It places
 // all-day events before timed events on the same day. Timed events then sort
 // by start time. SQL-level order is not sufficient. Recurring instances
 // are generated in Go.
 func sortExpandedEvents(results []ExpandedEvent) {
 	sort.SliceStable(results, func(i, j int) bool {
 		a, b := results[i], results[j]
-		ad := timeutil.LocalDay(a.InstanceTime)
-		bd := timeutil.LocalDay(b.InstanceTime)
+		ad := instanceDay(a)
+		bd := instanceDay(b)
 		if !ad.Equal(bd) {
 			return ad.Before(bd)
 		}
@@ -292,6 +298,16 @@ func sortExpandedEvents(results []ExpandedEvent) {
 		}
 		return a.InstanceTime.Before(b.InstanceTime)
 	})
+}
+
+// instanceDay returns local midnight of the calendar day of an instance.
+// An all-day instance has the day of its date, not the local day of its
+// stored instant (issue #875).
+func instanceDay(e ExpandedEvent) time.Time {
+	if e.AllDay {
+		return timeutil.FloatingLocal(e.InstanceTime)
+	}
+	return timeutil.LocalDay(e.InstanceTime)
 }
 
 func attendeeFromStorage(r storage.EventAttendee) model.Attendee {
@@ -330,6 +346,7 @@ func expandedEventKind(s *Service) recurringKind[storage.Event, ExpandedEvent, E
 		instTime:       func(i ExpandedEvent) time.Time { return i.InstanceTime },
 		applyInstance:  func(i ExpandedEvent) ExpandedEvent { return i },
 		uid:            func(r storage.Event) string { return seriesKey(r.CalendarID, r.Uid) },
+		dateOnly:       func(r storage.Event) bool { return r.AllDay == 1 },
 		status:         func(r storage.Event) string { return r.Status },
 		recurrenceID:   func(r storage.Event) string { return r.RecurrenceID },
 		overridesByUID: s.eventOverridesByUID,
@@ -357,6 +374,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 			return e
 		},
 		uid:            func(r storage.Event) string { return seriesKey(r.CalendarID, r.Uid) },
+		dateOnly:       func(r storage.Event) bool { return r.AllDay == 1 },
 		status:         func(r storage.Event) string { return r.Status },
 		recurrenceID:   func(r storage.Event) string { return r.RecurrenceID },
 		overridesByUID: s.eventOverridesByUID,
@@ -373,9 +391,10 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 // with expanded instances of recurring event masters. The returned events have
 // StartTime/EndTime adjusted to the instance time and are sorted by StartTime.
 func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Time) ([]event.Event, error) {
+	qFrom, qTo := timeutil.CoverWindow(from, to)
 	rangeRows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
-		StartTime: to.UTC().Format(time.RFC3339),   // start_time < to
-		EndTime:   from.UTC().Format(time.RFC3339), // end_time > from
+		StartTime: qTo.UTC().Format(time.RFC3339),   // start_time < to
+		EndTime:   qFrom.UTC().Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
@@ -386,7 +405,9 @@ func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Tim
 	var result []event.Event
 	for _, row := range rangeRows {
 		if row.RecurrenceRule == nil && row.RecurrenceID == "" && !isRDateOnlyMaster(row.Rdates) {
-			result = append(result, event.FromStorage(row))
+			if evt := event.FromStorage(row); evt.Overlaps(from, to) {
+				result = append(result, evt)
+			}
 		}
 	}
 
@@ -433,8 +454,9 @@ func rangeBoundUTC(t time.Time) string {
 // export. Emit the master VEVENT with RRULE, not individual instances. All
 // filters (calendar, category, status) are applied at the SQL level.
 func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterParams) ([]event.Event, error) {
-	fromStr := rangeBoundUTC(p.From)
-	toStr := rangeBoundUTC(p.To)
+	qFrom, qTo := timeutil.CoverWindow(p.From, p.To)
+	fromStr := rangeBoundUTC(qFrom)
+	toStr := rangeBoundUTC(qTo)
 
 	rangeRows, err := s.q.ListEventsForExport(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
@@ -450,7 +472,11 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 	seen := make(map[int64]bool)
 	for _, row := range rangeRows {
 		if row.RecurrenceRule == nil {
-			result = append(result, event.FromStorage(row))
+			evt := event.FromStorage(row)
+			if !evt.Overlaps(p.From, p.To) {
+				continue
+			}
+			result = append(result, evt)
 			seen[row.ID] = true
 		}
 	}
@@ -473,7 +499,8 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 		// ignores the cancelled-expansion guard — unlike display, which hides it.
 		probe := evt
 		probe.Status = ""
-		if len(ExpandEvent(probe, p.From, p.To)) > 0 {
+		from, to := timeutil.WindowFor(evt.AllDay, p.From, p.To)
+		if len(ExpandEvent(probe, from, to)) > 0 {
 			result = append(result, evt)
 		}
 	}
@@ -538,8 +565,9 @@ type EventListParams struct {
 // overrides. With no range, it returns the series masters as they are.
 // The todo and journal lists use the same contract.
 func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]event.Event, error) {
-	fromStr := rangeBoundUTC(p.From)
-	toStr := rangeBoundUTC(p.To)
+	qFrom, qTo := timeutil.CoverWindow(p.From, p.To)
+	fromStr := rangeBoundUTC(qFrom)
+	toStr := rangeBoundUTC(qTo)
 	hasRange := fromStr != "" || toStr != ""
 
 	rangeRows, err := s.q.ListEventsFiltered(ctx, storage.EventFilterParams{
@@ -556,7 +584,9 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 
 	var result []event.Event
 	for _, row := range rangeRows {
-		result = append(result, event.FromStorage(row))
+		if evt := event.FromStorage(row); evt.Overlaps(p.From, p.To) {
+			result = append(result, evt)
+		}
 	}
 
 	recurringRows, err := s.q.ListRecurringEventsFiltered(ctx, storage.EventFilterParams{

@@ -797,8 +797,10 @@ skip_all_day = true
 
 Each entry is a trigger duration, or an action-prefixed trigger. The action
 prefix is `DISPLAY` (default) or `AUDIO`. `skip_all_day` excludes all-day
-events. All-day events start at midnight, so a `-PT15M` trigger fires the
-evening before.
+events. An all-day event starts at local midnight of its date, so a `-PT15M`
+trigger fires at 23:45 local time on the day before. A date-only todo DUE
+uses the same rule. A date-only value is a floating date (RFC 5545), so the
+rule is the same in every time zone.
 
 Set a per-calendar default with `--default-alarm` on `calendar create` or
 `calendar update`. This replaces the global list for one calendar. The special

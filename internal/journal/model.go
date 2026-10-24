@@ -44,6 +44,12 @@ type Journal struct {
 	XProperties []model.XProperty
 }
 
+// IsDateOnly reports whether the DTSTART of the journal is a date-only
+// value. A date-only value is a floating date (see timeutil.FloatingLocal).
+func (j Journal) IsDateOnly() bool {
+	return timeutil.IsDateOnly(j.StartDate)
+}
+
 func (j Journal) ParseStartDate() time.Time {
 	return timeutil.ParseDate(j.StartDate)
 }

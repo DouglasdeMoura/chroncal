@@ -77,6 +77,10 @@ type recurringKind[Row any, Model any, Inst any] struct {
 	uid           func(Row) string
 	status        func(Row) string
 	recurrenceID  func(Row) string
+	// dateOnly reports whether the row holds a date-only value (an all-day
+	// event, or a todo or journal with a date-only anchor). Such a row uses
+	// the date-only window of timeutil.WindowFor.
+	dateOnly func(Row) bool
 	// overridesByUID batch-fetches every master's overrides in one query,
 	// grouped by UID, and propagates any fetch error.
 	overridesByUID func(context.Context, []Row) (map[string][]Row, error)
@@ -107,7 +111,8 @@ func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k 
 	var result []Model
 	for _, row := range rows {
 		master := k.fromRow(row)
-		expanded := k.expand(master, from, to)
+		mFrom, mTo := rowWindow(k, row, from, to)
+		expanded := k.expand(master, mFrom, mTo)
 
 		overrides := overridesByUID[k.uid(row)]
 		overridden := make(map[string]struct{}, len(overrides))
@@ -141,7 +146,8 @@ func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k 
 			if strings.EqualFold(k.status(o), "CANCELLED") {
 				continue // CANCELLED override suppresses the instance.
 			}
-			m, ok := k.emitOverride(o, from, to)
+			oFrom, oTo := rowWindow(k, o, from, to)
+			m, ok := k.emitOverride(o, oFrom, oTo)
 			if !ok {
 				continue // override's own occurrence is outside the window
 			}
@@ -152,6 +158,12 @@ func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k 
 		}
 	}
 	return result, nil
+}
+
+// rowWindow returns the window [from, to) that applies to row (see
+// timeutil.WindowFor).
+func rowWindow[Row any, Model any, Inst any](k recurringKind[Row, Model, Inst], row Row, from, to time.Time) (time.Time, time.Time) {
+	return timeutil.WindowFor(k.dateOnly(row), from, to)
 }
 
 // populateCategories batch-loads categories for items and assigns the joined

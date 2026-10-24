@@ -201,10 +201,11 @@ func writeCompactEventTable(w io.Writer, events []event.Event, calendarNames map
 }
 
 // compactEventDateColumns formats the date and time columns for one event.
-// Date ranges use ISO 8601 interval syntax (start/end).
+// Date ranges use ISO 8601 interval syntax (start/end). An all-day event
+// shows its own dates in every time zone (event.Event.LocalStart).
 func compactEventDateColumns(e event.Event) (dateCol, timeCol string) {
-	start := e.StartTime.Local()
-	end := e.EndTime.Local()
+	start := e.LocalStart()
+	end := e.LocalEnd()
 	if e.AllDay {
 		last := end.AddDate(0, 0, -1)
 		if start.Year() == last.Year() && start.YearDay() == last.YearDay() {

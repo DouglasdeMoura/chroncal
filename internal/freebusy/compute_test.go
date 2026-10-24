@@ -183,11 +183,14 @@ func TestCompute_SkipsTransparentAndCancelledAndMapsTentative(t *testing.T) {
 	}
 }
 
+// TestCompute_PreservesAllDayIntervals checks that an all-day event is busy
+// for its whole local day. The database stores the date at midnight UTC.
+// The busy interval starts at local midnight (issue #875).
 func TestCompute_PreservesAllDayIntervals(t *testing.T) {
 	t.Parallel()
 
-	from := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
-	to := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	from := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
+	to := time.Date(2026, 4, 12, 0, 0, 0, 0, time.Local)
 	source := &stubExpandedEventSource{
 		events: []recurrence.ExpandedEvent{
 			{
@@ -210,10 +213,10 @@ func TestCompute_PreservesAllDayIntervals(t *testing.T) {
 	if len(result.Periods) != 1 {
 		t.Fatalf("periods = %d, want 1", len(result.Periods))
 	}
-	if !result.Periods[0].Start.Equal(time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)) {
+	if !result.Periods[0].Start.Equal(time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)) {
 		t.Fatalf("start = %s", result.Periods[0].Start)
 	}
-	if !result.Periods[0].End.Equal(time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)) {
+	if !result.Periods[0].End.Equal(time.Date(2026, 4, 11, 0, 0, 0, 0, time.Local)) {
 		t.Fatalf("end = %s", result.Periods[0].End)
 	}
 }

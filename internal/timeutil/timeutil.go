@@ -70,6 +70,59 @@ func LocalDay(t time.Time) time.Time {
 	return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.Local)
 }
 
+// A date-only value (an all-day event, a date-only DUE or DTSTART) is a
+// floating date (RFC 5545 section 3.3.4). It names a calendar day, not an
+// instant. The database stores it at midnight UTC. The calendar day starts
+// at local midnight, in every time zone. The three functions below hold
+// that rule (issue #875). A reader that compares a date-only value with a
+// moment, or shows it in local time, uses them. A conversion with .Local()
+// puts the value on the day before, west of UTC.
+
+// FloatingLocal returns the local moment of a date-only value or of a
+// floating time. t holds the wall clock in UTC, as the database stores it.
+// The result has the same wall clock in the local location. For example,
+// 2026-10-28T00:00:00Z gives local midnight at the start of October 28.
+func FloatingLocal(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), u.Hour(), u.Minute(), u.Second(), u.Nanosecond(), time.Local)
+}
+
+// FloatingBound is the inverse of FloatingLocal. It returns the UTC
+// instant that has the local wall clock of t. A range filter compares a
+// date-only value with the result, not with t. The zero time stays zero,
+// because a zero bound means "no bound".
+func FloatingBound(t time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	l := t.Local()
+	return time.Date(l.Year(), l.Month(), l.Day(), l.Hour(), l.Minute(), l.Second(), l.Nanosecond(), time.UTC)
+}
+
+// WindowFor returns the window that applies to a value. A moment uses
+// [from, to). A date-only value uses the bounds of FloatingBound.
+func WindowFor(dateOnly bool, from, to time.Time) (time.Time, time.Time) {
+	if !dateOnly {
+		return from, to
+	}
+	return FloatingBound(from), FloatingBound(to)
+}
+
+// CoverWindow returns the smallest window that holds [from, to) and the
+// date-only window of WindowFor. A query uses it to read the rows of both
+// kinds. The caller then keeps each row with the window of its own kind.
+// A zero bound stays zero.
+func CoverWindow(from, to time.Time) (time.Time, time.Time) {
+	ff, ft := FloatingBound(from), FloatingBound(to)
+	if !from.IsZero() && ff.Before(from) {
+		from = ff
+	}
+	if !to.IsZero() && ft.After(to) {
+		to = ft
+	}
+	return from, to
+}
+
 // ParseDate parses s as either a date-only string (YYYY-MM-DD) or an RFC 3339 datetime.
 // Returns zero time if s is empty.
 func ParseDate(s string) time.Time {

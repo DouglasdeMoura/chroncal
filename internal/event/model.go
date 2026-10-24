@@ -53,6 +53,35 @@ func (e Event) Span() time.Duration {
 	return e.EndTime.Sub(e.StartTime)
 }
 
+// LocalStart returns the start of the event as a local moment. An all-day
+// event starts at local midnight of its date (timeutil.FloatingLocal), in
+// every time zone.
+func (e Event) LocalStart() time.Time {
+	return localMoment(e.StartTime, e.AllDay)
+}
+
+// LocalEnd returns the end of the event as a local moment. It follows the
+// rule of LocalStart.
+func (e Event) LocalEnd() time.Time {
+	return localMoment(e.EndTime, e.AllDay)
+}
+
+func localMoment(t time.Time, allDay bool) time.Time {
+	if allDay {
+		return timeutil.FloatingLocal(t)
+	}
+	return t.Local()
+}
+
+// Overlaps reports whether the event overlaps the half-open window
+// [from, to). The test is the same as the SQL range filter: end_time > from
+// and start_time < to. An all-day event uses the date-only window of
+// timeutil.WindowFor. A zero bound is open.
+func (e Event) Overlaps(from, to time.Time) bool {
+	from, to = timeutil.WindowFor(e.AllDay, from, to)
+	return (from.IsZero() || e.EndTime.After(from)) && (to.IsZero() || e.StartTime.Before(to))
+}
+
 func (e Event) IsRecurrenceOverride() bool {
 	return e.RecurrenceID != ""
 }

@@ -381,9 +381,9 @@ func printEventDetail(w io.Writer, e event.Event, showDate bool) {
 	printDetailTitle(w, e.Title)
 
 	if showDate {
-		printDetailField(w, labelWidth, "when", formatEventDetailWhen(e.StartTime.Local(), e.EndTime.Local(), e.AllDay))
+		printDetailField(w, labelWidth, "when", formatEventDetailWhen(e.LocalStart(), e.LocalEnd(), e.AllDay))
 	} else {
-		printDetailField(w, labelWidth, "time", formatEventListTime(e.StartTime.Local(), e.EndTime.Local(), e.AllDay))
+		printDetailField(w, labelWidth, "time", formatEventListTime(e.LocalStart(), e.LocalEnd(), e.AllDay))
 	}
 	printDetailField(w, labelWidth, "location", e.Location)
 	printDetailField(w, labelWidth, "notes", e.Description)
