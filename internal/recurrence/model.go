@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -22,6 +23,16 @@ type ExpandedEvent struct {
 	event.Event
 	InstanceTime time.Time
 	IsOverride   bool
+}
+
+// LocalInstanceTime returns the instance time as a local moment. An
+// all-day instance starts at local midnight of its date
+// (timeutil.FloatingLocal).
+func (e ExpandedEvent) LocalInstanceTime() time.Time {
+	if e.AllDay {
+		return timeutil.FloatingLocal(e.InstanceTime)
+	}
+	return e.InstanceTime.Local()
 }
 
 // ExpandedTodo wraps a todo with its occurrence time for alarm checks

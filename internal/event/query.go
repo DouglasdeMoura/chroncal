@@ -76,12 +76,19 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Event, error) {
 }
 
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, error) {
-	from, to := timeutil.ParseDateTime(p.From), timeutil.ParseDateTime(p.To)
+	from, err := parseExportBound("from", p.From)
+	if err != nil {
+		return nil, err
+	}
+	to, err := parseExportBound("to", p.To)
+	if err != nil {
+		return nil, err
+	}
 	qFrom, qTo := timeutil.CoverWindow(from, to)
 	rows, err := s.q.ListEventsForExport(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
-		FromTime:     rangeBound(qFrom),
-		ToTime:       rangeBound(qTo),
+		FromTime:     timeutil.RangeBound(qFrom),
+		ToTime:       timeutil.RangeBound(qTo),
 		Category:     p.Category,
 		FilterStatus: p.Status,
 	})
@@ -91,6 +98,20 @@ func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, 
 	events := inWindow(fromStorageSlice(rows), from, to)
 	s.populateCategories(ctx, events)
 	return events, nil
+}
+
+// parseExportBound parses an RFC 3339 bound of ExportParams. An empty
+// bound gives the zero time (no bound). A bad bound gives an error, so a
+// typo never removes the filter.
+func parseExportBound(name, s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("export events: bad %s bound %q: %w", name, s, err)
+	}
+	return t, nil
 }
 
 // inWindow keeps the events that overlap [from, to) by the rule of their
@@ -105,15 +126,6 @@ func inWindow(events []Event, from, to time.Time) []Event {
 		}
 	}
 	return kept
-}
-
-// rangeBound formats a query bound as an RFC 3339 string in UTC, or ""
-// for the zero time (no bound).
-func rangeBound(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339)
 }
 
 func (s *Service) Get(ctx context.Context, id int64) (Event, error) {

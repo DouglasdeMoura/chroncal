@@ -787,8 +787,11 @@ func computeSnoozeResult(evt event.Event, dur time.Duration, now time.Time) (Sno
 		return SnoozeResult{}, fmt.Errorf("snooze duration must be positive")
 	}
 
+	// An all-day event starts and ends at local midnight of its dates.
+	start, end := evt.LocalStart(), evt.LocalEnd()
+
 	// Reject if the event has already ended.
-	if !evt.EndTime.IsZero() && evt.EndTime.Before(now) {
+	if !end.IsZero() && end.Before(now) {
 		return SnoozeResult{}, fmt.Errorf("event %q has already ended", evt.Title)
 	}
 
@@ -796,19 +799,19 @@ func computeSnoozeResult(evt event.Event, dur time.Duration, now time.Time) (Sno
 
 	res := SnoozeResult{
 		Until:      until,
-		EventStart: evt.StartTime,
-		EventEnd:   evt.EndTime,
+		EventStart: start,
+		EventEnd:   end,
 	}
 
 	// Cap at event end — no point snoozing past when the event is over.
 	// Skip capping for all-day events with zero EndTime.
-	if !evt.EndTime.IsZero() && until.After(evt.EndTime) {
-		res.Until = evt.EndTime
+	if !end.IsZero() && until.After(end) {
+		res.Until = end
 		res.Capped = true
 	}
 
 	// Note if the snooze fires after the event has started.
-	if res.Until.After(evt.StartTime) {
+	if res.Until.After(start) {
 		res.PastStart = true
 	}
 

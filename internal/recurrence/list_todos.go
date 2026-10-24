@@ -148,27 +148,29 @@ func ExpandTodo(td todo.Todo, from, to time.Time) []ExpandedTodo {
 	return instances
 }
 
+// TodoAtInstance returns the todo of an instance, with its DUE and DTSTART
+// moved to the occurrence. Each value keeps its own form, so a date-only
+// value stays date-only.
+func TodoAtInstance(i ExpandedTodo) todo.Todo {
+	t := i.Todo
+	anchor := todoAnchor(t)
+	if !anchor.IsZero() {
+		offset := i.InstanceTime.Sub(anchor)
+		t.DueDate = shiftDateString(t.DueDate, t.ParseDueDate(), offset)
+		t.StartDate = shiftDateString(t.StartDate, t.ParseStartDate(), offset)
+	}
+	return t
+}
+
 // expandRecurringTodoRows expands recurring todo rows into Todo instances with
 // DueDate/StartDate adjusted to each occurrence. For each master, overrides
 // (rows with a match of RECURRENCE-ID) replace the original RRULE instance.
 func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.Todo, from, to time.Time) ([]todo.Todo, error) {
 	k := recurringKind[storage.Todo, todo.Todo, ExpandedTodo]{
-		fromRow:  todoFromRow,
-		expand:   ExpandTodo,
-		instTime: func(i ExpandedTodo) time.Time { return i.InstanceTime },
-		applyInstance: func(i ExpandedTodo) todo.Todo {
-			t := i.Todo
-			anchor := t.ParseStartDate()
-			if anchor.IsZero() {
-				anchor = t.ParseDueDate()
-			}
-			if !anchor.IsZero() {
-				offset := i.InstanceTime.Sub(anchor)
-				t.DueDate = shiftDateString(t.DueDate, t.ParseDueDate(), offset)
-				t.StartDate = shiftDateString(t.StartDate, t.ParseStartDate(), offset)
-			}
-			return t
-		},
+		fromRow:        todoFromRow,
+		expand:         ExpandTodo,
+		instTime:       func(i ExpandedTodo) time.Time { return i.InstanceTime },
+		applyInstance:  TodoAtInstance,
 		uid:            func(r storage.Todo) string { return seriesKey(r.CalendarID, r.Uid) },
 		dateOnly:       func(r storage.Todo) bool { return todoFromRow(r).AnchorIsDateOnly() },
 		status:         func(r storage.Todo) string { return r.Status },
@@ -230,8 +232,8 @@ func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to 
 
 	s.populateTodoCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
-		di := result[i].ParseDueDate()
-		dj := result[j].ParseDueDate()
+		di := result[i].LocalDue()
+		dj := result[j].LocalDue()
 		if di.IsZero() {
 			return false
 		}
@@ -310,8 +312,8 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 
 	s.populateTodoCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
-		di := result[i].ParseDueDate()
-		dj := result[j].ParseDueDate()
+		di := result[i].LocalDue()
+		dj := result[j].LocalDue()
 		if di.IsZero() {
 			return false
 		}

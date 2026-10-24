@@ -123,6 +123,30 @@ func CoverWindow(from, to time.Time) (time.Time, time.Time) {
 	return from, to
 }
 
+// LocalMoment parses a stored date string (ParseDate) and returns it as a
+// local moment. A date-only string gives local midnight of its date
+// (FloatingLocal). An empty or a bad string gives the zero time.
+func LocalMoment(s string) time.Time {
+	t := ParseDate(s)
+	if t.IsZero() {
+		return t
+	}
+	if IsDateOnly(s) {
+		return FloatingLocal(t)
+	}
+	return t.Local()
+}
+
+// RangeBound formats a range bound as an RFC 3339 string in UTC, or "" for
+// the zero time (no bound). The database compares the bound lexically
+// with the UTC-stored strings, so the bound must be in UTC (issue #305).
+func RangeBound(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 // ParseDate parses s as either a date-only string (YYYY-MM-DD) or an RFC 3339 datetime.
 // Returns zero time if s is empty.
 func ParseDate(s string) time.Time {

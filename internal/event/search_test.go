@@ -179,3 +179,13 @@ func TestService_ExportFiltered(t *testing.T) {
 		})
 	}
 }
+
+// TestExportFiltered_RejectsBadBound checks that a bad range bound gives an
+// error. A silent zero bound would export every event.
+func TestExportFiltered_RejectsBadBound(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	if _, err := svc.ExportFiltered(context.Background(), ExportParams{From: "2026-13-01"}); err == nil {
+		t.Fatal("ExportFiltered with a bad bound: got nil error")
+	}
+}
