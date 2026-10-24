@@ -22,6 +22,11 @@ const (
 	minWindowHeight = 24
 )
 
+// windowTooSmall reports whether the window is below the minimum size.
+func (m Model) windowTooSmall() bool {
+	return m.width > 0 && (m.width < minWindowWidth || m.height < minWindowHeight)
+}
+
 // smallWindowNotice tells the user that the window is too small. Each line
 // fits in w cells, and the notice uses at most h rows.
 func (m Model) smallWindowNotice() string {
@@ -134,7 +139,7 @@ func (m Model) View() tea.View {
 		return v
 	}
 
-	if m.width < minWindowWidth || m.height < minWindowHeight {
+	if m.windowTooSmall() {
 		v.Content = m.smallWindowNotice()
 		return v
 	}

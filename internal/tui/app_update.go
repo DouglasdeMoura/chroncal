@@ -19,6 +19,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 
+	// A window below the minimum size shows only the notice. A key or a
+	// click then does nothing, so it cannot act on the hidden layout.
+	// ctrl+c still reaches the quit guard.
+	if m.windowTooSmall() {
+		switch in := msg.(type) {
+		case tea.KeyPressMsg:
+			if in.String() != "ctrl+c" {
+				return m, nil
+			}
+		case tea.MouseMsg:
+			return m, nil
+		}
+	}
+
 	// Global key bindings override any open dialog: ctrl+c / q always route
 	// through the quit guard, and ? opens the help dialog. The quit confirm
 	// itself is exempt so its y/n/esc keys keep working, and ? is a no-op
