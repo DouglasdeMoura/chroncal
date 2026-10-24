@@ -46,3 +46,10 @@ type Calendar struct {
 	// this calendar.
 	DefaultAlarms *string
 }
+
+// SyncWasClean reports whether a clean sync happened and no error followed
+// it. A failed sync keeps lastSyncAt (issue #886), so a time alone does not
+// tell. The CLI (last_sync_ok) and the TUI sync health use this one rule.
+func SyncWasClean(lastSyncAt, lastSyncError string) bool {
+	return lastSyncAt != "" && lastSyncError == ""
+}

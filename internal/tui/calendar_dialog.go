@@ -330,7 +330,7 @@ func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealt
 			style: lipgloss.NewStyle().Foreground(theme.Error),
 		}}
 		// A failed sync keeps the time of the last clean sync (issue
-		// #886), so the user sees how long the calendar has failed.
+		// #886), so the user sees when the last clean sync was.
 		if params.LastSyncAt != "" {
 			lines = append(lines, syncHealthLine{
 				text:  "Last good sync: " + formatSyncTime(params.LastSyncAt),

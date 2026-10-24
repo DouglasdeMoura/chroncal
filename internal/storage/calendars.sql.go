@@ -69,8 +69,8 @@ UPDATE calendars SET
 WHERE id = ?
 `
 
-// A relink to another server, user, or auth type of the same account row
-// drops the sync health of the old identity (issue #886).
+// A relink with another credential identity on the same account row drops
+// the sync health of the old identity (issue #886).
 func (q *Queries) ClearCalendarSyncHealth(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, clearCalendarSyncHealth, id)
 	return err
@@ -370,30 +370,37 @@ func (q *Queries) GetDefaultCalendar(ctx context.Context) (Calendar, error) {
 
 const linkCalendarToAccount = `-- name: LinkCalendarToAccount :exec
 UPDATE calendars SET
-    last_sync_at = CASE WHEN account_id IS ?1 AND remote_url IS ?2
+    last_sync_at = CASE WHEN account_id IS ?1 AND CAST(?2 AS INTEGER) = 1
         THEN last_sync_at ELSE '' END,
-    last_sync_attempted_at = CASE WHEN account_id IS ?1 AND remote_url IS ?2
+    last_sync_attempted_at = CASE WHEN account_id IS ?1 AND CAST(?2 AS INTEGER) = 1
         THEN last_sync_attempted_at ELSE '' END,
-    last_sync_error = CASE WHEN account_id IS ?1 AND remote_url IS ?2
+    last_sync_error = CASE WHEN account_id IS ?1 AND CAST(?2 AS INTEGER) = 1
         THEN last_sync_error ELSE '' END,
     account_id = ?1,
-    remote_url = ?2,
+    remote_url = ?3,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ?3
+WHERE id = ?4
 `
 
 type LinkCalendarToAccountParams struct {
-	AccountID *int64
-	RemoteUrl *string
-	ID        int64
+	AccountID      *int64
+	SameCollection int64
+	RemoteUrl      *string
+	ID             int64
 }
 
-// A change of account_id or remote_url drops the sync health: a failed
-// sync keeps last_sync_at (issue #886), so a kept time of the old link
-// would claim a clean sync that the new link never had. The CASE reads
-// the old values of the row.
+// A change of account_id, or of the collection, drops the sync health: a
+// failed sync keeps last_sync_at (issue #886), so a kept time of the old
+// link would claim a clean sync that the new link never had. The caller
+// compares the collections with calendar.CollectionKey and passes
+// same_collection. The CASE reads the old account_id of the row.
 func (q *Queries) LinkCalendarToAccount(ctx context.Context, arg LinkCalendarToAccountParams) error {
-	_, err := q.db.ExecContext(ctx, linkCalendarToAccount, arg.AccountID, arg.RemoteUrl, arg.ID)
+	_, err := q.db.ExecContext(ctx, linkCalendarToAccount,
+		arg.AccountID,
+		arg.SameCollection,
+		arg.RemoteUrl,
+		arg.ID,
+	)
 	return err
 }
 

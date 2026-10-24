@@ -242,7 +242,7 @@ func syncHealthFor(info CalendarInfo) SyncHealth {
 		return SyncHealthNone
 	case info.LastSyncError != "":
 		return SyncHealthError
-	case info.LastSyncAt != "":
+	case calendar.SyncWasClean(info.LastSyncAt, info.LastSyncError):
 		return SyncHealthOK
 	default:
 		return SyncHealthPending

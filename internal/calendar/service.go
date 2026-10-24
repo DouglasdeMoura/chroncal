@@ -350,9 +350,10 @@ func (s *Service) LinkToAccount(ctx context.Context, id, accountID int64, remote
 	defer tx.Rollback()
 	qtx := s.q.WithTx(tx)
 	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
-		ID:        id,
-		AccountID: &accountID,
-		RemoteUrl: storage.StringToNullable(remoteURL),
+		ID:             id,
+		AccountID:      &accountID,
+		RemoteUrl:      storage.StringToNullable(remoteURL),
+		SameCollection: storage.BoolToInt(CollectionKey(existing.RemoteURL, "") == CollectionKey(remoteURL, "")),
 	}); err != nil {
 		return err
 	}

@@ -158,10 +158,13 @@ func uniqueUnlinkedByRemoteIdentity(rows []storage.Calendar, serverURL string, d
 // It writes the live collection onto the row through applyDiscoveredCalendarMetadata.
 func relinkDiscoveredCalendar(ctx context.Context, qtx *storage.Queries, acct Account, item DiscoveredCalendar, calendarID int64) error {
 	accountID := acct.ID
+	// The relink found the row by its remote identity, so the collection
+	// stays the same. The account changes, so the sync health goes.
 	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
-		ID:        calendarID,
-		AccountID: &accountID,
-		RemoteUrl: storage.StringToNullable(item.Path),
+		ID:             calendarID,
+		AccountID:      &accountID,
+		RemoteUrl:      storage.StringToNullable(item.Path),
+		SameCollection: 1,
 	}); err != nil {
 		return err
 	}

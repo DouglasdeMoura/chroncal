@@ -48,8 +48,8 @@ UPDATE calendars SET
 WHERE id = sqlc.arg(id);
 
 -- name: ClearCalendarSyncHealth :exec
--- A relink to another server, user, or auth type of the same account row
--- drops the sync health of the old identity (issue #886).
+-- A relink with another credential identity on the same account row drops
+-- the sync health of the old identity (issue #886).
 UPDATE calendars SET
     last_sync_at = '',
     last_sync_attempted_at = '',
@@ -58,16 +58,17 @@ UPDATE calendars SET
 WHERE id = ?;
 
 -- name: LinkCalendarToAccount :exec
--- A change of account_id or remote_url drops the sync health: a failed
--- sync keeps last_sync_at (issue #886), so a kept time of the old link
--- would claim a clean sync that the new link never had. The CASE reads
--- the old values of the row.
+-- A change of account_id, or of the collection, drops the sync health: a
+-- failed sync keeps last_sync_at (issue #886), so a kept time of the old
+-- link would claim a clean sync that the new link never had. The caller
+-- compares the collections with calendar.CollectionKey and passes
+-- same_collection. The CASE reads the old account_id of the row.
 UPDATE calendars SET
-    last_sync_at = CASE WHEN account_id IS sqlc.narg(account_id) AND remote_url IS sqlc.narg(remote_url)
+    last_sync_at = CASE WHEN account_id IS sqlc.narg(account_id) AND CAST(sqlc.arg(same_collection) AS INTEGER) = 1
         THEN last_sync_at ELSE '' END,
-    last_sync_attempted_at = CASE WHEN account_id IS sqlc.narg(account_id) AND remote_url IS sqlc.narg(remote_url)
+    last_sync_attempted_at = CASE WHEN account_id IS sqlc.narg(account_id) AND CAST(sqlc.arg(same_collection) AS INTEGER) = 1
         THEN last_sync_attempted_at ELSE '' END,
-    last_sync_error = CASE WHEN account_id IS sqlc.narg(account_id) AND remote_url IS sqlc.narg(remote_url)
+    last_sync_error = CASE WHEN account_id IS sqlc.narg(account_id) AND CAST(sqlc.arg(same_collection) AS INTEGER) = 1
         THEN last_sync_error ELSE '' END,
     account_id = sqlc.narg(account_id),
     remote_url = sqlc.narg(remote_url),

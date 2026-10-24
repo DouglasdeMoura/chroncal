@@ -16,6 +16,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	syncPkg "github.com/douglasdemoura/chroncal/internal/sync"
 )
 
@@ -312,7 +313,7 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 				"last_sync_at":           s.LastSyncAt,
 				"last_sync_attempted_at": s.LastSyncAttemptedAt,
 				"last_sync_error":        s.LastSyncError,
-				"last_sync_ok":           syncWasClean(s.LastSyncAt, s.LastSyncError),
+				"last_sync_ok":           calendar.SyncWasClean(s.LastSyncAt, s.LastSyncError),
 				"pending_push":           s.PendingPush,
 				"conflicts":              s.Conflicts,
 				"stuck_hrefs":            stuck,

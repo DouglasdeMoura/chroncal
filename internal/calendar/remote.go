@@ -155,10 +155,6 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	if err != nil {
 		return err
 	}
-	identityChanged, err := s.linkIdentityChanged(ctx, cal, serverURL, link)
-	if err != nil {
-		return err
-	}
 	if reuse {
 		cred.AccountID = existing.ID
 		oldFingerprint := auth.AccountFingerprint(existing.ServerUrl, existing.AuthType, existing.Username)
@@ -192,13 +188,16 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			}
 		}
 		if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
-			ID:        cal.ID,
-			AccountID: &existing.ID,
-			RemoteUrl: storage.StringToNullable(link.RemoteURL),
+			ID:             cal.ID,
+			AccountID:      &existing.ID,
+			RemoteUrl:      storage.StringToNullable(link.RemoteURL),
+			SameCollection: storage.BoolToInt(!remoteChanged),
 		}); err != nil {
 			return fmt.Errorf("link calendar: %w", err)
 		}
-		if err := clearLastSyncOnNewIdentity(ctx, qtx, cal.ID, identityChanged); err != nil {
+		// The account row keeps its ID, so the link query keeps the sync
+		// health. A new credential identity drops it (issue #886).
+		if err := clearLastSyncOnNewIdentity(ctx, qtx, cal.ID, oldFingerprint != cred.AccountFingerprint); err != nil {
 			return err
 		}
 		if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
@@ -268,14 +267,12 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		}
 	}
 	if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
-		ID:        cal.ID,
-		AccountID: &account.ID,
-		RemoteUrl: storage.StringToNullable(link.RemoteURL),
+		ID:             cal.ID,
+		AccountID:      &account.ID,
+		RemoteUrl:      storage.StringToNullable(link.RemoteURL),
+		SameCollection: storage.BoolToInt(!remoteChanged),
 	}); err != nil {
 		return fmt.Errorf("link calendar: %w", err)
-	}
-	if err := clearLastSyncOnNewIdentity(ctx, qtx, cal.ID, identityChanged); err != nil {
-		return err
 	}
 	if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
 		return err
@@ -323,28 +320,6 @@ func checkConnectFree(ctx context.Context, q *storage.Queries, cal Calendar, lin
 		}
 	}
 	return CheckCollectionFree(ctx, q, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID})
-}
-
-// linkIdentityChanged reports whether link moves cal to another server, user,
-// or auth type than its current account. The values compare as
-// checkConnectFree compares them. LinkCalendarToAccount clears the sync
-// health when the account or the collection changes. This check covers a
-// relink that updates the account row in place. A calendar with no account,
-// or with a gone account, reports false: the link query covers it.
-func (s *Service) linkIdentityChanged(ctx context.Context, cal Calendar, serverURL string, link RemoteLink) (bool, error) {
-	if cal.AccountID == 0 {
-		return false, nil
-	}
-	current, err := s.q.GetAccount(ctx, cal.AccountID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("get account: %w", err)
-	}
-	return strings.TrimRight(strings.TrimSpace(current.ServerUrl), "/") != strings.TrimRight(strings.TrimSpace(serverURL), "/") ||
-		NormalizeAuthType(current.AuthType) != NormalizeAuthType(link.AuthType) ||
-		!strings.EqualFold(strings.TrimSpace(current.Username), strings.TrimSpace(link.Username)), nil
 }
 
 // clearLastSyncOnNewIdentity drops the sync health of calendarID when the
