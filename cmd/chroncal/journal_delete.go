@@ -71,17 +71,19 @@ entire recurring series.`,
 }
 
 // journalRestorePushCalendars returns the calendars that the push after a
-// restore of uid sends: rowCalendarID (0 for none) and the calendar of the
-// master of the UID. The restore marks the calendar of the master dirty
-// (see storage.ReconcileAfterRestore). A failed read of the master returns
-// rowCalendarID only: the push is best-effort.
+// restore of uid sends (see restorePushCalendars). The candidates are
+// rowCalendarID (0 for none), the calendar of the master, and the
+// calendars of the live overrides of the UID. A failed read drops its
+// candidates: the push is best-effort.
 func journalRestorePushCalendars(ctx context.Context, a *app.App, uid string, rowCalendarID int64) []int64 {
-	var ids []int64
-	if rowCalendarID != 0 {
-		ids = append(ids, rowCalendarID)
+	candidates := []int64{rowCalendarID}
+	if m, err := a.Queries.GetJournalByUIDIncludingDeleted(ctx, uid); err == nil {
+		candidates = append(candidates, m.CalendarID)
 	}
-	if m, err := a.Queries.GetJournalByUIDIncludingDeleted(ctx, uid); err == nil && m.CalendarID != rowCalendarID {
-		ids = append(ids, m.CalendarID)
+	if overrides, err := a.Journals.ListOverridesByUID(ctx, uid); err == nil {
+		for _, o := range overrides {
+			candidates = append(candidates, o.CalendarID)
+		}
 	}
-	return ids
+	return restorePushCalendars(ctx, a, uid, candidates)
 }

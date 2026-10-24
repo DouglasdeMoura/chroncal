@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/config"
+	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
 // stubPushSeam replaces the opportunistic-push seam with a recorder that
@@ -166,6 +167,9 @@ func TestRestorePathsOpportunisticallyPush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("calendar create: %v", err)
 	}
+	// The calendar has an account link, so a restore leaves a dirty sync
+	// row there. The push seam is a stub, so no server is needed.
+	linkCLICalendar(t, a, cal.ID)
 	a.Close()
 
 	for _, tc := range []struct {
@@ -204,6 +208,58 @@ func TestRestorePathsOpportunisticallyPush(t *testing.T) {
 				assertPushed(t, *pushed, cal.ID)
 			}
 		})
+	}
+}
+
+// linkCLICalendar gives calendarID an account link with no server.
+func linkCLICalendar(t *testing.T, a *app.App, calendarID int64) {
+	t.Helper()
+	ctx := context.Background()
+	var accountID int64
+	if err := a.DB.QueryRowContext(ctx, `SELECT id FROM accounts WHERE name = 'push-test'`).Scan(&accountID); err != nil {
+		res, err := a.DB.ExecContext(ctx, `INSERT INTO accounts (name, server_url, auth_type, username) VALUES ('push-test', 'https://example.invalid', 'basic', 'u')`)
+		if err != nil {
+			t.Fatalf("insert account: %v", err)
+		}
+		accountID, _ = res.LastInsertId()
+	}
+	if _, err := a.DB.ExecContext(ctx, `UPDATE calendars SET account_id = ?, remote_url = '/cal/' || id || '/' WHERE id = ?`, accountID, calendarID); err != nil {
+		t.Fatalf("link calendar: %v", err)
+	}
+}
+
+// TestRestorePushCalendarsOrder checks the push set after a restore of a
+// legacy override: the calendar with the dirty row first, then the calendar
+// with the tombstone. A calendar with no sync state of the UID, for example
+// the calendar of another series of the UID, stays out.
+func TestRestorePushCalendarsOrder(t *testing.T) {
+	a, err := app.New(testutil.DBPath(t))
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	ctx := context.Background()
+	ids := make([]int64, 0, 3)
+	for _, name := range []string{"Tomb", "Other", "Dirty"} {
+		cal, err := a.Calendars.Create(ctx, name, "#7C3AED", "")
+		if err != nil {
+			t.Fatalf("calendar create: %v", err)
+		}
+		ids = append(ids, cal.ID)
+	}
+	tomb, other, dirty := ids[0], ids[1], ids[2]
+	for _, stmt := range []string{
+		fmt.Sprintf(`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, dirty) VALUES (%d, 'u', 'event', '/d/u.ics', 1)`, dirty),
+		fmt.Sprintf(`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url, dirty) VALUES (%d, 'u', 'event', '/o/u.ics', 0)`, other),
+		fmt.Sprintf(`INSERT INTO tombstones (calendar_id, uid, remote_url) VALUES (%d, 'u', '/t/u.ics')`, tomb),
+	} {
+		if _, err := a.DB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	got := restorePushCalendars(ctx, a, "u", []int64{tomb, other, 0, dirty, tomb})
+	if len(got) != 2 || got[0] != dirty || got[1] != tomb {
+		t.Errorf("push calendars = %v, want [%d %d]", got, dirty, tomb)
 	}
 }
 

@@ -413,15 +413,13 @@ func seriesDeleteErr(ctx context.Context, a *app.App, target row, err error) err
 }
 
 // eventRestorePushCalendars returns the calendars that the push after a
-// restore of uid sends: every calendar that holds a row of the UID. The
-// restore marks the calendar of the series dirty, and a legacy override
-// keeps a tombstone in its own calendar (see storage.ReconcileAfterRestore).
-// A calendar with nothing to send makes no server write. A failed read
-// returns no calendar: the push is best-effort.
+// restore of uid sends (see restorePushCalendars). The candidates are the
+// calendars that hold a row of the UID. A failed read returns no calendar:
+// the push is best-effort.
 func eventRestorePushCalendars(ctx context.Context, a *app.App, uid string) []int64 {
 	ids, err := a.Queries.ListEventCalendarIDsByUID(ctx, uid)
 	if err != nil {
 		return nil
 	}
-	return ids
+	return restorePushCalendars(ctx, a, uid, ids)
 }

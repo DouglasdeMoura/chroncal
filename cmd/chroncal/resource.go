@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/uidmove"
 )
 
@@ -250,6 +251,37 @@ func newRestoreCmd(r resource, h verbHelp) *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// restorePushCalendars returns the calendars of candidates that the push
+// after a restore of uid must send, in push order. The restore leaves sync
+// state that names them (see storage.ReconcileAfterRestore):
+//  1. A calendar with a dirty sync row of the UID. The push creates or
+//     updates the server object there.
+//  2. A calendar with a tombstone of the UID, for example the calendar of
+//     a legacy override. The push deletes the old server object there.
+//
+// The order is the order of sync.PushMove: the target first, then the
+// source. A failed second push then leaves the item on the server. A
+// calendar with no such state stays out, so the push sends no unrelated
+// edits of another series of the UID. A duplicate or a 0 stays out too.
+func restorePushCalendars(ctx context.Context, a *app.App, uid string, candidates []int64) []int64 {
+	var dirty, tombstoned []int64
+	seen := map[int64]bool{0: true}
+	for _, id := range candidates {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if sr, err := a.Queries.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: id, Uid: uid}); err == nil && sr.Dirty != 0 {
+			dirty = append(dirty, id)
+			continue
+		}
+		if _, err := a.Queries.GetTombstoneByCalendarAndUID(ctx, storage.GetTombstoneByCalendarAndUIDParams{CalendarID: id, Uid: uid}); err == nil {
+			tombstoned = append(tombstoned, id)
+		}
+	}
+	return append(dirty, tombstoned...)
 }
 
 // newPurgeCmd builds the purge verb for one resource. The body refuses a
