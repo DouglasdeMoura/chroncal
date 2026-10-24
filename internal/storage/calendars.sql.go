@@ -50,6 +50,17 @@ func (q *Queries) ClearCalendarColorDirty(ctx context.Context, arg ClearCalendar
 	return err
 }
 
+const clearCalendarLastSyncAt = `-- name: ClearCalendarLastSyncAt :exec
+UPDATE calendars SET last_sync_at = '' WHERE id = ?
+`
+
+// A relink to another server, user, or auth type drops the time of the
+// last clean sync of the old identity (issue #886).
+func (q *Queries) ClearCalendarLastSyncAt(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, clearCalendarLastSyncAt, id)
+	return err
+}
+
 const clearCalendarRelinkPending = `-- name: ClearCalendarRelinkPending :exec
 UPDATE calendars SET relink_pending = 0 WHERE id = ?
 `

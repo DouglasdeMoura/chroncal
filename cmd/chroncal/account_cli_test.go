@@ -210,7 +210,7 @@ func assertLinkedCalendarsSynced(t *testing.T, dbPath string) {
 		t.Fatalf("list calendars: %v", err)
 	}
 	for _, item := range calendars {
-		if item.AccountID != 0 && item.LastSyncAt == "" {
+		if item.AccountID != 0 && (item.LastSyncAt == "" || item.LastSyncError != "") {
 			t.Fatalf("linked calendar %q has no successful initial sync", item.Name)
 		}
 	}

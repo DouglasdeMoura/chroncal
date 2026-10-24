@@ -155,6 +155,10 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	if err != nil {
 		return err
 	}
+	identityChanged, err := s.linkIdentityChanged(ctx, cal, serverURL, link)
+	if err != nil {
+		return err
+	}
 	if reuse {
 		cred.AccountID = existing.ID
 		oldFingerprint := auth.AccountFingerprint(existing.ServerUrl, existing.AuthType, existing.Username)
@@ -193,6 +197,9 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 			RemoteUrl: storage.StringToNullable(link.RemoteURL),
 		}); err != nil {
 			return fmt.Errorf("link calendar: %w", err)
+		}
+		if err := clearLastSyncOnNewIdentity(ctx, qtx, cal.ID, identityChanged); err != nil {
+			return err
 		}
 		if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
 			return err
@@ -267,6 +274,9 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	}); err != nil {
 		return fmt.Errorf("link calendar: %w", err)
 	}
+	if err := clearLastSyncOnNewIdentity(ctx, qtx, cal.ID, identityChanged); err != nil {
+		return err
+	}
 	if err := updateCalendarCapabilities(ctx, qtx, cal.ID, link); err != nil {
 		return err
 	}
@@ -313,6 +323,38 @@ func checkConnectFree(ctx context.Context, q *storage.Queries, cal Calendar, lin
 		}
 	}
 	return CheckCollectionFree(ctx, q, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID})
+}
+
+// linkIdentityChanged reports whether link moves cal to another server, user,
+// or auth type than its current account. A calendar with no account, or
+// with a gone account, has no identity to keep, so it reports false.
+func (s *Service) linkIdentityChanged(ctx context.Context, cal Calendar, serverURL string, link RemoteLink) (bool, error) {
+	if cal.AccountID == 0 {
+		return false, nil
+	}
+	current, err := s.q.GetAccount(ctx, cal.AccountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get account: %w", err)
+	}
+	return current.ServerUrl != serverURL || current.AuthType != NormalizeAuthType(link.AuthType) ||
+		current.Username != link.Username, nil
+}
+
+// clearLastSyncOnNewIdentity drops last_sync_at of calendarID when the link
+// changes the identity. A failed sync keeps last_sync_at (issue #886), so a
+// kept time of the old identity would claim a clean sync that the new
+// identity never had.
+func clearLastSyncOnNewIdentity(ctx context.Context, qtx *storage.Queries, calendarID int64, changed bool) error {
+	if !changed {
+		return nil
+	}
+	if err := qtx.ClearCalendarLastSyncAt(ctx, calendarID); err != nil {
+		return fmt.Errorf("clear the last sync time: %w", err)
+	}
+	return nil
 }
 
 func updateCalendarCapabilities(ctx context.Context, q *storage.Queries, calendarID int64, link RemoteLink) error {

@@ -1067,3 +1067,49 @@ func TestConnect_RefusesACollectionThatAnotherCalendarLinks(t *testing.T) {
 		t.Fatalf("Connect with another user: %v", err)
 	}
 }
+
+// TestConnect_ClearsTheLastSyncOfAnotherIdentity relinks a calendar to its
+// collection with another user. A failed sync keeps last_sync_at (issue
+// #886), so the time of the old identity must go. A relink with the same
+// identity keeps it.
+func TestConnect_ClearsTheLastSyncOfAnotherIdentity(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	link := RemoteLink{RemoteURL: "https://example.com/dav/calendars/work/", Username: "user", AuthType: "basic"}
+	connect := func(l RemoteLink) {
+		t.Helper()
+		cal, err := svc.Get(ctx, 1)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if err := svc.Connect(ctx, cal, l, auth.Credential{Username: l.Username, Password: "pass"}, &memCredStore{}); err != nil {
+			t.Fatalf("Connect: %v", err)
+		}
+	}
+	stamp := func() {
+		t.Helper()
+		if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET last_sync_at = '2026-10-20T08:00:00Z' WHERE id = 1`); err != nil {
+			t.Fatalf("stamp: %v", err)
+		}
+	}
+	lastSync := func() string {
+		t.Helper()
+		cal, err := svc.Get(ctx, 1)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		return cal.LastSyncAt
+	}
+	connect(link)
+	stamp()
+	connect(link)
+	if got := lastSync(); got == "" {
+		t.Fatal("a relink with the same identity dropped last_sync_at")
+	}
+	other := link
+	other.Username = "other"
+	connect(other)
+	if got := lastSync(); got != "" {
+		t.Fatalf("last_sync_at = %q after a relink with another user; want none", got)
+	}
+}

@@ -47,6 +47,11 @@ UPDATE calendars SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = sqlc.arg(id);
 
+-- name: ClearCalendarLastSyncAt :exec
+-- A relink to another server, user, or auth type drops the time of the
+-- last clean sync of the old identity (issue #886).
+UPDATE calendars SET last_sync_at = '' WHERE id = ?;
+
 -- name: LinkCalendarToAccount :exec
 UPDATE calendars SET
     account_id = ?,

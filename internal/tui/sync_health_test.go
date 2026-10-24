@@ -130,3 +130,21 @@ func TestHumanizeSyncError(t *testing.T) {
 		t.Errorf("long error should be truncated to <=80 runes; got %d", len([]rune(got)))
 	}
 }
+
+// TestSyncHealthDialogLines_FailureKeepsTheLastGoodSync gives a failed sync
+// the time of the last clean sync. The detail must show the error, then
+// that time, then the hint: the user sees how long the calendar has failed
+// (issue #886).
+func TestSyncHealthDialogLines_FailureKeepsTheLastGoodSync(t *testing.T) {
+	params := CalendarDialogParams{
+		Name:          "gmail",
+		RemoteLinked:  true,
+		LastSyncAt:    "2026-10-20T08:00:00Z",
+		LastSyncError: `oauth token refresh: token refresh failed (400): {"error": "invalid_grant"}`,
+	}
+	lines := syncHealthDialogLines(params, Theme{})
+	if len(lines) != 3 || !strings.HasPrefix(lines[0].text, "⚠ Sync failed") ||
+		!strings.HasPrefix(lines[1].text, "Last good sync: ") || !strings.Contains(lines[2].text, "Manage Account") {
+		t.Fatalf("lines = %+v; want the error, the last good sync, and the hint", lines)
+	}
+}
