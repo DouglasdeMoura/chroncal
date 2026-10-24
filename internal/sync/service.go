@@ -437,6 +437,12 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 // conflict row has.
 var ErrConflictNotFound = errors.New("no sync conflict with this ID")
 
+// conflictNotFound is ErrConflictNotFound for conflictID. The resolve reads
+// the row three times: first, and again after each lock wait.
+func conflictNotFound(conflictID int64) error {
+	return fmt.Errorf("%w: %d", ErrConflictNotFound, conflictID)
+}
+
 // resolveConflict runs the pick. See ResolveConflict.
 func (s *Service) resolveConflict(ctx context.Context, conflictID int64, pick string) (moveResolution, error) {
 	if pick != "server" && pick != "local" {
@@ -445,7 +451,7 @@ func (s *Service) resolveConflict(ctx context.Context, conflictID int64, pick st
 
 	conflict, err := s.q.GetSyncConflict(ctx, conflictID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return moveResolution{}, fmt.Errorf("%w: %d", ErrConflictNotFound, conflictID)
+		return moveResolution{}, conflictNotFound(conflictID)
 	}
 	if err != nil {
 		return moveResolution{}, fmt.Errorf("get conflict: %w", err)
@@ -467,7 +473,7 @@ func (s *Service) resolveConflict(ctx context.Context, conflictID int64, pick st
 		}
 		conflict, err = s.q.GetSyncConflict(ctx, conflictID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return moveResolution{}, fmt.Errorf("%w: %d", ErrConflictNotFound, conflictID)
+			return moveResolution{}, conflictNotFound(conflictID)
 		}
 		if err != nil {
 			return moveResolution{}, fmt.Errorf("revalidate conflict: %w", err)
@@ -500,7 +506,7 @@ func (s *Service) resolveConflict(ctx context.Context, conflictID int64, pick st
 	}
 	conflict, err = s.q.GetSyncConflict(ctx, conflictID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return moveResolution{}, fmt.Errorf("%w: %d", ErrConflictNotFound, conflictID)
+		return moveResolution{}, conflictNotFound(conflictID)
 	}
 	if err != nil {
 		return moveResolution{}, fmt.Errorf("revalidate conflict: %w", err)

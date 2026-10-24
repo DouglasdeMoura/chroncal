@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -374,29 +375,40 @@ func seriesRestoreCandidates(ctx context.Context, uid string, rowCalendarID int6
 	return p
 }
 
-// restoreNotDeletedErr builds the "not_found" error of a restore that
-// brought back no row. A live row is not in the trash, so the message says
-// that. Else the row is gone, or no delete of it can come back. Pass the
-// ID of a restore by ID, or the UID of a restore by UID.
+// restoreNotDeletedErr builds the error of a restore that brought back no
+// row. Pass the ID of a restore by ID, or the UID of a restore by UID. The
+// cases:
+//   - A live row or a live UID is not in the trash, so the message says
+//     that.
+//   - A row in the trash, or a UID with rows in the trash, that no delete
+//     can bring back. A restore by UID reverses a delete of the UID, so the
+//     message sends the user to the restore by ID of each row.
+//   - Else the row is gone ("may have been purged").
 //
-// A restore by UID reverses a delete of the UID. A live item of the UID can
-// still have a row in the trash, for example one occurrence. The message
-// then sends the user to the restore by ID. A read error of the state of
-// the UID shows as itself. The code stays "not_found",
-// the code of this error before, because a script can read it.
+// The code is "not_found", the code of this error before, because a script
+// can read it. A read error of the state shows as itself.
 func restoreNotDeletedErr(ctx context.Context, a *app.App, r resource, id int64, uid string) error {
 	if uid == "" {
-		if _, deleted, err := r.purgeCandidate(ctx, a, id); err == nil && !deleted {
-			return errNotFoundf("%s %d is not in the trash; it is live", r.name, id)
+		_, deleted, err := r.purgeCandidate(ctx, a, id)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return errNotFoundf("%s %d not found (may have been purged)", r.name, id)
+		case err != nil:
+			return fmt.Errorf("restore %s: %w", r.name, err)
+		case deleted:
+			return errNotFoundf("%s %d is in the trash, but no delete of it can come back by this ID; see %s list --include-deleted", r.name, id, r.name)
 		}
-		return errNotFoundf("%s %d not found (may have been purged)", r.name, id)
+		return errNotFoundf("%s %d is not in the trash; it is live", r.name, id)
 	}
 	live, trashed, err := r.uidState(ctx, a, uid)
 	switch {
 	case err != nil:
 		return fmt.Errorf("restore %s: %w", r.name, err)
-	case live && trashed:
+	case trashed && live:
 		return errNotFoundf("%s %q is live, and no delete of the UID can come back by UID; restore a row in the trash by its ID (see %s list --include-deleted)",
+			r.name, safeText(uid), r.name)
+	case trashed:
+		return errNotFoundf("no delete of %s uid %q can come back by UID; restore each row in the trash by its ID (see %s list --include-deleted)",
 			r.name, safeText(uid), r.name)
 	case live:
 		return errNotFoundf("no %s with uid %q is in the trash; it is live", r.name, safeText(uid))

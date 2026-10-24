@@ -486,7 +486,7 @@ On Linux this proxies "systemctl --user status chroncal-alarm.timer".
 On macOS it proxies "launchctl list com.chroncal.alarm".
 On Windows it proxies "schtasks /Query /TN chroncal-alarm /V /FO LIST".
 
-With --output json or yaml, the command prints one object:
+With --output json, the command prints one object:
   - os: the operating system
   - command: the command that the status runs ([] when there is none)
   - exit_code: the exit code of that command
