@@ -538,13 +538,14 @@ WHERE c.id = sqlc.arg(calendar_id) AND c.account_id IS NOT NULL AND c.account_id
   AND NOT EXISTS (SELECT 1 FROM tombstones t WHERE t.calendar_id = c.id AND t.uid = x.uid)
 ON CONFLICT(calendar_id, uid) DO NOTHING;
 
--- name: SettleUntakeableEditsInCalendar :exec
+-- name: SettleUntakeableEditsInCalendar :execrows
 -- Clear the mark of each pushed row of a relinked calendar whose collection
 -- cannot take the edit: a read-only collection, or a collection that does
 -- not list the component of the row (remote_components). An edit while the
 -- calendar had no account marked such a row (issue #876). No push sends
--- it, so the row would stay dirty with no end. The etag goes too, so the
--- next pull reads the server body. A row with an open conflict and a moved
+-- it, so the row would stay dirty with no end. The etag goes too, and the
+-- engine clears the sync token, so the next pull reads the server body. A
+-- row with an open conflict and a moved
 -- copy keep their mark: the conflict and the move rules own them. The
 -- pass of a calendar with relink_pending runs it.
 UPDATE sync_resources SET dirty = 0, etag = ''
@@ -567,7 +568,7 @@ WHERE sync_resources.calendar_id = sqlc.arg(calendar_id)
     SELECT 1 FROM tombstones t
     WHERE t.uid = sync_resources.uid AND t.moved_to_calendar_id = sync_resources.calendar_id);
 
--- name: SettleUntakeableTombstonesInCalendar :exec
+-- name: SettleUntakeableTombstonesInCalendar :execrows
 -- Drop each tombstone with an href of a relinked calendar whose collection
 -- is read-only. A delete while the calendar had no account wrote it (issue
 -- #876). The tombstone pass skips a read-only calendar, so no DELETE ever

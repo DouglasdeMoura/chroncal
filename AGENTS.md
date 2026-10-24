@@ -31,8 +31,8 @@ Integration packages and infrastructure packages do not use the `NewService` sha
 
   An account removal keeps `remote_url`, the sync rows, and the tombstones, and it sets `calendars.relink_pending` (issue #876). These rules apply:
 
-  - While the calendar has no account, an edit marks the existing sync row of the item (`storage.CalendarAwaitsRelink`). These calendars get no mark, because no relink takes them: a calendar with a local directory, a declared calendar (`Apply` clears the flag), and two calendars with the same `remote_url`.
-  - A pass of the relinked calendar clears the mark of a row, and drops the tombstone, that the collection cannot take (`SettleUntakeableEditsInCalendar`, `SettleUntakeableTombstonesInCalendar`).
+  - While the calendar has no account, an edit marks the existing sync row of the item (`storage.CalendarAwaitsRelink`). The mark has no exceptions. A mark on a calendar that no relink takes does nothing, but a missed mark loses the edit.
+  - A pass of the relinked calendar clears the mark of a row, and drops the tombstone, that the collection cannot take (`SettleUntakeableEditsInCalendar`, `SettleUntakeableTombstonesInCalendar`). A settled row clears the sync token, so the next pull reads the server body.
   - While an unsent change of a pushed item exists, a server-wins pass uses the prompt strategy (`Engine.relinkStrategy`).
   - A clean pass with no unsent change clears the flag (`Engine.settleRelink`).
 - **caldav** - Low-level CalDAV client (discovery, REPORT, PROPFIND, VFREEBUSY). Constructor: `NewClient`

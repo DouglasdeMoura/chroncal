@@ -133,53 +133,8 @@ func TestRelinkToAReadOnlyCollectionSettlesTheEdit(t *testing.T) {
 	if err != nil || sr.Dirty != 0 || sr.Etag != "" || sr.RemoteUrl == "" {
 		t.Fatalf("sync row after the relink = %+v, %v; want a clean row with its href and no etag", sr, err)
 	}
-}
-
-// TestNoMarkForACalendarWithALocalDirectory gives a calendar with no
-// account a local directory. No link takes the calendar again, so an edit
-// must not mark its sync row (issue #876).
-func TestNoMarkForACalendarWithALocalDirectory(t *testing.T) {
-	t.Parallel()
-	engine, q, _, calA, _ := newICloudPairEngine(t)
-	ctx := context.Background()
-	evt := createPushedEvent(t, engine, calA)
-	cal, err := q.GetCalendar(ctx, calA)
-	if err != nil {
-		t.Fatalf("GetCalendar: %v", err)
-	}
-	if err := q.ClearRemoteLinksByAccount(ctx, cal.AccountID); err != nil {
-		t.Fatalf("ClearRemoteLinksByAccount: %v", err)
-	}
-	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET local_path = '/tmp/x' WHERE id = ?`, calA); err != nil {
-		t.Fatalf("set local path: %v", err)
-	}
-	editTitle(t, engine, evt, "Dentist (local)")
-	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID}); err != nil || sr.Dirty != 0 {
-		t.Fatalf("sync row = %+v, %v; want no mark", sr, err)
-	}
-}
-
-// TestNoMarkForTwoCalendarsOfOneCollection unlinks two calendars with the
-// same remote_url. The account import relinks neither of them, so an edit
-// must not mark a sync row (issue #876).
-func TestNoMarkForTwoCalendarsOfOneCollection(t *testing.T) {
-	t.Parallel()
-	engine, q, _, calA, calB := newICloudPairEngine(t)
-	ctx := context.Background()
-	evt := createPushedEvent(t, engine, calA)
-	cal, err := q.GetCalendar(ctx, calA)
-	if err != nil {
-		t.Fatalf("GetCalendar: %v", err)
-	}
-	if err := q.ClearRemoteLinksByAccount(ctx, cal.AccountID); err != nil {
-		t.Fatalf("ClearRemoteLinksByAccount: %v", err)
-	}
-	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET remote_url = '/cal/a/' WHERE id = ?`, calB); err != nil {
-		t.Fatalf("seed twin: %v", err)
-	}
-	editTitle(t, engine, evt, "Dentist (local)")
-	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID}); err != nil || sr.Dirty != 0 {
-		t.Fatalf("sync row = %+v, %v; want no mark", sr, err)
+	if cal, err := q.GetCalendar(ctx, calA); err != nil || storage.NullableToString(cal.SyncToken) != "" {
+		t.Fatalf("sync token = %q, %v; want none, so the next pull is a full pull", storage.NullableToString(cal.SyncToken), err)
 	}
 }
 

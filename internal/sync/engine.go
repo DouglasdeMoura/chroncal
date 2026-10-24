@@ -1149,11 +1149,19 @@ func (e *Engine) relinkStrategy(ctx context.Context, cal storage.Calendar, strat
 	if cal.RelinkPending == 0 {
 		return strategy, nil
 	}
-	if err := e.q.SettleUntakeableEditsInCalendar(ctx, cal.ID); err != nil {
+	edits, err := e.q.SettleUntakeableEditsInCalendar(ctx, cal.ID)
+	if err != nil {
 		return strategy, fmt.Errorf("settle the edits that the collection cannot take: %w", err)
 	}
-	if err := e.q.SettleUntakeableTombstonesInCalendar(ctx, cal.ID); err != nil {
+	if _, err := e.q.SettleUntakeableTombstonesInCalendar(ctx, cal.ID); err != nil {
 		return strategy, fmt.Errorf("settle the deletes that the collection cannot take: %w", err)
+	}
+	if edits > 0 {
+		// An incremental pull lists no unchanged object. A full pull reads
+		// the server body of each settled row again.
+		if err := e.q.UpdateCalendarSyncState(ctx, storage.UpdateCalendarSyncStateParams{ID: cal.ID}); err != nil {
+			return strategy, fmt.Errorf("reset the sync token after the settle: %w", err)
+		}
 	}
 	has, err := e.q.HasUnsentServerChangesInCalendar(ctx, cal.ID)
 	if err != nil {
