@@ -160,11 +160,18 @@ func (q *Queries) ReconcileAfterRestore(ctx context.Context, calendarID int64, u
 // from the relink (issue #866).
 func markCalendarDirty(ctx context.Context, db DBTX, calendarID int64, uid, ownerType string) error {
 	// The mark runs on each edit, so it reads the columns of the two
-	// predicates only.
+	// predicates only. twins counts the other calendars with no account and
+	// the same remote_url. The account import relinks no calendar of such a
+	// set (uniqueUnlinkedByRemoteIdentity), so none of them gets a mark.
 	var cal Calendar
+	var twins int64
 	err := db.QueryRowContext(ctx,
-		`SELECT account_id, relink_pending, local_path FROM calendars WHERE id = ?`, calendarID,
-	).Scan(&cal.AccountID, &cal.RelinkPending, &cal.LocalPath)
+		`SELECT c.account_id, c.relink_pending, c.local_path,
+		        (SELECT COUNT(*) FROM calendars o
+		         WHERE o.id != c.id AND (o.account_id IS NULL OR o.account_id = 0)
+		           AND COALESCE(o.remote_url, '') != '' AND o.remote_url = c.remote_url)
+		 FROM calendars c WHERE c.id = ?`, calendarID,
+	).Scan(&cal.AccountID, &cal.RelinkPending, &cal.LocalPath, &twins)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -172,7 +179,7 @@ func markCalendarDirty(ctx context.Context, db DBTX, calendarID int64, uid, owne
 		return err
 	}
 	if !CalendarLinked(cal) {
-		if !CalendarAwaitsRelink(cal) {
+		if !CalendarAwaitsRelink(cal) || twins > 0 {
 			return nil
 		}
 		return New(db).MarkSyncResourceDirty(ctx, MarkSyncResourceDirtyParams{CalendarID: calendarID, Uid: uid})

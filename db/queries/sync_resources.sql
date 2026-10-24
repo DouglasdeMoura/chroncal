@@ -567,6 +567,22 @@ WHERE sync_resources.calendar_id = sqlc.arg(calendar_id)
     SELECT 1 FROM tombstones t
     WHERE t.uid = sync_resources.uid AND t.moved_to_calendar_id = sync_resources.calendar_id);
 
+-- name: SettleUntakeableTombstonesInCalendar :exec
+-- Drop each tombstone with an href of a relinked calendar whose collection
+-- is read-only. A delete while the calendar had no account wrote it (issue
+-- #876). The tombstone pass skips a read-only calendar, so no DELETE ever
+-- goes out. The item stays in the local trash. A move tombstone stays: the
+-- move rules own it. The pass of a calendar with relink_pending runs it.
+DELETE FROM tombstones
+WHERE tombstones.calendar_id = sqlc.arg(calendar_id)
+  AND tombstones.remote_url != ''
+  AND tombstones.moved_to_calendar_id IS NULL
+  AND EXISTS (
+    SELECT 1 FROM calendars c
+    WHERE c.id = tombstones.calendar_id AND c.relink_pending = 1
+      AND c.account_id IS NOT NULL AND c.account_id != 0
+      AND lower(trim(c.remote_access)) = 'read');
+
 -- name: HasUnsentServerChangesInCalendar :one
 -- Report whether a calendar holds a local change of a pushed item that no
 -- push sent: a dirty row with an href, or a tombstone with an href. A pass

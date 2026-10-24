@@ -1601,6 +1601,28 @@ func (q *Queries) SettleUntakeableEditsInCalendar(ctx context.Context, calendarI
 	return err
 }
 
+const settleUntakeableTombstonesInCalendar = `-- name: SettleUntakeableTombstonesInCalendar :exec
+DELETE FROM tombstones
+WHERE tombstones.calendar_id = ?1
+  AND tombstones.remote_url != ''
+  AND tombstones.moved_to_calendar_id IS NULL
+  AND EXISTS (
+    SELECT 1 FROM calendars c
+    WHERE c.id = tombstones.calendar_id AND c.relink_pending = 1
+      AND c.account_id IS NOT NULL AND c.account_id != 0
+      AND lower(trim(c.remote_access)) = 'read')
+`
+
+// Drop each tombstone with an href of a relinked calendar whose collection
+// is read-only. A delete while the calendar had no account wrote it (issue
+// #876). The tombstone pass skips a read-only calendar, so no DELETE ever
+// goes out. The item stays in the local trash. A move tombstone stays: the
+// move rules own it. The pass of a calendar with relink_pending runs it.
+func (q *Queries) SettleUntakeableTombstonesInCalendar(ctx context.Context, calendarID int64) error {
+	_, err := q.db.ExecContext(ctx, settleUntakeableTombstonesInCalendar, calendarID)
+	return err
+}
+
 const upsertDirtySyncResourceOfCalendar = `-- name: UpsertDirtySyncResourceOfCalendar :exec
 INSERT INTO sync_resources (calendar_id, uid, owner_type, dirty, sync_strategy)
 VALUES (?1, ?2, ?3, 1, 'sync-token')

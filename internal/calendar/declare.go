@@ -323,6 +323,14 @@ func (s *Service) Apply(ctx context.Context, declared []Declared) (warnings []st
 			warnings = append(warnings, fmt.Sprintf("calendar %q: %v", name, ErrDeclaredRemote))
 			continue
 		}
+		// A declared calendar stays local, so no relink takes it again. An
+		// account removal can leave relink_pending on it: clear the flag,
+		// so an edit marks no sync row (issue #876).
+		if ok && cal.RemoteURL != "" {
+			if err := s.q.ClearCalendarRelinkPending(ctx, cal.ID); err != nil {
+				return warnings, fmt.Errorf("calendar %q: clear the relink flag: %w", name, err)
+			}
+		}
 		// adopted marks a row that existed before this apply. A reset of
 		// one of its fields gets a warning; a new row gets none.
 		adopted := ok

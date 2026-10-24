@@ -158,3 +158,64 @@ func TestNoMarkForACalendarWithALocalDirectory(t *testing.T) {
 		t.Fatalf("sync row = %+v, %v; want no mark", sr, err)
 	}
 }
+
+// TestNoMarkForTwoCalendarsOfOneCollection unlinks two calendars with the
+// same remote_url. The account import relinks neither of them, so an edit
+// must not mark a sync row (issue #876).
+func TestNoMarkForTwoCalendarsOfOneCollection(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	evt := createPushedEvent(t, engine, calA)
+	cal, err := q.GetCalendar(ctx, calA)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if err := q.ClearRemoteLinksByAccount(ctx, cal.AccountID); err != nil {
+		t.Fatalf("ClearRemoteLinksByAccount: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET remote_url = '/cal/a/' WHERE id = ?`, calB); err != nil {
+		t.Fatalf("seed twin: %v", err)
+	}
+	editTitle(t, engine, evt, "Dentist (local)")
+	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID}); err != nil || sr.Dirty != 0 {
+		t.Fatalf("sync row = %+v, %v; want no mark", sr, err)
+	}
+}
+
+// TestRelinkToAReadOnlyCollectionDropsTheDelete deletes a pushed event while
+// its calendar has no account, and the collection is read-only at the
+// relink. The tombstone pass skips a read-only calendar, so the pass drops
+// the tombstone, and the next pass clears relink_pending (issue #876).
+func TestRelinkToAReadOnlyCollectionDropsTheDelete(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	evt := createPushedEvent(t, engine, calA)
+	cal, err := q.GetCalendar(ctx, calA)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	accountID := *cal.AccountID
+	if err := q.ClearRemoteLinksByAccount(ctx, &accountID); err != nil {
+		t.Fatalf("ClearRemoteLinksByAccount: %v", err)
+	}
+	if err := engine.events.Delete(ctx, evt.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE calendars SET remote_access = 'read' WHERE id = ?`, calA); err != nil {
+		t.Fatalf("set read-only: %v", err)
+	}
+	if err := calendar.NewService(engine.db, q).LinkToAccount(ctx, calA, accountID, "/cal/a/"); err != nil {
+		t.Fatalf("LinkToAccount: %v", err)
+	}
+	if cal, err = q.GetCalendar(ctx, calA); err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if _, err := engine.relinkStrategy(ctx, cal, ConflictServerWins); err != nil {
+		t.Fatalf("relinkStrategy: %v", err)
+	}
+	if has, err := q.HasUnsentServerChangesInCalendar(ctx, calA); err != nil || has != 0 {
+		t.Fatalf("unsent changes = %d, %v; want none after the settle", has, err)
+	}
+}

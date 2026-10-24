@@ -1140,15 +1140,20 @@ func detectOwnerType(result icalPkg.ImportResult) string {
 // relink, it can hold a local edit or a delete of a pushed item that no
 // push sent. A server-wins pass would adopt the server body over that
 // edit. While such a change exists, the pass uses ConflictPrompt: a 412
-// records an open conflict, and the edit stays dirty. The relink also
-// clears the mark of a row that the collection cannot take
-// (SettleUntakeableEditsInCalendar).
+// records an open conflict, and the edit stays dirty. Each such pass first
+// clears the mark of a row and drops the tombstone that the collection
+// cannot take (SettleUntakeableEditsInCalendar and
+// SettleUntakeableTombstonesInCalendar). The access of the collection can
+// become known after the link, so each pass runs the settle again.
 func (e *Engine) relinkStrategy(ctx context.Context, cal storage.Calendar, strategy ConflictStrategy) (ConflictStrategy, error) {
 	if cal.RelinkPending == 0 {
 		return strategy, nil
 	}
 	if err := e.q.SettleUntakeableEditsInCalendar(ctx, cal.ID); err != nil {
 		return strategy, fmt.Errorf("settle the edits that the collection cannot take: %w", err)
+	}
+	if err := e.q.SettleUntakeableTombstonesInCalendar(ctx, cal.ID); err != nil {
+		return strategy, fmt.Errorf("settle the deletes that the collection cannot take: %w", err)
 	}
 	has, err := e.q.HasUnsentServerChangesInCalendar(ctx, cal.ID)
 	if err != nil {
