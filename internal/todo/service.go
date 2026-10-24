@@ -504,11 +504,17 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Todo, error) {
 	return t, nil
 }
 
-func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, error) {
+// normalize applies the defaults of an update to p and checks its timing.
+// Update, CreateOverride, and DeleteInstance share it.
+func (p *UpdateParams) normalize() error {
 	p.Status, p.Class = defaults(p.Status, p.Class)
 	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
 	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
-	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
+	return validateTiming(p.DueDate, p.StartDate, p.Duration)
+}
+
+func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Todo, error) {
+	if err := p.normalize(); err != nil {
 		return Todo{}, err
 	}
 
