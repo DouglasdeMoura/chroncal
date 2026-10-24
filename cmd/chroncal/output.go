@@ -868,6 +868,12 @@ func lastSyncOK(c calendar.Calendar) *bool {
 	if c.AccountID == 0 {
 		return nil
 	}
-	ok := c.LastSyncAt != "" && c.LastSyncError == ""
+	ok := syncWasClean(c.LastSyncAt, c.LastSyncError)
 	return &ok
+}
+
+// syncWasClean is the rule of last_sync_ok: a clean sync happened, and no
+// error followed it. A failed sync keeps last_sync_at (issue #886).
+func syncWasClean(lastSyncAt, lastSyncError string) bool {
+	return lastSyncAt != "" && lastSyncError == ""
 }

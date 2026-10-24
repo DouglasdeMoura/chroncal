@@ -326,8 +326,11 @@ func checkConnectFree(ctx context.Context, q *storage.Queries, cal Calendar, lin
 }
 
 // linkIdentityChanged reports whether link moves cal to another server, user,
-// or auth type than its current account. A calendar with no account, or
-// with a gone account, has no identity to keep, so it reports false.
+// or auth type than its current account. The values compare as
+// checkConnectFree compares them. LinkCalendarToAccount clears the sync
+// health when the account or the collection changes. This check covers a
+// relink that updates the account row in place. A calendar with no account,
+// or with a gone account, reports false: the link query covers it.
 func (s *Service) linkIdentityChanged(ctx context.Context, cal Calendar, serverURL string, link RemoteLink) (bool, error) {
 	if cal.AccountID == 0 {
 		return false, nil
@@ -339,20 +342,21 @@ func (s *Service) linkIdentityChanged(ctx context.Context, cal Calendar, serverU
 	if err != nil {
 		return false, fmt.Errorf("get account: %w", err)
 	}
-	return current.ServerUrl != serverURL || current.AuthType != NormalizeAuthType(link.AuthType) ||
-		current.Username != link.Username, nil
+	return strings.TrimRight(strings.TrimSpace(current.ServerUrl), "/") != strings.TrimRight(strings.TrimSpace(serverURL), "/") ||
+		NormalizeAuthType(current.AuthType) != NormalizeAuthType(link.AuthType) ||
+		!strings.EqualFold(strings.TrimSpace(current.Username), strings.TrimSpace(link.Username)), nil
 }
 
-// clearLastSyncOnNewIdentity drops last_sync_at of calendarID when the link
-// changes the identity. A failed sync keeps last_sync_at (issue #886), so a
-// kept time of the old identity would claim a clean sync that the new
+// clearLastSyncOnNewIdentity drops the sync health of calendarID when the
+// link changes the identity. A failed sync keeps last_sync_at (issue #886),
+// so a kept time of the old identity would claim a clean sync that the new
 // identity never had.
 func clearLastSyncOnNewIdentity(ctx context.Context, qtx *storage.Queries, calendarID int64, changed bool) error {
 	if !changed {
 		return nil
 	}
-	if err := qtx.ClearCalendarLastSyncAt(ctx, calendarID); err != nil {
-		return fmt.Errorf("clear the last sync time: %w", err)
+	if err := qtx.ClearCalendarSyncHealth(ctx, calendarID); err != nil {
+		return fmt.Errorf("clear the sync health: %w", err)
 	}
 	return nil
 }

@@ -312,7 +312,7 @@ func renderSyncStatuses(cmd *cobra.Command, statuses []syncPkg.SyncStatus) error
 				"last_sync_at":           s.LastSyncAt,
 				"last_sync_attempted_at": s.LastSyncAttemptedAt,
 				"last_sync_error":        s.LastSyncError,
-				"last_sync_ok":           s.LastSyncAt != "" && s.LastSyncError == "",
+				"last_sync_ok":           syncWasClean(s.LastSyncAt, s.LastSyncError),
 				"pending_push":           s.PendingPush,
 				"conflicts":              s.Conflicts,
 				"stuck_hrefs":            stuck,

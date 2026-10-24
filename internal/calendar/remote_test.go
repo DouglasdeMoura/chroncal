@@ -1113,3 +1113,52 @@ func TestConnect_ClearsTheLastSyncOfAnotherIdentity(t *testing.T) {
 		t.Fatalf("last_sync_at = %q after a relink with another user; want none", got)
 	}
 }
+
+// TestLinkToAccountClearsTheSyncHealthOfAnotherLink links a calendar with a
+// sync history to another account. The link query must clear the sync
+// health, so the old link does not claim a clean or a failed sync for the
+// new one. A link to the same account and collection keeps it (issue
+// #886).
+func TestLinkToAccountClearsTheSyncHealthOfAnotherLink(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	ids := make([]int64, 0, 2)
+	for _, name := range []string{"one", "two"} {
+		account, err := svc.q.CreateAccount(ctx, storage.CreateAccountParams{Name: name, ServerUrl: "https://example.com", AuthType: "basic", Username: name})
+		if err != nil {
+			t.Fatalf("CreateAccount: %v", err)
+		}
+		ids = append(ids, account.ID)
+	}
+	const url = "https://example.com/cal/work/"
+	health := func() string {
+		t.Helper()
+		var at, attempted, errText string
+		if err := svc.db.QueryRowContext(ctx, `SELECT COALESCE(last_sync_at, ''), COALESCE(last_sync_attempted_at, ''), COALESCE(last_sync_error, '') FROM calendars WHERE id = 1`).Scan(&at, &attempted, &errText); err != nil {
+			t.Fatalf("read health: %v", err)
+		}
+		return at + "|" + attempted + "|" + errText
+	}
+	stamp := func() {
+		t.Helper()
+		if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET last_sync_at = 'a', last_sync_attempted_at = 'b', last_sync_error = 'c' WHERE id = 1`); err != nil {
+			t.Fatalf("stamp: %v", err)
+		}
+	}
+	if err := svc.LinkToAccount(ctx, 1, ids[0], url); err != nil {
+		t.Fatalf("LinkToAccount: %v", err)
+	}
+	stamp()
+	if err := svc.LinkToAccount(ctx, 1, ids[0], url); err != nil {
+		t.Fatalf("LinkToAccount again: %v", err)
+	}
+	if got := health(); got != "a|b|c" {
+		t.Fatalf("health after the same link = %q; want it kept", got)
+	}
+	if err := svc.LinkToAccount(ctx, 1, ids[1], url); err != nil {
+		t.Fatalf("LinkToAccount to another account: %v", err)
+	}
+	if got := health(); got != "||" {
+		t.Fatalf("health after a link to another account = %q; want it cleared", got)
+	}
+}

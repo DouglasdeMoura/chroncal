@@ -47,17 +47,32 @@ UPDATE calendars SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = sqlc.arg(id);
 
--- name: ClearCalendarLastSyncAt :exec
--- A relink to another server, user, or auth type drops the time of the
--- last clean sync of the old identity (issue #886).
-UPDATE calendars SET last_sync_at = '' WHERE id = ?;
-
--- name: LinkCalendarToAccount :exec
+-- name: ClearCalendarSyncHealth :exec
+-- A relink to another server, user, or auth type of the same account row
+-- drops the sync health of the old identity (issue #886).
 UPDATE calendars SET
-    account_id = ?,
-    remote_url = ?,
+    last_sync_at = '',
+    last_sync_attempted_at = '',
+    last_sync_error = '',
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ?;
+
+-- name: LinkCalendarToAccount :exec
+-- A change of account_id or remote_url drops the sync health: a failed
+-- sync keeps last_sync_at (issue #886), so a kept time of the old link
+-- would claim a clean sync that the new link never had. The CASE reads
+-- the old values of the row.
+UPDATE calendars SET
+    last_sync_at = CASE WHEN account_id IS sqlc.narg(account_id) AND remote_url IS sqlc.narg(remote_url)
+        THEN last_sync_at ELSE '' END,
+    last_sync_attempted_at = CASE WHEN account_id IS sqlc.narg(account_id) AND remote_url IS sqlc.narg(remote_url)
+        THEN last_sync_attempted_at ELSE '' END,
+    last_sync_error = CASE WHEN account_id IS sqlc.narg(account_id) AND remote_url IS sqlc.narg(remote_url)
+        THEN last_sync_error ELSE '' END,
+    account_id = sqlc.narg(account_id),
+    remote_url = sqlc.narg(remote_url),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = sqlc.arg(id);
 
 -- name: MarkCalendarColorDirty :exec
 UPDATE calendars SET

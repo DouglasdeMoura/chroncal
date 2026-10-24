@@ -3,6 +3,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
@@ -982,5 +983,24 @@ func TestEngineSyncCalendarKeepsLastSyncAtOnFailure(t *testing.T) {
 	kept, errText := health()
 	if kept != good || errText == "" {
 		t.Fatalf("after the failed pass: last_sync_at=%q last_sync_error=%q; want %q and the error", kept, errText, good)
+	}
+}
+
+// TestUpdateSyncHealthRecordsAFailureWithNoText gives a failed run an error
+// with no text. The run must still record an error, or the kept
+// last_sync_at looks like a clean sync (issue #886).
+func TestUpdateSyncHealthRecordsAFailureWithNoText(t *testing.T) {
+	t.Parallel()
+	engine, _, q := newTestEngine(t)
+	ctx := context.Background()
+	if err := engine.updateSyncHealth(ctx, 1, "2026-10-20T08:00:00Z", &SyncResult{Errors: []error{errors.New("")}}, nil); err != nil {
+		t.Fatalf("updateSyncHealth: %v", err)
+	}
+	row, err := q.GetCalendar(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetCalendar: %v", err)
+	}
+	if got := storage.NullableToString(row.LastSyncError); got != "sync failed" {
+		t.Fatalf("last_sync_error = %q; want %q", got, "sync failed")
 	}
 }
