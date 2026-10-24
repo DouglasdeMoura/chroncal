@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -94,14 +95,7 @@ exposes, import every usable collection, and complete their initial sync.`,
 				return rollback(fmt.Errorf("discover account calendars: %w", err))
 			}
 			selected := addableCalendarPaths(discovery)
-			linkedElsewhere := 0
-			for _, remote := range discovery.Calendars {
-				if remote.LinkedBy != "" && remote.Importable && !remote.Missing {
-					linkedElsewhere++
-					fmt.Fprintf(cmd.ErrOrStderr(), "chroncal: skipped the calendar %q: the local calendar %q links it already\n",
-						textsafe.Display(remote.Name), textsafe.Display(remote.LinkedBy))
-				}
-			}
+			linkedElsewhere := printLinkedSkips(cmd.ErrOrStderr(), discovery)
 			if len(selected) == 0 && linkedElsewhere > 0 {
 				return rollback(errInvalidInputf(
 					"account %q has no calendar to add: other local calendars link each usable calendar already",
@@ -546,7 +540,9 @@ local calendar links cannot be added: --all skips it, and --calendar refuses it.
 				return err
 			}
 			selected := addableCalendarPaths(discovery)
-			if !addAll {
+			if addAll {
+				printLinkedSkips(cmd.ErrOrStderr(), discovery)
+			} else {
 				selected, err = resolveDiscoveredSelections(discovery, calendarRefs)
 				if err != nil {
 					return err
@@ -787,6 +783,21 @@ func refreshDiscoveryImportState(
 		}
 	}
 	return nil
+}
+
+// printLinkedSkips prints one notice for each usable collection that another
+// local calendar links (issue #874). A selection of all collections skips
+// such a collection. It returns the count of the notices.
+func printLinkedSkips(w io.Writer, discovery account.Discovery) int {
+	skipped := 0
+	for _, remote := range discovery.Calendars {
+		if remote.LinkedBy != "" && remote.Importable && !remote.Missing && !remote.Imported {
+			skipped++
+			fmt.Fprintf(w, "chroncal: skipped the calendar %q: the local calendar %q links it already\n",
+				textsafe.Display(remote.Name), textsafe.Display(remote.LinkedBy))
+		}
+	}
+	return skipped
 }
 
 func addableCalendarPaths(discovery account.Discovery) []string {

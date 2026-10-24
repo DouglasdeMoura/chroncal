@@ -20,10 +20,10 @@ var ErrCollectionLinked = model.NewInputError(
 
 // CollectionKey returns the identity of a remote collection. It resolves a
 // relative remoteURL against serverURL. It changes the scheme and the host
-// to lowercase, and it removes a default port and the user information. It
-// cleans the path (dot segments, double slashes) and removes the trailing
-// slash. It returns "" for an empty remoteURL. The account discovery and
-// the calendar link use this one rule.
+// to lowercase, and it removes a default port. It cleans the path (dot
+// segments, double slashes) and removes the trailing slash. It keeps the
+// user information: another user can see the collection with other rights.
+// It returns "" for an empty remoteURL.
 func CollectionKey(remoteURL, serverURL string) string {
 	remoteURL = strings.TrimSpace(remoteURL)
 	if remoteURL == "" {
@@ -41,7 +41,6 @@ func CollectionKey(remoteURL, serverURL string) string {
 	if port := ref.Port(); (ref.Scheme == "https" && port == "443") || (ref.Scheme == "http" && port == "80") {
 		ref.Host = ref.Hostname()
 	}
-	ref.User = nil
 	if ref.Path != "" {
 		ref.Path = path.Clean(ref.Path)
 	}
@@ -127,19 +126,6 @@ func (l *CollectionLinks) Find(remoteURL, serverURL, username string, scope Coll
 	return storage.Calendar{}, false
 }
 
-// FindCollectionLink is LoadCollectionLinks and Find for one collection.
-func FindCollectionLink(ctx context.Context, q *storage.Queries, remoteURL, serverURL, username string, scope CollectionLinkScope) (storage.Calendar, bool, error) {
-	if CollectionKey(remoteURL, serverURL) == "" {
-		return storage.Calendar{}, false, nil
-	}
-	links, err := LoadCollectionLinks(ctx, q)
-	if err != nil {
-		return storage.Calendar{}, false, err
-	}
-	other, linked := links.Find(remoteURL, serverURL, username, scope)
-	return other, linked, nil
-}
-
 // collectionLinkedError is ErrCollectionLinked with the name of the other
 // calendar.
 type collectionLinkedError struct{ name string }
@@ -157,13 +143,17 @@ func (e *collectionLinkedError) InvalidInput() bool { return true }
 func CollectionLinkedError(name string) error { return &collectionLinkedError{name: name} }
 
 // CheckCollectionFree returns ErrCollectionLinked, with the name of the other
-// calendar, when FindCollectionLink finds a link of the collection.
+// calendar, when a calendar of another account links the collection
+// remoteURL with the user username (CollectionLinks.Find).
 func CheckCollectionFree(ctx context.Context, q *storage.Queries, remoteURL, serverURL, username string, scope CollectionLinkScope) error {
-	other, linked, err := FindCollectionLink(ctx, q, remoteURL, serverURL, username, scope)
+	if CollectionKey(remoteURL, serverURL) == "" {
+		return nil
+	}
+	links, err := LoadCollectionLinks(ctx, q)
 	if err != nil {
 		return err
 	}
-	if linked {
+	if other, linked := links.Find(remoteURL, serverURL, username, scope); linked {
 		return CollectionLinkedError(other.Name)
 	}
 	return nil
