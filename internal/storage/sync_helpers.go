@@ -585,6 +585,30 @@ var ErrPendingMove = errors.New("the item waits for its move")
 // server then holds two copies (issue #841).
 var ErrCrossCalendarImport = errors.New("the item lives in another calendar")
 
+// ErrUIDInOtherCalendar reports a write of a todo or a journal into one
+// calendar while a row of its UID lives in another calendar, live or in the
+// trash. The key of these domains spans calendars, so the upsert would
+// write the row of the other calendar. The upsert never moves a row: a
+// move uses the rules of uidmove (issue #911).
+var ErrUIDInOtherCalendar = errors.New("the UID lives in another calendar")
+
+// CheckUIDInOneCalendar returns ErrUIDInOtherCalendar when a row of uid
+// lives outside calendarID. outside reads the calendar of such a row in
+// the transaction of q, or returns sql.ErrNoRows. ownerType is "todo" or
+// "journal".
+func CheckUIDInOneCalendar(ctx context.Context, q *Queries, ownerType, uid string, calendarID int64, outside func(context.Context) (int64, error)) error {
+	other, err := outside(ctx)
+	found, err := Found(err)
+	if err != nil {
+		return fmt.Errorf("check the calendars of %s: %w", uid, err)
+	}
+	if !found {
+		return nil
+	}
+	return fmt.Errorf("%w: %s %s lives in calendar %q, not in calendar %q; a %s UID cannot be in two calendars",
+		ErrUIDInOtherCalendar, ownerType, uid, CalendarLabel(ctx, q, other), CalendarLabel(ctx, q, calendarID), ownerType)
+}
+
 // ClearTombstonesOfUID deletes the tombstones of uid in calendarID through
 // q. A tombstone with the source_gone mark names a server object that is
 // gone. So the sync row first drops its href and its etag, and the next

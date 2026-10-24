@@ -655,6 +655,18 @@ func (e *Engine) importFetchedResource(ctx context.Context, calendarID int64, to
 		return uid, false, warnings, nil
 	}
 
+	// A todo or a journal whose UID lives in another calendar stays out of
+	// this calendar: the upsert never moves a row (issue #911). The pull
+	// skips the body with a warning, so the rest of the pull goes on and
+	// the sync-token advances. The body counts as present on the server,
+	// so no prune deletes it.
+	if w, skip, err := e.uidOfOtherCalendar(ctx, calendarID, uid, res.href, importResult); err != nil {
+		return uid, false, warnings, err
+	} else if skip {
+		logImportWarnings(e.logger, []ImportWarning{w})
+		return uid, false, append(warnings, w), nil
+	}
+
 	// Persist imported data to the database
 	revs, alarmWarnings, persistErr := e.persistImported(ctx, calendarID, importResult)
 	if persistErr != nil {
@@ -771,4 +783,29 @@ func (e *Engine) openConflictBlocksImport(ctx context.Context, calendarID int64,
 		return true, false
 	}
 	return open.RowDirty != 0, true
+}
+
+// uidOfOtherCalendar reports whether the todo or the journal of a fetched
+// body has a UID that a row of another calendar holds (issue #911). It
+// gives the warning of the skip. An event UID is per calendar, so an
+// event never skips here.
+func (e *Engine) uidOfOtherCalendar(ctx context.Context, calendarID int64, uid, href string, result icalPkg.ImportResult) (ImportWarning, bool, error) {
+	var err error
+	switch {
+	case len(result.Todos) > 0:
+		err = storage.CheckUIDInOneCalendar(ctx, e.q, "todo", uid, calendarID, func(ctx context.Context) (int64, error) {
+			return e.q.GetTodoCalendarOfUIDOutside(ctx, storage.GetTodoCalendarOfUIDOutsideParams{Uid: uid, CalendarID: calendarID})
+		})
+	case len(result.Journals) > 0:
+		err = storage.CheckUIDInOneCalendar(ctx, e.q, "journal", uid, calendarID, func(ctx context.Context) (int64, error) {
+			return e.q.GetJournalCalendarOfUIDOutside(ctx, storage.GetJournalCalendarOfUIDOutsideParams{Uid: uid, CalendarID: calendarID})
+		})
+	}
+	switch {
+	case errors.Is(err, storage.ErrUIDInOtherCalendar):
+		return ImportWarning{Path: href, UID: uid, Message: err.Error() + "; the pull keeps the server copy out of this calendar"}, true, nil
+	case err != nil:
+		return ImportWarning{}, false, err
+	}
+	return ImportWarning{}, false, nil
 }

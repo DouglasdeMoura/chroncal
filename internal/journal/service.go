@@ -428,6 +428,14 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Journal, err
 		}
 	}
 
+	// The key spans calendars, but the upsert never moves a row to another
+	// calendar (issue #911). A UID of another calendar stops the write.
+	if err := storage.CheckUIDInOneCalendar(ctx, qtx, "journal", p.UID, p.CalendarID, func(ctx context.Context) (int64, error) {
+		return qtx.GetJournalCalendarOfUIDOutside(ctx, storage.GetJournalCalendarOfUIDOutsideParams{Uid: p.UID, CalendarID: p.CalendarID})
+	}); err != nil {
+		return Journal{}, err
+	}
+
 	r, err := qtx.UpsertJournalByUID(ctx, storage.UpsertJournalByUIDParams{
 		Uid:            p.UID,
 		CalendarID:     p.CalendarID,

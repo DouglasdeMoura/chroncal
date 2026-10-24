@@ -443,6 +443,24 @@ func (q *Queries) GetTodoCalendarOfRow(ctx context.Context, id int64) (int64, er
 	return calendar_id, err
 }
 
+const getTodoCalendarOfUIDOutside = `-- name: GetTodoCalendarOfUIDOutside :one
+SELECT calendar_id FROM todos WHERE uid = ? AND calendar_id != ? LIMIT 1
+`
+
+type GetTodoCalendarOfUIDOutsideParams struct {
+	Uid        string
+	CalendarID int64
+}
+
+// The calendar of one row of a UID outside one calendar, live or in the
+// trash. The upsert refuses such a UID (issue #911).
+func (q *Queries) GetTodoCalendarOfUIDOutside(ctx context.Context, arg GetTodoCalendarOfUIDOutsideParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getTodoCalendarOfUIDOutside, arg.Uid, arg.CalendarID)
+	var calendar_id int64
+	err := row.Scan(&calendar_id)
+	return calendar_id, err
+}
+
 const getTodoIncludingDeleted = `-- name: GetTodoIncludingDeleted :one
 SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at, dtstamp, deleted_at FROM todos WHERE id = ?
 `
@@ -1338,7 +1356,6 @@ INSERT INTO todos (
     recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, dtstamp
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uid, recurrence_id) DO UPDATE SET
-    calendar_id = excluded.calendar_id,
     summary = excluded.summary, description = excluded.description,
     location = excluded.location, due_date = excluded.due_date,
     start_date = excluded.start_date, duration = excluded.duration,
@@ -1353,6 +1370,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     dtstamp = excluded.dtstamp,
     deleted_at = NULL,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE todos.calendar_id = excluded.calendar_id
 RETURNING id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at, dtstamp, deleted_at
 `
 
@@ -1386,6 +1404,10 @@ type UpsertTodoByUIDParams struct {
 // must know this. The pull path is safe. The engine excludes
 // tombstoned UIDs before this query runs (engine.go loads tombstones
 // first and skips them during pull).
+// NOTE: the key spans calendars, but the upsert never moves a row to
+// another calendar (issue #911). The service refuses a UID of another
+// calendar first. The WHERE of the update keeps the rule here too: a row
+// of another calendar gives no update and no returned row.
 func (q *Queries) UpsertTodoByUID(ctx context.Context, arg UpsertTodoByUIDParams) (Todo, error) {
 	row := q.db.QueryRowContext(ctx, upsertTodoByUID,
 		arg.Uid,
