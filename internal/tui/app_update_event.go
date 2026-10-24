@@ -200,7 +200,14 @@ func (m Model) handleEventViewLoaded(msg eventViewLoadedMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) handleEventDuplicate(msg EventDuplicateMsg) (tea.Model, tea.Cmd) {
-	form, cmd := NewEventFormModelForDuplicate(msg.Event, eventFormCalendars(m.calendars), m.theme, m.formDefaultCalendarID())
+	ev := msg.Event
+	if !m.viewDialogOpen {
+		// The day dialog and the agenda hold a display summary of the
+		// alarms (issue #912). A duplicate from them copies no alarms, as
+		// before. The event view loads the full alarms.
+		ev.Alarms = nil
+	}
+	form, cmd := NewEventFormModelForDuplicate(ev, eventFormCalendars(m.calendars), m.theme, m.formDefaultCalendarID())
 	if m.viewDialogOpen {
 		m.viewReturnEvent = msg.Event
 	}
