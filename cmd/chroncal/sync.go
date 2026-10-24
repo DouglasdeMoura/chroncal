@@ -84,7 +84,12 @@ func syncNewCalendars(
 	)
 	var syncErrs []error
 	for _, calendarID := range calendarIDs {
-		result, err := svc.SyncCalendar(ctx, calendarID, syncPkg.ConflictServerWins)
+		strategy, err := svc.FirstSyncStrategy(ctx, calendarID, syncPkg.ConflictServerWins)
+		if err != nil {
+			syncErrs = append(syncErrs, fmt.Errorf("initial sync for calendar %d: %w", calendarID, err))
+			continue
+		}
+		result, err := svc.SyncCalendar(ctx, calendarID, strategy)
 		if result != nil {
 			// The engine here runs with a discarded logger, so the result is
 			// the only place the first pull's import warnings surface.

@@ -365,6 +365,9 @@ func (s *Service) LinkToAccount(ctx context.Context, id, accountID int64, remote
 	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, id); err != nil {
 		return err
 	}
+	if err := qtx.SettleUntakeableEditsInCalendar(ctx, id); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

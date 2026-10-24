@@ -170,11 +170,16 @@ func relinkDiscoveredCalendar(ctx context.Context, qtx *storage.Queries, acct Ac
 	}
 	// Each local item of the relinked calendar gets a dirty sync row, so
 	// the next push uploads it (issue #866). A moved copy gets its sync row
-	// too (issue #841). Both run in the transaction of the relink.
+	// too (issue #841). An edit while the calendar had no account on a row
+	// that the collection cannot take loses its mark (issue #876). All run
+	// in the transaction of the relink.
 	if err := qtx.MarkLocalItemsDirtyInCalendar(ctx, calendarID); err != nil {
 		return err
 	}
 	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, calendarID); err != nil {
+		return err
+	}
+	if err := qtx.SettleUntakeableEditsInCalendar(ctx, calendarID); err != nil {
 		return err
 	}
 	return qtx.UpdateCalendarOwnerEmail(ctx, storage.UpdateCalendarOwnerEmailParams{
