@@ -112,8 +112,8 @@ replaces them on the override only.`,
 			if createOverride {
 				// An override is one occurrence, so the rule and the date
 				// lists of the series do not apply to it. An existing
-				// override row keeps the flags, so a stray rule on an
-				// imported row can still be cleared.
+				// override row keeps the flags, so the user can still
+				// clear a stray rule on an imported row.
 				for _, name := range []string{"recurrence-rule", "rrule", "exception-date-times", "exdate", "recurrence-date-times", "rdate"} {
 					if cmd.Flags().Changed(name) {
 						return errInvalidInputf("--%s changes the series; drop --recurrence-id to edit the series", name)
@@ -276,6 +276,7 @@ replaces them on the override only.`,
 			var t todo.Todo
 			if createOverride {
 				t, err = a.Todos.CreateOverride(ctx, existing.UID, existing.RecurrenceID, p)
+				err = occurrenceWriteErr(err)
 			} else {
 				t, err = a.Todos.Update(ctx, existing.ID, p)
 			}

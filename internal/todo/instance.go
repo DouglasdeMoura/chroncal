@@ -137,10 +137,11 @@ func (s *Service) inTx(ctx context.Context, fn func(txs *Service) error) error {
 	return tx.Commit()
 }
 
-// occursAt reports whether the series of master has an occurrence at
+// OccursAt reports whether the series of master has an occurrence at
 // recurrenceID. EXDATEs apply. A cancelled series has no occurrence. It
-// uses the anchor of the expansion: DTSTART, else DUE.
-func occursAt(master Todo, recurrenceID string) bool {
+// uses the anchor of the expansion: DTSTART, else DUE. CreateOverride and
+// recurrence.TodoOccurrence share this one rule.
+func OccursAt(master Todo, recurrenceID string) bool {
 	if master.RecurrenceRule == "" && master.RDates == "" {
 		return false
 	}
@@ -184,7 +185,7 @@ func (s *Service) createOverride(ctx context.Context, uid, recurrenceID string, 
 	case found:
 		return Todo{}, ErrOverrideExists
 	}
-	if !occursAt(master, recurrenceID) {
+	if !OccursAt(master, recurrenceID) {
 		return Todo{}, ErrNotOccurrence
 	}
 
@@ -227,7 +228,7 @@ func (s *Service) copyChildRows(ctx context.Context, master Todo, overrideID int
 		name string
 		run  func() error
 	}{
-		{"alarms", func() error { return s.ReplaceAlarmsForSync(ctx, overrideID, alarms) }},
+		{"alarms", func() error { return s.ReplaceAlarms(ctx, overrideID, alarms) }},
 		{"attendees", func() error { return s.ReplaceAttendees(ctx, overrideID, attendees) }},
 		{"attachments", func() error { return s.ReplaceAttachments(ctx, overrideID, master.Attachments) }},
 		{"comments", func() error { return s.ReplaceComments(ctx, overrideID, master.Comments) }},
