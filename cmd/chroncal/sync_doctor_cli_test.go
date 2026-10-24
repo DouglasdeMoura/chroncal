@@ -475,9 +475,10 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 // the real move: the move refuses too.
 func TestSyncDoctorLegacyOverrideNamesTheMoveRefusal(t *testing.T) {
 	cases := []struct {
-		name   string
-		seed   []string
-		reason string
+		name    string
+		seed    []string
+		reason  string
+		moveErr string
 	}{
 		{
 			name: "collision",
@@ -510,6 +511,19 @@ func TestSyncDoctorLegacyOverrideNamesTheMoveRefusal(t *testing.T) {
 			seed: []string{`INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag)
 			 SELECT id, 'event', 1, 'refuse-cli@example.com', 'l', 's', 'e' FROM calendars WHERE name = 'Linked'`},
 			reason: `calendar "Linked" holds an open sync conflict of the UID; resolve it with chroncal sync resolve first`,
+		},
+		{
+			// Two rules refuse. The doctor names the rule that the real
+			// move checks first: the collision.
+			name: "collision and open sync conflict",
+			seed: []string{
+				`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+				 SELECT 'refuse-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z' FROM calendars WHERE name = 'Home'`,
+				`INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag)
+				 SELECT id, 'event', 1, 'refuse-cli@example.com', 'l', 's', 'e' FROM calendars WHERE name = 'Linked'`,
+			},
+			reason:  `calendar "Home" holds a live row at the same occurrence; delete or move that row first`,
+			moveErr: "holds a live copy",
 		},
 	}
 	for _, tc := range cases {
@@ -570,10 +584,51 @@ func TestSyncDoctorLegacyOverrideNamesTheMoveRefusal(t *testing.T) {
 				t.Fatalf("items = %v, want one legacy_override item that names the refusal", items)
 			}
 
-			if _, _, err := runChroncalCommand(t, "event", "update", fmt.Sprint(rowID), "--calendar", "Home"); err == nil {
+			_, moveStderr, err := runChroncalCommand(t, "event", "update", fmt.Sprint(rowID), "--calendar", "Home")
+			if err == nil {
 				t.Errorf("event update passed; the doctor said that the move refuses")
 			}
+			if tc.moveErr != "" && !strings.Contains(moveStderr, tc.moveErr) {
+				t.Errorf("event update stderr %q misses %q", moveStderr, tc.moveErr)
+			}
 		})
+	}
+}
+
+// TestSyncDoctorLegacyOverrideNamesTheSyncState checks the reason of a row
+// that the heal keeps in two local calendars: a sync row of the UID that an
+// unlink left. The doctor names the calendar, and it gives the command,
+// because the move can pass.
+func TestSyncDoctorLegacyOverrideNamesTheSyncState(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	ctx := context.Background()
+	for _, stmt := range []string{
+		`INSERT INTO calendars (name) VALUES ('Old')`,
+		`INSERT INTO calendars (name) VALUES ('Home')`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule)
+		 SELECT 'state-cli@example.com', id, 't', '2026-05-11T09:00:00Z', '2026-05-11T10:00:00Z', 'FREQ=WEEKLY' FROM calendars WHERE name = 'Home'`,
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+		 SELECT 'state-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z' FROM calendars WHERE name = 'Old'`,
+		`INSERT INTO sync_resources (calendar_id, uid, owner_type, remote_url)
+		 SELECT id, 'state-cli@example.com', 'event', '/old/state.ics' FROM calendars WHERE name = 'Old'`,
+	} {
+		if _, err := a.DB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	a.Close()
+
+	stdout, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
+	if err != nil {
+		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
+	}
+	want := `The rows stay, because calendar "Old" holds sync state of the UID, so the startup heal does not move the rows. Move them there with: chroncal event update`
+	if !strings.Contains(stdout, want) {
+		t.Errorf("output %q misses %q", stdout, want)
 	}
 }
 

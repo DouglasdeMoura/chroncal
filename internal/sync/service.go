@@ -190,7 +190,7 @@ func (s *Service) LegacyOverrides(ctx context.Context, calendarID int64) ([]Lega
 			return nil, err
 		}
 		if l.Refusal == "" {
-			if l.Kept, err = s.legacyKeptReason(ctx, calendarID, r.OwnerCalendarID); err != nil {
+			if l.Kept, err = storage.LegacyKeptReason(ctx, s.q, calendarID, r.OwnerCalendarID, r.Uid); err != nil {
 				return nil, err
 			}
 		}
@@ -217,23 +217,6 @@ func (s *Service) legacyMoveRefusal(ctx context.Context, calendarID, ownerCalend
 		}
 	}
 	return storage.LegacyMoveRefusal(ctx, s.q, calendarID, ownerCalendarID, uid)
-}
-
-// legacyKeptReason names the reason that the startup heal keeps the legacy
-// overrides in calendarID when no rule refuses their move. The heal
-// moves no rows of a calendar with an account link, or with a sync row or a
-// tombstone of the UID (see storage.healLegacyEventOverrides).
-func (s *Service) legacyKeptReason(ctx context.Context, calendarID, ownerCalendarID int64) (string, error) {
-	for _, id := range []int64{calendarID, ownerCalendarID} {
-		cal, err := s.q.GetCalendar(ctx, id)
-		if err != nil {
-			return "", fmt.Errorf("get calendar %d: %w", id, err)
-		}
-		if storage.CalendarLinked(cal) {
-			return fmt.Sprintf("calendar %q has an account link, so the startup heal does not move the rows", cal.Name), nil
-		}
-	}
-	return "a calendar holds sync state of the UID, so the startup heal does not move the rows", nil
 }
 
 // WaitingResource is a sync row whose push waits for another step, for
