@@ -61,10 +61,6 @@ type JournalListParams struct {
 	IncludeDeleted bool
 }
 
-func journalFromRow(row storage.Journal) journal.Journal {
-	return journal.FromStorage(row)
-}
-
 func (s *Service) populateJournalCategories(ctx context.Context, journals []journal.Journal) {
 	populateCategories(ctx, journals,
 		func(j journal.Journal) int64 { return j.ID },
@@ -129,7 +125,7 @@ func ExpandJournal(j journal.Journal, from, to time.Time) []ExpandedJournal {
 
 func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage.Journal, from, to time.Time) ([]journal.Journal, error) {
 	k := recurringKind[storage.Journal, journal.Journal, ExpandedJournal]{
-		fromRow:  journalFromRow,
+		fromRow:  journal.FromStorage,
 		expand:   ExpandJournal,
 		instTime: func(i ExpandedJournal) time.Time { return i.InstanceTime },
 		applyInstance: func(i ExpandedJournal) journal.Journal {
@@ -149,7 +145,7 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 		overridesByUID: s.journalOverridesByUID,
 		newOccChecker:  newJournalOccChecker,
 		emitOverride: func(o storage.Journal, from, to time.Time) (journal.Journal, bool) {
-			oj := journalFromRow(o)
+			oj := journal.FromStorage(o)
 			oj.RecurrenceTime = recurrenceTime(o.RecurrenceID)
 			anchor := oj.ParseStartDate()
 			if anchor.IsZero() {
@@ -193,7 +189,7 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 
 	var result []journal.Journal
 	for _, row := range rows {
-		result = append(result, journalFromRow(row))
+		result = append(result, journal.FromStorage(row))
 	}
 
 	recurringRows, err := s.q.ListRecurringJournalsFiltered(ctx, storage.JournalFilterParams{
@@ -213,7 +209,7 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 		result = append(result, expanded...)
 	} else {
 		for _, row := range recurringRows {
-			result = append(result, journalFromRow(row))
+			result = append(result, journal.FromStorage(row))
 		}
 	}
 

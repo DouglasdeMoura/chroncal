@@ -936,7 +936,7 @@ Default alarms (issue #815) are included. A default alarm has no
 event_alarms row, so the report gives the trigger spec instead of an alarm
 ID.
 
-In the JSON and YAML output, "age_seconds" gives the age of the alarm in
+In the JSON output, "age_seconds" gives the age of the alarm in
 seconds. "age" gives the same age in nanoseconds.`,
 		Example: `  chroncal alarm missed
   chroncal alarm missed --days 3

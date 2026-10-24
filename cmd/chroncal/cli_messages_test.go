@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -157,6 +159,57 @@ func TestListJSONInstanceTimeIsCanonical(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"title": "Broken"`) || strings.Contains(stdout, "instance_time") {
 		t.Errorf("event list %q: want the broken master with no instance_time", stdout)
+	}
+}
+
+// TestRestoreNotDeletedErrCases checks each branch of the message of a
+// restore that brought back no row, with a fake resource.
+func TestRestoreNotDeletedErrCases(t *testing.T) {
+	readErr := errors.New("disk I/O error")
+	for _, tc := range []struct {
+		name          string
+		id            int64
+		uid           string
+		deleted       bool
+		purgeErr      error
+		live, trashed bool
+		stateErr      error
+		want          string
+		wantCode      string
+	}{
+		{name: "live row", id: 1, want: "todo 1 is not in the trash; it is live", wantCode: "not_found"},
+		{name: "row in the trash", id: 1, deleted: true, want: "todo 1 is in the trash, but no delete of it can come back by this ID; see todo list --include-deleted", wantCode: "not_found"},
+		{name: "missing row", id: 1, purgeErr: sql.ErrNoRows, want: "todo 1 not found (may have been purged)", wantCode: "not_found"},
+		{name: "read error by ID", id: 1, purgeErr: readErr, want: "disk I/O error"},
+		{name: "live UID", uid: "u", live: true, want: `no todo with uid "u" is in the trash; it is live`, wantCode: "not_found"},
+		{name: "live UID with rows in the trash", uid: "u", live: true, trashed: true, want: `todo "u" is live, and no delete of the UID can come back by UID; restore a row in the trash by its ID`, wantCode: "not_found"},
+		{name: "UID with rows in the trash only", uid: "u", trashed: true, want: `no delete of todo uid "u" can come back by UID; restore each row in the trash by its ID (see todo list --include-deleted)`, wantCode: "not_found"},
+		{name: "missing UID", uid: "u", want: `todo "u" not found (may have been purged)`, wantCode: "not_found"},
+		{name: "read error by UID", uid: "u", stateErr: readErr, want: "disk I/O error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := resource{
+				name: "todo",
+				purgeCandidate: func(context.Context, *app.App, int64) (row, bool, error) {
+					return row{}, tc.deleted, tc.purgeErr
+				},
+				uidState: func(context.Context, *app.App, string) (bool, bool, error) {
+					return tc.live, tc.trashed, tc.stateErr
+				},
+			}
+			err := restoreNotDeletedErr(context.Background(), nil, r, tc.id, tc.uid)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+			var ce *cliError
+			code := ""
+			if errors.As(err, &ce) {
+				code = ce.Code
+			}
+			if code != tc.wantCode {
+				t.Errorf("code = %q, want %q", code, tc.wantCode)
+			}
+		})
 	}
 }
 

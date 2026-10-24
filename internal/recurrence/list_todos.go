@@ -32,10 +32,6 @@ func (s *Service) todoOverridesByUID(ctx context.Context, masters []storage.Todo
 	return byUID, nil
 }
 
-func todoFromRow(row storage.Todo) todo.Todo {
-	return todo.FromStorage(row)
-}
-
 func (s *Service) populateTodoCategories(ctx context.Context, todos []todo.Todo) {
 	populateCategories(ctx, todos,
 		func(t todo.Todo) int64 { return t.ID },
@@ -160,7 +156,7 @@ func TodoOccurrence(master todo.Todo, at time.Time) (todo.Todo, bool) {
 // (rows with a match of RECURRENCE-ID) replace the original RRULE instance.
 func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.Todo, from, to time.Time) ([]todo.Todo, error) {
 	k := recurringKind[storage.Todo, todo.Todo, ExpandedTodo]{
-		fromRow:  todoFromRow,
+		fromRow:  todo.FromStorage,
 		expand:   ExpandTodo,
 		instTime: func(i ExpandedTodo) time.Time { return i.InstanceTime },
 		applyInstance: func(i ExpandedTodo) todo.Todo {
@@ -179,7 +175,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 		overridesByUID: s.todoOverridesByUID,
 		newOccChecker:  newTodoOccChecker,
 		emitOverride: func(o storage.Todo, from, to time.Time) (todo.Todo, bool) {
-			ot := todoFromRow(o)
+			ot := todo.FromStorage(o)
 			ot.RecurrenceTime = recurrenceTime(o.RecurrenceID)
 			anchor := ot.ParseStartDate()
 			if anchor.IsZero() {
@@ -218,7 +214,7 @@ func (s *Service) ListExpandedTodosByDueDateRange(ctx context.Context, from, to 
 	var result []todo.Todo
 	for _, row := range rangeRows {
 		if row.RecurrenceRule == nil && row.RecurrenceID == "" && !isRDateOnlyMaster(row.Rdates) {
-			result = append(result, todoFromRow(row))
+			result = append(result, todo.FromStorage(row))
 		}
 	}
 
@@ -288,7 +284,7 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 
 	var result []todo.Todo
 	for _, row := range rows {
-		result = append(result, todoFromRow(row))
+		result = append(result, todo.FromStorage(row))
 	}
 
 	recurringRows, err := s.q.ListRecurringTodosFiltered(ctx, storage.TodoFilterParams{
@@ -308,7 +304,7 @@ func (s *Service) ListFilteredTodos(ctx context.Context, p TodoListParams) ([]to
 		result = append(result, expanded...)
 	} else {
 		for _, row := range recurringRows {
-			result = append(result, todoFromRow(row))
+			result = append(result, todo.FromStorage(row))
 		}
 	}
 
