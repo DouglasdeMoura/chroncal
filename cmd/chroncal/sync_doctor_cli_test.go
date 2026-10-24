@@ -284,7 +284,7 @@ func TestSyncDoctorListsAWaitingResource(t *testing.T) {
 	if !strings.Contains(stdout, `uid wait-cli@example.com (event): waiting on the source delete of the UID in another calendar`) {
 		t.Errorf("output %q misses the waiting line", stdout)
 	}
-	if !strings.Contains(stdout, "No wedged resources.") {
+	if !strings.Contains(stdout, "1 item(s) above. None of them is wedged, so --push does not apply.") {
 		t.Errorf("output %q misses the empty wedge report", stdout)
 	}
 
@@ -356,11 +356,16 @@ func TestSyncDoctorListsPushFailuresAndUnownedEdits(t *testing.T) {
 	for _, want := range []string{
 		"uid fail-cli@example.com (event): 2 failed push attempt(s); last error: HTTP 500",
 		"uid unowned-cli@example.com (event): the edit stays local: " + storage.NoSeriesOwnerMsg,
-		"No wedged resources.",
+		"2 item(s) above. None of them is wedged, so --push does not apply.",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("output %q misses %q", stdout, want)
 		}
+	}
+	// The summary must not read as "nothing found" after the listed items
+	// (issue #873).
+	if strings.Contains(stdout, "No wedged resources.") {
+		t.Errorf("output %q says that it found nothing after the listed items", stdout)
 	}
 
 	stdout, _, err = runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--output", "json")
@@ -433,7 +438,7 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
 	}
-	want := fmt.Sprintf(`calendar "Linked" uid legacy-cli@example.com (event): 3 override row(s) with no master in this calendar; the series in calendar "Home" owns them. Move them there with: chroncal event update %d --calendar 'Home'`, rowID)
+	want := fmt.Sprintf(`calendar "Linked" uid legacy-cli@example.com (event): 3 override row(s) with no master in this calendar; the series in calendar "Home" owns them. The rows stay, because calendar "Linked" has an account link, so the startup heal does not move the rows. Move them there with: chroncal event update %d --calendar 'Home'`, rowID)
 	if !strings.Contains(stdout, want) {
 		t.Errorf("output %q misses %q", stdout, want)
 	}
@@ -447,7 +452,8 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 		t.Fatalf("decode %q: %v", stdout, err)
 	}
 	if len(items) != 1 || items[0]["state"] != "legacy_override" || items[0]["id"] != float64(rowID) || items[0]["rows"] != float64(3) ||
-		items[0]["owner_calendar_name"] != "Home" || items[0]["calendar_name"] != "Linked" {
+		items[0]["owner_calendar_name"] != "Home" || items[0]["calendar_name"] != "Linked" ||
+		items[0]["movable"] != true || items[0]["move_command"] != fmt.Sprintf("chroncal event update %d --calendar 'Home'", rowID) {
 		t.Fatalf("items = %v, want one legacy_override item", items)
 	}
 
@@ -460,6 +466,114 @@ func TestSyncDoctorListsLegacyOverride(t *testing.T) {
 	}
 	if strings.Contains(stdout, "legacy_override") {
 		t.Errorf("output %q still lists the legacy override after the move", stdout)
+	}
+}
+
+// TestSyncDoctorLegacyOverrideNamesTheMoveRefusal checks that the doctor
+// names the rule that refuses the move of a legacy override, and that it
+// prints no move command then (issue #873). The printed reason must match
+// the real move: the move refuses too.
+func TestSyncDoctorLegacyOverrideNamesTheMoveRefusal(t *testing.T) {
+	cases := []struct {
+		name   string
+		seed   []string
+		reason string
+	}{
+		{
+			name: "collision",
+			seed: []string{`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+			 SELECT 'refuse-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z' FROM calendars WHERE name = 'Home'`},
+			reason: `calendar "Home" holds a live row at the same occurrence; delete or move that row first`,
+		},
+		{
+			name: "collision in the trash",
+			seed: []string{`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
+			 SELECT 'refuse-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z', '2026-05-01T00:00:00Z' FROM calendars WHERE name = 'Home'`},
+			reason: `calendar "Home" holds a row in the trash at the same occurrence; purge or restore that row first`,
+		},
+		{
+			name:   "read-only owner",
+			seed:   []string{`UPDATE calendars SET remote_access = 'read' WHERE name = 'Home'`},
+			reason: `calendar "Home" is read-only`,
+		},
+		{
+			name: "open move conflict",
+			seed: []string{
+				`INSERT INTO calendars (name, account_id, remote_url) VALUES ('Other', 903, '/other/')`,
+				`INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag, move_source_calendar_id, move_state)
+				 SELECT o.id, 'event', 1, 'refuse-cli@example.com', 'l', 's', 'e', l.id, 'open' FROM calendars o, calendars l WHERE o.name = 'Other' AND l.name = 'Linked'`,
+			},
+			reason: "an open move conflict of the UID waits for the user; resolve it with chroncal sync resolve first",
+		},
+		{
+			name: "open sync conflict",
+			seed: []string{`INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag)
+			 SELECT id, 'event', 1, 'refuse-cli@example.com', 'l', 's', 'e' FROM calendars WHERE name = 'Linked'`},
+			reason: `calendar "Linked" holds an open sync conflict of the UID; resolve it with chroncal sync resolve first`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := setupCalendarCLITestEnv(t)
+			a, err := app.New(dbPath)
+			if err != nil {
+				t.Fatalf("app.New: %v", err)
+			}
+			ctx := context.Background()
+			seed := append([]string{
+				`INSERT INTO accounts (id, name, server_url, auth_type, username) VALUES (903, 'refuse-acct', 'https://example.com', 'basic', 'u')`,
+				`INSERT INTO calendars (name, account_id, remote_url) VALUES ('Linked', 903, '/linked/')`,
+				`INSERT INTO calendars (name) VALUES ('Home')`,
+				`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_rule)
+				 SELECT 'refuse-cli@example.com', id, 't', '2026-05-11T09:00:00Z', '2026-05-11T10:00:00Z', 'FREQ=WEEKLY' FROM calendars WHERE name = 'Home'`,
+				`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
+				 SELECT 'refuse-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z' FROM calendars WHERE name = 'Linked'`,
+			}, tc.seed...)
+			for _, stmt := range seed {
+				if _, err := a.DB.ExecContext(ctx, stmt); err != nil {
+					t.Fatalf("seed %q: %v", stmt, err)
+				}
+			}
+			var rowID int64
+			if err := a.DB.QueryRowContext(ctx, `SELECT e.id FROM events e JOIN calendars c ON c.id = e.calendar_id WHERE c.name = 'Linked' AND e.uid = 'refuse-cli@example.com'`).Scan(&rowID); err != nil {
+				t.Fatalf("read row id: %v", err)
+			}
+			a.Close()
+
+			stdout, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
+			if err != nil {
+				t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
+			}
+			want := `calendar "Linked" uid refuse-cli@example.com (event): 1 override row(s) with no master in this calendar; the series in calendar "Home" owns them. The rows stay, because a move there refuses: ` + tc.reason + "."
+			if !strings.Contains(stdout, want) {
+				t.Errorf("output %q misses %q", stdout, want)
+			}
+			if strings.Contains(stdout, "chroncal event update") {
+				t.Errorf("output %q gives a move command that refuses", stdout)
+			}
+
+			stdout, _, err = runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--output", "json")
+			if err != nil {
+				t.Fatalf("sync doctor --output json: %v", err)
+			}
+			var items []map[string]any
+			if err := json.Unmarshal([]byte(stdout), &items); err != nil {
+				t.Fatalf("decode %q: %v", stdout, err)
+			}
+			var legacy map[string]any
+			for _, it := range items {
+				if it["state"] == "legacy_override" {
+					legacy = it
+				}
+			}
+			if legacy == nil || legacy["movable"] != false || legacy["move_refusal"] != tc.reason || legacy["move_command"] != nil {
+				t.Fatalf("items = %v, want one legacy_override item that names the refusal", items)
+			}
+
+			if _, _, err := runChroncalCommand(t, "event", "update", fmt.Sprint(rowID), "--calendar", "Home"); err == nil {
+				t.Errorf("event update passed; the doctor said that the move refuses")
+			}
+		})
 	}
 }
 
