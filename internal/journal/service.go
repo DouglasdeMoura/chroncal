@@ -149,6 +149,14 @@ func (p *UpsertParams) applyDefaults() {
 	p.Status, p.Class = defaults(p.Status, p.Class)
 }
 
+// WithStoreDefaults returns j with the defaults that UpsertByUID applies
+// before the write. A comparison of an imported journal with its stored
+// row then sees the form that the write stores (issue #883).
+func (j Journal) WithStoreDefaults() Journal {
+	j.Status, j.Class = defaults(j.Status, j.Class)
+	return j
+}
+
 func (s *Service) List(ctx context.Context) ([]Journal, error) {
 	rows, err := s.q.ListJournals(ctx)
 	if err != nil {
