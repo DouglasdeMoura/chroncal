@@ -53,7 +53,9 @@ type calendarImportFinishedMsg struct {
 	Generation uint64
 	CalendarID int64
 	Summary    icaltransfer.Summary
-	Err        error
+	// ImportWarnings holds the warnings of the import, not of the parse.
+	ImportWarnings []string
+	Err            error
 }
 
 type calendarExportFinishedMsg struct {

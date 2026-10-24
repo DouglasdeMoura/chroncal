@@ -609,6 +609,12 @@ chroncal ical import
 chroncal ical import --calendar Fastmail
 ```
 
+An event UID that another calendar holds gets its own copy in the import calendar. A todo or a journal cannot have a copy, because its UID is unique across all calendars. The import never moves such an item and never writes it into another calendar:
+
+- When the UID lives in another local calendar, the import skips the item. A warning names both calendars, and the summary prints `Skipped N item(s) that live in another calendar.` The JSON output has `skipped_todos` and `skipped_journals`. A skipped item is not a failure, so a directory import from a timer does not fail. After `todo update --calendar`, the old directory still holds the file, and each run skips it.
+- When the UID lives in another synced calendar, live or in the trash, the import refuses the item, and the item counts as failed. The warning names the calendar. The other items of the file still land.
+- The rules take any row of the UID: an override of a series, or a master with overrides, follows the calendar of the other rows. The import then never splits a series.
+
 Imports have size limits to reduce resource exhaustion from untrusted calendar data. `chroncal ical import` rejects `.ics` payloads larger than 8 MiB. It also rejects inline base64 attachments larger than 1 MiB decoded. The limit applies to each file, not to a whole directory.
 
 The export aborts when one relation read fails. It writes no file, so no incomplete backup exists. Pass `--skip-unreadable` to continue past records with unreadable relations. The file then carries a comment header that names each incomplete record. The command also lists those records on stderr.

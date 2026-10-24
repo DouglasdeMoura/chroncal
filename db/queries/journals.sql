@@ -234,3 +234,12 @@ SELECT calendar_id FROM journals WHERE id = ?;
 -- trash, and whether the row is in the trash. The key spans calendars.
 -- See issue #841.
 SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM journals WHERE uid = ? AND recurrence_id = ?;
+
+-- name: ListJournalCalendarsOfUID :many
+-- The calendar of each row of a UID, live or in the trash, and whether the
+-- row is in the trash. A live row comes first, and a master comes before
+-- an override. The import uses it for an item with no row of its own
+-- (issue #882).
+SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM journals
+WHERE uid = ?
+ORDER BY deleted_at IS NOT NULL, recurrence_id = '' DESC, id;

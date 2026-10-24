@@ -13,6 +13,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/textsafe"
 )
 
 func (m Model) handleCalendarsLoaded(msg calendarsLoadedMsg) (tea.Model, tea.Cmd) {
@@ -215,10 +216,23 @@ func (m Model) handleCalendarImportRequested(msg CalendarImportRequestedMsg) (te
 			return cleanup(err)
 		}
 		summary := icaltransfer.Import(ctx, m.app, calendarID, &request.Preview.Result)
-		if summary.Failed > 0 {
-			return cleanup(fmt.Errorf("%d component(s) failed to import", summary.Failed))
+		// A run that landed nothing leaves no new calendar behind. A run
+		// that landed items keeps them: one refused item, for example a
+		// todo of a synced calendar (issue #882), must not take the
+		// imported events with it. The status line then shows the
+		// failed items and the first warning.
+		// The warnings of the import come after the warnings of the parse.
+		importWarnings := summary.Warnings[min(len(request.Preview.Warnings), len(summary.Warnings)):]
+		landed := len(summary.Events) + len(summary.Todos) + len(summary.Journals)
+		skipped := summary.SkippedTodos + summary.SkippedJournals
+		if landed == 0 && (summary.Failed > 0 || skipped > 0) {
+			cause := fmt.Errorf("no item landed: %d failed, %d skipped", summary.Failed, skipped)
+			if len(importWarnings) > 0 {
+				cause = fmt.Errorf("%w: %s", cause, statusText(importWarnings[0]))
+			}
+			return cleanup(cause)
 		}
-		return calendarImportFinishedMsg{Generation: request.Generation, CalendarID: calendarID, Summary: summary}
+		return calendarImportFinishedMsg{Generation: request.Generation, CalendarID: calendarID, Summary: summary, ImportWarnings: importWarnings}
 	}
 }
 
@@ -237,7 +251,7 @@ func (m Model) handleCalendarImportFinished(msg calendarImportFinishedMsg) (tea.
 	}
 	m.calendarManager = m.calendarManager.CompleteTransfer(msg.CalendarID)
 	imported := len(msg.Summary.Events) + len(msg.Summary.Todos) + len(msg.Summary.Journals)
-	m.syncStatus = fmt.Sprintf("Imported %d item(s) with %d warning(s)", imported, len(msg.Summary.Warnings))
+	m.syncStatus = importStatus(imported, msg.Summary, msg.ImportWarnings)
 	m.statusToken++
 	return m, tea.Batch(m.loadCalendars(), m.loadEvents(), m.expireStatusAfter(10*time.Second, m.statusToken))
 }
@@ -564,4 +578,37 @@ func (m Model) handleCalendarMutationDone(msg calendarMutationDoneMsg) (tea.Mode
 		m.calendarManager = m.calendarManager.SelectAfterReload(msg.createdID)
 	}
 	return m, tea.Batch(m.loadCalendars(), m.loadEvents())
+}
+
+// importStatus is the status line of a finished import. It counts the
+// items, the skipped and the failed items, and the warnings. It shows the
+// first warning of the import, for example the calendar of a skipped todo
+// (issue #882). The warnings of the parse come first in the summary, so
+// importWarnings holds only the warnings of the import.
+func importStatus(imported int, summary icaltransfer.Summary, importWarnings []string) string {
+	status := fmt.Sprintf("Imported %d item(s)", imported)
+	if skipped := summary.SkippedTodos + summary.SkippedJournals; skipped > 0 {
+		status += fmt.Sprintf(", %d skipped", skipped)
+	}
+	if summary.Failed > 0 {
+		status += fmt.Sprintf(", %d failed", summary.Failed)
+	}
+	status += fmt.Sprintf(", with %d warning(s)", len(summary.Warnings))
+	if len(importWarnings) > 0 {
+		status += ": " + statusText(importWarnings[0])
+	}
+	return status
+}
+
+// statusMaxRunes bounds a warning on the status line.
+const statusMaxRunes = 160
+
+// statusText returns w for the status line: safe to show, and cut to
+// statusMaxRunes.
+func statusText(w string) string {
+	w = textsafe.Display(w)
+	if r := []rune(w); len(r) > statusMaxRunes {
+		w = string(r[:statusMaxRunes-1]) + "…"
+	}
+	return w
 }
