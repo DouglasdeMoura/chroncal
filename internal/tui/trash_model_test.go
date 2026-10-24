@@ -354,6 +354,42 @@ func TestTrashDetailLines_NamesTheTruncationToRestoreFirst(t *testing.T) {
 	}
 }
 
+// TestTrashDetailLines_RestoreNoteWrapsInANarrowPane checks that the
+// restore-order note shows in full at the width of the detail pane. The note
+// wraps, so the cutoff at its end does not go (issue #871).
+func TestTrashDetailLines_RestoreNoteWrapsInANarrowPane(t *testing.T) {
+	newer := time.Date(2026, 11, 3, 13, 0, 0, 0, time.UTC)
+	e := trash.Entry{
+		Kind: trash.KindEventSeriesTail, ID: 1, Title: "Series",
+		CutoffTime:        time.Date(2026, 11, 10, 13, 0, 0, 0, time.UTC),
+		NewerTruncationID: 2, NewerTruncationCutoff: newer,
+	}
+	want := "restore the truncation with cutoff " + newer.Local().Format("Mon, Jan 2 15:04") + " first"
+	for _, w := range []int{40, 60} {
+		lines := trashDetailLines(e, CalendarInfo{}, w, 11, nil)
+		var values []string
+		for i, line := range lines {
+			plain := ansi.Strip(line)
+			if got := ansi.StringWidth(plain); got > w {
+				t.Errorf("w=%d: line %q is %d cells wide", w, plain, got)
+			}
+			if strings.HasPrefix(strings.TrimSpace(plain), "Restore") {
+				values = append(values, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(plain), "Restore")))
+				for _, cont := range lines[i+1:] {
+					c := ansi.Strip(cont)
+					if !strings.HasPrefix(c, strings.Repeat(" ", 13)) {
+						break
+					}
+					values = append(values, strings.TrimSpace(c))
+				}
+			}
+		}
+		if got := strings.Join(values, " "); got != want {
+			t.Errorf("w=%d: restore note = %q, want %q", w, got, want)
+		}
+	}
+}
+
 // TestTrashDetailLines_AllDayCutoffShowsTheUTCDate checks that an all-day
 // series shows the date of its cutoff and of the cutoff to restore first.
 // The series stores them at midnight UTC, so in local time west of UTC the

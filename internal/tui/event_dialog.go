@@ -414,6 +414,27 @@ func detailLine(labelStyle lipgloss.Style, label, value string, lw, w int) strin
 	return truncateTo(prefix+value, w)
 }
 
+// detailWrappedLines is detailLine for a value that must show in full. The
+// value wraps at word boundaries. Each continuation line starts below the
+// first character of the value.
+func detailWrappedLines(labelStyle lipgloss.Style, label, value string, lw, w int) []string {
+	prefix, available := detailLabelPrefix(labelStyle, label, lw, w)
+	if available <= 0 {
+		return []string{detailLine(labelStyle, label, value, lw, w)}
+	}
+	indent := strings.Repeat(" ", labelColWidth(label, lw))
+	wrapped := wrapLine(value, available)
+	lines := make([]string, len(wrapped))
+	for i, part := range wrapped {
+		if i == 0 {
+			lines[i] = prefix + part
+			continue
+		}
+		lines[i] = indent + part
+	}
+	return lines
+}
+
 // labelColWidth returns the on-screen cell width consumed by the label column
 // plus its two-space gap. It accounts for labels that exceed the nominal lw.
 func labelColWidth(label string, lw int) int {

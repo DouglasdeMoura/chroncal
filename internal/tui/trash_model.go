@@ -500,9 +500,10 @@ func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int, rw url
 			lines = append(lines, detailLine(faint, "Cutoff", trashOccurrenceTime(e.CutoffTime, e.AllDay), labelWidth, w))
 		}
 		// A newer truncation of the series blocks the restore of this
-		// one. The line names the entry to restore first.
+		// one. The note names the entry to restore first. The note wraps,
+		// because the cutoff at its end is the part that the user needs.
 		if note := trashRestoreOrderNote(e); note != "" {
-			lines = append(lines, detailLine(faint, "Restore", note, labelWidth, w))
+			lines = append(lines, detailWrappedLines(faint, "Restore", note, labelWidth, w)...)
 		}
 	case trash.KindTodo:
 		if !e.DueDate.IsZero() {
