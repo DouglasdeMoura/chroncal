@@ -3,6 +3,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -100,6 +101,10 @@ func (f *icloudFakeServer) serve(w http.ResponseWriter, r *http.Request) {
   </d:response>
 </d:multistatus>`))
 	case "REPORT":
+		body, _ := io.ReadAll(r.Body)
+		if f.serveFullReport(w, r, string(body)) {
+			return
+		}
 		// Incremental sync-collection with no changed member: the pull
 		// imports nothing. A removed member of the collection gets 404.
 		var gone strings.Builder
@@ -224,6 +229,47 @@ func (f *icloudFakeServer) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// fakeHrefPattern finds the hrefs of a calendar-multiget body.
+var fakeHrefPattern = regexp.MustCompile(`<d:href>([^<]*)</d:href>`)
+
+// serveFullReport answers the two REPORTs of a full inventory: a
+// sync-collection with an empty token lists each object of the collection
+// with its etag, and a calendar-multiget returns the listed bodies. It
+// reports false for an incremental sync-collection. The caller holds f.mu.
+func (f *icloudFakeServer) serveFullReport(w http.ResponseWriter, r *http.Request, body string) bool {
+	var out strings.Builder
+	switch {
+	case strings.Contains(body, "calendar-multiget"):
+		for _, m := range fakeHrefPattern.FindAllStringSubmatch(body, -1) {
+			p := m[1]
+			data, ok := f.objects[p]
+			if !ok {
+				out.WriteString("\n  <d:response><d:href>" + p + "</d:href><d:status>HTTP/1.1 404 Not Found</d:status></d:response>")
+				continue
+			}
+			var esc strings.Builder
+			_ = xml.EscapeText(&esc, []byte(data))
+			out.WriteString("\n  <d:response><d:href>" + p + "</d:href><d:propstat><d:prop><d:getetag>" + f.etags[p] +
+				"</d:getetag><c:calendar-data>" + esc.String() + "</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>")
+		}
+	case strings.Contains(body, "<d:sync-token></d:sync-token>"):
+		for p := range f.objects {
+			if strings.HasPrefix(p, r.URL.Path) {
+				out.WriteString("\n  <d:response><d:href>" + p + "</d:href><d:propstat><d:prop><d:getetag>" + f.etags[p] +
+					"</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>")
+			}
+		}
+		out.WriteString("\n  <d:sync-token>tok-full</d:sync-token>")
+	default:
+		return false
+	}
+	w.WriteHeader(http.StatusMultiStatus)
+	_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">` + out.String() + `
+</d:multistatus>`))
+	return true
 }
 
 func (f *icloudFakeServer) paths() []string {

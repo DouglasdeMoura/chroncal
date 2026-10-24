@@ -81,12 +81,10 @@ func TestUpdateOfAGoneObjectIsCreatedAgain(t *testing.T) {
 }
 
 // TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit is the server-wins case of
-// TestUpdateOfAGoneObjectIsCreatedAgain. The push sends no create, and the
-// pull moves the event to the trash. The pass reports no error and records
-// no conflict: the GET after the 412 finds no object, and the delete is the
-// side that a server-wins pass keeps. The push applies the delete, and a
-// warning tells the user that the item and its edit are in the trash
-// (issue #884).
+// TestUpdateOfAGoneObjectIsCreatedAgain. The GET after the 412 finds no
+// object. The push sends no create and reports nothing, and the pull of
+// the same pass reads a full inventory: the object is not listed, so the
+// event goes to the trash. The next pass is quiet (issue #884).
 func TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit(t *testing.T) {
 	t.Parallel()
 	engine, q, srv, calA, _ := newICloudPairEngine(t)
@@ -98,14 +96,15 @@ func TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit(t *testing.T) {
 
 	putsBefore, _ := srv.counts()
 	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 || len(res.Warnings) != 1 {
-		t.Fatalf("pass of A = %+v, %v; want no push, no error, one warning, and the remote delete applied", res, err)
+	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 || len(res.Warnings) != 0 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, no warning, and the remote delete applied", res, err)
 	}
 	if puts, _ := srv.counts(); puts != putsBefore+1 || srv.has(path) {
 		t.Fatalf("PUTs = %d (want %d), object = %v; want no create", puts, putsBefore+1, srv.has(path))
 	}
 	wantTrashed(t, engine, "events", evt.ID)
 	wantNoOpenConflictOrRow(t, q, calA, evt.UID)
+	wantQuietPass(t, engine, srv, calA)
 }
 
 // TestServerWinsPassKeepsTheRemoteDeleteOfATodoEdit is the todo case of
@@ -128,14 +127,56 @@ func TestServerWinsPassKeepsTheRemoteDeleteOfATodoEdit(t *testing.T) {
 	}
 	putsBefore, _ := srv.counts()
 	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 || len(res.Warnings) != 1 {
-		t.Fatalf("pass of A = %+v, %v; want no push, no error, one warning, and the remote delete applied", res, err)
+	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, and the remote delete applied", res, err)
 	}
 	if puts, _ := srv.counts(); puts != putsBefore+1 || srv.has(path) {
 		t.Fatalf("PUTs = %d (want %d), object = %v; want no create", puts, putsBefore+1, srv.has(path))
 	}
 	wantTrashed(t, engine, "todos", td.ID)
 	wantNoOpenConflictOrRow(t, q, calA, td.UID)
+	wantQuietPass(t, engine, srv, calA)
+}
+
+// TestServerWinsPassAdoptsAnObjectThatTheServerStillLists answers the GET
+// after the 412 with 404, while the server still lists the object. The
+// full inventory of the pull fetches it, and the server-wins pull adopts
+// its body: the event stays live with the server title, and the row is
+// clean. The next pass is quiet (issue #884).
+func TestServerWinsPassAdoptsAnObjectThatTheServerStillLists(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	evt := createPushedEvent(t, engine, calA)
+	path := "/cal/a/" + evt.UID + ".ics"
+	srv.editRemoteSummary(path, "Dentist (server)")
+	editTitle(t, engine, evt, "Dentist (local)")
+	srv.setGetStatus("/cal/a/", 404)
+
+	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
+	if err != nil || len(res.Errors) != 0 || res.Pushed != 0 || res.Deleted != 0 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, and no delete", res, err)
+	}
+	wantLive(t, engine, evt.ID, calA, "Dentist (server)")
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: evt.UID})
+	if err != nil || sr.Dirty != 0 || sr.PushFailCount != 0 || sr.RemoteUrl != path {
+		t.Fatalf("sync row = %+v, %v; want a clean row at %s", sr, err, path)
+	}
+	wantQuietPass(t, engine, srv, calA)
+}
+
+// wantQuietPass runs one more server-wins pass of calendarID. It must send
+// no PUT and give no error and no warning: nothing repeats.
+func wantQuietPass(t *testing.T, engine *Engine, srv *icloudFakeServer, calendarID int64) {
+	t.Helper()
+	putsBefore, _ := srv.counts()
+	res, err := engine.SyncCalendar(context.Background(), calendarID, ConflictServerWins)
+	if err != nil || len(res.Errors) != 0 || len(res.Warnings) != 0 {
+		t.Fatalf("next pass = %+v, %v; want a quiet pass", res, err)
+	}
+	if puts, _ := srv.counts(); puts != putsBefore {
+		t.Fatalf("PUTs = %d, want %d: the next pass must not repeat the update", puts, putsBefore)
+	}
 }
 
 // TestServerWinsPassWithAnOpenConflictReportsTheDelete gives a gone object
@@ -433,36 +474,5 @@ func TestRemoteDeleteOfAnEditWithAnOpenConflictKeepsTheDelete(t *testing.T) {
 	}
 	if got, err := engine.events.Get(ctx, evt.ID); err == nil && got.DeletedAt == nil {
 		t.Fatalf("event = %+v; want it in the trash", got)
-	}
-}
-
-// TestServerWinsPassTrashesTheItemWhenTheServerStillListsIt answers the GET
-// after the 412 with 404, while the server still lists the object. The
-// push applies the delete itself, so the result does not depend on the
-// pull: the item is in the trash, and the next pass repeats nothing
-// (issue #884).
-func TestServerWinsPassTrashesTheItemWhenTheServerStillListsIt(t *testing.T) {
-	t.Parallel()
-	engine, q, srv, calA, _ := newICloudPairEngine(t)
-	ctx := context.Background()
-	evt := createPushedEvent(t, engine, calA)
-	path := "/cal/a/" + evt.UID + ".ics"
-	srv.editRemoteSummary(path, "Dentist (server)")
-	editTitle(t, engine, evt, "Dentist (local)")
-	srv.setGetStatus("/cal/a/", 404)
-
-	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || len(res.Errors) != 0 || res.Pushed != 0 || res.Deleted != 1 || len(res.Warnings) != 1 {
-		t.Fatalf("pass of A = %+v, %v; want no push, no error, one delete, and one warning", res, err)
-	}
-	wantTrashed(t, engine, "events", evt.ID)
-	wantNoOpenConflictOrRow(t, q, calA, evt.UID)
-	putsBefore, _ := srv.counts()
-	res, err = engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || len(res.Errors) != 0 || len(res.Warnings) != 0 {
-		t.Fatalf("next pass = %+v, %v; want a quiet pass", res, err)
-	}
-	if puts, _ := srv.counts(); puts != putsBefore {
-		t.Fatalf("PUTs = %d, want %d: the next pass must not repeat the update", puts, putsBefore)
 	}
 }
