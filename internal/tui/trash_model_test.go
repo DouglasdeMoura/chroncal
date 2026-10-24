@@ -549,7 +549,7 @@ func TestTrashModel_ActionsPutTheFocusOnTheList(t *testing.T) {
 	clickPurgeAll := func(m TrashModel) tea.Msg {
 		for y := 0; y < 30; y++ {
 			for x := 0; x < 120; x++ {
-				if _, ok := m.shell.TitleActionAtPosition(x, y); ok {
+				if m.shell.TitleActionAtPosition(x, y) {
 					return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}
 				}
 			}

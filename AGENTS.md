@@ -152,7 +152,7 @@ For a custom button that does not use `Form`, render with `ButtonStyles.Normal` 
 
 Confirm dialogs focus Cancel by default (`form.FocusCancel()`). A quick Enter cancels. It does not confirm. Keep that behavior when you build a new destructive prompt.
 
-In a list dialog (`ListDialogModel`), an action that fires puts the focus on the list. Fire every button through the shell: `FireAction` for the action bar and `FireTitleAction` for the title line. A hotkey, Enter or Space (`Activate`), and a click all use them. The list keys then work after a canceled prompt or a refused action.
+In a list dialog (`ListDialogModel`), an action that fires puts the focus on the list. Fire every button through the shell: `FireAction` for the action bar and `FireTitleAction` for the title line. A hotkey, Enter or Space (`ActivateByKey`), and a click all use them. The list keys then work after a canceled prompt or a refused action. Space does not fire a `Danger` button. A destructive action fires only by Enter, a click, or its own key.
 
 ### Test speed
 
