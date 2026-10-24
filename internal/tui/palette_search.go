@@ -53,7 +53,7 @@ func eventPaletteCommand(ev event.Event, cal CalendarInfo) PaletteCommand {
 // show the year instead of the clock. When the event has a same-day end
 // time, it's appended as `–HH:MM`.
 func paletteEventDate(ev event.Event) string {
-	start := ev.StartTime.Local()
+	start := ev.LocalStart()
 	if start.IsZero() {
 		return ""
 	}

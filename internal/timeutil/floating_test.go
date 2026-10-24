@@ -86,3 +86,16 @@ func TestCoverWindowKeepsZeroBounds(t *testing.T) {
 		}
 	})
 }
+
+// TestFloatingLocalKeepsZero checks that the zero time stays zero, so an
+// IsZero test of the caller still works outside UTC.
+func TestFloatingLocalKeepsZero(t *testing.T) {
+	forEachZone(t, func(t *testing.T) {
+		if got := FloatingLocal(time.Time{}); !got.IsZero() {
+			t.Fatalf("FloatingLocal(zero) = %s, want zero", got)
+		}
+		if got := Moment(time.Time{}, true); !got.IsZero() {
+			t.Fatalf("Moment(zero, true) = %s, want zero", got)
+		}
+	})
+}

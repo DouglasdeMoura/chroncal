@@ -761,3 +761,24 @@ func TestService_RestoreAllCountsALegacyOverrideOfARestoredMaster(t *testing.T) 
 		t.Fatalf("RestoreAll(legacy override, master) = %d, %v; want 2, nil", n, err)
 	}
 }
+
+// TestFromTodoAndJournal_DateOnlyEveryZone guards issue #875. A date-only
+// DUE or DTSTART of a trash entry is at local midnight of its date in every
+// zone, and the entry marks it as date-only.
+func TestFromTodoAndJournal_DateOnlyEveryZone(t *testing.T) {
+	testutil.ForEachLocalZone(t, func(t *testing.T) {
+		want := time.Date(2026, 10, 28, 0, 0, 0, 0, time.Local)
+		td := fromTodo(todo.Todo{ID: 1, DueDate: "2026-10-28"})
+		if !td.DueDate.Equal(want) || !td.DateOnly {
+			t.Fatalf("todo entry = DueDate %s DateOnly %v, want %s and true", td.DueDate, td.DateOnly, want)
+		}
+		j := fromJournal(journal.Journal{ID: 2, StartDate: "2026-10-28"})
+		if !j.StartTime.Equal(want) || !j.DateOnly {
+			t.Fatalf("journal entry = StartTime %s DateOnly %v, want %s and true", j.StartTime, j.DateOnly, want)
+		}
+		timed := fromTodo(todo.Todo{ID: 3, DueDate: "2026-10-28T15:00:00Z"})
+		if !timed.DueDate.Equal(time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC)) || timed.DateOnly {
+			t.Fatalf("timed todo entry = DueDate %s DateOnly %v", timed.DueDate, timed.DateOnly)
+		}
+	})
+}

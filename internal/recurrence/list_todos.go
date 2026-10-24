@@ -167,12 +167,14 @@ func TodoAtInstance(i ExpandedTodo) todo.Todo {
 // (rows with a match of RECURRENCE-ID) replace the original RRULE instance.
 func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.Todo, from, to time.Time) ([]todo.Todo, error) {
 	k := recurringKind[storage.Todo, todo.Todo, ExpandedTodo]{
-		fromRow:        todoFromRow,
-		expand:         ExpandTodo,
-		instTime:       func(i ExpandedTodo) time.Time { return i.InstanceTime },
-		applyInstance:  TodoAtInstance,
-		uid:            func(r storage.Todo) string { return seriesKey(r.CalendarID, r.Uid) },
-		dateOnly:       func(r storage.Todo) bool { return todoFromRow(r).AnchorIsDateOnly() },
+		fromRow:       todoFromRow,
+		expand:        ExpandTodo,
+		instTime:      func(i ExpandedTodo) time.Time { return i.InstanceTime },
+		applyInstance: TodoAtInstance,
+		uid:           func(r storage.Todo) string { return seriesKey(r.CalendarID, r.Uid) },
+		dateOnly: func(r storage.Todo) bool {
+			return todo.Todo{StartDate: storage.NullableToString(r.StartDate), DueDate: storage.NullableToString(r.DueDate)}.AnchorIsDateOnly()
+		},
 		status:         func(r storage.Todo) string { return r.Status },
 		recurrenceID:   func(r storage.Todo) string { return r.RecurrenceID },
 		overridesByUID: s.todoOverridesByUID,

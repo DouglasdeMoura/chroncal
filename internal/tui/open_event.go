@@ -40,7 +40,7 @@ func matchOpenEvent(events []event.Event, target event.Event) event.Event {
 		if !target.StartTime.IsZero() && e.StartTime.Equal(target.StartTime) {
 			return e
 		}
-		if !target.StartTime.IsZero() && sameDay(e.StartTime.Local(), target.StartTime.Local()) {
+		if !target.StartTime.IsZero() && sameDay(e.LocalStart(), target.LocalStart()) {
 			if dayMatch.ID == 0 {
 				dayMatch = e
 			}
@@ -66,7 +66,8 @@ func (m Model) WithOpenEvent(ev event.Event) Model {
 	if ev.StartTime.IsZero() {
 		return m
 	}
-	t := ev.StartTime.Local()
+	// An all-day event opens on its own date (issue #875).
+	t := ev.LocalStart()
 	m.day.cursor = t
 	m.week.cursor = t
 	m.calendar.cursor = t
