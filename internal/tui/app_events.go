@@ -212,14 +212,14 @@ func (m Model) loadTrash() tea.Cmd {
 
 // eventsOn returns the events that cover the given local calendar day.
 // A multi-day event (all-day or timed across midnight) appears on every day
-// of its span. eventCalendarDays defines that span, so the popup list matches
+// of its span. EventCalendarDays defines that span, so the popup list matches
 // the month and week grid cells (issue #807).
 func eventsOn(events []event.Event, day time.Time) []event.Event {
 	dayKey := day.Local().Format("2006-01-02")
 	var out []event.Event
 	for _, e := range events {
-		for _, d := range eventCalendarDays(e) {
-			// eventCalendarDays returns all-day days as UTC midnights and
+		for _, d := range EventCalendarDays(e) {
+			// EventCalendarDays returns all-day days as UTC midnights and
 			// timed days as local midnights. Format uses the day's own
 			// location, so the key is the calendar date the grid shows.
 			if d.Format("2006-01-02") == dayKey {
@@ -238,7 +238,7 @@ func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo, hi
 			continue
 		}
 		color := calendars[e.CalendarID].Color
-		for _, day := range eventCalendarDays(e) {
+		for _, day := range EventCalendarDays(e) {
 			start, end := clipEventToDay(e, day)
 			out = append(out, CalendarEvent{
 				ID:        e.ID,
@@ -254,10 +254,11 @@ func eventsToCalendar(events []event.Event, calendars map[int64]CalendarInfo, hi
 	return out
 }
 
-// eventCalendarDays returns one entry for each local calendar day an event
+// EventCalendarDays returns one entry for each local calendar day an event
 // touches. All-day events use UTC (their StartTime is a datestamp at 00:00
-// UTC, not a point in time). Timed events use local time.
-func eventCalendarDays(e event.Event) []time.Time {
+// UTC, not a point in time). Timed events use local time. The --at flag of
+// the TUI launch uses the same rule (issue #878).
+func EventCalendarDays(e event.Event) []time.Time {
 	if e.AllDay {
 		s := e.StartTime.UTC()
 		startDay := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, time.UTC)

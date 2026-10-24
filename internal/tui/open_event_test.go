@@ -84,6 +84,32 @@ func TestWithOpenEvent_JumpsEveryViewToTheEventDay(t *testing.T) {
 	}
 }
 
+// TestWithOpenEvent_AllDayUsesItsUTCDate guards issue #878. An all-day
+// event stores a UTC midnight. West of UTC that instant is the evening
+// before, but the cursor must take the date of the event.
+func TestWithOpenEvent_AllDayUsesItsUTCDate(t *testing.T) {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Skipf("load zone: %v", err)
+	}
+	prev := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = prev })
+
+	m := NewModel(nil, "")
+	start := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+	m = m.WithOpenEvent(event.Event{ID: 7, Title: "Trip", AllDay: true, StartTime: start, EndTime: start.AddDate(0, 0, 1)})
+
+	want := time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)
+	for name, got := range map[string]time.Time{
+		"month": m.calendar.Cursor(), "day": m.day.Cursor(), "week": m.week.Cursor(), "agenda": m.agenda.Cursor(),
+	} {
+		if !sameDay(got, want) {
+			t.Errorf("%s cursor = %s, want %s", name, got, want)
+		}
+	}
+}
+
 func TestEventsLoaded_OpensPendingEventAndSelectsAgendaRow(t *testing.T) {
 	day := time.Date(2026, 4, 21, 9, 0, 0, 0, time.Local)
 	ev := event.Event{
