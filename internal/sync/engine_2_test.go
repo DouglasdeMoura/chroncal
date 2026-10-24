@@ -943,3 +943,44 @@ func TestEnginePushLocalEditsRefreshesOpenConflict(t *testing.T) {
 		t.Fatalf("Title = %q, want the local title", evt.Title)
 	}
 }
+
+// TestEngineSyncCalendarKeepsLastSyncAtOnFailure runs a clean pass, then a
+// pass that fails. The failed pass must record its error and keep the
+// last_sync_at of the clean pass, so `sync status` shows how long the
+// calendar has failed (issue #886).
+func TestEngineSyncCalendarKeepsLastSyncAtOnFailure(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	health := func() (lastSyncAt, lastSyncError string) {
+		t.Helper()
+		row, err := q.GetCalendar(ctx, calA)
+		if err != nil {
+			t.Fatalf("GetCalendar: %v", err)
+		}
+		return storage.NullableToString(row.LastSyncAt), storage.NullableToString(row.LastSyncError)
+	}
+
+	if _, err := engine.SyncCalendar(ctx, calA, ConflictPrompt); err != nil {
+		t.Fatalf("clean pass: %v", err)
+	}
+	good, errText := health()
+	if good == "" || errText != "" {
+		t.Fatalf("after the clean pass: last_sync_at=%q last_sync_error=%q; want a time and no error", good, errText)
+	}
+	srv.setPutStatus("/cal/a/", http.StatusForbidden)
+	if _, err := engine.events.Create(ctx, event.CreateParams{
+		CalendarID: calA, Title: "Refused",
+		StartTime: time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC), EndTime: time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	res, err := engine.SyncCalendar(ctx, calA, ConflictPrompt)
+	if err != nil || len(res.Errors) == 0 {
+		t.Fatalf("failed pass = %+v, %v; want a push error", res, err)
+	}
+	kept, errText := health()
+	if kept != good || errText == "" {
+		t.Fatalf("after the failed pass: last_sync_at=%q last_sync_error=%q; want %q and the error", kept, errText, good)
+	}
+}

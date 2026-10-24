@@ -631,6 +631,8 @@ When you attach a local calendar, the next sync uploads its items. Some items st
 - A collection that does not support a component (for example `VTODO`) gets no item of that component.
 - An override without its series stays local.
 
+`sync status` shows one line for each connected calendar. `last_sync` is the time of the last clean sync. `last_attempt` is the time of the last sync, clean or not. `last_error` is the error of the last sync, or `-` when it was clean. A failed sync keeps `last_sync`, so you can see how long the calendar has failed.
+
 Narrow a run with `--calendar NAME` (one local calendar) or `--account NAME` (every calendar linked to one CalDAV account). The two flags are mutually exclusive. An account with no linked calendars is a clean no-op.
 
 Conflict handling:
