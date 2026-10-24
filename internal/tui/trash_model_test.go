@@ -422,7 +422,7 @@ func TestDetailWrappedLines_TooNarrowForTheLabel(t *testing.T) {
 	if got := ansi.Strip(lines[0]); got != "Restore" {
 		t.Errorf("first line = %q, want the label", got)
 	}
-	var values []string
+	values := make([]string, 0, len(lines)-1)
 	for _, line := range lines[1:] {
 		plain := ansi.Strip(line)
 		if ansi.StringWidth(plain) > 10 {
