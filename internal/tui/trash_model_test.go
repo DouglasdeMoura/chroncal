@@ -536,7 +536,6 @@ func TestTrashModel_ActionsPutTheFocusOnTheList(t *testing.T) {
 	tab := tea.KeyPressMsg{Code: tea.KeyTab}
 	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
 	click := func(m TrashModel, idx int) tea.Msg {
-		m = m.SetSize(120, 30)
 		x, y := m.shell.actionBarOrigin()
 		for dx := 0; dx < 60; dx++ {
 			if i, ok := m.shell.ActionAtPosition(x+dx, y); ok && i == idx {

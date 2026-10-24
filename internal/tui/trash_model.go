@@ -380,9 +380,10 @@ func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 		return m.toggleMarkAll(), nil
 	}
 	// Each action fires and puts the focus on the list: the restore and
-	// purge keys, Enter on a button, and a click on a button. A refused
-	// restore or a canceled purge sends no message back to the trash, so
-	// the list keys must work after the action (issue #880).
+	// purge keys, Enter on a button, and a click on a button. The reload
+	// after a refused restore or a canceled purge does not change the
+	// focus. A focus left on a button would stop the list keys (issue
+	// #880).
 	acts := m.buildActions()
 	switch {
 	case key.Matches(msg, m.keys.Restore):
@@ -431,12 +432,9 @@ func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 		return m.refresh(), nil
 	}
 	if idx, ok := m.shell.ActionAtPosition(msg.X, msg.Y); ok {
-		shell, cmd := m.shell.ClickAction(idx)
-		m.shell = shell
-		if cmd != nil {
-			return m.focusList(), cmd
-		}
-		return m.refresh(), cmd
+		// A disabled action gives no command and keeps the selection.
+		_, cmd := m.shell.ClickAction(idx)
+		return m.focusList(), cmd
 	}
 	return m, nil
 }
