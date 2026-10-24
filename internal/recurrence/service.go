@@ -34,10 +34,21 @@ func seriesKey(calendarID int64, uid string) string {
 // detection must use the same normalization (or neither) to stay in agreement.
 // It falls back to the raw string when it cannot be parsed.
 func canonicalRecurrenceID(rid string) string {
-	if t, err := timeutil.ParseRecurrenceID(rid); err == nil {
-		return t.UTC().Format(time.RFC3339)
+	if t := recurrenceTime(rid); !t.IsZero() {
+		return t.Format(time.RFC3339)
 	}
 	return rid
+}
+
+// recurrenceTime parses a recurrence ID to UTC, with the rule of
+// canonicalRecurrenceID. A value that does not parse gives the zero time.
+// The expansion sets the field RecurrenceTime of an override with it.
+func recurrenceTime(rid string) time.Time {
+	t, err := timeutil.ParseRecurrenceID(rid)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 // cancelledRecurringMaster reports whether the row is a recurring master that

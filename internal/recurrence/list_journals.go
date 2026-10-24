@@ -39,10 +39,11 @@ type ExpandedJournal struct {
 	journal.Journal
 	InstanceTime time.Time
 	IsOverride   bool
-	// Lone is true for the one instance of a row that the expansion
-	// cannot expand, for example a master with an RRULE that does not
-	// parse. Such an instance is no occurrence of a series.
-	Lone bool
+	// lone is true for the one instance of a row that the expansion does
+	// not expand: a row with no recurrence, or a master with an RRULE that
+	// does not parse. Such an instance is no occurrence of a series, so a
+	// list gives it no RecurrenceTime.
+	lone bool
 }
 
 // JournalListParams holds composable filters for journal lists.
@@ -104,7 +105,7 @@ func singleJournalInstance(j journal.Journal, from, to time.Time) []ExpandedJour
 	if anchor.IsZero() || anchor.Before(from) || !anchor.Before(to) {
 		return nil
 	}
-	return []ExpandedJournal{{Journal: j, InstanceTime: anchor, Lone: true}}
+	return []ExpandedJournal{{Journal: j, InstanceTime: anchor, lone: true}}
 }
 
 // ExpandJournal generates all occurrences of a journal within a date range.
@@ -136,7 +137,7 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 			if anchor := jj.ParseStartDate(); !anchor.IsZero() {
 				jj.StartDate = shiftDateString(jj.StartDate, anchor, i.InstanceTime.Sub(anchor))
 			}
-			if !i.Lone {
+			if !i.lone {
 				jj.RecurrenceTime = i.InstanceTime
 			}
 			return jj
@@ -149,7 +150,7 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 		newOccChecker:  newJournalOccChecker,
 		emitOverride: func(o storage.Journal, from, to time.Time) (journal.Journal, bool) {
 			oj := journalFromRow(o)
-			oj.RecurrenceTime = overrideRecurrenceTime(o.RecurrenceID)
+			oj.RecurrenceTime = recurrenceTime(o.RecurrenceID)
 			anchor := oj.ParseStartDate()
 			if anchor.IsZero() {
 				// No datable anchor: fall back to the replaced slot for the

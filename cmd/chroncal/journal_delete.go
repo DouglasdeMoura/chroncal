@@ -54,12 +54,12 @@ var journalResource = resource{
 		n, err := a.Journals.PurgeDeleted(ctx, cutoff)
 		return int64(n), err
 	},
-	liveUID: func(ctx context.Context, a *app.App, uid string) bool {
-		if _, err := a.Journals.GetByUID(ctx, uid); err == nil {
-			return true
+	uidState: func(ctx context.Context, a *app.App, uid string) (bool, bool, error) {
+		masterDeletedAt := func(ctx context.Context, uid string) (*string, error) {
+			m, err := a.Queries.GetJournalByUIDIncludingDeleted(ctx, uid)
+			return m.DeletedAt, err
 		}
-		overrides, err := a.Journals.ListOverridesByUID(ctx, uid)
-		return err == nil && len(overrides) > 0
+		return seriesUIDState(ctx, uid, masterDeletedAt, a.Queries.ListJournalOverridesByUID, a.Queries.ListDeletedJournalOverrideRecurrenceIDs)
 	},
 	errNotDeleted: journal.ErrNotDeleted,
 }

@@ -84,9 +84,10 @@ type resource struct {
 	purgeByID    func(ctx context.Context, a *app.App, id int64) error
 	purgeDeleted func(ctx context.Context, a *app.App, cutoff time.Time) (int64, error)
 
-	// liveUID reports whether a live row of the UID exists. A restore by UID
-	// that brings back no row reads it for its error message.
-	liveUID func(ctx context.Context, a *app.App, uid string) bool
+	// uidState reports whether a live row and a row in the trash of the UID
+	// exist. A restore by UID that brings back no row reads it for its
+	// error message.
+	uidState func(ctx context.Context, a *app.App, uid string) (live, trashed bool, err error)
 
 	// errNotDeleted is the domain sentinel error. Restore and purge map it
 	// to the "not_found" error code.
@@ -380,7 +381,8 @@ func seriesRestoreCandidates(ctx context.Context, uid string, rowCalendarID int6
 //
 // A restore by UID reverses a delete of the UID. A live item of the UID can
 // still have a row in the trash, for example one occurrence. The message
-// then sends the user to the restore by ID. The code stays "not_found",
+// then sends the user to the restore by ID. A read error of the state of
+// the UID shows as itself. The code stays "not_found",
 // the code of this error before, because a script can read it.
 func restoreNotDeletedErr(ctx context.Context, a *app.App, r resource, id int64, uid string) error {
 	if uid == "" {
@@ -389,11 +391,46 @@ func restoreNotDeletedErr(ctx context.Context, a *app.App, r resource, id int64,
 		}
 		return errNotFoundf("%s %d not found (may have been purged)", r.name, id)
 	}
-	if r.liveUID(ctx, a, uid) {
+	live, trashed, err := r.uidState(ctx, a, uid)
+	switch {
+	case err != nil:
+		return fmt.Errorf("restore %s: %w", r.name, err)
+	case live && trashed:
 		return errNotFoundf("%s %q is live, and no delete of the UID can come back by UID; restore a row in the trash by its ID (see %s list --include-deleted)",
 			r.name, safeText(uid), r.name)
+	case live:
+		return errNotFoundf("no %s with uid %q is in the trash; it is live", r.name, safeText(uid))
 	}
 	return errNotFoundf("%s %q not found (may have been purged)", r.name, safeText(uid))
+}
+
+// seriesUIDState is resource.uidState for a domain with one master of a
+// UID in all calendars (todos, journals). masterDeletedAt reads the
+// deleted_at column of the master. liveOverrides and trashedOverrides read
+// the override rows of the UID.
+func seriesUIDState[O any](ctx context.Context, uid string,
+	masterDeletedAt func(context.Context, string) (*string, error),
+	liveOverrides func(context.Context, string) ([]O, error),
+	trashedOverrides func(context.Context, string) ([]string, error),
+) (live, trashed bool, err error) {
+	deletedAt, err := masterDeletedAt(ctx, uid)
+	found, err := storage.Found(err)
+	if err != nil {
+		return false, false, err
+	}
+	if found {
+		masterTrashed := deletedAt != nil && *deletedAt != ""
+		live, trashed = !masterTrashed, masterTrashed
+	}
+	overrides, err := liveOverrides(ctx, uid)
+	if err != nil {
+		return false, false, err
+	}
+	deleted, err := trashedOverrides(ctx, uid)
+	if err != nil {
+		return false, false, err
+	}
+	return live || len(overrides) > 0, trashed || len(deleted) > 0, nil
 }
 
 // newPurgeCmd builds the purge verb for one resource. The body refuses a

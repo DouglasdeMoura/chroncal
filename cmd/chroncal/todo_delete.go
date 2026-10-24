@@ -67,12 +67,12 @@ var todoResource = resource{
 		n, err := a.Todos.PurgeDeleted(ctx, cutoff)
 		return int64(n), err
 	},
-	liveUID: func(ctx context.Context, a *app.App, uid string) bool {
-		if _, err := a.Todos.GetByUID(ctx, uid); err == nil {
-			return true
+	uidState: func(ctx context.Context, a *app.App, uid string) (bool, bool, error) {
+		masterDeletedAt := func(ctx context.Context, uid string) (*string, error) {
+			m, err := a.Queries.GetTodoByUIDIncludingDeleted(ctx, uid)
+			return m.DeletedAt, err
 		}
-		overrides, err := a.Todos.ListOverridesByUID(ctx, uid)
-		return err == nil && len(overrides) > 0
+		return seriesUIDState(ctx, uid, masterDeletedAt, a.Queries.ListTodoOverridesByUID, a.Queries.ListDeletedTodoOverrideRecurrenceIDs)
 	},
 	errNotDeleted: todo.ErrNotDeleted,
 }
