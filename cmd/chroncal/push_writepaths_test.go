@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -147,6 +148,63 @@ func TestWritePathsOpportunisticallyPush(t *testing.T) {
 		}
 		assertPushed(t, *pushed, calID)
 	})
+}
+
+// TestRestorePathsOpportunisticallyPush restores an event, a todo, and a
+// journal by ID and by UID. Each restore must push the calendar of the row,
+// as the delete does (issue #885). Before the fix the server changed only at
+// the next sync.
+func TestRestorePathsOpportunisticallyPush(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_ASSUME_YES", "1")
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	cal, err := a.Calendars.Create(context.Background(), "Work", "#7C3AED", "")
+	if err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	a.Close()
+
+	for _, tc := range []struct {
+		name  string
+		cmd   func() *cobra.Command
+		add   []string
+		table string
+	}{
+		{"event", eventCmd, []string{"event", "add", "Standup", "--calendar", "Work", "--date", "2026-05-18", "--time", "09:00", "--duration", "30m"}, "events"},
+		{"todo", todoCmd, []string{"todo", "add", "Ship", "--calendar", "Work"}, "todos"},
+		{"journal", journalCmd, []string{"journal", "add", "Note", "--calendar", "Work"}, "journals"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubPushSeam(t)
+			if err := runWriteCommand(t, tc.cmd(), tc.add...); err != nil {
+				t.Fatalf("%s add: %v", tc.name, err)
+			}
+			a, err := app.New(dbPath)
+			if err != nil {
+				t.Fatalf("app.New: %v", err)
+			}
+			var id int64
+			var uid string
+			if err := a.DB.QueryRowContext(context.Background(), `SELECT id, uid FROM `+tc.table+` ORDER BY id DESC LIMIT 1`).Scan(&id, &uid); err != nil {
+				t.Fatalf("read row: %v", err)
+			}
+			a.Close()
+			for _, ref := range []string{fmt.Sprint(id), uid} {
+				if err := runWriteCommand(t, tc.cmd(), tc.name, "delete", fmt.Sprint(id), "--yes"); err != nil {
+					t.Fatalf("%s delete: %v", tc.name, err)
+				}
+				pushed := stubPushSeam(t)
+				if err := runWriteCommand(t, tc.cmd(), tc.name, "restore", ref); err != nil {
+					t.Fatalf("%s restore %s: %v", tc.name, ref, err)
+				}
+				assertPushed(t, *pushed, cal.ID)
+			}
+		})
+	}
 }
 
 func assertPushed(t *testing.T, pushed []int64, want int64) {

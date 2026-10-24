@@ -82,8 +82,24 @@ var eventResource = resource{
 		}
 		return meta.PushCalendarIDs(target.CalendarID), nil
 	},
-	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Events.RestoreByID(ctx, id) },
-	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Events.RestoreByUID(ctx, uid) },
+	restoreByID: func(ctx context.Context, a *app.App, id int64) ([]int64, error) {
+		if err := a.Events.RestoreByID(ctx, id); err != nil {
+			return nil, err
+		}
+		e, err := a.Events.GetIncludingDeleted(ctx, id)
+		if err != nil {
+			// The restore committed. The push is best-effort, so a failed
+			// read skips it, and the next sync sends the rows.
+			return nil, nil
+		}
+		return eventRestorePushCalendars(ctx, a, e.UID), nil
+	},
+	restoreByUID: func(ctx context.Context, a *app.App, uid string) ([]int64, error) {
+		if err := a.Events.RestoreByUID(ctx, uid); err != nil {
+			return nil, err
+		}
+		return eventRestorePushCalendars(ctx, a, uid), nil
+	},
 	purgeCandidate: func(ctx context.Context, a *app.App, id int64) (row, bool, error) {
 		e, err := a.Events.GetIncludingDeleted(ctx, id)
 		if err != nil {
@@ -355,7 +371,7 @@ any override at that time). --following truncates the series at that date.`,
 			if err := a.Events.DeleteFromInstance(ctx, e.CalendarID, e.UID, followingAt); err != nil {
 				return fmt.Errorf("delete this and following: %w", err)
 			}
-			return reportDeleted(cmd, a, w, []int64{e.CalendarID},
+			return reportWritten(cmd, a, w, []int64{e.CalendarID},
 				map[string]any{"deleted": true, "uid": e.UID, "following": followingAt.UTC().Format(time.RFC3339)},
 				fmt.Sprintf("Deleted %q and following occurrences.\n", safeText(e.Title)))
 		}
@@ -363,7 +379,7 @@ any override at that time). --following truncates the series at that date.`,
 		if err := a.Events.DeleteInstance(ctx, e.CalendarID, e.UID, occurrenceAt); err != nil {
 			return fmt.Errorf("delete occurrence: %w", notFoundErrFor(err, "event", e.UID, true))
 		}
-		return reportDeleted(cmd, a, w, []int64{e.CalendarID},
+		return reportWritten(cmd, a, w, []int64{e.CalendarID},
 			map[string]any{"deleted": true, "uid": e.UID, "recurrence_id": occurrenceAt.UTC().Format(time.RFC3339)},
 			fmt.Sprintf("Deleted occurrence of %q at %s.\n", safeText(e.Title), occurrenceAt.Format(time.RFC3339)))
 	}
@@ -394,4 +410,18 @@ func seriesDeleteErr(ctx context.Context, a *app.App, target row, err error) err
 			target.UID, calendarName(ctx, a, target.CalendarID))
 	}
 	return err
+}
+
+// eventRestorePushCalendars returns the calendars that the push after a
+// restore of uid sends: every calendar that holds a row of the UID. The
+// restore marks the calendar of the series dirty, and a legacy override
+// keeps a tombstone in its own calendar (see storage.ReconcileAfterRestore).
+// A calendar with nothing to send makes no server write. A failed read
+// returns no calendar: the push is best-effort.
+func eventRestorePushCalendars(ctx context.Context, a *app.App, uid string) []int64 {
+	ids, err := a.Queries.ListEventCalendarIDsByUID(ctx, uid)
+	if err != nil {
+		return nil
+	}
+	return ids
 }

@@ -26,8 +26,24 @@ var todoResource = resource{
 	delSeries: func(ctx context.Context, a *app.App, target row) ([]int64, error) {
 		return []int64{target.CalendarID}, a.Todos.DeleteSeries(ctx, target.UID)
 	},
-	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Todos.RestoreByID(ctx, id) },
-	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Todos.RestoreByUID(ctx, uid) },
+	restoreByID: func(ctx context.Context, a *app.App, id int64) ([]int64, error) {
+		if err := a.Todos.RestoreByID(ctx, id); err != nil {
+			return nil, err
+		}
+		r, err := a.Todos.GetIncludingDeleted(ctx, id)
+		if err != nil {
+			// The restore committed. The push is best-effort, so a failed
+			// read skips it, and the next sync sends the rows.
+			return nil, nil
+		}
+		return todoRestorePushCalendars(ctx, a, r.UID, r.CalendarID), nil
+	},
+	restoreByUID: func(ctx context.Context, a *app.App, uid string) ([]int64, error) {
+		if err := a.Todos.RestoreByUID(ctx, uid); err != nil {
+			return nil, err
+		}
+		return todoRestorePushCalendars(ctx, a, uid, 0), nil
+	},
 	purgeCandidate: func(ctx context.Context, a *app.App, id int64) (row, bool, error) {
 		td, err := a.Todos.GetIncludingDeleted(ctx, id)
 		if err != nil {
@@ -52,4 +68,20 @@ recurring series.`,
   chroncal todo delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
   chroncal todo delete weekly-review-uid --series`,
 	})
+}
+
+// todoRestorePushCalendars returns the calendars that the push after a
+// restore of uid sends: rowCalendarID (0 for none) and the calendar of the
+// master of the UID. The restore marks the calendar of the master dirty
+// (see storage.ReconcileAfterRestore). A failed read of the master returns
+// rowCalendarID only: the push is best-effort.
+func todoRestorePushCalendars(ctx context.Context, a *app.App, uid string, rowCalendarID int64) []int64 {
+	var ids []int64
+	if rowCalendarID != 0 {
+		ids = append(ids, rowCalendarID)
+	}
+	if m, err := a.Queries.GetTodoByUIDIncludingDeleted(ctx, uid); err == nil && m.CalendarID != rowCalendarID {
+		ids = append(ids, m.CalendarID)
+	}
+	return ids
 }

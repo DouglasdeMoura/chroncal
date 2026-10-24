@@ -62,8 +62,9 @@ type resource struct {
 
 	// restoreByID clears the deletion marker on one row. restoreByUID
 	// reverses the delete of the UID by the rule of the resource service.
-	restoreByID  func(ctx context.Context, a *app.App, id int64) error
-	restoreByUID func(ctx context.Context, a *app.App, uid string) error
+	// Each returns the calendars that the push after the restore sends.
+	restoreByID  func(ctx context.Context, a *app.App, id int64) ([]int64, error)
+	restoreByUID func(ctx context.Context, a *app.App, uid string) ([]int64, error)
 
 	// purgeCandidate loads one row for the purge confirm. The bool reports
 	// whether the row carries a soft-delete marker.
@@ -87,10 +88,10 @@ type verbHelp struct {
 	example string
 }
 
-// reportDeleted writes one delete result. Machine output prints the JSON
-// payload. Text output prints the line. Both paths then push the changed
-// calendar.
-func reportDeleted(cmd *cobra.Command, a *app.App, w io.Writer, calendarIDs []int64, payload map[string]any, line string) error {
+// reportWritten writes one delete or restore result. Machine output prints
+// the JSON payload. Text output prints the line. Both paths then push the
+// changed calendars.
+func reportWritten(cmd *cobra.Command, a *app.App, w io.Writer, calendarIDs []int64, payload map[string]any, line string) error {
 	if outputFmt != "text" {
 		if err := printOutput(w, payload); err != nil {
 			return err
@@ -98,7 +99,8 @@ func reportDeleted(cmd *cobra.Command, a *app.App, w io.Writer, calendarIDs []in
 	} else {
 		fmt.Fprint(w, line)
 	}
-	// A series delete can write more than one calendar: each one pushes.
+	// A series delete or a restore can write more than one calendar: each
+	// one pushes.
 	for _, id := range calendarIDs {
 		opportunisticPush(a, id, cmd)
 	}
@@ -185,7 +187,7 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 		if err != nil {
 			return fmt.Errorf("delete series: %w", notFoundErrFor(err, r.name, target.UID, r.resolveIn != nil))
 		}
-		return reportDeleted(cmd, a, w, pushCalendarIDs,
+		return reportWritten(cmd, a, w, pushCalendarIDs,
 			map[string]any{"deleted": true, "uid": target.UID, "series": true},
 			fmt.Sprintf("Deleted %s series %q.\n", r.name, safeText(target.UID)))
 	}
@@ -194,7 +196,7 @@ func runDelete(cmd *cobra.Command, r resource, args []string, opts deleteOpts) e
 	if err != nil {
 		return fmt.Errorf("delete %s: %w", r.name, err)
 	}
-	return reportDeleted(cmd, a, w, []int64{pushCalendarID},
+	return reportWritten(cmd, a, w, []int64{pushCalendarID},
 		map[string]any{"deleted": true, "id": target.ID},
 		fmt.Sprintf("Deleted %s %d.\n", r.name, target.ID))
 }
@@ -222,31 +224,29 @@ func newRestoreCmd(r resource, h verbHelp) *cobra.Command {
 			w := cmd.OutOrStdout()
 
 			if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
-				if err := r.restoreByID(ctx, a, id); err != nil {
+				pushCalendarIDs, err := r.restoreByID(ctx, a, id)
+				if err != nil {
 					if errors.Is(err, r.errNotDeleted) {
 						return errNotFoundf("%s %d not found (may have been purged)", r.name, id)
 					}
 					return fmt.Errorf("restore %s: %w", r.name, notFoundErr(err, r.name, id))
 				}
-				if outputFmt != "text" {
-					return printOutput(w, map[string]any{"restored": true, "id": id})
-				}
-				fmt.Fprintf(w, "Restored %s %d.\n", r.name, id)
-				return nil
+				return reportWritten(cmd, a, w, pushCalendarIDs,
+					map[string]any{"restored": true, "id": id},
+					fmt.Sprintf("Restored %s %d.\n", r.name, id))
 			}
 
 			// UID path: the service reverses the delete of the UID.
-			if err := r.restoreByUID(ctx, a, ref); err != nil {
+			pushCalendarIDs, err := r.restoreByUID(ctx, a, ref)
+			if err != nil {
 				if errors.Is(err, r.errNotDeleted) {
 					return errNotFoundf("%s %q not found (may have been purged)", r.name, ref)
 				}
 				return fmt.Errorf("restore %s: %w", r.name, notFoundErr(err, r.name, ref))
 			}
-			if outputFmt != "text" {
-				return printOutput(w, map[string]any{"restored": true, "uid": ref})
-			}
-			fmt.Fprintf(w, "Restored %s(s) with uid %q.\n", r.name, safeText(ref))
-			return nil
+			return reportWritten(cmd, a, w, pushCalendarIDs,
+				map[string]any{"restored": true, "uid": ref},
+				fmt.Sprintf("Restored %s(s) with uid %q.\n", r.name, safeText(ref)))
 		},
 	}
 	return cmd
