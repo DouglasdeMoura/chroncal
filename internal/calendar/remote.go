@@ -299,11 +299,18 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 
 // checkConnectFree refuses a link of cal to a collection that another local
 // calendar links (CheckCollectionFree). A calendar that an account links to
-// the same collection already passes. A relink then changes the credential
-// only, and a double link from before issue #874 keeps working.
+// the same collection with the same user passes. A relink then changes the
+// credential only, and a double link from before issue #874 keeps working.
 func checkConnectFree(ctx context.Context, q *storage.Queries, cal Calendar, link RemoteLink, serverURL string) error {
-	if cal.AccountID != 0 && sameRemoteCollection(cal.RemoteURL, link.RemoteURL) {
-		return nil
+	if cal.AccountID != 0 {
+		current, err := q.GetAccount(ctx, cal.AccountID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("get account: %w", err)
+		}
+		if err == nil && strings.EqualFold(strings.TrimSpace(current.Username), strings.TrimSpace(link.Username)) &&
+			CollectionKey(cal.RemoteURL, current.ServerUrl) == CollectionKey(link.RemoteURL, serverURL) {
+			return nil
+		}
 	}
 	return CheckCollectionFree(ctx, q, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID})
 }

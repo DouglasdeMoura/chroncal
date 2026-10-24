@@ -156,6 +156,10 @@ func (s *Service) ReconcileSelection(
 		}
 	}
 	unlinkedByURL := uniqueUnlinkedByRemoteIdentity(allCalendars, discovery.Account.ServerURL, s.declared)
+	links, err := calendar.LoadCollectionLinks(ctx, qtx)
+	if err != nil {
+		return SelectionResult{}, err
+	}
 
 	result := SelectionResult{RemovedIDs: make([]int64, 0, len(removedRows))}
 	for _, row := range removedRows {
@@ -170,7 +174,7 @@ func (s *Service) ReconcileSelection(
 			continue
 		}
 		item := discoveredByKey[key]
-		if err := checkCollectionFree(ctx, qtx, discovery.Account, item.Path); err != nil {
+		if err := checkCollectionFree(links, discovery.Account, item.Path); err != nil {
 			return SelectionResult{}, fmt.Errorf("add calendar %q: %w", item.Name, err)
 		}
 		if id, ok := unlinkedByURL[key]; ok {
