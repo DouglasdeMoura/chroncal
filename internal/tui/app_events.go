@@ -186,17 +186,19 @@ func eventDedupKey(e event.Event) string {
 // and hands the result to the trash model via trashLoadedMsg. The merged
 // list is newest-first, as each trash.Service.List result is (issue #879).
 // The calendars are read in ID order, so entries with the same deletion
-// time keep one order from one load to the next.
+// time keep one order from one load to the next. The IDs come from the maps
+// of the model before the command runs: Update writes those maps, and the
+// command runs on another goroutine.
 func (m Model) loadTrash() tea.Cmd {
+	ids := make([]int64, 0, len(m.calendars))
+	for id := range m.calendars {
+		if !m.hiddenCalendars[id] {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
 	return func() tea.Msg {
 		ctx := context.Background()
-		ids := make([]int64, 0, len(m.calendars))
-		for id := range m.calendars {
-			if !m.hiddenCalendars[id] {
-				ids = append(ids, id)
-			}
-		}
-		slices.Sort(ids)
 		var out []trash.Entry
 		for _, id := range ids {
 			entries, err := m.app.Trash.List(ctx, id)
@@ -205,9 +207,7 @@ func (m Model) loadTrash() tea.Cmd {
 			}
 			out = append(out, entries...)
 		}
-		slices.SortStableFunc(out, func(a, b trash.Entry) int {
-			return b.DeletedAt.Compare(a.DeletedAt)
-		})
+		trash.SortNewestFirst(out)
 		return trashLoadedMsg{entries: out}
 	}
 }
