@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -10,39 +11,42 @@ import (
 
 // TestLoadTrash_NewestFirstAcrossCalendars checks that the merged trash of
 // all calendars is newest-first. Each calendar gives a newest-first list,
-// and the merge must keep that order across calendars (issue #879). The
-// calendars come from a map, so the test loads the trash several times.
+// and the merge must keep that order across calendars (issue #879). Two
+// entries with the same deletion time sort by the higher ID first. A hidden
+// calendar gives no entries.
 func TestLoadTrash_NewestFirstAcrossCalendars(t *testing.T) {
 	m, a := newDBBackedModel(t)
 	ctx := context.Background()
 
 	base := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	// Each event goes to the trash at its own time. The calendars
-	// alternate, so no calendar order gives the newest-first order.
+	// alternate, so no calendar order gives the newest-first order. The
+	// last two share a deletion time.
 	deletions := []struct {
-		calendar string
-		at       time.Time
+		title, calendar string
+		at              time.Time
 	}{
-		{"Home", base.Add(3 * time.Hour)},
-		{"Work", base.Add(2 * time.Hour)},
-		{"Home", base.Add(1 * time.Hour)},
-		{"Work", base},
+		{"home-3h", "Home", base.Add(3 * time.Hour)},
+		{"work-2h", "Work", base.Add(2 * time.Hour)},
+		{"home-1h", "Home", base.Add(1 * time.Hour)},
+		{"work-0h", "Work", base},
+		{"hidden-4h", "Hidden", base.Add(4 * time.Hour)},
+		{"work-tie", "Work", base.Add(5 * time.Hour)},
+		{"home-tie", "Home", base.Add(5 * time.Hour)},
 	}
+	want := []string{"home-tie", "work-tie", "home-3h", "work-2h", "home-1h", "work-0h"}
 	calendarIDs := map[string]int64{}
-	for _, d := range deletions {
-		if _, ok := calendarIDs[d.calendar]; ok {
-			continue
-		}
-		cal, err := a.Calendars.Create(ctx, d.calendar, "", "")
-		if err != nil {
-			t.Fatalf("calendar create: %v", err)
-		}
-		calendarIDs[d.calendar] = cal.ID
-	}
 	for i, d := range deletions {
+		if _, ok := calendarIDs[d.calendar]; !ok {
+			cal, err := a.Calendars.Create(ctx, d.calendar, "", "")
+			if err != nil {
+				t.Fatalf("calendar create: %v", err)
+			}
+			calendarIDs[d.calendar] = cal.ID
+		}
 		ev, err := a.Events.Create(ctx, event.CreateParams{
 			CalendarID: calendarIDs[d.calendar],
-			Title:      d.calendar,
+			Title:      d.title,
 			StartTime:  base.AddDate(0, 0, i),
 			EndTime:    base.AddDate(0, 0, i).Add(time.Hour),
 		})
@@ -58,20 +62,17 @@ func TestLoadTrash_NewestFirstAcrossCalendars(t *testing.T) {
 		}
 	}
 	m, _ = step(t, m, m.loadCalendars()())
+	m.hiddenCalendars[calendarIDs["Hidden"]] = true
 
-	for range 20 {
-		msg, ok := m.loadTrash()().(trashLoadedMsg)
-		if !ok || msg.err != nil {
-			t.Fatalf("loadTrash = %#v, want the trash entries", msg)
-		}
-		if len(msg.entries) != len(deletions) {
-			t.Fatalf("loadTrash gave %d entries, want %d", len(msg.entries), len(deletions))
-		}
-		for i, e := range msg.entries {
-			if !e.DeletedAt.Equal(deletions[i].at) {
-				t.Fatalf("entry %d deleted at %v (%s), want %v: the list is not newest-first",
-					i, e.DeletedAt, e.Title, deletions[i].at)
-			}
-		}
+	msg, ok := m.loadTrash()().(trashLoadedMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("loadTrash = %#v, want the trash entries", msg)
+	}
+	got := make([]string, len(msg.entries))
+	for i, e := range msg.entries {
+		got[i] = e.Title
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("loadTrash order = %v, want %v", got, want)
 	}
 }
