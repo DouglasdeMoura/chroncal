@@ -43,8 +43,3 @@ UPDATE todo_alarms SET uid = ? WHERE id = ?;
 
 -- name: UpdateTodoAlarmAcknowledged :exec
 UPDATE todo_alarms SET acknowledged = ? WHERE id = ?;
-
--- name: ListTodoAlarmUIDsHeldByOtherTodos :many
--- See ListEventAlarmUIDsHeldByOtherEvents.
-SELECT DISTINCT uid FROM todo_alarms
-WHERE todo_id <> sqlc.arg(todo_id) AND uid IN (sqlc.slice(uids));

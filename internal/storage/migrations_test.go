@@ -1026,3 +1026,49 @@ func TestMigration057_UIDIndexesOfTheLogs(t *testing.T) {
 		}
 	}
 }
+
+// Verifies migration 063: an alarm UID is unique in its event or its todo
+// only (issue #922). Down keeps the UID on the row with the lowest ID.
+func TestMigration063UpDown(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec, count := migHelpers(t, ctx, conn)
+	for _, uid := range []string{"e1", "e2"} {
+		mustExec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time)
+			VALUES (?, 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`, uid)
+		mustExec(`INSERT INTO todos (uid, calendar_id, summary) VALUES (?, 1, 'Mig')`, uid)
+	}
+	for _, id := range []int{1, 2} {
+		mustExec(`INSERT INTO event_alarms (event_id, uid, trigger_value) VALUES (?, 'shared', '-PT15M')`, id)
+		mustExec(`INSERT INTO todo_alarms (todo_id, uid, trigger_value) VALUES (?, 'shared', '-PT15M')`, id)
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO event_alarms (event_id, uid, trigger_value) VALUES (1, 'shared', '-PT5M')`); err == nil {
+		t.Error("a second use of a UID in one event must fail")
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO todo_alarms (todo_id, uid, trigger_value) VALUES (1, 'shared', '-PT5M')`); err == nil {
+		t.Error("a second use of a UID in one todo must fail")
+	}
+
+	provider := migProvider(t, conn)
+	if _, err := provider.DownTo(ctx, 62); err != nil {
+		t.Fatalf("down to 62: %v", err)
+	}
+	for _, table := range []string{"event_alarms", "todo_alarms"} {
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE uid = 'shared'`); n != 1 {
+			t.Errorf("%s rows with the shared UID after Down = %d, want 1", table, n)
+		}
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE uid = 'shared' AND id = (SELECT MIN(id) FROM ` + table + `)`); n != 1 {
+			t.Errorf("%s: the row with the lowest ID must keep the UID", table)
+		}
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("re-up: %v", err)
+	}
+	mustExec(`UPDATE event_alarms SET uid = 'shared'`)
+	mustExec(`UPDATE todo_alarms SET uid = 'shared'`)
+}

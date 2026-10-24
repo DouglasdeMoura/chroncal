@@ -35,8 +35,8 @@ import (
 //   - DTSTAMP, CREATED, and LAST-MODIFIED
 //   - the stored UID of an alarm that has no UID in the file, because the
 //     store gives a UID to an alarm without one
-//   - both UIDs of an alarm whose file UID another alarm row holds, because
-//     the store cannot keep that UID (issue #915)
+//   - both UIDs of an alarm whose file UID an earlier alarm of the item
+//     has, because the store cannot keep that UID (issue #915)
 //   - the order of the alarms, because the store reads them in the order of
 //     their row IDs and pairs them by content or by UID
 //   - the order of the categories and of the attendees, because the store
@@ -102,32 +102,32 @@ func sortedAttendees(attendees []model.Attendee) []model.Attendee {
 // comparableAlarms returns copies of the stored and the parsed alarms in a
 // form that the comparison can use. It applies the rules of the alarm
 // write: it clears each parsed UID that the store refuses
-// (model.WithoutRefusedAlarmUIDs, issue #915), and it pairs the alarms
-// with model.PairAlarms. The parsed alarms then take the order of their
-// stored alarms, so the order of the VALARMs is no change. A parsed alarm
-// with no UID clears the UID of its stored alarm, because the store gave
-// that UID. A file UID that the store can keep stays, so a change of it
-// counts.
+// (model.WithoutRefusedAlarmUIDs), and it pairs the alarms with
+// model.PairAlarms. The parsed alarms then take the order of their stored
+// alarms, so the order of the VALARMs is no change. A parsed alarm with no
+// UID clears the UID of its stored alarm, because the store gave that UID.
+// A file UID that differs from the UID of its stored alarm stays, so the
+// change counts.
 //
 // ok is false when an alarm has no pair: the write then creates or
 // deletes an alarm, so the item changes.
-func comparableAlarms(stored, parsed []model.Alarm, heldElsewhere func(uids []string) (map[string]bool, error)) (outStored, outParsed []model.Alarm, ok bool, err error) {
-	parsed, err = model.WithoutRefusedAlarmUIDs(parsed, heldElsewhere)
-	if err != nil || len(parsed) != len(stored) {
-		return nil, nil, false, err
+func comparableAlarms(stored, parsed []model.Alarm) (outStored, outParsed []model.Alarm, ok bool) {
+	parsed = model.WithoutRefusedAlarmUIDs(parsed)
+	if len(parsed) != len(stored) {
+		return nil, nil, false
 	}
 	outStored = slices.Clone(stored)
 	outParsed = make([]model.Alarm, len(stored))
 	for i, p := range model.PairAlarms(stored, parsed) {
 		if p.Stored < 0 {
-			return nil, nil, false, nil
+			return nil, nil, false
 		}
 		if parsed[i].UID == "" {
 			outStored[p.Stored].UID = ""
 		}
 		outParsed[p.Stored] = parsed[i]
 	}
-	return outStored, outParsed, true, nil
+	return outStored, outParsed, true
 }
 
 // unchangedEvent reports whether the import of e changes nothing on the
@@ -146,8 +146,8 @@ func unchangedEvent(ctx context.Context, a *app.App, mode *storage.Import, old, 
 	}
 	old.Categories = timeutil.JoinCategoryList(cats)
 	var ok bool
-	old.Alarms, e.Alarms, ok, err = comparableAlarms(old.Alarms, e.Alarms, event.AlarmUIDsHeldElsewhere(ctx, a.Queries, old.ID))
-	if err != nil || !ok {
+	old.Alarms, e.Alarms, ok = comparableAlarms(old.Alarms, e.Alarms)
+	if !ok {
 		return false
 	}
 	form := func(e event.Event) func() ([]byte, error) {
@@ -173,8 +173,8 @@ func unchangedTodo(ctx context.Context, a *app.App, mode *storage.Import, old, t
 	}
 	old.Categories = timeutil.JoinCategoryList(cats)
 	var ok bool
-	old.Alarms, t.Alarms, ok, err = comparableAlarms(old.Alarms, t.Alarms, todo.AlarmUIDsHeldElsewhere(ctx, a.Queries, old.ID))
-	if err != nil || !ok {
+	old.Alarms, t.Alarms, ok = comparableAlarms(old.Alarms, t.Alarms)
+	if !ok {
 		return false
 	}
 	form := func(t todo.Todo) func() ([]byte, error) {

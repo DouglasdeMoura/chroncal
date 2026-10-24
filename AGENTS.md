@@ -116,10 +116,11 @@ Three paths share one rule set. `alarm.defaultAlarmCandidates` decides which exp
 
 Eligibility filters the notification path only. `alarm.ListPendingDefaultAlarms` returns every unacknowledged row and carries an `Eligible` flag. The `alarm list` output shows an ineligible row as "will not fire again", because a hidden row gives the user no way to find its ID and dismiss it.
 
-Alarm UIDs are unique per table. The store refuses a UID that an alarm of another item holds, and a second use of one UID in one item. `model.WithoutRefusedAlarmUIDs` clears such a UID before the alarm write of the event and the todo services, and before the import comparison in `internal/icaltransfer/unchanged.go` (issue #915). The same callers pair the incoming alarms with the stored rows through `model.PairAlarms`:
+An alarm UID is unique in its event or its todo (migration 063, issue #922). Two items can hold the same alarm UID, as RFC 9074 permits. The store refuses a second use of one UID in one item. `model.WithoutRefusedAlarmUIDs` clears such a UID before the alarm write of the event and the todo services, and before the import comparison in `internal/icaltransfer/unchanged.go` (issue #915). The same callers pair the incoming alarms with the stored rows through `model.PairAlarms`:
 
-- The first pass pairs by content. Two different non-empty UIDs never pair. An alarm with no UID skips a row whose UID another incoming alarm has.
+- The first pass pairs by content. Two different non-empty UIDs do not pair. An alarm with no UID skips a row whose UID another incoming alarm has. An alarm whose UID a stored row has skips the rows with no UID.
 - The second pass pairs by UID, so an edited alarm keeps its row and its alarm state.
+- The third pass pairs an alarm that has a UID and no pair with a row of equal content that has no pair. The row takes the UID of the alarm and keeps its alarm state. Before migration 063, the store kept a minted UID when another item held the UID of the file. This pass gives such a row the UID of the file.
 
 Fix the two rules in `internal/model/alarm.go`, not per caller.
 
