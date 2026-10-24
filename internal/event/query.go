@@ -66,21 +66,30 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Event, error) {
 	if ftsQuery == "" {
 		return []Event{}, nil
 	}
-	rows, err := s.q.SearchEventsFTS(ctx, ftsQuery, p.CalendarID, p.From, p.To, p.Status)
+	from, err := parseRangeBound("search events", "from", p.From)
+	if err != nil {
+		return nil, err
+	}
+	to, err := parseRangeBound("search events", "to", p.To)
+	if err != nil {
+		return nil, err
+	}
+	qFrom, qTo := timeutil.CoverWindow(from, to)
+	rows, err := s.q.SearchEventsFTS(ctx, ftsQuery, p.CalendarID, timeutil.RangeBound(qFrom), timeutil.RangeBound(qTo), p.Status)
 	if err != nil {
 		return nil, fmt.Errorf("search events: %w", err)
 	}
-	events := fromStorageSlice(rows)
+	events := inWindow(fromStorageSlice(rows), from, to)
 	s.populateCategories(ctx, events)
 	return events, nil
 }
 
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, error) {
-	from, err := parseExportBound("from", p.From)
+	from, err := parseRangeBound("export events", "from", p.From)
 	if err != nil {
 		return nil, err
 	}
-	to, err := parseExportBound("to", p.To)
+	to, err := parseRangeBound("export events", "to", p.To)
 	if err != nil {
 		return nil, err
 	}
@@ -100,16 +109,16 @@ func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, 
 	return events, nil
 }
 
-// parseExportBound parses an RFC 3339 bound of ExportParams. An empty
-// bound gives the zero time (no bound). A bad bound gives an error, so a
-// typo never removes the filter.
-func parseExportBound(name, s string) (time.Time, error) {
+// parseRangeBound parses an RFC 3339 range bound of SearchParams or
+// ExportParams. An empty bound gives the zero time (no bound). A bad bound
+// gives an error, so a typo never removes the filter.
+func parseRangeBound(op, name, s string) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
 	}
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("export events: bad %s bound %q: %w", name, s, err)
+		return time.Time{}, fmt.Errorf("%s: bad %s bound %q: %w", op, name, s, err)
 	}
 	return t, nil
 }

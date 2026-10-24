@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasdemoura/chroncal/internal/alarm"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // TestAllDayEventOutput_EveryZone guards issue #875. The CLI shows the
@@ -47,6 +49,17 @@ func TestAllDayEventOutput_EveryZone(t *testing.T) {
 		printEventDetail(&buf, multi, false)
 		if !strings.Contains(buf.String(), "all day (Mon, Nov 2 2026 to Fri, Nov 6 2026)") {
 			t.Fatalf("event list detail:\n%s\nwant all day (Mon, Nov 2 2026 to Fri, Nov 6 2026)", buf.String())
+		}
+	})
+}
+
+// TestTodoDueAlarmToDueAlarm_DateOnly checks that the notification event
+// of a date-only todo is an all-day event at local midnight of the date.
+func TestTodoDueAlarmToDueAlarm_DateOnly(t *testing.T) {
+	testutil.ForEachLocalZone(t, func(t *testing.T) {
+		da := todoDueAlarmToDueAlarm(alarm.TodoDueAlarm{Todo: todo.Todo{Summary: "Water plants", DueDate: "2026-10-28"}})
+		if !da.Event.AllDay || !da.Event.LocalStart().Equal(time.Date(2026, 10, 28, 0, 0, 0, 0, time.Local)) {
+			t.Fatalf("event = AllDay %v start %s, want an all-day event on 2026-10-28", da.Event.AllDay, da.Event.LocalStart())
 		}
 	})
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
@@ -486,11 +487,11 @@ func truncationOrderNote(cutoff time.Time, sameCutoff, allDay bool) string {
 
 // trashOccurrenceTime renders the time of an occurrence of the series of a
 // trash entry: an instance time or a cutoff. An all-day series stores its
-// occurrences at midnight UTC, so it shows the UTC date only. In local time,
-// the date west of UTC is the day before.
+// occurrences at midnight UTC, so it shows the date only. timeutil.Moment
+// gives local midnight of that date (issue #875).
 func trashOccurrenceTime(t time.Time, allDay bool) string {
 	if allDay {
-		return t.UTC().Format("Mon, Jan 2")
+		return timeutil.Moment(t, true).Format("Mon, Jan 2")
 	}
 	return t.Local().Format("Mon, Jan 2 15:04")
 }
@@ -532,14 +533,14 @@ func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int, rw url
 			if e.DateOnly {
 				layout = "Mon, Jan 2"
 			}
-			lines = append(lines, detailLine(faint, "Due", e.DueDate.Local().Format(layout), labelWidth, w))
+			lines = append(lines, detailLine(faint, "Due", e.DueDate.Format(layout), labelWidth, w))
 		}
 		if e.PercentComplete > 0 {
 			lines = append(lines, detailLine(faint, "Progress", fmt.Sprintf("%d%%", e.PercentComplete), labelWidth, w))
 		}
 	case trash.KindJournal:
 		if !e.StartTime.IsZero() {
-			lines = append(lines, detailLine(faint, "Entry date", e.StartTime.Local().Format("Mon, Jan 2"), labelWidth, w))
+			lines = append(lines, detailLine(faint, "Entry date", e.StartTime.Format("Mon, Jan 2"), labelWidth, w))
 		}
 	default:
 		// KindEvent has no kind-specific detail line; the shared event

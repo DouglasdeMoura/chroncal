@@ -2,6 +2,7 @@ package event
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -188,4 +189,36 @@ func TestExportFiltered_RejectsBadBound(t *testing.T) {
 	if _, err := svc.ExportFiltered(context.Background(), ExportParams{From: "2026-13-01"}); err == nil {
 		t.Fatal("ExportFiltered with a bad bound: got nil error")
 	}
+}
+
+// TestSearch_AllDayEveryZone guards issue #875 for event search. A range
+// of the local day October 28 holds the all-day event of October 28 and
+// not the one of October 29, in every zone.
+func TestSearch_AllDayEveryZone(t *testing.T) {
+	testutil.ForEachLocalZone(t, func(t *testing.T) {
+		db, q := testutil.NewTestDB(t)
+		ctx := context.Background()
+		svc := NewService(db, q)
+		for _, d := range []int{27, 28, 29} {
+			if _, err := svc.Create(ctx, CreateParams{
+				CalendarID: 1, Title: fmt.Sprintf("holiday %d", d), AllDay: true,
+				StartTime: time.Date(2026, 10, d, 0, 0, 0, 0, time.UTC),
+				EndTime:   time.Date(2026, 10, d+1, 0, 0, 0, 0, time.UTC),
+			}); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+		}
+		from := time.Date(2026, 10, 28, 0, 0, 0, 0, time.Local)
+		got, err := svc.Search(ctx, SearchParams{
+			Query: "holiday",
+			From:  from.UTC().Format(time.RFC3339),
+			To:    from.AddDate(0, 0, 1).UTC().Format(time.RFC3339),
+		})
+		if err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		if len(got) != 1 || got[0].Title != "holiday 28" {
+			t.Fatalf("search = %v, want only holiday 28", got)
+		}
+	})
 }

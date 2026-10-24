@@ -111,7 +111,7 @@ func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k 
 	var result []Model
 	for _, row := range rows {
 		master := k.fromRow(row)
-		mFrom, mTo := rowWindow(k, row, from, to)
+		mFrom, mTo := timeutil.WindowFor(k.dateOnly(row), from, to)
 		expanded := k.expand(master, mFrom, mTo)
 
 		overrides := overridesByUID[k.uid(row)]
@@ -146,7 +146,7 @@ func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k 
 			if strings.EqualFold(k.status(o), "CANCELLED") {
 				continue // CANCELLED override suppresses the instance.
 			}
-			oFrom, oTo := rowWindow(k, o, from, to)
+			oFrom, oTo := timeutil.WindowFor(k.dateOnly(o), from, to)
 			m, ok := k.emitOverride(o, oFrom, oTo)
 			if !ok {
 				continue // override's own occurrence is outside the window
@@ -158,12 +158,6 @@ func expandRecurringRowsBy[Row any, Model any, Inst any](ctx context.Context, k 
 		}
 	}
 	return result, nil
-}
-
-// rowWindow returns the window [from, to) that applies to row (see
-// timeutil.WindowFor).
-func rowWindow[Row any, Model any, Inst any](k recurringKind[Row, Model, Inst], row Row, from, to time.Time) (time.Time, time.Time) {
-	return timeutil.WindowFor(k.dateOnly(row), from, to)
 }
 
 // populateCategories batch-loads categories for items and assigns the joined
