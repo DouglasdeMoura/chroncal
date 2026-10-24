@@ -22,7 +22,7 @@ const MaxAlarmRepeat = 100
 type Alarm struct {
 	ID            int64
 	EventID       int64
-	UID           string // globally unique per RFC 9074
+	UID           string // RFC 9074; unique in its event or its todo
 	Action        string // DISPLAY, EMAIL, AUDIO
 	TriggerValue  string // e.g. "-PT15M" or absolute RFC 3339
 	Description   string
@@ -36,6 +36,9 @@ type Alarm struct {
 	AttachFmtType string // FMTTYPE param for ATTACH (e.g. "audio/basic")
 	Attendees     []AlarmAttendee
 	XProperties   []XProperty // X-* extension props, round-trip only
+	// UIDUnverified marks a stored UID that a build before migration 063
+	// wrote. It can be a minted UID (issue #922). Store only, not content.
+	UIDUnverified bool
 }
 
 // ContentEqual returns true if two alarms have identical content (all fields
@@ -305,9 +308,9 @@ func StorableAlarmAction(action string) bool {
 //
 // The rule governs a write from now on. It does not repair a row an
 // earlier build already stamped: that row holds a non-empty UID, so this
-// function keeps it and syncMatchedAlarm backfills an empty value only.
-// A minted UID cannot be told from an authored one after the fact, so no
-// repair is possible.
+// function keeps it, and a pair by content writes a UID on a row with no
+// UID only (PairedAlarmUID). The third pass of PairAlarms is the one
+// exception (issue #922).
 func AlarmUIDForWrite(a Alarm) string {
 	if a.UID != "" {
 		return a.UID
@@ -319,50 +322,62 @@ func AlarmUIDForWrite(a Alarm) string {
 }
 
 // WithoutRefusedAlarmUIDs returns a copy of alarms with each UID that the
-// store cannot keep cleared. Alarm UIDs are unique per table, so the store
-// refuses two cases (issue #915):
-//   - an alarm of another item holds the UID; heldElsewhere returns the
-//     set of such UIDs from the UIDs that it gets
-//   - an earlier alarm of the same list has the UID
+// store cannot keep cleared. An alarm UID is unique in its event or its
+// todo (migration 063, issue #922), so the store refuses a UID that an
+// earlier alarm of the same list has.
 //
 // The alarm write of the event and the todo services and the import
 // comparison share this rule and PairAlarms. Fix the rules here, not per
 // caller.
-func WithoutRefusedAlarmUIDs(alarms []Alarm, heldElsewhere func(uids []string) (map[string]bool, error)) ([]Alarm, error) {
+func WithoutRefusedAlarmUIDs(alarms []Alarm) []Alarm {
 	out := slices.Clone(alarms)
-	var uids []string
-	for _, a := range out {
-		if a.UID != "" {
-			uids = append(uids, a.UID)
-		}
-	}
-	if len(uids) == 0 {
-		return out, nil
-	}
-	held, err := heldElsewhere(uids)
-	if err != nil {
-		return nil, fmt.Errorf("check alarm uids: %w", err)
-	}
-	seen := make(map[string]bool, len(uids))
+	seen := make(map[string]bool, len(out))
 	for i := range out {
-		uid := out[i].UID
-		switch {
+		switch uid := out[i].UID; {
 		case uid == "":
-		case held[uid] || seen[uid]:
+		case seen[uid]:
 			out[i].UID = ""
 		default:
 			seen[uid] = true
 		}
 	}
-	return out, nil
+	return out
+}
+
+// AlarmUIDs returns the non-empty UIDs of alarms.
+func AlarmUIDs(alarms []Alarm) []string {
+	var uids []string
+	for _, a := range alarms {
+		if a.UID != "" {
+			uids = append(uids, a.UID)
+		}
+	}
+	return uids
+}
+
+// PairedAlarmUID returns the UID that the store writes on the stored alarm
+// ex of the pair p by content with the incoming alarm a, and whether a
+// write is necessary. A pair of the third pass of PairAlarms takes the UID
+// of a. Else only a stored alarm with no UID gets a UID, the UID of
+// AlarmUIDForWrite. A preserved foreign alarm keeps its empty UID
+// (issue #586). The event and the todo services share this rule.
+func PairedAlarmUID(p AlarmPair, a, ex Alarm) (string, bool) {
+	if p.TakeUID {
+		return a.UID, true
+	}
+	uid := AlarmUIDForWrite(a)
+	return uid, uid != "" && ex.UID == ""
 }
 
 // AlarmPair names the stored alarm that an incoming alarm takes. Stored
 // is an index into the stored alarms, or -1 for no stored alarm. ByContent
-// is true for a pair by equal content and false for a pair by UID.
+// is true for a pair by equal content and false for a pair by UID. TakeUID
+// is true for a pair of the third pass: the stored alarm takes the UID of
+// the incoming alarm.
 type AlarmPair struct {
 	Stored    int
 	ByContent bool
+	TakeUID   bool
 }
 
 // PairAlarms pairs each incoming alarm with a stored alarm. A stored
@@ -370,14 +385,31 @@ type AlarmPair struct {
 // the todo services and the import comparison share this rule.
 //
 // The first pass pairs by equal content, in the order of incoming. Two
-// non-empty UIDs that differ never pair: the UID identifies the alarm, and
+// non-empty UIDs that differ do not pair. The UID identifies the alarm, and
 // a pair of different alarms would attach the alarm state to the wrong
-// alarm. An incoming alarm with no UID also skips a stored alarm whose UID
-// another incoming alarm has, because that stored alarm belongs to it.
+// alarm. An incoming alarm with no UID skips a stored alarm whose UID
+// another incoming alarm has, because that stored alarm belongs to it. An
+// incoming alarm whose UID a stored alarm has skips the stored alarms with
+// no UID. Its UID would go on a second row of the item.
 //
 // The second pass pairs the rest by an equal UID. An edited alarm then
 // keeps its row, and its alarm state stays.
-func PairAlarms(stored, incoming []Alarm) []AlarmPair {
+//
+// The third pass repairs a UID that the store minted before migration 063
+// (issue #922). The store then minted a UID for an alarm only when an alarm
+// of another item held the UID of the file. Two facts are the evidence of
+// a minted UID:
+//   - The stored alarm has the mark of migration 063 (UIDUnverified), so
+//     a build that could mint wrote its UID.
+//   - An alarm of another item has the incoming UID. heldElsewhere holds
+//     those UIDs.
+//
+// An incoming alarm with no pair and that evidence takes a stored alarm of
+// equal content with another UID and no pair. The stored alarm takes the
+// UID of the incoming alarm and keeps its alarm state. Without the
+// evidence, two different UIDs never pair. A UID that a build from
+// migration 063 on writes never has the mark.
+func PairAlarms(stored, incoming []Alarm, heldElsewhere map[string]bool) []AlarmPair {
 	pairs := make([]AlarmPair, len(incoming))
 	used := make([]bool, len(stored))
 	claimed := make(map[string]bool, len(incoming))
@@ -386,10 +418,17 @@ func PairAlarms(stored, incoming []Alarm) []AlarmPair {
 			claimed[a.UID] = true
 		}
 	}
+	home := make(map[string]bool, len(stored))
+	for _, ex := range stored {
+		if ex.UID != "" {
+			home[ex.UID] = true
+		}
+	}
 	for i, a := range incoming {
 		pairs[i] = AlarmPair{Stored: -1}
 		for j, ex := range stored {
-			if used[j] || (ex.UID != "" && ex.UID != a.UID && (a.UID != "" || claimed[ex.UID])) {
+			if used[j] || (ex.UID != "" && ex.UID != a.UID && (a.UID != "" || claimed[ex.UID])) ||
+				(ex.UID == "" && home[a.UID]) {
 				continue
 			}
 			if a.ContentEqual(ex) {
@@ -405,6 +444,17 @@ func PairAlarms(stored, incoming []Alarm) []AlarmPair {
 		for j, ex := range stored {
 			if !used[j] && ex.UID == a.UID {
 				pairs[i], used[j] = AlarmPair{Stored: j}, true
+				break
+			}
+		}
+	}
+	for i, a := range incoming {
+		if pairs[i].Stored >= 0 || !heldElsewhere[a.UID] {
+			continue
+		}
+		for j, ex := range stored {
+			if !used[j] && ex.UIDUnverified && ex.UID != "" && ex.UID != a.UID && !claimed[ex.UID] && a.ContentEqual(ex) {
+				pairs[i], used[j] = AlarmPair{Stored: j, ByContent: true, TakeUID: true}, true
 				break
 			}
 		}

@@ -1026,3 +1026,71 @@ func TestMigration057_UIDIndexesOfTheLogs(t *testing.T) {
 		}
 	}
 }
+
+// Verifies migration 063: an alarm UID is unique in its event or its todo
+// only (issue #922). Down keeps the UID on the row with the lowest ID.
+func TestMigration063UpDown(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec, count := migHelpers(t, ctx, conn)
+	provider := migProvider(t, conn)
+	for _, uid := range []string{"e1", "e2"} {
+		mustExec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time)
+			VALUES (?, 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`, uid)
+		mustExec(`INSERT INTO todos (uid, calendar_id, summary) VALUES (?, 1, 'Mig')`, uid)
+	}
+	for _, id := range []int{1, 2} {
+		mustExec(`INSERT INTO event_alarms (event_id, uid, trigger_value) VALUES (?, 'shared', '-PT15M')`, id)
+		mustExec(`INSERT INTO todo_alarms (todo_id, uid, trigger_value) VALUES (?, 'shared', '-PT15M')`, id)
+	}
+	// Each UID that a build before the migration wrote has the mark. A
+	// new row has no mark.
+	mustExec(`UPDATE event_alarms SET uid_unverified = 0`)
+	if _, err := provider.DownTo(ctx, 62); err != nil {
+		t.Fatalf("down to 62: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	for _, table := range []string{"event_alarms", "todo_alarms"} {
+		uids := count(`SELECT COUNT(*) FROM ` + table + ` WHERE uid IS NOT NULL`)
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE uid_unverified = 1`); n == 0 || n != uids {
+			t.Errorf("%s: marked rows after Up = %d, want each of the %d rows with a UID", table, n, uids)
+		}
+	}
+	mustExec(`INSERT INTO event_alarms (event_id, uid, trigger_value) VALUES (2, 'fresh', '-PT1M')`)
+	if n := count(`SELECT COUNT(*) FROM event_alarms WHERE uid = 'fresh' AND uid_unverified = 0`); n != 1 {
+		t.Error("a new row must have no mark")
+	}
+	mustExec(`DELETE FROM event_alarms WHERE uid = 'fresh'`)
+	mustExec(`UPDATE event_alarms SET uid = 'shared'`)
+	mustExec(`UPDATE todo_alarms SET uid = 'shared'`)
+	if _, err := conn.ExecContext(ctx, `INSERT INTO event_alarms (event_id, uid, trigger_value) VALUES (1, 'shared', '-PT5M')`); err == nil {
+		t.Error("a second use of a UID in one event must fail")
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO todo_alarms (todo_id, uid, trigger_value) VALUES (1, 'shared', '-PT5M')`); err == nil {
+		t.Error("a second use of a UID in one todo must fail")
+	}
+
+	if _, err := provider.DownTo(ctx, 62); err != nil {
+		t.Fatalf("down to 62: %v", err)
+	}
+	for _, table := range []string{"event_alarms", "todo_alarms"} {
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE uid = 'shared'`); n != 1 {
+			t.Errorf("%s rows with the shared UID after Down = %d, want 1", table, n)
+		}
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE uid = 'shared' AND id = (SELECT MIN(id) FROM ` + table + `)`); n != 1 {
+			t.Errorf("%s: the row with the lowest ID must keep the UID", table)
+		}
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("re-up: %v", err)
+	}
+	mustExec(`UPDATE event_alarms SET uid = 'shared'`)
+	mustExec(`UPDATE todo_alarms SET uid = 'shared'`)
+}

@@ -263,28 +263,61 @@ func TestEventService_ReplaceAlarms_CrossEventUIDCollision(t *testing.T) {
 		t.Fatalf("ReplaceAlarms e1: %v", err)
 	}
 
-	// Same VALARM UID on a second event (servers duplicate events): the
-	// insert must not fail the sync — a fresh local UID is minted instead.
+	// Same VALARM UID on a second event (servers duplicate events). An
+	// alarm UID is unique in its event only (migration 063, issue #922),
+	// so the second event keeps the UID.
 	if err := svc.ReplaceAlarms(ctx, e2.ID, []model.Alarm{
 		{UID: "dup-uid", Action: "DISPLAY", TriggerValue: "-PT15M"},
 	}); err != nil {
-		t.Fatalf("ReplaceAlarms e2 (uid collision): %v", err)
+		t.Fatalf("ReplaceAlarms e2: %v", err)
 	}
 	alarms, err := svc.ListAlarms(ctx, e2.ID)
 	if err != nil || len(alarms) != 1 {
 		t.Fatalf("ListAlarms e2: %v (n=%d)", err, len(alarms))
 	}
-	if alarms[0].UID == "dup-uid" || alarms[0].UID == "" {
-		t.Errorf("e2 alarm UID = %q, want a freshly minted non-empty UID", alarms[0].UID)
+	if alarms[0].UID != "dup-uid" {
+		t.Errorf("e2 alarm UID = %q, want dup-uid", alarms[0].UID)
 	}
 }
 
-// The UID-collision retry must not stamp a minted UID on a preserved
-// foreign alarm. A server can duplicate a resource, so the same foreign
-// VALARM UID arrives on two events. The retry mints for a fireable action
-// only, so the second row keeps an empty UID and the next push carries no
-// value the other client never authored (issue #586).
-func TestEventService_ReplaceAlarms_ForeignUIDCollisionMintsNothing(t *testing.T) {
+// One event with two alarms of one UID: the second alarm cannot keep the
+// UID. A fireable alarm gets a minted UID, and a preserved foreign alarm
+// gets no UID (issue #586).
+func TestEventService_ReplaceAlarms_DuplicateUIDInOneEvent(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	if err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{UID: "dup-uid", Action: "DISPLAY", TriggerValue: "-PT15M"},
+		{UID: "dup-uid", Action: "DISPLAY", TriggerValue: "-PT5M"},
+		{UID: "dup-uid", Action: "X-APPLE-SOUND", TriggerValue: "-PT1M"},
+	}); err != nil {
+		t.Fatalf("ReplaceAlarms: %v", err)
+	}
+	alarms, err := svc.ListAlarms(ctx, e.ID)
+	if err != nil || len(alarms) != 3 {
+		t.Fatalf("ListAlarms: %v (n=%d)", err, len(alarms))
+	}
+	uids := map[string]string{}
+	for _, a := range alarms {
+		uids[a.TriggerValue] = a.UID
+	}
+	if uids["-PT15M"] != "dup-uid" {
+		t.Errorf("first alarm UID = %q, want dup-uid", uids["-PT15M"])
+	}
+	if got := uids["-PT5M"]; got == "" || got == "dup-uid" {
+		t.Errorf("second alarm UID = %q, want a minted UID", got)
+	}
+	if got := uids["-PT1M"]; got != "" {
+		t.Errorf("foreign alarm UID = %q, want no UID", got)
+	}
+}
+
+// A server can duplicate a resource, so the same foreign VALARM UID
+// arrives on two events. Each event keeps the UID that the other client
+// authored (issues #586, #922).
+func TestEventService_ReplaceAlarms_ForeignUIDOnTwoEventsStays(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	e1 := createEvent(t, svc)
@@ -295,15 +328,15 @@ func TestEventService_ReplaceAlarms_ForeignUIDCollisionMintsNothing(t *testing.T
 		t.Fatalf("ReplaceAlarms e1: %v", err)
 	}
 	if err := svc.ReplaceAlarms(ctx, e2.ID, []model.Alarm{foreign}); err != nil {
-		t.Fatalf("ReplaceAlarms e2 (uid collision): %v", err)
+		t.Fatalf("ReplaceAlarms e2: %v", err)
 	}
 
 	alarms, err := svc.ListAlarms(ctx, e2.ID)
 	if err != nil || len(alarms) != 1 {
 		t.Fatalf("ListAlarms e2: %v (n=%d)", err, len(alarms))
 	}
-	if alarms[0].UID != "" {
-		t.Errorf("e2 foreign alarm UID = %q, want an empty value after the collision retry", alarms[0].UID)
+	if alarms[0].UID != "foreign-dup" {
+		t.Errorf("e2 foreign alarm UID = %q, want foreign-dup", alarms[0].UID)
 	}
 }
 
@@ -409,5 +442,37 @@ func TestUpdateWithRelations_SavesWithMalformedStoredAction(t *testing.T) {
 	}
 	if after[0].Action != model.UnsupportedAlarmAction {
 		t.Errorf("action after the save = %q, want %q", after[0].Action, model.UnsupportedAlarmAction)
+	}
+}
+
+// An incoming alarm whose UID a stored row holds must not pair by content
+// with a stored row that has no UID. The UID backfill would put the UID on
+// a second row of the event, and the unique index refuses that.
+func TestEventService_ReplaceAlarms_UIDKeepsItsOwnRow(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	e := createEvent(t, svc)
+
+	if err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{UID: "a", Action: "DISPLAY", TriggerValue: "-PT15M"},
+		{Action: "X-APPLE-SOUND", TriggerValue: "-PT5M"},
+	}); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	stored, err := svc.ListAlarms(ctx, e.ID)
+	if err != nil || len(stored) != 2 {
+		t.Fatalf("ListAlarms: %v (n=%d)", err, len(stored))
+	}
+	if err := svc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{UID: "a", Action: "X-APPLE-SOUND", TriggerValue: "-PT5M"},
+	}); err != nil {
+		t.Fatalf("second write: %v", err)
+	}
+	alarms, err := svc.ListAlarms(ctx, e.ID)
+	if err != nil || len(alarms) != 1 {
+		t.Fatalf("ListAlarms: %v (n=%d)", err, len(alarms))
+	}
+	if alarms[0].ID != stored[0].ID || alarms[0].UID != "a" {
+		t.Errorf("alarm = row %d UID %q, want row %d UID a", alarms[0].ID, alarms[0].UID, stored[0].ID)
 	}
 }

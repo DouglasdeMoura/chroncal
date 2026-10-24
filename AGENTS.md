@@ -116,12 +116,14 @@ Three paths share one rule set. `alarm.defaultAlarmCandidates` decides which exp
 
 Eligibility filters the notification path only. `alarm.ListPendingDefaultAlarms` returns every unacknowledged row and carries an `Eligible` flag. The `alarm list` output shows an ineligible row as "will not fire again", because a hidden row gives the user no way to find its ID and dismiss it.
 
-Alarm UIDs are unique per table. The store refuses a UID that an alarm of another item holds, and a second use of one UID in one item. `model.WithoutRefusedAlarmUIDs` clears such a UID before the alarm write of the event and the todo services, and before the import comparison in `internal/icaltransfer/unchanged.go` (issue #915). The same callers pair the incoming alarms with the stored rows through `model.PairAlarms`:
+An alarm UID is unique in its event or its todo (migration 063, issue #922). Two items can hold the same alarm UID, as RFC 9074 permits. The store refuses a second use of one UID in one item. `model.WithoutRefusedAlarmUIDs` clears such a UID before the alarm write of the event and the todo services, and before the import comparison in `internal/icaltransfer/unchanged.go` (issue #915). The same callers pair the incoming alarms with the stored rows through `model.PairAlarms`:
 
-- The first pass pairs by content. Two different non-empty UIDs never pair. An alarm with no UID skips a row whose UID another incoming alarm has.
+- The first pass pairs by content. Two different non-empty UIDs do not pair. An alarm with no UID skips a row whose UID another incoming alarm has. An alarm whose UID a stored row has skips the rows with no UID.
 - The second pass pairs by UID, so an edited alarm keeps its row and its alarm state.
+- The third pass repairs a UID that the store minted before migration 063. The store then minted a UID only when an alarm of another item held the UID of the file. The pass needs two facts. The stored row has the mark `uid_unverified` of migration 063, and an alarm of another item has the incoming UID. The row then takes the UID of the file (`model.PairedAlarmUID`) and keeps its alarm state. Without the two facts, two different UIDs never pair.
+- Migration 063 marks each UID that an older build wrote. A new row has no mark. A write that confirms the UID clears the mark: a UID write, an update in place, or a pair with an alarm of the same UID. Do not set the mark in new code.
 
-Fix the two rules in `internal/model/alarm.go`, not per caller.
+Fix the rules in `internal/model/alarm.go`, not per caller.
 
 `CheckMissed` returns three slices: stored event alarms, todo alarms, and default alarms. Its forward window includes the default triggers, or a long default lead time never enters the window and `alarm missed` reports nothing.
 

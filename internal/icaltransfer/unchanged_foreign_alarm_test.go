@@ -123,61 +123,45 @@ func eventCounts(s icaltransfer.Summary) (int, int) { return s.UpdatedEvents, s.
 func todoCounts(s icaltransfer.Summary) (int, int) { return s.UpdatedTodos, s.UnchangedTodos }
 
 // TestImport_UnchangedItemWithAForeignAlarmUIDKeepsItsSequence covers the
-// remaining case of issue #883 (issue #915). The file holds a VALARM whose
-// UID belongs to an alarm of another calendar. The unique index of the
-// alarm UIDs refuses that UID, so the store keeps another UID or no UID for
-// the alarm of the round trip. The next imports of the same file must still
-// count as unchanged and keep the SEQUENCE.
+// remaining case of issue #883 (issues #915, #922). The file holds a VALARM
+// whose UID belongs to an alarm of another calendar. An alarm UID is unique
+// in its item only, so the store keeps the UID of the file. The next
+// imports of the same file must count as unchanged and keep the SEQUENCE.
 func TestImport_UnchangedItemWithAForeignAlarmUIDKeepsItsSequence(t *testing.T) {
 	const shared = "shared-alarm@test"
-	tests := []struct {
-		name   string
-		action string
-		// minted is true when the store gives the alarm a new UID. A
-		// sync-only action gets no UID.
-		minted bool
-	}{
-		{name: "fireable action", action: "DISPLAY", minted: true},
-		{name: "sync-only action", action: "NONE", minted: false},
-	}
-	for _, tt := range tests {
-		t.Run("event "+tt.name, func(t *testing.T) {
+	for _, action := range []string{"DISPLAY", "NONE"} {
+		t.Run("event "+action, func(t *testing.T) {
 			a := newTestApp(t)
 			owner, roundTrip := twoCalendars(t, a)
 			importFixture(t, a, owner, calendarICS(veventICS("owner@test", "Owner",
-				valarmICS(shared, tt.action, "-PT15M", "Owner alarm"))))
+				valarmICS(shared, action, "-PT15M", "Owner alarm"))))
 			file := calendarICS(veventICS("round@test", "Round trip",
-				valarmICS(shared, tt.action, "-PT15M", "Round trip alarm")))
+				valarmICS(shared, action, "-PT15M", "Round trip alarm")))
 			importFixture(t, a, roundTrip, file)
 			state := func() (int64, []string) { return eventState(t, a, "round@test") }
-			requireForeignUID(t, state, shared, tt.minted)
+			requireAlarmUIDs(t, state, shared)
 			requireUnchanged(t, a, roundTrip, file, state, eventCounts)
 		})
-		t.Run("todo "+tt.name, func(t *testing.T) {
+		t.Run("todo "+action, func(t *testing.T) {
 			a := newTestApp(t)
 			owner, roundTrip := twoCalendars(t, a)
 			importFixture(t, a, owner, calendarICS(vtodoICS("owner@test", "Owner",
-				valarmICS(shared, tt.action, "-PT15M", "Owner alarm"))))
+				valarmICS(shared, action, "-PT15M", "Owner alarm"))))
 			file := calendarICS(vtodoICS("round@test", "Round trip",
-				valarmICS(shared, tt.action, "-PT15M", "Round trip alarm")))
+				valarmICS(shared, action, "-PT15M", "Round trip alarm")))
 			importFixture(t, a, roundTrip, file)
 			state := func() (int64, []string) { return todoState(t, a, "round@test") }
-			requireForeignUID(t, state, shared, tt.minted)
+			requireAlarmUIDs(t, state, shared)
 			requireUnchanged(t, a, roundTrip, file, state, todoCounts)
 		})
 	}
 }
 
-// requireForeignUID checks that the store did not keep the shared UID of
-// the file. The test is then about the case of issue #915.
-func requireForeignUID(t *testing.T, state func() (int64, []string), shared string, minted bool) {
+// requireAlarmUIDs checks the alarm UIDs that state returns.
+func requireAlarmUIDs(t *testing.T, state func() (int64, []string), want ...string) {
 	t.Helper()
-	_, uids := state()
-	if len(uids) != 1 {
-		t.Fatalf("alarm UIDs = %v, want one alarm", uids)
-	}
-	if uids[0] == shared || (uids[0] != "") != minted {
-		t.Fatalf("alarm UID = %q, want a minted UID = %v and not %q", uids[0], minted, shared)
+	if _, got := state(); !slices.Equal(got, want) {
+		t.Fatalf("alarm UIDs = %q, want %q", got, want)
 	}
 }
 
@@ -197,29 +181,141 @@ func TestImport_UnchangedItemWithADuplicateAlarmUIDKeepsItsSequence(t *testing.T
 	requireUnchanged(t, a, roundTrip, file, state, eventCounts)
 }
 
-// TestImport_ReleasedAlarmUIDUpdatesOnce covers an owner that gives up the
-// shared UID. The store can then keep the UID of the file, so the next
-// import writes it once. The imports after that count as unchanged.
-func TestImport_ReleasedAlarmUIDUpdatesOnce(t *testing.T) {
-	const shared = "shared-alarm@test"
+// TestImport_MintedAlarmUIDWithNoEvidenceUpdatesOnce covers a minted UID
+// with no evidence: no other item holds the UID of the file. The next
+// import writes the UID of the file once. The imports after that count as
+// unchanged (issue #922).
+func TestImport_MintedAlarmUIDWithNoEvidenceUpdatesOnce(t *testing.T) {
+	const fileUID = "shared-alarm@test"
+	a := newTestApp(t)
+	_, roundTrip := twoCalendars(t, a)
+	file := calendarICS(veventICS("round@test", "Round trip",
+		valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder")))
+	importFixture(t, a, roundTrip, file)
+	markPre063UID(t, a, "event_alarms", alarmRowIDs(t, a, "round@test")[0], "minted-before-063")
+
+	if s := importFixture(t, a, roundTrip, file); s.UpdatedEvents != 1 {
+		t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
+	}
+	state := func() (int64, []string) { return eventState(t, a, "round@test") }
+	requireAlarmUIDs(t, state, fileUID)
+	requireUnchanged(t, a, roundTrip, file, state, eventCounts)
+}
+
+// markPre063UID gives the alarm row id of table the UID uid and the mark of
+// migration 063, as a build before that migration left it.
+func markPre063UID(t *testing.T, a *app.App, table string, id int64, uid string) {
+	t.Helper()
+	if _, err := a.DB.ExecContext(context.Background(),
+		`UPDATE `+table+` SET uid = ?, uid_unverified = 1 WHERE id = ?`, uid, id); err != nil {
+		t.Fatalf("mark %s row %d: %v", table, id, err)
+	}
+}
+
+// TestImport_AuthoredAlarmUIDChangeIsANewAlarm covers a UID that a build
+// from migration 063 on wrote. The file changes it to a UID that another
+// item holds. The alarm is a new alarm, so it gets a new row, and the
+// alarm state of the old alarm does not move to it.
+func TestImport_AuthoredAlarmUIDChangeIsANewAlarm(t *testing.T) {
 	a := newTestApp(t)
 	owner, roundTrip := twoCalendars(t, a)
 	importFixture(t, a, owner, calendarICS(veventICS("owner@test", "Owner",
-		valarmICS(shared, "DISPLAY", "-PT15M", "Owner alarm"))))
-	file := calendarICS(veventICS("round@test", "Round trip",
-		valarmICS(shared, "DISPLAY", "-PT15M", "Round trip alarm")))
-	importFixture(t, a, roundTrip, file)
+		valarmICS("b@test", "DISPLAY", "-PT15M", "Reminder"))))
+	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip",
+		valarmICS("a@test", "DISPLAY", "-PT15M", "Reminder"))))
+	row := alarmRowIDs(t, a, "round@test")[0]
 
-	// The owner drops its alarm, so no row holds the shared UID.
-	importFixture(t, a, owner, calendarICS(veventICS("owner@test", "Owner")))
-	if s := importFixture(t, a, roundTrip, file); s.UpdatedEvents != 1 {
-		t.Fatalf("first import after the release: updated events = %d, want 1", s.UpdatedEvents)
+	if s := importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip",
+		valarmICS("b@test", "DISPLAY", "-PT15M", "Reminder")))); s.UpdatedEvents != 1 {
+		t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
 	}
-	state := func() (int64, []string) { return eventState(t, a, "round@test") }
-	if _, uids := state(); len(uids) != 1 || uids[0] != shared {
-		t.Fatalf("alarm UIDs = %v, want [%s]", uids, shared)
+	if got := alarmRowIDs(t, a, "round@test"); slices.Contains(got, row) {
+		t.Errorf("alarm row IDs = %v, want a new row in place of row %d", got, row)
 	}
-	requireUnchanged(t, a, roundTrip, file, state, eventCounts)
+	requireAlarmUIDs(t, func() (int64, []string) { return eventState(t, a, "round@test") }, "b@test")
+}
+
+// TestImport_ConfirmedAlarmUIDLosesTheMark covers a write that pairs a
+// marked row with an alarm of the same UID. The file confirms the UID, so
+// the mark of migration 063 goes.
+func TestImport_ConfirmedAlarmUIDLosesTheMark(t *testing.T) {
+	a := newTestApp(t)
+	_, roundTrip := twoCalendars(t, a)
+	alarm := valarmICS("a@test", "DISPLAY", "-PT15M", "Reminder")
+	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip", alarm)))
+	row := alarmRowIDs(t, a, "round@test")[0]
+	markPre063UID(t, a, "event_alarms", row, "a@test")
+
+	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip edited", alarm)))
+	var mark int
+	if err := a.DB.QueryRowContext(context.Background(), `SELECT uid_unverified FROM event_alarms WHERE id = ?`, row).Scan(&mark); err != nil {
+		t.Fatalf("read the mark: %v", err)
+	}
+	if mark != 0 {
+		t.Errorf("uid_unverified = %d, want 0 after the file confirms the UID", mark)
+	}
+}
+
+// TestImport_MintedAlarmUIDTakesTheFileUID covers a row from before
+// migration 063. Another item holds the UID of the file, so the store
+// minted a UID for the row. The next import gives the row the UID of the
+// file, and the row and its alarm state stay (issue #922). The imports
+// after that count as unchanged.
+func TestImport_MintedAlarmUIDTakesTheFileUID(t *testing.T) {
+	const fileUID = "shared-alarm@test"
+	minted := "minted-before-063"
+	ctx := context.Background()
+	t.Run("event", func(t *testing.T) {
+		a := newTestApp(t)
+		owner, roundTrip := twoCalendars(t, a)
+		importFixture(t, a, owner, calendarICS(veventICS("owner@test", "Owner",
+			valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder"))))
+		file := calendarICS(veventICS("round@test", "Round trip",
+			valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder")))
+		importFixture(t, a, roundTrip, file)
+		row := alarmRowIDs(t, a, "round@test")[0]
+		markPre063UID(t, a, "event_alarms", row, minted)
+
+		if s := importFixture(t, a, roundTrip, file); s.UpdatedEvents != 1 {
+			t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
+		}
+		if got := alarmRowIDs(t, a, "round@test"); !slices.Equal(got, []int64{row}) {
+			t.Errorf("alarm row IDs = %v, want [%d]", got, row)
+		}
+		state := func() (int64, []string) { return eventState(t, a, "round@test") }
+		requireAlarmUIDs(t, state, fileUID)
+		requireUnchanged(t, a, roundTrip, file, state, eventCounts)
+	})
+	t.Run("todo", func(t *testing.T) {
+		a := newTestApp(t)
+		owner, roundTrip := twoCalendars(t, a)
+		importFixture(t, a, owner, calendarICS(vtodoICS("owner@test", "Owner",
+			valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder"))))
+		file := calendarICS(vtodoICS("round@test", "Round trip",
+			valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder")))
+		importFixture(t, a, roundTrip, file)
+		td, err := a.Todos.GetByUID(ctx, "round@test")
+		if err != nil {
+			t.Fatalf("GetByUID: %v", err)
+		}
+		alarms, err := a.Todos.ListAlarms(ctx, td.ID)
+		if err != nil || len(alarms) != 1 {
+			t.Fatalf("ListAlarms: %v (n=%d)", err, len(alarms))
+		}
+		row := alarms[0].ID
+		markPre063UID(t, a, "todo_alarms", row, minted)
+
+		if s := importFixture(t, a, roundTrip, file); s.UpdatedTodos != 1 {
+			t.Fatalf("updated todos = %d, want 1", s.UpdatedTodos)
+		}
+		alarms, err = a.Todos.ListAlarms(ctx, td.ID)
+		if err != nil || len(alarms) != 1 || alarms[0].ID != row {
+			t.Fatalf("alarms = %+v (err %v), want row %d to stay", alarms, err, row)
+		}
+		state := func() (int64, []string) { return todoState(t, a, "round@test") }
+		requireAlarmUIDs(t, state, fileUID)
+		requireUnchanged(t, a, roundTrip, file, state, todoCounts)
+	})
 }
 
 // TestImport_UnchangedItemIgnoresTheOrderOfAlarms covers a file that lists
@@ -267,11 +363,11 @@ func alarmRowIDs(t *testing.T, a *app.App, uid string) []int64 {
 	return out
 }
 
-// TestImport_EditKeepsTheAlarmRowsOfARefusedUID covers the alarm write of
-// issue #915. A changed item with a refused alarm UID must keep its alarm
-// rows, so the alarm state stays. The edit must not fail on the unique
-// index either.
-func TestImport_EditKeepsTheAlarmRowsOfARefusedUID(t *testing.T) {
+// TestImport_EditKeepsTheAlarmRows covers the alarm write of issues #915
+// and #922. A changed item with a foreign or a duplicate alarm UID must keep
+// its alarm rows, so the alarm state stays. The edit must not fail on the
+// unique index either.
+func TestImport_EditKeepsTheAlarmRows(t *testing.T) {
 	const shared = "shared-alarm@test"
 	tests := []struct {
 		name   string
@@ -312,21 +408,18 @@ func TestImport_EditKeepsTheAlarmRowsOfARefusedUID(t *testing.T) {
 	}
 }
 
-// TestImport_RefusedAlarmUIDDoesNotTakeTheRowOfAnotherAlarm covers a file
-// that adds an alarm with a refused UID and edits an alarm with its own
-// UID. The edited alarm must keep its row, its UID, and its alarm state.
-func TestImport_RefusedAlarmUIDDoesNotTakeTheRowOfAnotherAlarm(t *testing.T) {
-	const shared = "shared-alarm@test"
+// TestImport_AlarmWithNoUIDDoesNotTakeTheRowOfAnotherAlarm covers a file
+// that adds an alarm with no UID and edits an alarm with its own UID. The
+// edited alarm must keep its row, its UID, and its alarm state.
+func TestImport_AlarmWithNoUIDDoesNotTakeTheRowOfAnotherAlarm(t *testing.T) {
 	a := newTestApp(t)
-	owner, roundTrip := twoCalendars(t, a)
-	importFixture(t, a, owner, calendarICS(veventICS("owner@test", "Owner",
-		valarmICS(shared, "DISPLAY", "-PT15M", "Reminder"))))
+	_, roundTrip := twoCalendars(t, a)
 	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip",
 		valarmICS("own@test", "DISPLAY", "-PT15M", "Reminder"))))
 	ownRow := alarmRowIDs(t, a, "round@test")[0]
 
 	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip",
-		valarmICS(shared, "DISPLAY", "-PT15M", "Reminder"),
+		valarmICS("", "DISPLAY", "-PT15M", "Reminder"),
 		valarmICS("own@test", "DISPLAY", "-PT5M", "Reminder"))))
 	ctx := context.Background()
 	e, err := a.Events.GetByUID(ctx, "round@test")
@@ -337,12 +430,16 @@ func TestImport_RefusedAlarmUIDDoesNotTakeTheRowOfAnotherAlarm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAlarms: %v", err)
 	}
+	found := false
 	for _, al := range alarms {
-		if al.ID == ownRow && (al.UID != "own@test" || al.TriggerValue != "-PT5M") {
-			t.Errorf("row %d = UID %q trigger %q, want own@test and -PT5M", al.ID, al.UID, al.TriggerValue)
+		if al.ID == ownRow {
+			found = true
+			if al.UID != "own@test" || al.TriggerValue != "-PT5M" {
+				t.Errorf("row %d = UID %q trigger %q, want own@test and -PT5M", al.ID, al.UID, al.TriggerValue)
+			}
 		}
 	}
-	if ids := alarmRowIDs(t, a, "round@test"); !slices.Contains(ids, ownRow) {
-		t.Errorf("alarm row IDs = %v, want row %d to stay", ids, ownRow)
+	if !found {
+		t.Errorf("alarm rows = %+v, want row %d to stay", alarms, ownRow)
 	}
 }
