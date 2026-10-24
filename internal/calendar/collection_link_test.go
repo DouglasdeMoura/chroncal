@@ -18,7 +18,6 @@ func TestCollectionKeyNormalizesOneCollection(t *testing.T) {
 	for _, spelling := range []string{
 		"https://CAL.example.com/dav/work",
 		"HTTPS://cal.example.com:443/dav/work/",
-		"https://alice@cal.example.com/dav/work/",
 		"https://cal.example.com/dav/./x/../work/",
 		"https://cal.example.com//dav//work/",
 	} {
@@ -29,8 +28,10 @@ func TestCollectionKeyNormalizesOneCollection(t *testing.T) {
 	if got := CollectionKey("/dav/work/", "http://cal.example.com:80/"); got != "http://cal.example.com/dav/work" {
 		t.Errorf("relative key = %q; want the path on the server without the default port", got)
 	}
-	if got := CollectionKey("https://cal.example.com:8443/dav/work/", ""); got == want {
-		t.Errorf("a key with another port = %q; want a different key", got)
+	for _, other := range []string{"https://cal.example.com:8443/dav/work/", "https://bob@cal.example.com/dav/work/"} {
+		if got := CollectionKey(other, ""); got == want {
+			t.Errorf("CollectionKey(%q) = %q; want a different key", other, got)
+		}
 	}
 }
 
