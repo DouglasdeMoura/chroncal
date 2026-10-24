@@ -342,9 +342,12 @@ func TestParseCLIDateString(t *testing.T) {
 }
 
 func TestParseTUIAtRelative(t *testing.T) {
-	got, err := parseTUIAt("tomorrow", relNow)
+	got, dateOnly, err := parseTUIAt("tomorrow", relNow)
 	if err != nil {
 		t.Fatalf("parseTUIAt: %v", err)
+	}
+	if !dateOnly {
+		t.Fatal("parseTUIAt(tomorrow) dateOnly = false, want true")
 	}
 	year, month, day := relNow.In(time.Local).Date()
 	want := time.Date(year, month, day, 0, 0, 0, 0, time.Local).AddDate(0, 0, 1)
