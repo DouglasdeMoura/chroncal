@@ -195,7 +195,7 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, m.loadTrash(), true
 	}
 	// Undo: only active on the main grid, with no overlay competing for input.
-	if key.Matches(msg, m.keys.Undo) && m.undoIsAllowed() {
+	if key.Matches(msg, m.keys.Undo) && m.undoIsAllowed() && (!m.dialogOpen || !m.dialog.UsesKey(msg)) {
 		entry, ok := m.undoStack.Peek()
 		if ok {
 			// Bumping the token invalidates any delete-push that was still
@@ -234,11 +234,11 @@ func (m Model) undoIsAllowed() bool {
 
 // onlyDayDialogOpen reports whether the day dialog is the one open overlay.
 // A delete in the day dialog shows the undo toast, so the undo key works
-// there too (issue #889). The day dialog has no text field and no binding
-// on the undo key.
+// there too (issue #889). The day dialog has no text field. A remapped undo
+// key that the day dialog uses stays with the dialog (see
+// interceptGlobalKeys).
 func (m Model) onlyDayDialogOpen() bool {
-	return m.dialogOpen && !m.textEntryActive() && !m.viewDialogOpen &&
-		!m.confirmOpen && !m.choiceOpen && !m.helpDialogOpen && !m.trashOpen
+	return m.dialogOpen && !m.textEntryActive() && !m.otherKeyOnlyOverlayOpen()
 }
 
 // textEntryActive reports whether an open overlay can take typed text. An
@@ -256,7 +256,13 @@ func (m Model) textEntryActive() bool {
 // the event view, the day dialog, a confirm, a choice, the help dialog, or
 // the trash.
 func (m Model) keyOnlyOverlayOpen() bool {
-	return m.viewDialogOpen || m.dialogOpen || m.confirmOpen || m.choiceOpen ||
+	return m.dialogOpen || m.otherKeyOnlyOverlayOpen()
+}
+
+// otherKeyOnlyOverlayOpen is keyOnlyOverlayOpen without the day dialog.
+// Add a new overlay with no text field here.
+func (m Model) otherKeyOnlyOverlayOpen() bool {
+	return m.viewDialogOpen || m.confirmOpen || m.choiceOpen ||
 		m.helpDialogOpen || m.trashOpen
 }
 

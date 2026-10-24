@@ -2,6 +2,7 @@ package tui
 
 import (
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 )
 
 type eventDialogKeyMap struct {
@@ -38,6 +39,16 @@ func defaultEventDialogKeys() eventDialogKeyMap {
 func (m EventDialogModel) WithAppKeys(keys appKeyMap) EventDialogModel {
 	m.keys.Create = key.NewBinding(key.WithKeys(keys.Create.Keys()...), key.WithHelp(keyLabel(keys.Create), "create"))
 	return m
+}
+
+// UsesKey reports whether the day dialog binds msg. A remapped app key that
+// the dialog uses then stays with the dialog.
+func (m EventDialogModel) UsesKey(msg tea.KeyPressMsg) bool {
+	k, sk := m.keys, m.shell.Keys()
+	return key.Matches(msg, k.Left, k.Right, k.Edit, k.Delete, k.Duplicate, k.Create,
+		k.RSVPYes, k.RSVPNo, k.RSVPMaybe, k.Copy,
+		sk.Up, sk.Down, sk.Tab, sk.ShiftTab, sk.Enter, sk.Close,
+		sk.PageUp, sk.PageDown, sk.Home, sk.End)
 }
 
 func (m EventDialogModel) shortHelp() []key.Binding {

@@ -634,7 +634,7 @@ func (m Model) handleTrashActionDone(msg trashActionDoneMsg) (tea.Model, tea.Cmd
 		// shows the entries that remain, with notes that are current.
 		reason := msg.err.Error()
 		if msg.done > 0 {
-			reason = fmt.Sprintf("restored %d of %d; %s", msg.done, msg.total, reason)
+			reason = fmt.Sprintf("%s %d of %d; %s", msg.action, msg.done, msg.total, reason)
 		}
 		return m, tea.Batch(m.loadTrash(), m.loadEvents(), m.toast.Failed(reason))
 	}

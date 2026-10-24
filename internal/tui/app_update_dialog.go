@@ -106,9 +106,9 @@ func (m Model) handleConfirmDialogResult(msg ConfirmDialogResultMsg) (tea.Model,
 		entries := act.target.entries
 		title := act.label
 		return m, func() tea.Msg {
-			for _, e := range entries {
+			for i, e := range entries {
 				if err := m.app.Trash.Purge(context.Background(), e); err != nil {
-					return trashActionDoneMsg{action: "purged", title: title, err: err, total: len(entries)}
+					return trashActionDoneMsg{action: "purged", title: title, err: err, done: i, total: len(entries)}
 				}
 			}
 			return trashActionDoneMsg{action: "purged", title: title, err: nil, total: len(entries)}
