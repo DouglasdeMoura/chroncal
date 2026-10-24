@@ -33,44 +33,7 @@ func (s *Service) todoOverridesByUID(ctx context.Context, masters []storage.Todo
 }
 
 func todoFromRow(row storage.Todo) todo.Todo {
-	return todo.Todo{
-		ID:              row.ID,
-		UID:             row.Uid,
-		CalendarID:      row.CalendarID,
-		Summary:         row.Summary,
-		Description:     storage.NullableToString(row.Description),
-		Location:        storage.NullableToString(row.Location),
-		DueDate:         storage.NullableToString(row.DueDate),
-		StartDate:       storage.NullableToString(row.StartDate),
-		Duration:        storage.NullableToString(row.Duration),
-		CompletedAt:     storage.NullableToString(row.CompletedAt),
-		PercentComplete: row.PercentComplete,
-		Status:          row.Status,
-		Priority:        row.Priority,
-		Class:           row.Class,
-		URL:             storage.NullableToString(row.Url),
-		RecurrenceRule:  storage.NullableToString(row.RecurrenceRule),
-		Timezone:        storage.NullableToString(row.Timezone),
-		Sequence:        row.Sequence,
-		ExDates:         storage.NullableToString(row.Exdates),
-		RDates:          storage.NullableToString(row.Rdates),
-		RecurrenceID:    row.RecurrenceID,
-		Geo:             storage.NullableToString(row.Geo),
-		DtStamp:         storage.NullableToString(row.Dtstamp),
-		CreatedAt:       timeutil.ParseDateTime(row.CreatedAt),
-		UpdatedAt:       timeutil.ParseDateTime(row.UpdatedAt),
-		DeletedAt:       deletedAtOf(row.DeletedAt),
-	}
-}
-
-// deletedAtOf parses the deleted_at column of a row. It returns nil for a
-// live row, so a list with IncludeDeleted can mark the rows in the trash.
-func deletedAtOf(deletedAt *string) *time.Time {
-	if deletedAt == nil || *deletedAt == "" {
-		return nil
-	}
-	t := timeutil.ParseDateTime(*deletedAt)
-	return &t
+	return todo.FromStorage(row)
 }
 
 func (s *Service) populateTodoCategories(ctx context.Context, todos []todo.Todo) {
@@ -131,7 +94,7 @@ func singleTodoInstance(td todo.Todo, from, to time.Time) []ExpandedTodo {
 	if anchor.IsZero() || anchor.Before(from) || !anchor.Before(to) {
 		return nil
 	}
-	return []ExpandedTodo{{Todo: td, InstanceTime: anchor}}
+	return []ExpandedTodo{{Todo: td, InstanceTime: anchor, Lone: true}}
 }
 
 // ExpandTodo generates all occurrences of a todo within a date range.
@@ -202,7 +165,9 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 		instTime: func(i ExpandedTodo) time.Time { return i.InstanceTime },
 		applyInstance: func(i ExpandedTodo) todo.Todo {
 			t := TodoAtInstance(i)
-			t.InstanceTime = i.InstanceTime
+			if !i.Lone {
+				t.RecurrenceTime = i.InstanceTime
+			}
 			return t
 		},
 		uid: func(r storage.Todo) string { return seriesKey(r.CalendarID, r.Uid) },
@@ -215,6 +180,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 		newOccChecker:  newTodoOccChecker,
 		emitOverride: func(o storage.Todo, from, to time.Time) (todo.Todo, bool) {
 			ot := todoFromRow(o)
+			ot.RecurrenceTime = overrideRecurrenceTime(o.RecurrenceID)
 			anchor := ot.ParseStartDate()
 			if anchor.IsZero() {
 				anchor = ot.ParseDueDate()

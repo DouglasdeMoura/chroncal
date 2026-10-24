@@ -54,6 +54,13 @@ var journalResource = resource{
 		n, err := a.Journals.PurgeDeleted(ctx, cutoff)
 		return int64(n), err
 	},
+	liveUID: func(ctx context.Context, a *app.App, uid string) bool {
+		if _, err := a.Journals.GetByUID(ctx, uid); err == nil {
+			return true
+		}
+		overrides, err := a.Journals.ListOverridesByUID(ctx, uid)
+		return err == nil && len(overrides) > 0
+	},
 	errNotDeleted: journal.ErrNotDeleted,
 }
 

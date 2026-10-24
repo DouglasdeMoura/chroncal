@@ -466,6 +466,9 @@ func (s *Service) resolveConflict(ctx context.Context, conflictID int64, pick st
 			s.engine.testHooks.afterConflictLock()
 		}
 		conflict, err = s.q.GetSyncConflict(ctx, conflictID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return moveResolution{}, fmt.Errorf("%w: %d", ErrConflictNotFound, conflictID)
+		}
 		if err != nil {
 			return moveResolution{}, fmt.Errorf("revalidate conflict: %w", err)
 		}
@@ -496,6 +499,9 @@ func (s *Service) resolveConflict(ctx context.Context, conflictID int64, pick st
 		s.engine.testHooks.afterConflictLock()
 	}
 	conflict, err = s.q.GetSyncConflict(ctx, conflictID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return moveResolution{}, fmt.Errorf("%w: %d", ErrConflictNotFound, conflictID)
+	}
 	if err != nil {
 		return moveResolution{}, fmt.Errorf("revalidate conflict: %w", err)
 	}

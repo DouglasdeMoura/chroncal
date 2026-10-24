@@ -655,6 +655,12 @@ func (s *Service) ReplaceRelations(ctx context.Context, journalID int64, relatio
 
 // Converters
 
+// FromStorage converts a database row to a Journal. The recurrence service
+// uses it for the rows of a list.
+func FromStorage(r storage.Journal) Journal {
+	return fromStorage(r)
+}
+
 func fromStorage(r storage.Journal) Journal {
 	var deletedAt *time.Time
 	if r.DeletedAt != nil && *r.DeletedAt != "" {

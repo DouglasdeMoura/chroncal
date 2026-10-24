@@ -144,7 +144,7 @@ func singleEventInstance(evt event.Event, from, to time.Time) []ExpandedEvent {
 	if evt.StartTime.Before(from) || !evt.StartTime.Before(to) {
 		return nil
 	}
-	return []ExpandedEvent{{Event: evt, InstanceTime: evt.StartTime}}
+	return []ExpandedEvent{{Event: evt, InstanceTime: evt.StartTime, Lone: true}}
 }
 
 // ExpandEvent generates all occurrences of an event within a date range
@@ -379,6 +379,16 @@ func eventRowDateOnly(r storage.Event) bool { return r.AllDay == 1 }
 // expandRecurringRows expands recurring event rows into Event instances with
 // StartTime/EndTime adjusted to each occurrence. For each master, overrides
 // (rows whose RECURRENCE-ID matches) replace the original RRULE instance.
+// overrideRecurrenceTime parses the recurrence ID of an override for the
+// field RecurrenceTime. A value that does not parse gives the zero time.
+func overrideRecurrenceTime(recurrenceID string) time.Time {
+	t, err := timeutil.ParseRecurrenceID(recurrenceID)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
+}
+
 func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event, from, to time.Time) ([]event.Event, error) {
 	k := recurringKind[storage.Event, event.Event, ExpandedEvent]{
 		fromRow:  event.FromStorage,
@@ -389,7 +399,9 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 			dur := e.EndTime.Sub(e.StartTime)
 			e.StartTime = i.InstanceTime
 			e.EndTime = i.InstanceTime.Add(dur)
-			e.InstanceTime = i.InstanceTime
+			if !i.Lone {
+				e.RecurrenceTime = i.InstanceTime
+			}
 			return e
 		},
 		uid:            func(r storage.Event) string { return seriesKey(r.CalendarID, r.Uid) },
@@ -400,6 +412,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 		newOccChecker:  newEventOccChecker,
 		emitOverride: func(o storage.Event, from, to time.Time) (event.Event, bool) {
 			oe := event.FromStorage(o)
+			oe.RecurrenceTime = overrideRecurrenceTime(o.RecurrenceID)
 			return oe, recurset.OverlapsWindow(oe.StartTime, oe.EndTime, from, to)
 		},
 	}

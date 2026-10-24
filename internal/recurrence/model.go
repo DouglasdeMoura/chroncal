@@ -23,6 +23,10 @@ type ExpandedEvent struct {
 	event.Event
 	InstanceTime time.Time
 	IsOverride   bool
+	// Lone is true for the one instance of a row that the expansion
+	// cannot expand, for example a master with an RRULE that does not
+	// parse. Such an instance is no occurrence of a series.
+	Lone bool
 }
 
 // LocalInstanceTime returns the instance time as a local moment. An
@@ -37,4 +41,8 @@ type ExpandedTodo struct {
 	todo.Todo
 	InstanceTime time.Time
 	IsOverride   bool
+	// Lone is true for the one instance of a row that the expansion
+	// cannot expand, for example a master with an RRULE that does not
+	// parse. Such an instance is no occurrence of a series.
+	Lone bool
 }

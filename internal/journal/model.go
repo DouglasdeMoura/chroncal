@@ -28,6 +28,10 @@ type Journal struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	DeletedAt      *time.Time // nil = not soft-deleted; set = soft-deleted at this time
+	// RecurrenceTime is the RECURRENCE-ID of the occurrence that a list
+	// expansion gives: a generated occurrence or an override. It is zero
+	// for another row. The database does not store it.
+	RecurrenceTime time.Time
 
 	// Descriptions carries every DESCRIPTION property for iCal round-trip
 	// fidelity. RFC 5545 permits a VJOURNAL to hold multiple DESCRIPTIONs;
