@@ -41,11 +41,11 @@ type calendarMoveFinishedMsg struct {
 
 func (m Model) beginCalendarMove(msg CalendarMoveToAccountRequestedMsg) (Model, tea.Cmd) {
 	if m.syncing || m.pending.isCalendarMove() {
-		return m, m.toast.Failed("Finish the current account operation before moving a calendar")
+		return m, m.toast.Failed("Move", "Finish the current account operation before moving a calendar")
 	}
 	info, ok := m.calendars[msg.ID]
 	if !ok || info.Synced || info.AccountID != 0 {
-		return m, m.toast.Failed("Only a local calendar can be moved to an account")
+		return m, m.toast.Failed("Move", "Only a local calendar can be moved to an account")
 	}
 	accounts := make([]account.Account, 0, len(m.accounts))
 	for _, configured := range m.accounts {
@@ -58,7 +58,7 @@ func (m Model) beginCalendarMove(msg CalendarMoveToAccountRequestedMsg) (Model, 
 		return strings.Compare(strings.ToLower(a.DisplayName), strings.ToLower(b.DisplayName))
 	})
 	if len(accounts) == 0 {
-		return m, m.toast.Failed("Add an account before moving this calendar")
+		return m, m.toast.Failed("Move", "Add an account before moving this calendar")
 	}
 	labels := make([]string, len(accounts))
 	for i, configured := range accounts {
@@ -116,7 +116,7 @@ func (m Model) finishCalendarMoveDiscovery(msg calendarMoveDiscoveryReadyMsg) (M
 	}
 	if len(collections) == 0 {
 		m = m.clearPending()
-		return m, m.toast.Failed("This account has no writable calendar collections")
+		return m, m.toast.Failed("Move", "This account has no writable calendar collections")
 	}
 	slices.SortFunc(collections, func(a, b account.DiscoveredCalendar) int {
 		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))

@@ -82,24 +82,13 @@ func TestToast_RestoringDoesNotAutoDismiss(t *testing.T) {
 
 func TestToast_FailedState(t *testing.T) {
 	m := NewToastModel(NewTheme(true))
-	m.Failed("calendar deleted")
-	if !strings.Contains(m.View(), "calendar deleted") {
-		t.Errorf("View = %q, missing reason", m.View())
-	}
-	if !strings.Contains(m.View(), "Undo failed") {
-		t.Errorf("View = %q, missing 'Undo failed' prefix", m.View())
-	}
-}
-
-func TestToast_ActionFailedNamesTheAction(t *testing.T) {
-	m := NewToastModel(NewTheme(true))
-	m.ActionFailed("Restore", "calendar deleted")
-	if !strings.Contains(m.View(), "Restore failed: calendar deleted") {
-		t.Errorf("View = %q, want the restore in the failed toast", m.View())
-	}
-	m.Failed("calendar deleted")
+	m.Failed("Undo", "calendar deleted")
 	if !strings.Contains(m.View(), "Undo failed: calendar deleted") {
-		t.Errorf("View = %q, want the undo in the failed toast", m.View())
+		t.Errorf("View = %q, want the undo and the reason", m.View())
+	}
+	m.Failed("Restore", "calendar deleted")
+	if !strings.Contains(m.View(), "Restore failed: calendar deleted") {
+		t.Errorf("View = %q, want the restore and the reason", m.View())
 	}
 }
 

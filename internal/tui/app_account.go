@@ -63,7 +63,7 @@ func (m Model) finishAccountRename(msg accountRenameFinishedMsg) (Model, tea.Cmd
 		}
 		m.syncStatus = "Account rename failed: " + msg.err.Error()
 		return m, tea.Batch(
-			m.toast.Failed(msg.err.Error()),
+			m.toast.Failed("Rename", msg.err.Error()),
 			m.expireStatusAfter(8*time.Second, m.statusToken),
 		)
 	}
@@ -97,7 +97,7 @@ func (m Model) finishAccountRemoval(msg accountRemovalFinishedMsg) (Model, tea.C
 		}
 		m.syncStatus = "Account removal failed: " + msg.err.Error()
 		return m, tea.Batch(
-			m.toast.Failed(msg.err.Error()),
+			m.toast.Failed("Remove", msg.err.Error()),
 			m.expireStatusAfter(10*time.Second, m.statusToken),
 		)
 	}
@@ -156,7 +156,7 @@ func (m Model) finishAccountManagementDiscovery(
 		m.statusToken++
 		m.syncStatus = "Calendar discovery failed: " + msg.err.Error()
 		return m, tea.Batch(
-			m.toast.Failed(msg.err.Error()),
+			m.toast.Failed("Discovery", msg.err.Error()),
 			m.expireStatusAfter(10*time.Second, m.statusToken),
 		)
 	}

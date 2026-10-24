@@ -27,7 +27,7 @@ const (
 // before it fades. A failed-toast uses the shorter value below.
 const ToastAutoDismissDelay = 6 * time.Second
 
-// ToastFailedDismissDelay is the shorter window for an undo-failed toast —
+// ToastFailedDismissDelay is the shorter window for a failed toast —
 // errors read faster and overstay their welcome.
 const ToastFailedDismissDelay = 4 * time.Second
 
@@ -98,14 +98,9 @@ func (t *ToastModel) Restoring() {
 }
 
 // Failed shows a short error message with a faster auto-dismiss. The
-// message names the undo as the action that failed.
-func (t *ToastModel) Failed(reason string) tea.Cmd {
-	return t.ActionFailed("Undo", reason)
-}
-
-// ActionFailed is Failed for another action. The message starts with
-// "<action> failed:".
-func (t *ToastModel) ActionFailed(action, reason string) tea.Cmd {
+// message starts with "<action> failed:". The caller names the action, for
+// example "Undo" or "Restore".
+func (t *ToastModel) Failed(action, reason string) tea.Cmd {
 	t.token++
 	t.state = ToastFailed
 	t.action = action

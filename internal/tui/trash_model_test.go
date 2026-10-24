@@ -492,30 +492,20 @@ func TestTrashActionDone_RefusedRestoreNamesTheRestore(t *testing.T) {
 	time.Local = time.FixedZone("America/Sao_Paulo", -3*60*60)
 	t.Cleanup(func() { time.Local = old })
 
-	timed := time.Date(2026, 11, 3, 13, 0, 0, 0, time.UTC)
-	allDay := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
-	tail := func(cutoff time.Time, isAllDay bool) trash.Entry {
-		return trash.Entry{
-			Kind: trash.KindEventSeriesTail, ID: 1, Title: "Series", AllDay: isAllDay,
-			CutoffTime:        cutoff.AddDate(0, 0, 7),
-			NewerTruncationID: 2, NewerTruncationCutoff: cutoff,
-		}
-	}
 	for _, tc := range []struct {
-		name    string
-		cutoff  time.Time
-		entries []trash.Entry
-		want    string
+		name string
+		err  error
+		want string
 	}{
-		{"timed", timed, []trash.Entry{tail(timed, false)}, "Restore failed: restore the truncation with cutoff Tue, Nov 3 10:00 first"},
-		{"all-day", allDay, []trash.Entry{tail(allDay, true)}, "Restore failed: restore the truncation with cutoff Tue, Nov 3 first"},
-		{"no entry", timed, nil, "Restore failed: restore the truncation with cutoff Tue, Nov 3 10:00 first"},
+		{"timed", &event.NewerTruncationError{Cutoff: time.Date(2026, 11, 3, 13, 0, 0, 0, time.UTC)},
+			"Restore failed: restore the truncation with cutoff Tue, Nov 3 10:00 first"},
+		{"all-day", &event.NewerTruncationError{Cutoff: time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC), AllDay: true},
+			"Restore failed: restore the truncation with cutoff Tue, Nov 3 first"},
+		{"no cutoff", &event.NewerTruncationError{},
+			"Restore failed: restore the newer truncation of this series first"},
 	} {
 		m := NewModel(nil, "")
-		next, _ := m.handleTrashActionDone(trashActionDoneMsg{
-			action: "restored", title: "Series", err: &event.NewerTruncationError{Cutoff: tc.cutoff},
-			total: len(tc.entries), entries: tc.entries,
-		})
+		next, _ := m.handleTrashActionDone(trashActionDoneMsg{action: "restored", title: "Series", err: tc.err, total: 1})
 		if got := ansi.Strip(next.(Model).toast.View()); !strings.Contains(got, tc.want) {
 			t.Errorf("%s: toast = %q, want %q", tc.name, got, tc.want)
 		}

@@ -113,7 +113,7 @@ func (m Model) handlePlaintextOptInSaved(msg plaintextOptInSavedMsg) (tea.Model,
 		m.statusToken++
 		m.syncStatus = "Couldn’t turn on plaintext storage: " + msg.err.Error()
 		return m, tea.Batch(
-			m.toast.Failed(msg.err.Error()),
+			m.toast.Failed("Save", msg.err.Error()),
 			m.expireStatusAfter(10*time.Second, m.statusToken),
 		)
 	}

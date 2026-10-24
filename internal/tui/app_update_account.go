@@ -71,7 +71,7 @@ func (m Model) handleAccountOrderSaved(msg accountOrderSavedMsg) (tea.Model, tea
 	if len(latest) > 0 && !slices.Equal(msg.ids, latest) {
 		saveLatest := m.beginAccountOrderSave(latest)
 		if msg.err != nil {
-			return m, tea.Batch(m.toast.Failed(msg.err.Error()), saveLatest)
+			return m, tea.Batch(m.toast.Failed("Reorder", msg.err.Error()), saveLatest)
 		}
 		return m, saveLatest
 	}
@@ -82,7 +82,7 @@ func (m Model) handleAccountOrderSaved(msg accountOrderSavedMsg) (tea.Model, tea
 	}
 	m.pendingAccountOrderIDs = nil
 	if msg.err != nil {
-		return m, tea.Batch(m.toast.Failed(msg.err.Error()), m.loadCalendars())
+		return m, tea.Batch(m.toast.Failed("Reorder", msg.err.Error()), m.loadCalendars())
 	}
 	return m, nil
 }
@@ -443,7 +443,7 @@ func (m Model) handleAccountCalendarPickerClosed(msg AccountCalendarPickerClosed
 func (m Model) handleAccountCalendarsImportRequested(msg AccountCalendarsImportRequestedMsg) (tea.Model, tea.Cmd) {
 	if m.calendarManager.DiscoveryPicker() == nil ||
 		msg.AccountID != m.calendarManager.DiscoveryPicker().discovery.Account.ID {
-		return m, m.toast.Failed("calendar selection no longer matches the open account")
+		return m, m.toast.Failed("Import", "calendar selection no longer matches the open account")
 	}
 	m.calendarManagerOpen = false
 	m.syncing = true
@@ -454,7 +454,7 @@ func (m Model) handleAccountCalendarsImportRequested(msg AccountCalendarsImportR
 func (m Model) handleAccountCalendarsReconcileRequested(msg AccountCalendarsReconcileRequestedMsg) (tea.Model, tea.Cmd) {
 	selection, candidates, err := m.prepareAccountCalendarSelection(msg)
 	if err != nil {
-		return m, m.toast.Failed(err.Error())
+		return m, m.toast.Failed("Update", err.Error())
 	}
 	if len(selection.removed) == 0 {
 		m.calendarManagerOpen = true

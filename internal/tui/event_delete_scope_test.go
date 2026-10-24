@@ -322,5 +322,6 @@ func TestUndo_NewerTruncationKeepsTheEntry(t *testing.T) {
 	updated, _ := next.Update(msg)
 	m = updated.(Model)
 	require.Equal(t, 1, m.undoStack.Len())
-	require.Contains(t, m.toast.reason, "restore the newer truncation of this series first")
+	// The toast shows the cutoff as the trash detail pane does (issue #872).
+	require.Equal(t, "restore the truncation with cutoff "+start.AddDate(0, 0, 3).Local().Format("Mon, Jan 2 15:04")+" first", m.toast.reason)
 }

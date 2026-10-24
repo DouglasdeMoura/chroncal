@@ -526,7 +526,13 @@ func (s *Service) restoreTruncation(ctx context.Context, key truncationKey) erro
 		return err
 	} else if found {
 		cutoff, _ := time.Parse(time.RFC3339, newer.CutoffTime)
-		return &NewerTruncationError{Cutoff: cutoff}
+		// The master gives the all-day flag of the series. A failed read
+		// leaves the flag false: the refusal stays, and only the form of
+		// the cutoff in the message changes.
+		master, err := qtx.GetEventByCalendarUIDIncludingDeleted(ctx, storage.GetEventByCalendarUIDIncludingDeletedParams{
+			CalendarID: log.CalendarID, Uid: log.Uid,
+		})
+		return &NewerTruncationError{Cutoff: cutoff, AllDay: err == nil && master.AllDay != 0}
 	}
 	// The restore writes the master in the calendar of the log. A log
 	// with row IDs guards the calendars of its rows in restoreLoggedIDsTx.
