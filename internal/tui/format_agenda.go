@@ -62,7 +62,7 @@ func effectiveStartOnDay(ev event.Event, day time.Time, dayIndex int) time.Time 
 // datestamps. Their span is derived from the UTC date, anchored at local
 // midnight to match the timed-event convention used by callers' window and
 // boundary comparisons. They then land on the correct day regardless of the
-// local timezone offset (mirrors eventCalendarDays).
+// local timezone offset (mirrors EventCalendarDays).
 func spanDays(ev event.Event) []time.Time {
 	if ev.AllDay {
 		s := ev.StartTime.UTC()

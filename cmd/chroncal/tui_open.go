@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
-	"github.com/douglasdemoura/chroncal/internal/timeutil"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/tui"
 )
 
 func resolveTUIOpenEvent(ctx context.Context, a *app.App, ref, recurrenceID, at string) (event.Event, error) {
@@ -41,56 +44,83 @@ func resolveTUIOpenEvent(ctx context.Context, a *app.App, ref, recurrenceID, at 
 }
 
 // findSeriesOccurrence finds the occurrence of the series of master at the
-// --at value (issue #878). A date-only value takes the first occurrence on
-// that local date. A timestamp takes the occurrence that starts at that
-// time, or the occurrence that an override moved from that time. An
-// override gives its own row, so the TUI shows its own fields. ok is false
-// when master is not a recurring master or when no occurrence matches.
+// --at value (issue #878). ok is false when master is not a recurring
+// master or when no occurrence matches.
+//
+//   - A timestamp takes the override whose RECURRENCE-ID is that time, then
+//     the occurrence that starts at that time.
+//   - A date takes the first occurrence that the TUI grid shows on that
+//     local date.
+//
+// An override gives its own row, so the TUI shows its own fields.
 func findSeriesOccurrence(ctx context.Context, a *app.App, master event.Event, when time.Time, dateOnly bool) (event.Event, bool, error) {
 	if master.RecurrenceID != "" || (master.RecurrenceRule == "" && master.RDates == "") {
 		return event.Event{}, false, nil
 	}
+	if !dateOnly {
+		_, override, err := a.Events.SeriesOccurrence(ctx, master.CalendarID, master.UID, when.UTC().Format(time.RFC3339))
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return event.Event{}, false, err
+		}
+		if override != nil {
+			return *override, true, nil
+		}
+	}
 	// The window adds one day on each side. An all-day occurrence is a UTC
-	// midnight, and a moved override can start on the day before or after.
-	expanded, err := a.Recurrences.ListExpandedEvents(ctx, when.AddDate(0, 0, -1), when.AddDate(0, 0, 2))
+	// midnight, and an occurrence can start on the day before.
+	expanded, err := a.Recurrences.ListExpandedEvents(ctx, when.AddDate(0, 0, -1), when.AddDate(0, 0, 2), recurrence.SkipCategories())
 	if err != nil {
 		return event.Event{}, false, err
 	}
 	dayKey := when.Local().Format(time.DateOnly)
 	for _, x := range expanded {
-		if x.UID != master.UID || x.CalendarID != master.CalendarID {
+		if x.UID != master.UID {
 			continue
 		}
 		occ := x.Event
-		// slot is the time of the occurrence in the series. A generated
-		// occurrence keeps the times of the master, so it takes the slot.
-		slot := x.InstanceTime
 		if occ.RecurrenceID == "" {
-			occ.EndTime = slot.Add(occ.EndTime.Sub(occ.StartTime))
-			occ.StartTime = slot
-		} else if rid, err := timeutil.ParseRecurrenceID(occ.RecurrenceID); err == nil {
-			slot = rid
-		}
-		if dateOnly {
-			if occurrenceDate(occ) == dayKey {
-				return occ, true, nil
+			if occ.CalendarID != master.CalendarID {
+				continue
 			}
+			// A generated occurrence keeps the times of the master.
+			occ.EndTime = x.InstanceTime.Add(occ.EndTime.Sub(occ.StartTime))
+			occ.StartTime = x.InstanceTime
+		} else if owned, err := ownsOverride(ctx, a, master, occ); err != nil {
+			return event.Event{}, false, err
+		} else if !owned {
 			continue
 		}
-		if occ.StartTime.Equal(when) || slot.Equal(when) {
+		if dateOnly && showsOnDate(occ, dayKey) || !dateOnly && occ.StartTime.Equal(when) {
 			return occ, true, nil
 		}
 	}
 	return event.Event{}, false, nil
 }
 
-// occurrenceDate returns the calendar date that the TUI shows ev on. An
-// all-day event stores a UTC midnight. A timed event uses the local date.
-func occurrenceDate(ev event.Event) string {
-	if ev.AllDay {
-		return ev.StartTime.UTC().Format(time.DateOnly)
+// ownsOverride reports whether the series of master owns the override row.
+// A legacy override can sit in another calendar (issue #842).
+func ownsOverride(ctx context.Context, a *app.App, master, row event.Event) (bool, error) {
+	if row.CalendarID == master.CalendarID {
+		return true, nil
 	}
-	return ev.StartTime.Local().Format(time.DateOnly)
+	_, override, err := a.Events.SeriesOccurrence(ctx, master.CalendarID, master.UID, row.RecurrenceID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return override != nil && override.ID == row.ID, nil
+}
+
+// showsOnDate reports whether the TUI grid shows ev on the date dayKey.
+func showsOnDate(ev event.Event, dayKey string) bool {
+	for _, d := range tui.EventCalendarDays(ev) {
+		if d.Format(time.DateOnly) == dayKey {
+			return true
+		}
+	}
+	return false
 }
 
 // parseTUIAt parses the --at flag. It accepts an RFC 3339 timestamp, a

@@ -177,3 +177,86 @@ func TestResolveTUIOpenEvent_AtFindsSeriesOccurrence(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveTUIOpenEvent_AtEdgeCases covers the review cases of issue
+// #878: an override moved far from its slot, a legacy override in another
+// calendar, and an all-day series of two-day occurrences.
+func TestResolveTUIOpenEvent_AtEdgeCases(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Skipf("load zone: %v", err)
+	}
+	prev := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = prev })
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	ctx := context.Background()
+	other, err := a.Calendars.Create(ctx, "Other", "#112233", "")
+	if err != nil {
+		t.Fatalf("create calendar: %v", err)
+	}
+
+	start := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	master, err := a.Events.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Standup", StartTime: start, EndTime: start.Add(30 * time.Minute),
+		RecurrenceRule: "FREQ=DAILY;COUNT=10",
+	})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	slot := start.AddDate(0, 0, 1)
+	far := slot.AddDate(0, 0, 4).Add(2 * time.Hour)
+	moved, err := a.Events.UpdateInstance(ctx, 1, master.UID, slot, event.UpdateParams{
+		CalendarID: 1, Title: "Moved far", StartTime: far, EndTime: far.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("create moved override: %v", err)
+	}
+	legacySlot := start.AddDate(0, 0, 2)
+	legacy, err := a.Events.UpdateInstance(ctx, 1, master.UID, legacySlot, event.UpdateParams{
+		CalendarID: 1, Title: "Legacy", StartTime: legacySlot, EndTime: legacySlot.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("create legacy override: %v", err)
+	}
+	if _, err := a.DB.ExecContext(ctx, `UPDATE events SET calendar_id = ? WHERE id = ?`, other.ID, legacy.ID); err != nil {
+		t.Fatalf("seed legacy override: %v", err)
+	}
+
+	allDay := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	trip, err := a.Events.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Trip", StartTime: allDay, EndTime: allDay.AddDate(0, 0, 2), AllDay: true,
+		RecurrenceRule: "FREQ=WEEKLY;COUNT=3",
+	})
+	if err != nil {
+		t.Fatalf("create all-day series: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		ref, at   string
+		wantID    int64
+		wantStart time.Time
+	}{
+		{"slot of a far override", master.UID, "2026-10-19T12:00:00Z", moved.ID, far},
+		{"date of a legacy override", master.UID, "2026-10-20", legacy.ID, legacySlot},
+		{"second day of an all-day occurrence", trip.UID, "2026-10-26", trip.ID, allDay.AddDate(0, 0, 7)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveTUIOpenEvent(ctx, a, tc.ref, "", tc.at)
+			if err != nil {
+				t.Fatalf("resolveTUIOpenEvent: %v", err)
+			}
+			if got.ID != tc.wantID || !got.StartTime.Equal(tc.wantStart) {
+				t.Fatalf("got ID %d at %s, want ID %d at %s", got.ID, got.StartTime, tc.wantID, tc.wantStart)
+			}
+		})
+	}
+}
