@@ -117,16 +117,18 @@ func (m ListDialogModel) Activate() (ListDialogModel, tea.Cmd) {
 
 // ActivateByKey is Activate for the Enter binding (Enter or Space). Space
 // does not fire a danger button: a destructive action fires only by Enter,
-// a click, or its own key.
+// a click, or its own key. Space there puts the focus on the list, so no
+// key leaves the focus on a button (issue #909).
 func (m ListDialogModel) ActivateByKey(msg tea.KeyPressMsg) (ListDialogModel, tea.Cmd) {
-	if msg.String() == "space" && m.focusedDanger() {
+	if msg.String() == "space" && m.FocusedDanger() {
+		m.focusZone = ListZoneList
 		return m, nil
 	}
 	return m.Activate()
 }
 
-// focusedDanger reports whether the focused button is a danger button.
-func (m ListDialogModel) focusedDanger() bool {
+// FocusedDanger reports whether the focused button is a danger button.
+func (m ListDialogModel) FocusedDanger() bool {
 	switch m.focusZone {
 	case ListZoneActions:
 		return m.focusedAction >= 0 && m.focusedAction < len(m.actions) && m.actions[m.focusedAction].Danger
@@ -149,6 +151,7 @@ func (m ListDialogModel) FireAction(idx int) (ListDialogModel, tea.Cmd) {
 		return m, nil
 	}
 	m.focusZone = ListZoneList
+	m.focusedAction = idx
 	return m, m.actions[idx].Msg
 }
 
