@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
@@ -398,5 +399,54 @@ func TestTrashActionDone_PartialRestoreReloadsAndCounts(t *testing.T) {
 	batch, ok := cmd().(tea.BatchMsg)
 	if !ok || len(batch) != 3 {
 		t.Errorf("command = %T with %d commands, want a batch of the trash reload, the events reload, and the toast", cmd(), len(batch))
+	}
+}
+
+// TestTrashActionDone_RefusedRestoreNamesTheRestore checks the toast of a
+// restore that a newer truncation refuses. The toast names the restore, not
+// an undo. It shows the cutoff as the detail pane does: in local time for a
+// timed series, and as the UTC date for an all-day series (issue #872).
+func TestTrashActionDone_RefusedRestoreNamesTheRestore(t *testing.T) {
+	old := time.Local
+	time.Local = time.FixedZone("America/Sao_Paulo", -3*60*60)
+	t.Cleanup(func() { time.Local = old })
+
+	timed := time.Date(2026, 11, 3, 13, 0, 0, 0, time.UTC)
+	allDay := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
+	tail := func(cutoff time.Time, isAllDay bool) trash.Entry {
+		return trash.Entry{
+			Kind: trash.KindEventSeriesTail, ID: 1, Title: "Series", AllDay: isAllDay,
+			CutoffTime:        cutoff.AddDate(0, 0, 7),
+			NewerTruncationID: 2, NewerTruncationCutoff: cutoff,
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		cutoff  time.Time
+		entries []trash.Entry
+		want    string
+	}{
+		{"timed", timed, []trash.Entry{tail(timed, false)}, "Restore failed: restore the truncation with cutoff Tue, Nov 3 10:00 first"},
+		{"all-day", allDay, []trash.Entry{tail(allDay, true)}, "Restore failed: restore the truncation with cutoff Tue, Nov 3 first"},
+		{"no entry", timed, nil, "Restore failed: restore the truncation with cutoff Tue, Nov 3 10:00 first"},
+	} {
+		m := NewModel(nil, "")
+		next, _ := m.handleTrashActionDone(trashActionDoneMsg{
+			action: "restored", title: "Series", err: &event.NewerTruncationError{Cutoff: tc.cutoff},
+			total: len(tc.entries), entries: tc.entries,
+		})
+		if got := ansi.Strip(next.(Model).toast.View()); !strings.Contains(got, tc.want) {
+			t.Errorf("%s: toast = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestTrashActionDone_FailedPurgeNamesThePurge checks that the toast of a
+// failed purge names the purge, not an undo.
+func TestTrashActionDone_FailedPurgeNamesThePurge(t *testing.T) {
+	m := NewModel(nil, "")
+	next, _ := m.handleTrashActionDone(trashActionDoneMsg{action: "purged", title: "Lunch", err: errors.New("database is locked")})
+	if got := ansi.Strip(next.(Model).toast.View()); !strings.Contains(got, "Purge failed: database is locked") {
+		t.Errorf("toast = %q, want the purge in the failed toast", got)
 	}
 }

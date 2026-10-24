@@ -19,7 +19,7 @@ const (
 	ToastDeletedSynced                     // "Deleted 'X' (synced) — undo (u)"
 	ToastRestoring                         // "Restoring…"
 	ToastRestored                          // "✓ Restored 'X'"
-	ToastFailed                            // "Undo failed: <reason>"
+	ToastFailed                            // "<Action> failed: <reason>"
 	ToastPurged                            // "✓ Purged 'X'"
 )
 
@@ -45,9 +45,12 @@ type toastTickMsg struct{ token int }
 // window replaces the first toast. The undo stack (independent of the
 // toast) still remembers both.
 type ToastModel struct {
-	state    ToastState
-	title    string
-	reason   string
+	state  ToastState
+	title  string
+	reason string
+	// action names the action that failed in the failed toast, for
+	// example "Undo" or "Restore".
+	action   string
 	token    int
 	theme    Theme
 	deadline time.Time
@@ -94,10 +97,18 @@ func (t *ToastModel) Restoring() {
 	t.state = ToastRestoring
 }
 
-// Failed shows a short error message with a faster auto-dismiss.
+// Failed shows a short error message with a faster auto-dismiss. The
+// message names the undo as the action that failed.
 func (t *ToastModel) Failed(reason string) tea.Cmd {
+	return t.ActionFailed("Undo", reason)
+}
+
+// ActionFailed is Failed for another action. The message starts with
+// "<action> failed:".
+func (t *ToastModel) ActionFailed(action, reason string) tea.Cmd {
 	t.token++
 	t.state = ToastFailed
+	t.action = action
 	t.reason = reason
 	t.deadline = time.Now().Add(ToastFailedDismissDelay)
 	return t.scheduleDismiss(ToastFailedDismissDelay)
@@ -203,7 +214,7 @@ func (t ToastModel) View() string {
 	case ToastFailed:
 		return fmt.Sprintf("%s %s",
 			errStyle.Render("✗"),
-			dimStyle.Render("Undo failed: "+t.reason))
+			dimStyle.Render(t.action+" failed: "+t.reason))
 	default:
 		// ToastEmpty is short-circuited above; nothing else renders.
 		return ""
