@@ -107,9 +107,13 @@ var eventResource = resource{
 		n, err := a.Events.PurgeDeleted(ctx, cutoff)
 		return int64(n), err
 	},
-	liveUID: func(ctx context.Context, a *app.App, uid string) bool {
-		ids, err := a.Queries.ListLiveEventCalendarIDsByUID(ctx, uid)
-		return err == nil && len(ids) > 0
+	uidState: func(ctx context.Context, a *app.App, uid string) (bool, bool, error) {
+		live, err := a.Queries.ListLiveEventCalendarIDsByUID(ctx, uid)
+		if err != nil {
+			return false, false, err
+		}
+		trashed, err := a.Queries.ListTrashedEventsByUID(ctx, uid)
+		return len(live) > 0, len(trashed) > 0, err
 	},
 	errNotDeleted: event.ErrNotDeleted,
 }

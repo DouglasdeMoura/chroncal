@@ -494,7 +494,8 @@ With --output json or yaml, the command prints one object:
   - message: a note when the OS has no service integration
 
 The exit code has the meaning of the tool. For systemctl, 0 is active,
-3 is not active, and 4 is no such unit.`,
+3 is not active, and 4 is no such unit. -1 is a run with no exit code,
+for example a kill by a signal.`,
 		Example: `  chroncal service status
   chroncal service status --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -526,10 +527,14 @@ The exit code has the meaning of the tool. For systemctl, 0 is active,
 				return fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
 			}
 			if outputFmt != "text" {
+				// -1 marks a run with no exit code of its own, for
+				// example a kill by a signal.
 				exitCode := 0
 				var exitErr *exec.ExitError
 				if errors.As(err, &exitErr) {
 					exitCode = exitErr.ExitCode()
+				} else if err != nil {
+					exitCode = -1
 				}
 				return printOutput(w, map[string]any{
 					"os": runtime.GOOS, "command": argv, "exit_code": exitCode, "output": string(out),

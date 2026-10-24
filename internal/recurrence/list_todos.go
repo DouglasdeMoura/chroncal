@@ -94,7 +94,7 @@ func singleTodoInstance(td todo.Todo, from, to time.Time) []ExpandedTodo {
 	if anchor.IsZero() || anchor.Before(from) || !anchor.Before(to) {
 		return nil
 	}
-	return []ExpandedTodo{{Todo: td, InstanceTime: anchor, Lone: true}}
+	return []ExpandedTodo{{Todo: td, InstanceTime: anchor, lone: true}}
 }
 
 // ExpandTodo generates all occurrences of a todo within a date range.
@@ -165,7 +165,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 		instTime: func(i ExpandedTodo) time.Time { return i.InstanceTime },
 		applyInstance: func(i ExpandedTodo) todo.Todo {
 			t := TodoAtInstance(i)
-			if !i.Lone {
+			if !i.lone {
 				t.RecurrenceTime = i.InstanceTime
 			}
 			return t
@@ -180,7 +180,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 		newOccChecker:  newTodoOccChecker,
 		emitOverride: func(o storage.Todo, from, to time.Time) (todo.Todo, bool) {
 			ot := todoFromRow(o)
-			ot.RecurrenceTime = overrideRecurrenceTime(o.RecurrenceID)
+			ot.RecurrenceTime = recurrenceTime(o.RecurrenceID)
 			anchor := ot.ParseStartDate()
 			if anchor.IsZero() {
 				anchor = ot.ParseDueDate()

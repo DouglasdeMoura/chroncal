@@ -175,8 +175,10 @@ func trashMarked(title string, deletedAt *time.Time) string {
 
 // jsonInstanceTime names the occurrence of an item in a list: the
 // RECURRENCE-ID of an occurrence or an override that the expansion gives,
-// in UTC RFC 3339. It returns "" for another item. The value is a valid
-// --recurrence-id.
+// in UTC RFC 3339. It returns "" for another item. An event takes the value
+// as --recurrence-id. A stored override keeps its own form in
+// recurrence_id, and a lookup of a todo or a journal override needs that
+// form.
 func jsonInstanceTime(recurrenceTime time.Time) string {
 	if recurrenceTime.IsZero() {
 		return ""

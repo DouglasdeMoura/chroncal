@@ -63,7 +63,7 @@ func TestRestoreOfALiveRowSaysThatItIsNotInTheTrash(t *testing.T) {
 				t.Errorf("restore by ID: err %v, stderr %q", err, stderr)
 			}
 			_, stderr, err = runChroncalCommand(t, tc.name, "restore", uid)
-			if err == nil || !strings.Contains(stderr, fmt.Sprintf("%s %q is live, and no delete of the UID can come back by UID; restore a row in the trash by its ID (see %s list --include-deleted)", tc.name, uid, tc.name)) {
+			if err == nil || !strings.Contains(stderr, fmt.Sprintf("no %s with uid %q is in the trash; it is live", tc.name, uid)) {
 				t.Errorf("restore by UID: err %v, stderr %q", err, stderr)
 			}
 			_, stderr, err = runChroncalCommand(t, tc.name, "restore", "999")
@@ -78,7 +78,8 @@ func TestRestoreOfALiveRowSaysThatItIsNotInTheTrash(t *testing.T) {
 // that the restore by UID cannot take: the series is live, and one
 // occurrence is in the trash. The message must not say that nothing is in
 // the trash. It sends the user to the restore by ID, which works. A UID
-// with a live series in two calendars gets the same message.
+// with a live series in two calendars and nothing in the trash says that
+// nothing is in the trash.
 func TestRestoreByUIDOfALiveSeriesWithAnOccurrenceInTheTrash(t *testing.T) {
 	dbPath := setupCalendarCLITestEnv(t)
 	cliSeed(t,
@@ -112,6 +113,7 @@ func TestRestoreByUIDOfALiveSeriesWithAnOccurrenceInTheTrash(t *testing.T) {
 		t.Fatalf("insert copy: %v", err)
 	}
 	a.Close()
+	want = fmt.Sprintf("no event with uid %q is in the trash; it is live", uid)
 	if _, stderr, err := runChroncalCommand(t, "event", "restore", uid); err == nil || !strings.Contains(stderr, want) {
 		t.Errorf("restore by UID in two calendars: err %v, stderr %q, want %q", err, stderr, want)
 	}
