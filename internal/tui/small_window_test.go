@@ -166,6 +166,16 @@ func TestSmallWindowIgnoresInput(t *testing.T) {
 	if updated.(Model).viewMode != mode || cmd != nil {
 		t.Fatal("a click in a small window changed the view")
 	}
+	if _, cmd = m.Update(tea.PasteMsg{Content: "text"}); cmd != nil {
+		t.Fatal("a paste in a small window produced a command")
+	}
+	_, cmd = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+c in a small window produced no command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("ctrl+c in a small window did not quit")
+	}
 }
 
 func TestMonthCellOverflowKeepsCountInTinyCell(t *testing.T) {
@@ -178,5 +188,9 @@ func TestMonthCellOverflowKeepsCountInTinyCell(t *testing.T) {
 	cell := ansi.Strip(buildCalendarCell(day, false, false, true, evs, 3, 3, ""))
 	if !strings.Contains(cell, "+13") {
 		t.Fatalf("cell lacks the overflow count:\n%s", cell)
+	}
+	cell = ansi.Strip(buildCalendarCell(day, false, false, true, evs, 2, 3, ""))
+	if !strings.Contains(cell, "+…") {
+		t.Fatalf("a two-cell overflow label is not cut with an ellipsis:\n%s", cell)
 	}
 }

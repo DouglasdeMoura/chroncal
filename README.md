@@ -955,7 +955,7 @@ A series can have two or more truncations ("This and following") in the trash. R
 
 Run `chroncal` with no arguments to launch the interactive terminal UI.
 
-The TUI needs a window of at least 80 columns by 24 rows. A smaller window shows a notice with the minimum size. Make the window larger to see the calendar again.
+The TUI needs a window of at least 80 columns by 24 rows. A smaller window shows a notice with the minimum size, and keys and clicks do nothing. Make the window larger to see the calendar again, or press ctrl+c to quit.
 
 <p align="center">
   <img src="assets/chroncal-tui.png" alt="The chroncal TUI">
