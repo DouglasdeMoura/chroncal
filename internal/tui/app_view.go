@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"image"
 	"slices"
 	"strings"
@@ -13,6 +14,30 @@ import (
 )
 
 const sidebarWidth = 24
+
+// The TUI needs a window of at least minWindowWidth by minWindowHeight
+// cells. A smaller window shows smallWindowNotice instead of the layout.
+const (
+	minWindowWidth  = 80
+	minWindowHeight = 24
+)
+
+// smallWindowNotice tells the user that the window is too small. Each line
+// fits in w cells, and the notice uses at most h rows.
+func (m Model) smallWindowNotice() string {
+	lines := []string{
+		"Window too small",
+		fmt.Sprintf("Need %dx%d", minWindowWidth, minWindowHeight),
+		fmt.Sprintf("Now %dx%d", m.width, m.height),
+	}
+	lines = lines[:min(len(lines), max(m.height, 1))]
+	for i, l := range lines {
+		lines[i] = truncateTo(l, m.width)
+	}
+	text := lipgloss.NewStyle().Foreground(m.theme.Text).
+		Render(lipgloss.JoinVertical(lipgloss.Center, lines...))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, text)
+}
 
 // footerHeight returns the total rows the footer occupies. The footer is
 // always a single line: the "? help" hint (and optional sync status).
@@ -106,6 +131,11 @@ func (m Model) View() tea.View {
 	v := tea.View{AltScreen: true, MouseMode: tea.MouseModeCellMotion}
 
 	if m.width == 0 {
+		return v
+	}
+
+	if m.width < minWindowWidth || m.height < minWindowHeight {
+		v.Content = m.smallWindowNotice()
 		return v
 	}
 

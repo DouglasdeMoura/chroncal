@@ -333,8 +333,14 @@ func buildCalendarCell(d time.Time, isToday, isSelected, inMonth bool, events []
 		pills = append(pills, renderEventPill(ev, cellW, !inMonth))
 	}
 	if overflow > 0 && len(pills) > 0 {
+		// A narrow cell drops the word "more". A wrapped label makes the
+		// cell one row taller than the grid.
+		label := fmt.Sprintf(" +%d more", overflow)
+		if lipgloss.Width(label) > cellW {
+			label = truncateTo(fmt.Sprintf(" +%d", overflow), cellW)
+		}
 		pills[len(pills)-1] = lipgloss.NewStyle().Faint(true).
-			Width(cellW).Render(fmt.Sprintf(" +%d more", overflow))
+			Width(cellW).Render(label)
 	}
 
 	lines := make([]string, 0, cellH)

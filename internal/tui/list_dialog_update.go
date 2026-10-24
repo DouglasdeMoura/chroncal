@@ -165,27 +165,22 @@ func (m ListDialogModel) RowAtPosition(x, y int) (int, bool) {
 // ActionAtPosition hit-tests the action bar. Returns the clicked button index.
 // Each button's width is measured from its actual rendered output. That
 // matches DefaultButtonStyles: Padding(0,2) + MarginRight(1). The hit regions
-// then agree exactly with what the user sees. The join space added by
-// strings.Join(parts, " ") in renderActions accounts for the +1 advance
-// between consecutive buttons.
+// then agree exactly with what the user sees. The join space of
+// renderActions (see actionGap) adds to the advance between two buttons.
 func (m ListDialogModel) ActionAtPosition(x, y int) (int, bool) {
 	ox, oy := m.actionBarOrigin()
 	if y != oy {
 		return 0, false
 	}
 	bs := DefaultButtonStyles()
+	gap := m.actionGap(m.actionsWidth())
 	cx := ox
 	for i, a := range m.actions {
-		var w int
-		if a.Danger {
-			w = lipgloss.Width(bs.Danger.Render(a.Label, false))
-		} else {
-			w = lipgloss.Width(bs.Normal.Render(a.Label, false))
-		}
+		w := actionButtonWidth(bs, a)
 		if x >= cx && x < cx+w {
 			return i, true
 		}
-		cx += w + 1 // +1 for the strings.Join(" ") separator in renderActions
+		cx += w + gap // the separator of renderActions
 	}
 	return 0, false
 }
