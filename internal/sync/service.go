@@ -10,7 +10,6 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
-	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -186,7 +185,7 @@ func (s *Service) LegacyOverrides(ctx context.Context, calendarID int64) ([]Lega
 	out := make([]LegacyOverride, 0, len(rows))
 	for _, r := range rows {
 		l := LegacyOverride{ID: r.ID, UID: r.Uid, OwnerCalendarID: r.OwnerCalendarID, Rows: r.RowCount}
-		if l.Refusal, err = s.legacyMoveRefusal(ctx, calendarID, r.OwnerCalendarID, r.Uid); err != nil {
+		if l.Refusal, err = storage.LegacyMoveRefusal(ctx, s.q, calendarID, r.OwnerCalendarID, r.Uid); err != nil {
 			return nil, err
 		}
 		if l.Refusal == "" {
@@ -197,26 +196,6 @@ func (s *Service) LegacyOverrides(ctx context.Context, calendarID int64) ([]Lega
 		out = append(out, l)
 	}
 	return out, nil
-}
-
-// legacyMoveRefusal names the rule that refuses the user move of the legacy
-// overrides of uid from calendarID to ownerCalendarID, or returns "". It
-// checks the access of the two calendars first, as uidmove.Rows.Update
-// does, and then the rules of storage.LegacyMoveRefusal.
-func (s *Service) legacyMoveRefusal(ctx context.Context, calendarID, ownerCalendarID int64, uid string) (string, error) {
-	for _, id := range []int64{calendarID, ownerCalendarID} {
-		err := calendaraccess.EnsureWritable(ctx, s.q, id, "VEVENT")
-		if errors.Is(err, calendaraccess.ErrReadOnly) {
-			return fmt.Sprintf("calendar %q is read-only", storage.CalendarLabel(ctx, s.q, id)), nil
-		}
-		if errors.Is(err, calendaraccess.ErrUnsupportedComponent) {
-			return fmt.Sprintf("calendar %q does not support events", storage.CalendarLabel(ctx, s.q, id)), nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("check access: %w", err)
-		}
-	}
-	return storage.LegacyMoveRefusal(ctx, s.q, calendarID, ownerCalendarID, uid)
 }
 
 // WaitingResource is a sync row whose push waits for another step, for

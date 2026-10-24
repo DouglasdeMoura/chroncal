@@ -167,6 +167,16 @@ func TestHealLegacyOverrides_KeepsRows(t *testing.T) {
 				t.Fatalf("set remote_access: %v", err)
 			}
 		}},
+		{"owner calendar with no VEVENT component left", func(t *testing.T, f legacyFixture) {
+			if _, err := f.db.Exec(`UPDATE calendars SET remote_components = 'VTODO' WHERE id = ?`, f.m); err != nil {
+				t.Fatalf("set remote_components: %v", err)
+			}
+		}},
+		{"source calendar with no VEVENT component left", func(t *testing.T, f legacyFixture) {
+			if _, err := f.db.Exec(`UPDATE calendars SET remote_components = 'VTODO,VJOURNAL' WHERE id = ?`, f.l); err != nil {
+				t.Fatalf("set remote_components: %v", err)
+			}
+		}},
 		{"sync row of the uid in the owner calendar", func(t *testing.T, f legacyFixture) {
 			if _, err := f.db.Exec(`INSERT INTO sync_resources (calendar_id, uid, owner_type) VALUES (?, ?, 'event')`, f.m, legacyUID); err != nil {
 				t.Fatalf("insert sync row: %v", err)

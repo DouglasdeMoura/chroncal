@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
@@ -31,14 +30,8 @@ func EnsureWritable(ctx context.Context, q *storage.Queries, calendarID int64, c
 	if IsReadOnly(cal.RemoteAccess) {
 		return fmt.Errorf("%w: %s", ErrReadOnly, cal.Name)
 	}
-	components := strings.TrimSpace(cal.RemoteComponents)
-	if components == "" || strings.TrimSpace(component) == "" {
+	if storage.CalendarSupportsComponent(cal.RemoteComponents, component) {
 		return nil
-	}
-	for _, advertised := range strings.Split(components, ",") {
-		if strings.EqualFold(strings.TrimSpace(advertised), component) {
-			return nil
-		}
 	}
 	return fmt.Errorf("%w: %s does not advertise %s", ErrUnsupportedComponent, cal.Name, component)
 }
