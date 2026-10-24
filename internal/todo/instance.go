@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
@@ -68,10 +67,7 @@ func overrideRow(ctx context.Context, q *storage.Queries, uid, recurrenceID stri
 // occurrence returns ErrOverrideExists when it is live, and
 // ErrOccurrenceInTrash when it is in the trash.
 func (s *Service) CreateOverride(ctx context.Context, uid, recurrenceID string, p UpdateParams) (Todo, error) {
-	p.Status, p.Class = defaults(p.Status, p.Class)
-	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
-	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
-	if err := validateTiming(p.DueDate, p.StartDate, p.Duration); err != nil {
+	if err := p.normalize(); err != nil {
 		return Todo{}, err
 	}
 
@@ -86,11 +82,6 @@ func (s *Service) CreateOverride(ctx context.Context, uid, recurrenceID string, 
 	if err != nil {
 		return Todo{}, err
 	}
-	// The override changes the server object of the series, so the series
-	// gets the dirty mark in the same transaction (issue #107).
-	if err := storage.MarkResourceDirty(ctx, tx, t.CalendarID, uid, "todo"); err != nil {
-		return Todo{}, fmt.Errorf("mark resource dirty: %w", err)
-	}
 	if err := tx.Commit(); err != nil {
 		return Todo{}, fmt.Errorf("commit override: %w", err)
 	}
@@ -104,9 +95,9 @@ func (s *Service) CreateOverride(ctx context.Context, uid, recurrenceID string, 
 // three writes. The trash then shows the occurrence, and RestoreByID brings
 // it back. It returns the override row in the trash.
 func (s *Service) DeleteInstance(ctx context.Context, uid, recurrenceID string, p UpdateParams) (Todo, error) {
-	p.Status, p.Class = defaults(p.Status, p.Class)
-	p.CompletedAt = completedAtFor(p.Status, p.CompletedAt)
-	p.PercentComplete = percentCompleteFor(p.Status, p.PercentComplete)
+	if err := p.normalize(); err != nil {
+		return Todo{}, err
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -140,12 +131,6 @@ func createOverrideTx(ctx context.Context, qtx *storage.Queries, uid, recurrence
 	if err != nil {
 		return Todo{}, err
 	}
-	if err := calendaraccess.EnsureWritable(ctx, qtx, master.CalendarID, todoComponent); err != nil {
-		return Todo{}, err
-	}
-	if p.CalendarID != 0 && p.CalendarID != master.CalendarID {
-		return Todo{}, ErrInstanceCalendarMove
-	}
 	_, trashed, found, err := overrideRow(ctx, qtx, uid, recurrenceID)
 	switch {
 	case err != nil:
@@ -156,9 +141,26 @@ func createOverrideTx(ctx context.Context, qtx *storage.Queries, uid, recurrence
 		return Todo{}, ErrOverrideExists
 	}
 
+	// The access checks, the move rules, and the dirty mark of the series
+	// run in the order of uidmove.Rows.Update, as in Update. The rules
+	// refuse a move of one occurrence (ErrInstanceCalendarMove).
+	var t Todo
+	err = uidMoveRows(qtx, uid).Update(ctx, todoComponent, "todo", recurrenceID, master.CalendarID, p.CalendarID, func(ctx context.Context, calendarID int64) error {
+		var err error
+		t, err = insertOverrideTx(ctx, qtx, uid, recurrenceID, calendarID, master.Sequence+1, p)
+		return err
+	})
+	if err != nil {
+		return Todo{}, err
+	}
+	return t, nil
+}
+
+// insertOverrideTx inserts the override row and its categories.
+func insertOverrideTx(ctx context.Context, qtx *storage.Queries, uid, recurrenceID string, calendarID, sequence int64, p UpdateParams) (Todo, error) {
 	r, err := qtx.CreateTodo(ctx, storage.CreateTodoParams{
 		Uid:             uid,
-		CalendarID:      master.CalendarID,
+		CalendarID:      calendarID,
 		Summary:         p.Summary,
 		Description:     storage.StringToNullable(p.Description),
 		Location:        storage.StringToNullable(p.Location),
@@ -173,7 +175,7 @@ func createOverrideTx(ctx context.Context, qtx *storage.Queries, uid, recurrence
 		Url:             storage.StringToNullable(p.URL),
 		// An override is one occurrence. It has no rule and no date lists.
 		Timezone:     storage.StringToNullable(p.Timezone),
-		Sequence:     master.Sequence + 1,
+		Sequence:     sequence,
 		RecurrenceID: recurrenceID,
 		Geo:          storage.StringToNullable(p.Geo),
 		Dtstamp:      storage.StringToNullable(p.DtStamp),

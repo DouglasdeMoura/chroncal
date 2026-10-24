@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 )
 
@@ -70,9 +71,13 @@ func TestCreateOverride_RefusesAMoveToAnotherCalendar(t *testing.T) {
 	db, q := testutil.NewTestDB(t)
 	svc := NewService(db, q)
 	seedWeekly(t, svc)
+	other, err := q.CreateCalendar(context.Background(), storage.CreateCalendarParams{Name: "Other"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
 
 	p := occurrenceParams()
-	p.CalendarID = 99
+	p.CalendarID = other.ID
 	if _, err := svc.CreateOverride(context.Background(), "weekly", "2026-10-31T00:00:00Z", p); !errors.Is(err, ErrInstanceCalendarMove) {
 		t.Errorf("error = %v, want ErrInstanceCalendarMove", err)
 	}
@@ -154,5 +159,30 @@ func TestOverrideRow_TakesTheDateOnlyForm(t *testing.T) {
 	}
 	if _, err := svc.CreateOverride(ctx, "weekly", "2026-10-31T00:00:00Z", occurrenceParams()); !errors.Is(err, ErrOverrideExists) {
 		t.Errorf("CreateOverride error = %v, want ErrOverrideExists", err)
+	}
+}
+
+// TestCreateOverride_MarksTheSeriesDirty checks that the new override of a
+// synced series reaches the push.
+func TestCreateOverride_MarksTheSeriesDirty(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	ctx := context.Background()
+	testutil.LinkCalendarToAccount(t, db)
+	seedWeekly(t, svc)
+	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: 1, Uid: "weekly", OwnerType: "todo", RemoteUrl: "/cal/weekly.ics", Etag: "e1", SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if _, err := svc.CreateOverride(ctx, "weekly", "2026-10-31T00:00:00Z", occurrenceParams()); err != nil {
+		t.Fatalf("CreateOverride: %v", err)
+	}
+	var dirty int
+	if err := db.QueryRowContext(ctx, `SELECT dirty FROM sync_resources WHERE calendar_id = 1 AND uid = 'weekly'`).Scan(&dirty); err != nil {
+		t.Fatalf("read dirty: %v", err)
+	}
+	if dirty != 1 {
+		t.Errorf("dirty = %d, want 1", dirty)
 	}
 }
