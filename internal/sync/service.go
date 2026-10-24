@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/calendar"
+	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/storage"
@@ -160,11 +161,17 @@ func (s *Service) UnownedEdits(ctx context.Context, calendarID int64) ([]string,
 // no master of the UID (see storage.LegacyOverride). OwnerCalendarID names
 // the calendar of the live series that owns them. ID is the lowest row ID.
 // A move of that row to the owner calendar takes the other Rows with it.
+//
+// Refusal names the rule that refuses that move, or is "" when the move can
+// pass. Kept names the reason that the startup heal keeps the rows when the
+// move can pass: an account link, or sync state of the UID.
 type LegacyOverride struct {
 	ID              int64
 	UID             string
 	OwnerCalendarID int64
 	Rows            int64
+	Refusal         string
+	Kept            string
 }
 
 // LegacyOverrides lists the UIDs of calendarID with a live legacy override
@@ -178,9 +185,55 @@ func (s *Service) LegacyOverrides(ctx context.Context, calendarID int64) ([]Lega
 	}
 	out := make([]LegacyOverride, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, LegacyOverride{ID: r.ID, UID: r.Uid, OwnerCalendarID: r.OwnerCalendarID, Rows: r.RowCount})
+		l := LegacyOverride{ID: r.ID, UID: r.Uid, OwnerCalendarID: r.OwnerCalendarID, Rows: r.RowCount}
+		if l.Refusal, err = s.legacyMoveRefusal(ctx, calendarID, r.OwnerCalendarID, r.Uid); err != nil {
+			return nil, err
+		}
+		if l.Refusal == "" {
+			if l.Kept, err = s.legacyKeptReason(ctx, calendarID, r.OwnerCalendarID); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, l)
 	}
 	return out, nil
+}
+
+// legacyMoveRefusal names the rule that refuses the user move of the legacy
+// overrides of uid from calendarID to ownerCalendarID, or returns "". It
+// checks the access of the two calendars first, as uidmove.Rows.Update
+// does, and then the rules of storage.LegacyMoveRefusal.
+func (s *Service) legacyMoveRefusal(ctx context.Context, calendarID, ownerCalendarID int64, uid string) (string, error) {
+	for _, id := range []int64{calendarID, ownerCalendarID} {
+		err := calendaraccess.EnsureWritable(ctx, s.q, id, "VEVENT")
+		if errors.Is(err, calendaraccess.ErrReadOnly) {
+			return fmt.Sprintf("calendar %q is read-only", storage.CalendarLabel(ctx, s.q, id)), nil
+		}
+		if errors.Is(err, calendaraccess.ErrUnsupportedComponent) {
+			return fmt.Sprintf("calendar %q does not support events", storage.CalendarLabel(ctx, s.q, id)), nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("check access: %w", err)
+		}
+	}
+	return storage.LegacyMoveRefusal(ctx, s.q, calendarID, ownerCalendarID, uid)
+}
+
+// legacyKeptReason names the reason that the startup heal keeps the legacy
+// overrides in calendarID when no rule refuses their move. The heal
+// moves no rows of a calendar with an account link, or with a sync row or a
+// tombstone of the UID (see storage.healLegacyEventOverrides).
+func (s *Service) legacyKeptReason(ctx context.Context, calendarID, ownerCalendarID int64) (string, error) {
+	for _, id := range []int64{calendarID, ownerCalendarID} {
+		cal, err := s.q.GetCalendar(ctx, id)
+		if err != nil {
+			return "", fmt.Errorf("get calendar %d: %w", id, err)
+		}
+		if storage.CalendarLinked(cal) {
+			return fmt.Sprintf("calendar %q has an account link, so the startup heal does not move the rows", cal.Name), nil
+		}
+	}
+	return "a calendar holds sync state of the UID, so the startup heal does not move the rows", nil
 }
 
 // WaitingResource is a sync row whose push waits for another step, for

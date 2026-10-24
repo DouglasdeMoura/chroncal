@@ -29,7 +29,8 @@ The list also shows four other kinds of resources:
   - a resource whose last push failed;
   - an edit that stays local, because no series owns the edited row;
   - a legacy override: an override in a calendar with no master of its
-    UID. The line gives the command that moves it to its series.
+    UID. The line gives the reason that the row stays. When a move of
+    the row to its series can pass, the line also gives the command.
 
 A wedged resource stays dirty forever. Every sync retries it and fails on
 the same unreadable relation, and no edit under its UID reaches the server.
@@ -112,12 +113,22 @@ type noteEntry struct {
 	ownerType    string
 	count        int64  // push_failure only
 	reason       string // the last push error, storage.NoSeriesOwnerMsg, or legacyOverrideMsg
-	// rowID, rows, and ownerCalendarName are for legacy_override only: the
-	// lowest override row of the UID, the count of its rows, and the
-	// calendar of the series that owns them.
+	// rowID, rows, ownerCalendarName, refusal, and kept are for
+	// legacy_override only: the lowest override row of the UID, the count
+	// of its rows, the calendar of the series that owns them, the rule that
+	// refuses their move ("" when the move can pass), and the reason that
+	// the startup heal keeps them when the move can pass.
 	rowID             int64
 	rows              int64
 	ownerCalendarName string
+	refusal           string
+	kept              string
+}
+
+// moveCommand is the command that moves the rows of a legacy_override
+// note to the calendar of its series.
+func (n noteEntry) moveCommand() string {
+	return fmt.Sprintf("chroncal event update %d --calendar %s", n.rowID, commandName(n.ownerCalendarName))
 }
 
 // legacyOverrideMsg is the reason of a legacy_override note.
@@ -183,6 +194,7 @@ func notesAll(ctx context.Context, svc *syncPkg.Service, cals []storage.Calendar
 				state: "legacy_override", calendarID: cal.ID, calendarName: cal.Name,
 				uid: l.UID, ownerType: "event", reason: legacyOverrideMsg,
 				rowID: l.ID, rows: l.Rows, ownerCalendarName: owner,
+				refusal: l.Refusal, kept: l.Kept,
 			})
 		}
 	}
@@ -289,6 +301,13 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 				item["id"] = n.rowID
 				item["rows"] = n.rows
 				item["owner_calendar_name"] = n.ownerCalendarName
+				item["movable"] = n.refusal == ""
+				if n.refusal != "" {
+					item["move_refusal"] = n.refusal
+				} else {
+					item["kept_reason"] = n.kept
+					item["move_command"] = n.moveCommand()
+				}
 			}
 			items = append(items, item)
 		}
@@ -306,15 +325,27 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 			continue
 		}
 		if n.state == "legacy_override" {
-			fmt.Fprintf(out, "calendar %q uid %s (%s): %d override row(s) with no master in this calendar; the series in calendar %q owns them. Move them there with: chroncal event update %d --calendar %s\n",
-				safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), n.rows,
-				safeText(n.ownerCalendarName), n.rowID, commandName(n.ownerCalendarName))
+			fmt.Fprintf(out, "calendar %q uid %s (%s): %d override row(s) with no master in this calendar; the series in calendar %q owns them. ",
+				safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), n.rows, safeText(n.ownerCalendarName))
+			// Print the move command only when the move can pass. Else the
+			// line names the rule that refuses it.
+			if n.refusal != "" {
+				fmt.Fprintf(out, "The rows stay, because a move there refuses: %s.\n", safeText(n.refusal))
+			} else {
+				fmt.Fprintf(out, "The rows stay, because %s. Move them there with: %s\n", safeText(n.kept), n.moveCommand())
+			}
 			continue
 		}
 		fmt.Fprintf(out, "calendar %q uid %s (%s): the edit stays local: %s\n",
 			safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), safeText(n.reason))
 	}
 	if len(entries) == 0 {
+		// The lines above list no wedged resource. The summary must not
+		// read as "nothing found" after them.
+		if len(waits)+len(notes) > 0 {
+			fmt.Fprintf(out, "\n%d item(s) above. None of them is wedged, so --push does not apply.\n", len(waits)+len(notes))
+			return nil
+		}
 		fmt.Fprintln(out, "No wedged resources.")
 		return nil
 	}
