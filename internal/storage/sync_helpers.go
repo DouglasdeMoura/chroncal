@@ -592,41 +592,63 @@ var ErrCrossCalendarImport = errors.New("the item lives in another calendar")
 // move uses the rules of uidmove (issue #911).
 var ErrUIDInOtherCalendar = errors.New("the UID lives in another calendar")
 
-// ErrFollowRefused reports that the local rows of a todo or a journal UID
-// cannot follow a pulled server body into another calendar yet (issue
-// #911). The source calendar still holds state that the move would lose:
-// a copy on its server, an edit that waits for its push, or a delete that
-// waits for its push. The pull counts the body as a failure and tries
-// again on the next run.
-var ErrFollowRefused = errors.New("the item cannot follow the server into this calendar yet")
+// ErrFollowSkipped reports that the local rows of a todo or a journal UID
+// do not follow a pulled server body into another calendar (issue #911).
+// The pull skips the body and keeps the rows where they are.
+var ErrFollowSkipped = errors.New("skipped")
 
-// CheckFollowSource refuses the follow of the rows of uid out of
-// fromCalendarID (ErrFollowRefused) while that calendar holds state that a
-// move would lose. A remote move by another client removes the source
-// object, and the next pull of the source drops its sync row, so a later
-// pass follows. Two server calendars that both keep the UID never pass:
-// the pull reports it on each run, and the server keeps both copies.
-func CheckFollowSource(ctx context.Context, q *Queries, fromCalendarID int64, uid string) error {
+// CheckFollowSource decides whether the rows of uid in fromCalendarID may
+// follow a server body into toCalendarID. liveRows counts the live rows of
+// uid in fromCalendarID. The rules, in order:
+//   - A tombstone of uid in the source is a delete or a move that waits
+//     for its push. The follow would lose it, so the pull skips.
+//   - A dirty sync row of the source is an edit that waits for its push.
+//     The follow would lose it, so the pull skips.
+//   - Rows that are all in the trash follow: the pull of the source saw
+//     the server object go.
+//   - A source in the account of the target follows: the server moved
+//     the item between two calendars of one account.
+//   - Else the pull skips. A live row of another account or of a local
+//     calendar keeps the UID there, and a move could go back and forth
+//     between two accounts that both hold the UID.
+//
+// A skip is ErrFollowSkipped with a message that names the source.
+func CheckFollowSource(ctx context.Context, q *Queries, fromCalendarID, toCalendarID int64, uid string, liveRows int64) error {
 	name := CalendarLabel(ctx, q, fromCalendarID)
-	res, err := q.GetSyncResource(ctx, GetSyncResourceParams{CalendarID: fromCalendarID, Uid: uid})
-	found, err := Found(err)
-	if err != nil {
-		return fmt.Errorf("read the sync row of %s: %w", uid, err)
+	where := "lives in"
+	if liveRows == 0 {
+		where = "is in the trash of"
 	}
-	if found && res.Dirty == 1 {
-		return fmt.Errorf("%w: %s has an edit in calendar %q that waits for its push", ErrFollowRefused, uid, name)
-	}
-	if found && res.RemoteUrl != "" {
-		return fmt.Errorf("%w: %s also has a copy on the server of calendar %q; a UID cannot be in two calendars, so delete one copy", ErrFollowRefused, uid, name)
-	}
-	_, found, err = importTombstone(ctx, q, fromCalendarID, uid)
+	_, found, err := importTombstone(ctx, q, fromCalendarID, uid)
 	if err != nil {
 		return fmt.Errorf("read the tombstone of %s: %w", uid, err)
 	}
 	if found {
-		return fmt.Errorf("%w: %s has a delete or a move in calendar %q that waits for its push", ErrFollowRefused, uid, name)
+		return fmt.Errorf("%w: %s %s calendar %q, and a delete or a move of it there waits for its push", ErrFollowSkipped, uid, where, name)
 	}
-	return nil
+	res, err := q.GetSyncResource(ctx, GetSyncResourceParams{CalendarID: fromCalendarID, Uid: uid})
+	found, err = Found(err)
+	if err != nil {
+		return fmt.Errorf("read the sync row of %s: %w", uid, err)
+	}
+	if found && res.Dirty == 1 {
+		return fmt.Errorf("%w: %s %s calendar %q, and an edit of it there waits for its push", ErrFollowSkipped, uid, where, name)
+	}
+	if liveRows == 0 {
+		return nil
+	}
+	from, err := q.GetCalendar(ctx, fromCalendarID)
+	if err != nil {
+		return fmt.Errorf("get calendar %d: %w", fromCalendarID, err)
+	}
+	to, err := q.GetCalendar(ctx, toCalendarID)
+	if err != nil {
+		return fmt.Errorf("get calendar %d: %w", toCalendarID, err)
+	}
+	if CalendarLinked(from) && CalendarLinked(to) && *from.AccountID == *to.AccountID {
+		return nil
+	}
+	return fmt.Errorf("%w: %s %s calendar %q, of another account or a local calendar; a UID cannot be in two calendars", ErrFollowSkipped, uid, where, name)
 }
 
 // CheckUIDInOneCalendar returns ErrUIDInOtherCalendar when a row of uid

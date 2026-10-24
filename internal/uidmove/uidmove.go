@@ -323,6 +323,35 @@ func (r Rows) Record(ctx context.Context, fromCalendarID, toCalendarID int64, ta
 	})
 }
 
+// FollowServer moves the rows of the UID from one calendar to another
+// after the server moved the item (issue #911): another client moved it
+// between two server calendars, and the pull of the target fetched it. It
+// writes nothing for the server. The source gets no tombstone, and its
+// sync row goes, because the server object of the source moved with the
+// item. Call it in the transaction of r.Q. The caller decides with
+// storage.CheckFollowSource that the source holds nothing that the move
+// would lose.
+func (r Rows) FollowServer(ctx context.Context, fromCalendarID, toCalendarID int64) error {
+	if err := r.CheckTarget(ctx, fromCalendarID, toCalendarID); err != nil {
+		return err
+	}
+	targetHoldsMaster := false
+	if r.HoldsMaster != nil {
+		holds, err := r.HoldsMaster(ctx, toCalendarID)
+		if err != nil {
+			return fmt.Errorf("check target master: %w", err)
+		}
+		targetHoldsMaster = holds
+	}
+	if err := r.MoveRows(ctx, fromCalendarID, toCalendarID, targetHoldsMaster); err != nil {
+		return fmt.Errorf("move rows: %w", err)
+	}
+	if err := r.Q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{CalendarID: fromCalendarID, Uid: r.UID}); err != nil {
+		return fmt.Errorf("drop the source sync row: %w", err)
+	}
+	return nil
+}
+
 // MoveBack moves the rows of the UID back from the target of a move to its
 // source. The cancel of the move in the sync engine uses it (issue #841). It
 // applies the target collision rule (CheckTarget) and then records the move

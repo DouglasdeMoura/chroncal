@@ -593,15 +593,14 @@ func (s *Service) Complete(ctx context.Context, id int64) (Todo, error) {
 const maxFollowPasses = 8
 
 // FollowUIDToCalendar moves every row of uid that lives outside calendarID
-// into calendarID, live or in the trash, by the rules of a calendar move
-// (uidmove.Rows.Update), and it returns the calendar that the rows left, or
-// 0. A sync pull calls it before the upsert of a server body (issue #911).
-// Another client can move an item between two server calendars and keep
-// its UID, and the key of a todo spans calendars, so the local rows follow
-// the server. The move also heals a series that an older version split
-// across two calendars. The source calendar must hold no state that the
-// move would lose (storage.CheckFollowSource). A refusal of those rules or
-// of the move rules comes back as an error, and no row moves.
+// into calendarID, live or in the trash, and it returns the calendar that
+// the rows left, or 0. A sync pull calls it before the upsert of a server
+// body (issue #911). Another client can move an item between two server
+// calendars and keep its UID, and the key of a todo spans calendars, so
+// the local rows follow the server (uidmove.Rows.FollowServer). The series
+// moves as one unit, so the move also heals a series that an older version
+// split. storage.CheckFollowSource decides whether the rows may follow. A
+// skip comes back as storage.ErrFollowSkipped, and no row moves.
 func (s *Service) FollowUIDToCalendar(ctx context.Context, uid string, calendarID int64) (int64, error) {
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
@@ -624,10 +623,14 @@ func (s *Service) FollowUIDToCalendar(ctx context.Context, uid string, calendarI
 		if !found {
 			break
 		}
-		if err := storage.CheckFollowSource(ctx, qtx, from, uid); err != nil {
+		live, err := qtx.CountLiveTodoRowsInCalendar(ctx, storage.CountLiveTodoRowsInCalendarParams{CalendarID: from, Uid: uid})
+		if err != nil {
+			return 0, fmt.Errorf("count the live rows of %s: %w", uid, err)
+		}
+		if err := storage.CheckFollowSource(ctx, qtx, from, calendarID, uid, live); err != nil {
 			return 0, err
 		}
-		if err := uidMoveRows(qtx, uid).Update(ctx, todoComponent, "todo", "", from, calendarID, func(context.Context, int64) error { return nil }); err != nil {
+		if err := uidMoveRows(qtx, uid).FollowServer(ctx, from, calendarID); err != nil {
 			return 0, fmt.Errorf("follow %s from calendar %q: %w", uid, storage.CalendarLabel(ctx, qtx, from), err)
 		}
 		if first == 0 {

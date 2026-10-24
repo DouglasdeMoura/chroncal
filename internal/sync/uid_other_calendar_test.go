@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -27,19 +26,49 @@ func pullBody(t *testing.T, engine *Engine, calendarID int64, path, etag, compon
 
 const movedTodoBody = "BEGIN:VTODO\r\nUID:moved-todo\r\nDTSTAMP:20261020T000000Z\r\nSUMMARY:From B\r\nEND:VTODO\r\n"
 
-// TestPullFollowsARemoteMoveBeforeThePullOfTheSource pulls calendar B
-// first. Another client moved the todo from server calendar A to B and
-// kept its UID (issue #911). The local row still lives in A, so the pull
-// of B moves it into B by the rules of a calendar move, and the item stays
-// live.
-func TestPullFollowsARemoteMoveBeforeThePullOfTheSource(t *testing.T) {
-	t.Parallel()
-	engine, q, _, calA, calB := newICloudPairEngine(t)
+// seedPushedTodo writes a todo in calendarID with a clean sync row, as a
+// pushed item has.
+func seedPushedTodo(t *testing.T, engine *Engine, calendarID int64, uid, path string) todo.Todo {
+	t.Helper()
 	ctx := context.Background()
-	td, err := engine.todos.UpsertByUID(ctx, todo.UpsertParams{UID: "moved-todo", CalendarID: calA, Summary: "In A"})
+	td, err := engine.todos.UpsertByUID(ctx, todo.UpsertParams{UID: uid, CalendarID: calendarID, Summary: "Before"})
 	if err != nil {
 		t.Fatalf("seed todo: %v", err)
 	}
+	if err := engine.q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
+		CalendarID: calendarID, Uid: uid, OwnerType: "todo", RemoteUrl: path, Etag: `"a1"`, SyncStrategy: "sync-token",
+	}); err != nil {
+		t.Fatalf("UpsertSyncResource: %v", err)
+	}
+	if _, err := engine.db.ExecContext(ctx, `UPDATE sync_resources SET dirty = 0 WHERE calendar_id = ? AND uid = ?`, calendarID, uid); err != nil {
+		t.Fatalf("clear dirty: %v", err)
+	}
+	return td
+}
+
+// wantNoTrace checks that calendarID has no sync row and no tombstone of
+// uid: a follow writes nothing for the server of the source.
+func wantNoTrace(t *testing.T, q *storage.Queries, calendarID int64, uid string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid}); err == nil {
+		t.Errorf("calendar %d keeps a sync row of %s", calendarID, uid)
+	}
+	if ts, err := q.ListTombstonesByCalendar(ctx, calendarID); err != nil || len(ts) != 0 {
+		t.Errorf("tombstones of calendar %d = %v, %v; want none", calendarID, ts, err)
+	}
+}
+
+// TestPullFollowsARemoteMoveInOneAccountBeforeThePullOfTheSource pulls
+// calendar B first. Another client moved the todo from server calendar A
+// to B of the same account and kept its UID (issue #911). The local row
+// still lives in A, so the pull of B moves it into B. The source gets no
+// tombstone, because the server already moved the item.
+func TestPullFollowsARemoteMoveInOneAccountBeforeThePullOfTheSource(t *testing.T) {
+	t.Parallel()
+	engine, q, _, calA, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	td := seedPushedTodo(t, engine, calA, "moved-todo", "/cal/a/moved-todo.ics")
 	if imported, warnings := pullBody(t, engine, calB, "/cal/b/moved-todo.ics", `"e1"`, movedTodoBody); !imported || len(warnings) != 0 {
 		t.Fatalf("pull of B = %v, %+v; want an import with no warning", imported, warnings)
 	}
@@ -47,15 +76,16 @@ func TestPullFollowsARemoteMoveBeforeThePullOfTheSource(t *testing.T) {
 	if err != nil || got.CalendarID != calB || got.Summary != "From B" || got.DeletedAt != nil {
 		t.Fatalf("todo = %+v, %v; want it live in B with the server body", got, err)
 	}
-	if res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: "moved-todo"}); err != nil || res.Dirty != 0 {
-		t.Errorf("sync row of B = %+v, %v; want a clean row", res, err)
+	if res, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: "moved-todo"}); err != nil || res.Dirty != 0 || res.RemoteUrl != "/cal/b/moved-todo.ics" {
+		t.Errorf("sync row of B = %+v, %v; want a clean row with the href of B", res, err)
 	}
+	wantNoTrace(t, q, calA, "moved-todo")
 }
 
 // TestPullFollowsARemoteMoveAfterThePullOfTheSource pulls calendar A first:
-// the server object of A is gone, so the pull of A puts the row in the
-// trash. The pull of B then moves the row out of the trash of A, and the
-// upsert brings it back live in B.
+// the server object of A is gone, so the pull of A put the row in the trash
+// and dropped its sync row. The pull of B then moves the row out of the
+// trash of A, and the upsert brings it back live in B.
 func TestPullFollowsARemoteMoveAfterThePullOfTheSource(t *testing.T) {
 	t.Parallel()
 	engine, q, _, calA, calB := newICloudPairEngine(t)
@@ -74,11 +104,38 @@ func TestPullFollowsARemoteMoveAfterThePullOfTheSource(t *testing.T) {
 	if err != nil || got.CalendarID != calB || got.DeletedAt != nil {
 		t.Fatalf("todo = %+v, %v; want it live in B", got, err)
 	}
+	wantNoTrace(t, q, calA, "moved-todo")
+}
+
+// TestPullFollowsATrashedRowOfALocalCalendar moves a row from the trash of
+// a local calendar: nothing there keeps the UID live.
+func TestPullFollowsATrashedRowOfALocalCalendar(t *testing.T) {
+	t.Parallel()
+	engine, q, _, _, calB := newICloudPairEngine(t)
+	ctx := context.Background()
+	local, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "local"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	td, err := engine.todos.UpsertByUID(ctx, todo.UpsertParams{UID: "moved-todo", CalendarID: local.ID, Summary: "Local"})
+	if err != nil {
+		t.Fatalf("seed todo: %v", err)
+	}
+	if err := q.SoftDeleteTodo(ctx, td.ID); err != nil {
+		t.Fatalf("SoftDeleteTodo: %v", err)
+	}
+	if imported, _ := pullBody(t, engine, calB, "/cal/b/moved-todo.ics", `"e1"`, movedTodoBody); !imported {
+		t.Fatal("pull of B did not import")
+	}
+	if got, err := engine.todos.Get(ctx, td.ID); err != nil || got.CalendarID != calB || got.DeletedAt != nil {
+		t.Fatalf("todo = %+v, %v; want it live in B", got, err)
+	}
 }
 
 // TestPullHealsASplitSeries pulls into calendar B a todo series whose
-// master an older version left in calendar A while its override lives in
-// B. The pull moves the master into B, so the series is one again.
+// master an older version left in calendar A of the same account while its
+// override lives in B. The pull moves the master into B, so the series is
+// one again.
 func TestPullHealsASplitSeries(t *testing.T) {
 	t.Parallel()
 	engine, _, _, calA, calB := newICloudPairEngine(t)
@@ -96,8 +153,7 @@ func TestPullHealsASplitSeries(t *testing.T) {
 	if imported, warnings := pullBody(t, engine, calB, "/cal/b/split.ics", `"e1"`, body); !imported || len(warnings) != 0 {
 		t.Fatalf("pull of B = %v, %+v; want an import with no warning", imported, warnings)
 	}
-	got, err := engine.todos.Get(ctx, master.ID)
-	if err != nil || got.CalendarID != calB {
+	if got, err := engine.todos.Get(ctx, master.ID); err != nil || got.CalendarID != calB {
 		t.Fatalf("master = %+v, %v; want it in B", got, err)
 	}
 	var outside int
@@ -106,79 +162,90 @@ func TestPullHealsASplitSeries(t *testing.T) {
 	}
 }
 
-// TestPullWaitsWhileTheSourceKeepsItsServerCopy pulls into calendar B a
-// journal whose rows live in calendar A, while A still has a server copy
-// of the UID. A follow would delete that copy through the move tombstone,
-// so the pull refuses the body for now: a warning names the cause, the
-// failure withholds the sync-token, and the rows stay in A. Once the pull
-// of A drops its server copy, the next pull of B follows.
-func TestPullWaitsWhileTheSourceKeepsItsServerCopy(t *testing.T) {
+// TestPullSkipsALiveRowOfAnotherCalendarOnce pulls into calendar B a
+// journal whose live row lives in a local calendar, and a todo whose live
+// row lives in a calendar of another account. A move could go back and
+// forth between two accounts that both hold the UID, so the pull skips
+// each body, with one warning that names the calendar. A second pass of a
+// full snapshot gives no new warning. B gets no sync row for the bodies.
+func TestPullSkipsALiveRowOfAnotherCalendarOnce(t *testing.T) {
 	t.Parallel()
-	engine, q, _, calA, calB := newICloudPairEngine(t)
+	engine, q, _, _, calB := newICloudPairEngine(t)
 	ctx := context.Background()
-	jr, err := engine.journals.UpsertByUID(ctx, journal.UpsertParams{UID: "shared-journal", CalendarID: calA, Summary: "In A"})
+	local, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "local"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	other, err := q.CreateAccount(ctx, storage.CreateAccountParams{Name: "other", ServerUrl: "https://other.example", AuthType: "basic", Username: "u"})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	foreign, err := q.CreateCalendar(ctx, storage.CreateCalendarParams{Name: "foreign"})
+	if err != nil {
+		t.Fatalf("CreateCalendar: %v", err)
+	}
+	if err := q.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{ID: foreign.ID, AccountID: &other.ID, RemoteUrl: storage.StringToNullable("/other/")}); err != nil {
+		t.Fatalf("LinkCalendarToAccount: %v", err)
+	}
+	jr, err := engine.journals.UpsertByUID(ctx, journal.UpsertParams{UID: "shared-journal", CalendarID: local.ID, Summary: "Local"})
 	if err != nil {
 		t.Fatalf("seed journal: %v", err)
 	}
-	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-		CalendarID: calA, Uid: "shared-journal", OwnerType: "journal", RemoteUrl: "/cal/a/shared-journal.ics", Etag: `"a1"`, SyncStrategy: "sync-token",
-	}); err != nil {
-		t.Fatalf("UpsertSyncResource: %v", err)
+	td := seedPushedTodo(t, engine, foreign.ID, "moved-todo", "/other/moved-todo.ics")
+	cases := []struct{ uid, body, calendar string }{
+		{"shared-journal", "BEGIN:VJOURNAL\r\nUID:shared-journal\r\nDTSTAMP:20261020T000000Z\r\nDTSTART;VALUE=DATE:20261021\r\nSUMMARY:From B\r\nEND:VJOURNAL\r\n", `"local"`},
+		{"moved-todo", movedTodoBody, `"foreign"`},
 	}
-	body := "BEGIN:VJOURNAL\r\nUID:shared-journal\r\nDTSTAMP:20261020T000000Z\r\nDTSTART;VALUE=DATE:20261021\r\nSUMMARY:From B\r\nEND:VJOURNAL\r\n"
-	data, err := parseICalData([]byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\n" + body + "END:VCALENDAR\r\n"))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	for _, tc := range cases {
+		path := "/cal/b/" + tc.uid + ".ics"
+		imported, warnings := pullBody(t, engine, calB, path, `"e1"`, tc.body)
+		if imported || len(warnings) != 1 || !strings.Contains(warnings[0].Message, tc.uid+" lives in calendar "+tc.calendar) {
+			t.Fatalf("first pass of %s = %v, %+v; want a skip with one warning", tc.uid, imported, warnings)
+		}
+		if imported, warnings := pullBody(t, engine, calB, path, `"e1"`, tc.body); imported || len(warnings) != 0 {
+			t.Fatalf("second pass of %s = %v, %+v; want a skip with no new warning", tc.uid, imported, warnings)
+		}
+		if _, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calB, Uid: tc.uid}); err == nil {
+			t.Errorf("B has a sync row of the skipped %s", tc.uid)
+		}
 	}
-	path := "/cal/b/shared-journal.ics"
-	_, imported, warnings, err := engine.importFetchedResource(ctx, calB, nil, fetchedResource{path: path, href: path, etag: `"e1"`, data: data})
-	if !errors.Is(err, storage.ErrFollowRefused) || imported {
-		t.Fatalf("pull = %v, %v; want a refused follow", imported, err)
+	if got, err := engine.journals.Get(ctx, jr.ID); err != nil || got.CalendarID != local.ID {
+		t.Errorf("journal = %+v, %v; want it in the local calendar", got, err)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0].Message, "also has a copy on the server") {
-		t.Fatalf("warnings = %+v; want the cause", warnings)
-	}
-	if got, err := engine.journals.Get(ctx, jr.ID); err != nil || got.CalendarID != calA || got.Summary != "In A" {
-		t.Fatalf("journal = %+v, %v; want it unchanged in A", got, err)
-	}
-
-	// The pull of A finds the server copy gone and drops its sync row.
-	if err := q.DeleteSyncResource(ctx, storage.DeleteSyncResourceParams{CalendarID: calA, Uid: "shared-journal"}); err != nil {
-		t.Fatalf("DeleteSyncResource: %v", err)
-	}
-	if imported, warnings := pullBody(t, engine, calB, path, `"e1"`, body); !imported || len(warnings) != 0 {
-		t.Fatalf("second pull = %v, %+v; want the follow", imported, warnings)
-	}
-	if got, err := engine.journals.Get(ctx, jr.ID); err != nil || got.CalendarID != calB || got.Summary != "From B" {
-		t.Errorf("journal = %+v, %v; want it in B", got, err)
+	if got, err := engine.todos.Get(ctx, td.ID); err != nil || got.CalendarID != foreign.ID {
+		t.Errorf("todo = %+v, %v; want it in the calendar of the other account", got, err)
 	}
 }
 
-// TestPullWaitsForAnUnpushedEditOfTheSource keeps an unsent local edit of
-// the source calendar. The follow would replace it with the server body
-// and clear its dirty flag, so the pull refuses the body for now.
-func TestPullWaitsForAnUnpushedEditOfTheSource(t *testing.T) {
+// TestPullSkipsWhileTheSourceWaitsForItsPush keeps state of the source
+// that a follow would lose: an unsent edit, and a delete that waits for its
+// push. The pull skips the body and keeps the rows in A.
+func TestPullSkipsWhileTheSourceWaitsForItsPush(t *testing.T) {
 	t.Parallel()
-	engine, q, _, calA, calB := newICloudPairEngine(t)
+	engine, _, _, calA, calB := newICloudPairEngine(t)
 	ctx := context.Background()
-	td, err := engine.todos.UpsertByUID(ctx, todo.UpsertParams{UID: "moved-todo", CalendarID: calA, Summary: "Edited in A"})
-	if err != nil {
-		t.Fatalf("seed todo: %v", err)
+
+	edited := seedPushedTodo(t, engine, calA, "edited-todo", "/cal/a/edited-todo.ics")
+	if _, err := engine.db.ExecContext(ctx, `UPDATE sync_resources SET dirty = 1 WHERE calendar_id = ? AND uid = 'edited-todo'`, calA); err != nil {
+		t.Fatalf("mark dirty: %v", err)
 	}
-	if err := q.UpsertSyncResource(ctx, storage.UpsertSyncResourceParams{
-		CalendarID: calA, Uid: "moved-todo", OwnerType: "todo", Dirty: 1, SyncStrategy: "sync-token",
-	}); err != nil {
-		t.Fatalf("UpsertSyncResource: %v", err)
+	body := strings.ReplaceAll(movedTodoBody, "moved-todo", "edited-todo")
+	if imported, warnings := pullBody(t, engine, calB, "/cal/b/edited-todo.ics", `"e1"`, body); imported || len(warnings) != 1 || !strings.Contains(warnings[0].Message, "an edit of it there waits for its push") {
+		t.Fatalf("pull of the edited todo = %v, %+v; want a skip", imported, warnings)
 	}
-	data, err := parseICalData([]byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\n" + movedTodoBody + "END:VCALENDAR\r\n"))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	if got, err := engine.todos.Get(ctx, edited.ID); err != nil || got.CalendarID != calA || got.Summary != "Before" {
+		t.Errorf("edited todo = %+v, %v; want the edit kept in A", got, err)
 	}
-	path := "/cal/b/moved-todo.ics"
-	if _, imported, _, err := engine.importFetchedResource(ctx, calB, nil, fetchedResource{path: path, href: path, etag: `"e1"`, data: data}); !errors.Is(err, storage.ErrFollowRefused) || imported {
-		t.Fatalf("pull = %v, %v; want a refused follow", imported, err)
+
+	deleted := seedPushedTodo(t, engine, calA, "deleted-todo", "/cal/a/deleted-todo.ics")
+	if err := engine.todos.Delete(ctx, deleted.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
-	if got, err := engine.todos.Get(ctx, td.ID); err != nil || got.CalendarID != calA || got.Summary != "Edited in A" {
-		t.Errorf("todo = %+v, %v; want the edit kept in A", got, err)
+	body = strings.ReplaceAll(movedTodoBody, "moved-todo", "deleted-todo")
+	if imported, warnings := pullBody(t, engine, calB, "/cal/b/deleted-todo.ics", `"e1"`, body); imported || len(warnings) != 1 || !strings.Contains(warnings[0].Message, `deleted-todo is in the trash of calendar "a", and a delete or a move of it there waits for its push`) {
+		t.Fatalf("pull of the deleted todo = %v, %+v; want a skip", imported, warnings)
+	}
+	if got, err := engine.todos.GetIncludingDeleted(ctx, deleted.ID); err != nil || got.CalendarID != calA || got.DeletedAt == nil {
+		t.Errorf("deleted todo = %+v, %v; want it in the trash of A", got, err)
 	}
 }
