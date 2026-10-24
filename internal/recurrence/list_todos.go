@@ -59,7 +59,18 @@ func todoFromRow(row storage.Todo) todo.Todo {
 		DtStamp:         storage.NullableToString(row.Dtstamp),
 		CreatedAt:       timeutil.ParseDateTime(row.CreatedAt),
 		UpdatedAt:       timeutil.ParseDateTime(row.UpdatedAt),
+		DeletedAt:       deletedAtOf(row.DeletedAt),
 	}
+}
+
+// deletedAtOf parses the deleted_at column of a row. It returns nil for a
+// live row, so a list with IncludeDeleted can mark the rows in the trash.
+func deletedAtOf(deletedAt *string) *time.Time {
+	if deletedAt == nil || *deletedAt == "" {
+		return nil
+	}
+	t := timeutil.ParseDateTime(*deletedAt)
+	return &t
 }
 
 func (s *Service) populateTodoCategories(ctx context.Context, todos []todo.Todo) {
@@ -186,11 +197,15 @@ func TodoOccurrence(master todo.Todo, at time.Time) (todo.Todo, bool) {
 // (rows with a match of RECURRENCE-ID) replace the original RRULE instance.
 func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.Todo, from, to time.Time) ([]todo.Todo, error) {
 	k := recurringKind[storage.Todo, todo.Todo, ExpandedTodo]{
-		fromRow:       todoFromRow,
-		expand:        ExpandTodo,
-		instTime:      func(i ExpandedTodo) time.Time { return i.InstanceTime },
-		applyInstance: TodoAtInstance,
-		uid:           func(r storage.Todo) string { return seriesKey(r.CalendarID, r.Uid) },
+		fromRow:  todoFromRow,
+		expand:   ExpandTodo,
+		instTime: func(i ExpandedTodo) time.Time { return i.InstanceTime },
+		applyInstance: func(i ExpandedTodo) todo.Todo {
+			t := TodoAtInstance(i)
+			t.InstanceTime = i.InstanceTime
+			return t
+		},
+		uid: func(r storage.Todo) string { return seriesKey(r.CalendarID, r.Uid) },
 		dateOnly: func(r storage.Todo) bool {
 			return todo.Todo{StartDate: storage.NullableToString(r.StartDate), DueDate: storage.NullableToString(r.DueDate)}.AnchorIsDateOnly()
 		},

@@ -253,6 +253,17 @@ func formatCompactCalendar(c calendarpkg.Calendar) string {
 	return fmt.Sprintf("%s%-*s%s", prefix, nameColWidth, textsafe.Display(c.Name), c.Color)
 }
 
+// parseCalendarIDArg parses the <id> argument of "calendar verb". The
+// command takes a numeric ID only, so the error of a name says that and
+// names the command that lists the IDs.
+func parseCalendarIDArg(verb, arg string) (int64, error) {
+	id, err := strconv.ParseInt(arg, 10, 64)
+	if err != nil {
+		return 0, errInvalidInputf("calendar %s takes a numeric calendar ID, not %q; run chroncal calendar list to see the IDs", verb, safeText(arg))
+	}
+	return id, nil
+}
+
 func calendarGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <id>",
@@ -268,9 +279,9 @@ func calendarGetCmd() *cobra.Command {
 			}
 			defer a.Close()
 
-			id, err := strconv.ParseInt(args[0], 10, 64)
+			id, err := parseCalendarIDArg("get", args[0])
 			if err != nil {
-				return errInvalidInputf("invalid calendar ID: %v", err)
+				return err
 			}
 
 			c, err := a.Calendars.Get(context.Background(), id)
@@ -797,9 +808,9 @@ to stderr.`,
 			defer a.Close()
 			ctx := context.Background()
 
-			id, err := strconv.ParseInt(args[0], 10, 64)
+			id, err := parseCalendarIDArg("delete", args[0])
 			if err != nil {
-				return errInvalidInputf("invalid calendar ID: %v", err)
+				return err
 			}
 
 			// Load the calendar before prompting so the user sees what's

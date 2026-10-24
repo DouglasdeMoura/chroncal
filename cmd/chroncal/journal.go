@@ -101,6 +101,9 @@ CANCELLED entries.`,
 			if outputFmt != "text" {
 				return printOutput(w, toJSONJournals(journals))
 			}
+			for i := range journals {
+				journals[i].Summary = trashMarked(journals[i].Summary, journals[i].DeletedAt)
+			}
 			useCompact, err := listCompact(cmd, compact)
 			if err != nil {
 				return err

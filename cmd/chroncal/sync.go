@@ -453,7 +453,7 @@ picks. See the README for the states.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
-				return fmt.Errorf("invalid conflict ID: %s", args[0])
+				return errInvalidInputf("invalid conflict ID %q: sync resolve takes the numeric ID that chroncal sync conflicts shows", args[0])
 			}
 
 			a, err := initApp()
@@ -468,6 +468,9 @@ picks. See the README for the states.`,
 			}
 
 			res, err := svc.ResolveConflictOutcome(context.Background(), id, pick)
+			if errors.Is(err, syncPkg.ErrConflictNotFound) {
+				return errNotFoundf("no sync conflict with ID %d; run chroncal sync conflicts for the list", id)
+			}
 			if err != nil {
 				return err
 			}

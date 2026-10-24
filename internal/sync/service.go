@@ -433,6 +433,10 @@ func (s *Service) ResolveConflict(ctx context.Context, conflictID int64, pick st
 	return res.Warnings, err
 }
 
+// ErrConflictNotFound reports a resolve of a conflict ID that no sync
+// conflict row has.
+var ErrConflictNotFound = errors.New("no sync conflict with this ID")
+
 // resolveConflict runs the pick. See ResolveConflict.
 func (s *Service) resolveConflict(ctx context.Context, conflictID int64, pick string) (moveResolution, error) {
 	if pick != "server" && pick != "local" {
@@ -440,6 +444,9 @@ func (s *Service) resolveConflict(ctx context.Context, conflictID int64, pick st
 	}
 
 	conflict, err := s.q.GetSyncConflict(ctx, conflictID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return moveResolution{}, fmt.Errorf("%w: %d", ErrConflictNotFound, conflictID)
+	}
 	if err != nil {
 		return moveResolution{}, fmt.Errorf("get conflict: %w", err)
 	}

@@ -389,6 +389,7 @@ func (s *Service) expandRecurringRows(ctx context.Context, rows []storage.Event,
 			dur := e.EndTime.Sub(e.StartTime)
 			e.StartTime = i.InstanceTime
 			e.EndTime = i.InstanceTime.Add(dur)
+			e.InstanceTime = i.InstanceTime
 			return e
 		},
 		uid:            func(r storage.Event) string { return seriesKey(r.CalendarID, r.Uid) },

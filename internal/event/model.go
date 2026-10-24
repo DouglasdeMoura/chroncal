@@ -36,6 +36,10 @@ type Event struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	DeletedAt      *time.Time // nil = not soft-deleted; set = soft-deleted at this time
+	// InstanceTime is the start of the occurrence (its RECURRENCE-ID) that
+	// a recurrence expansion makes from a master row. It is zero for a row
+	// that the expansion does not make. The database does not store it.
+	InstanceTime time.Time
 
 	// Transient fields — populated for import/export, not stored in events table
 	Alarms      []model.Alarm

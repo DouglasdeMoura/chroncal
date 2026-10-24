@@ -103,6 +103,9 @@ Set ui.event_list_days in config.toml to change the window.`,
 				}
 				return printOutput(w, items)
 			}
+			for i := range events {
+				events[i].Title = trashMarked(events[i].Title, events[i].DeletedAt)
+			}
 			if len(events) == 0 {
 				fmt.Fprintln(w, "No events found.")
 				return nil
