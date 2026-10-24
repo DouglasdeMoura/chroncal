@@ -386,16 +386,9 @@ func (m CalendarManagerModel) renderTitleRow(w int) string {
 // help model. Key-binding hints then match every other dialog (key in Text,
 // desc in TextDim, " · " separators).
 func (m CalendarManagerModel) renderHelp(w int) string {
-	m.help.SetWidth(w)
-	bindings := m.helpBindings()
-	view := m.help.ShortHelpView(bindings)
-	// bubbles' short-help truncation keeps an overflowing item when the
-	// ellipsis lands exactly on the width boundary. A too-wide line would wrap
-	// and shear the dialog frame. Drop trailing hints until the line fits.
-	for lipgloss.Width(view) > w && len(bindings) > 1 {
-		bindings = bindings[:len(bindings)-1]
-		view = m.help.ShortHelpView(bindings)
-	}
+	// shortHelpLine keeps the line inside w. A too-wide line would wrap and
+	// shear the dialog frame.
+	view := shortHelpLine(m.help, m.helpBindings(), w)
 	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(view)
 }
 

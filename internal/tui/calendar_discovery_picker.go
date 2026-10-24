@@ -240,19 +240,16 @@ func (m AccountCalendarPickerModel) HandleInspectorClick(x, y, w, h int) (Accoun
 		return m.toggleCurrent(), nil
 	case y == headerRows+listH:
 		bs := DefaultButtonStyles()
+		gap := m.shell.actionGap(max(w, 1)) // the separator of renderActions
 		cx := 0
 		for i, action := range m.shell.actions {
-			style := bs.Normal
-			if action.Danger {
-				style = bs.Danger
-			}
-			bw := lipgloss.Width(style.Render(action.Label, false))
+			bw := actionButtonWidth(bs, action)
 			if x >= cx && x < cx+bw {
 				var cmd tea.Cmd
 				m.shell, cmd = m.shell.ClickAction(i)
 				return m.refresh(), cmd
 			}
-			cx += bw + 1 // +1 for the strings.Join(" ") separator in renderActions
+			cx += bw + gap
 		}
 	}
 	return m, nil

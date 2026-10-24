@@ -121,3 +121,62 @@ func TestSmallWindowShowsNotice(t *testing.T) {
 		t.Errorf("%dx%d shows the notice", minWindowWidth, minWindowHeight)
 	}
 }
+
+// TestPickerInspectorClickFollowsNarrowGap checks that a click on the
+// action row of the picker inspector hits each button when the row drops
+// its join space.
+func TestPickerInspectorClickFollowsNarrowGap(t *testing.T) {
+	m := NewAccountCalendarPickerModel(pickerDiscovery(), ActiveTheme())
+	bs := DefaultButtonStyles()
+	total := 0
+	for _, a := range m.shell.actions {
+		total += actionButtonWidth(bs, a)
+	}
+	w, h := total, 12
+	if m.shell.actionGap(w) != 0 {
+		t.Fatalf("actionGap(%d) = %d, want 0", w, m.shell.actionGap(w))
+	}
+	y := 3 + max(h-4, 1)
+	x := 0
+	for i, a := range m.shell.actions {
+		next, _ := m.HandleInspectorClick(x, y, w, h)
+		if a.Disabled {
+			x += actionButtonWidth(bs, a)
+			continue
+		}
+		if got := next.shell.FocusedAction(); got != i || next.shell.FocusZone() != ListZoneActions {
+			t.Fatalf("click at x=%d focused action %d (zone %v), want %d", x, got, next.shell.FocusZone(), i)
+		}
+		x += actionButtonWidth(bs, a)
+	}
+}
+
+// TestSmallWindowIgnoresInput checks that a key or a click does nothing
+// while the window shows the small-window notice.
+func TestSmallWindowIgnoresInput(t *testing.T) {
+	m, _ := newDBBackedModel(t)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 15})
+	m = updated.(Model)
+	mode := m.viewMode
+	updated, cmd := m.Update(keyPressMsg("c"))
+	if got := updated.(Model); got.formOpen || cmd != nil {
+		t.Fatalf("c in a small window opened the form (formOpen=%v, cmd=%v)", got.formOpen, cmd != nil)
+	}
+	updated, cmd = m.Update(tea.MouseClickMsg{X: 70, Y: 20, Button: tea.MouseLeft})
+	if updated.(Model).viewMode != mode || cmd != nil {
+		t.Fatal("a click in a small window changed the view")
+	}
+}
+
+func TestMonthCellOverflowKeepsCountInTinyCell(t *testing.T) {
+	day := time.Date(2026, 10, 24, 0, 0, 0, 0, time.Local)
+	evs := make([]CalendarEvent, 14)
+	for i := range evs {
+		evs[i] = CalendarEvent{ID: int64(i + 1), Title: "Standup", Day: day,
+			StartTime: day.Add(time.Hour), EndTime: day.Add(2 * time.Hour)}
+	}
+	cell := ansi.Strip(buildCalendarCell(day, false, false, true, evs, 3, 3, ""))
+	if !strings.Contains(cell, "+13") {
+		t.Fatalf("cell lacks the overflow count:\n%s", cell)
+	}
+}

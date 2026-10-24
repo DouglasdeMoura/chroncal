@@ -9,6 +9,7 @@ import (
 
 	lipgloss "charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type CalendarOptions struct {
@@ -333,12 +334,16 @@ func buildCalendarCell(d time.Time, isToday, isSelected, inMonth bool, events []
 		pills = append(pills, renderEventPill(ev, cellW, !inMonth))
 	}
 	if overflow > 0 && len(pills) > 0 {
-		// A narrow cell drops the word "more". A wrapped label makes the
-		// cell one row taller than the grid.
+		// A narrow cell drops the word "more", then the space. A wrapped
+		// label makes the cell one row taller than the grid. A hard cut
+		// keeps the start of the count.
 		label := fmt.Sprintf(" +%d more", overflow)
-		if lipgloss.Width(label) > cellW {
-			label = truncateTo(fmt.Sprintf(" +%d", overflow), cellW)
+		for _, short := range []string{fmt.Sprintf(" +%d", overflow), fmt.Sprintf("+%d", overflow)} {
+			if lipgloss.Width(label) > cellW {
+				label = short
+			}
 		}
+		label = ansi.Truncate(label, cellW, "")
 		pills[len(pills)-1] = lipgloss.NewStyle().Faint(true).
 			Width(cellW).Render(label)
 	}
