@@ -716,3 +716,22 @@ func TestApplyRechecksAnAcceptedChangeAgainstARestoredPath(t *testing.T) {
 		t.Fatalf("warnings = %v, want one for A and one for B", warnings)
 	}
 }
+
+// TestApplyClearsTheRelinkFlagOfADeclaredCalendar declares a calendar that
+// an account removal unlinked. The declared calendar stays local, so no
+// relink takes it again: Apply clears relink_pending, and an edit then
+// marks no sync row (issue #876).
+func TestApplyClearsTheRelinkFlagOfADeclaredCalendar(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.db.ExecContext(ctx, `UPDATE calendars SET remote_url = 'https://example.com/cal/', relink_pending = 1 WHERE id = 1`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := svc.Apply(ctx, []Declared{{Name: "Personal"}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	row, err := svc.q.GetCalendar(ctx, 1)
+	if err != nil || row.RelinkPending != 0 {
+		t.Fatalf("relink_pending = %d, %v; want 0", row.RelinkPending, err)
+	}
+}
