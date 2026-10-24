@@ -355,6 +355,11 @@ func markLinkedItemsDirty(ctx context.Context, qtx *storage.Queries, calendarID 
 	if err := qtx.MarkMovedCopiesDirtyInCalendar(ctx, calendarID); err != nil {
 		return fmt.Errorf("mark the moved copies dirty: %w", err)
 	}
+	// An edit while the calendar had no account can sit on a row that the
+	// collection cannot take (issue #876).
+	if err := qtx.SettleUntakeableEditsInCalendar(ctx, calendarID); err != nil {
+		return fmt.Errorf("settle the edits that the collection cannot take: %w", err)
+	}
 	return nil
 }
 

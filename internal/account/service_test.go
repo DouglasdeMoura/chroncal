@@ -1306,3 +1306,74 @@ func TestServiceAccountRemoveKeepsTheEditOfASyncedItem(t *testing.T) {
 		t.Fatalf("sync row of the offline event = %+v, %v; want a dirty row without an href", sr, err)
 	}
 }
+
+// TestServiceAccountRemoveKeepsADeleteAndARestore deletes one synced event
+// and deletes and restores another while their calendar has no account. The
+// delete must keep its tombstone with the href, so the relink sends the
+// DELETE. The restore must drop its tombstone and mark the row with its
+// href and its etag, so the relink sends the body with If-Match (issue
+// #876).
+func TestServiceAccountRemoveKeepsADeleteAndARestore(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	store := newMemoryCredentialStore()
+	svc := NewService(db, q)
+	svc.discover = func(context.Context, Account, auth.Credential, func(auth.Credential) error) ([]caldav.RemoteCalendar, error) {
+		return []caldav.RemoteCalendar{{Path: "/cal/work/", Name: "Work", SupportedComponentSet: []string{"VEVENT"}}}, nil
+	}
+	account, err := svc.Create(ctx, CreateParams{Name: "dev", ServerURL: "https://cal.example.test/", Username: "alice", AuthType: "basic"},
+		auth.Credential{Username: "alice", Password: "secret"}, store)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	discovery, err := svc.Discover(ctx, account.ID, store)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	imported, err := svc.Import(ctx, discovery, []string{"/cal/work/"})
+	if err != nil || len(imported.CreatedIDs) != 1 {
+		t.Fatalf("Import = %+v, %v; want one created", imported, err)
+	}
+	calID := imported.CreatedIDs[0]
+	evtSvc := event.NewService(db, q)
+	evts := make([]event.Event, 0, 2)
+	for i, title := range []string{"Deleted", "Restored"} {
+		evt, err := evtSvc.Create(ctx, event.CreateParams{
+			CalendarID: calID, Title: title,
+			StartTime: time.Date(2026, 4, 1+i, 10, 0, 0, 0, time.UTC), EndTime: time.Date(2026, 4, 1+i, 11, 0, 0, 0, time.UTC),
+		})
+		if err != nil {
+			t.Fatalf("create event: %v", err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE sync_resources SET dirty = 0, remote_url = ?, etag = '"e1"' WHERE calendar_id = ? AND uid = ?`,
+			"/cal/work/"+evt.UID+".ics", calID, evt.UID); err != nil {
+			t.Fatalf("seed sync row: %v", err)
+		}
+		evts = append(evts, evt)
+	}
+	if err := svc.Delete(ctx, account.ID, store); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	for _, evt := range evts {
+		if err := evtSvc.Delete(ctx, evt.ID); err != nil {
+			t.Fatalf("delete event: %v", err)
+		}
+	}
+	if err := evtSvc.RestoreByID(ctx, evts[1].ID); err != nil {
+		t.Fatalf("RestoreByID: %v", err)
+	}
+
+	var tombstones int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tombstones WHERE calendar_id = ? AND uid = ? AND remote_url != ''`, calID, evts[0].UID).Scan(&tombstones); err != nil || tombstones != 1 {
+		t.Fatalf("tombstones of the deleted event = %d, %v; want one with its href", tombstones, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tombstones WHERE calendar_id = ? AND uid = ?`, calID, evts[1].UID).Scan(&tombstones); err != nil || tombstones != 0 {
+		t.Fatalf("tombstones of the restored event = %d, %v; want none", tombstones, err)
+	}
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calID, Uid: evts[1].UID})
+	if err != nil || sr.Dirty != 1 || sr.RemoteUrl == "" || sr.Etag != `"e1"` {
+		t.Fatalf("sync row of the restored event = %+v, %v; want a dirty row with its href and etag", sr, err)
+	}
+}
