@@ -1923,9 +1923,10 @@ const (
 // server ETag the row has no safe server side. The failure surfaces as an
 // error (see recordConflictRow). Prompt mode and the opportunistic push stop
 // after the record. A server-wins pass adopts the server version and marks
-// the row resolved. When the object is gone, a server-wins pass records
-// nothing and keeps the remote delete (putConflictServerDeleted). Every failure on that path leaves the row open, so the
-// user can still resolve it by hand. See issue #610.
+// the row resolved. Every failure on that path leaves the row open, so the
+// user can still resolve it by hand. See issue #610. When the object of an
+// update is gone, a server-wins pass records no conflict and keeps the
+// remote delete (putConflictServerDeleted, issue #884).
 func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, calendarID int64, res storage.SyncResource, putPath string, icalData []byte, strategy ConflictStrategy, opportunistic bool) (putConflictOutcome, []ImportWarning, []error) {
 	var errs []error
 
@@ -1974,7 +1975,10 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 			return putConflictRecordFailed, nil, append(errs, err)
 		}
 	}
-	if res.RemoteUrl != "" && caldav.IsAbsent(fetchErr) && (strategy != ConflictServerWins || opportunistic) {
+	if res.RemoteUrl != "" && caldav.IsAbsent(fetchErr) {
+		if strategy == ConflictServerWins && !opportunistic {
+			return e.keepServerDelete(ctx, calendarID, res, putPath, errs)
+		}
 		// The update met no object: another client deleted it. The local
 		// edit wins over the delete, as on the pull (keepUnpushedEdit). A
 		// server-wins pass keeps the delete: its pull moves the item to
@@ -2003,14 +2007,6 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 		}
 		logImportWarnings(e.logger, []ImportWarning{w})
 		return putConflictRecreate, []ImportWarning{w}, errs
-	}
-	if res.RemoteUrl != "" && caldav.IsAbsent(fetchErr) {
-		// A server-wins pass keeps the remote delete. The object is gone,
-		// so no conflict row can hold a server side. The row stays dirty,
-		// and the pull of the same pass moves the item to the trash. The
-		// push reports no error (issue #884).
-		e.logger.Info("keep the remote delete: server wins", "uid", res.Uid)
-		return putConflictServerDeleted, nil, errs
 	}
 	if fetchErr != nil {
 		e.logger.Warn("fetch server resource for conflict record failed", "uid", res.Uid, "error", fetchErr)
@@ -2088,6 +2084,26 @@ func (e *Engine) handlePutConflict(ctx context.Context, client *caldav.Client, c
 		return putConflictLeftOpen, warnings, errs
 	}
 	return putConflictAutoResolved, warnings, errs
+}
+
+// keepServerDelete settles an update whose object another client deleted,
+// on a server-wins pass. The pass keeps the remote delete: no conflict row
+// can hold a server side, so the push records none and reports no error.
+// The row stays dirty, and the pull of the same pass moves the item to the
+// trash (issue #884). A warning tells the user that the local edit goes to
+// the trash. The push failure of the row records the case too. When the
+// pull applies no delete (for example, the server holds the UID under
+// another href), the sync status then lists the row.
+func (e *Engine) keepServerDelete(ctx context.Context, calendarID int64, res storage.SyncResource, putPath string, errs []error) (putConflictOutcome, []ImportWarning, []error) {
+	e.logger.Info("keep the remote delete: server wins", "uid", res.Uid)
+	e.recordPushFailure(ctx, calendarID, res.Uid, fmt.Errorf("update %s: the server deleted the item; a server-wins pass keeps the delete", res.Uid))
+	w := ImportWarning{
+		Path:    putPath,
+		UID:     res.Uid,
+		Message: "the server deleted this item, and the pass is server-wins; the local edit goes to the trash",
+	}
+	logImportWarnings(e.logger, []ImportWarning{w})
+	return putConflictServerDeleted, []ImportWarning{w}, errs
 }
 
 // pendingSiblingDelete reports whether a tombstone of uid waits in a
