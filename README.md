@@ -589,7 +589,12 @@ Directory rules:
 - chroncal reads at most 10000 `.ics` files in one run.
 - The import does not follow a symbolic link that the path names. It also skips a symbolic link inside the directory. A stored directory is an exception. See the batch rules below.
 
-Entries are matched by UID, so a second import of the same path updates the existing items. An item that did not change keeps its row as it is. Its SEQUENCE stays, and the summary counts it as unchanged, not as updated. The comparison ignores DTSTAMP, CREATED, LAST-MODIFIED, and the UID of an alarm.
+Entries are matched by UID, so a second import of the same path updates the existing items. An item that did not change keeps its row as it is. Its SEQUENCE stays, and the summary counts it as unchanged, not as updated. The comparison ignores DTSTAMP, CREATED, LAST-MODIFIED, and the order of the alarms. It also ignores the UID of an alarm in two cases:
+
+- The file gives the alarm no UID, so the store gives one.
+- Another alarm already holds the UID of the file. Alarm UIDs are unique, so the store keeps a different UID for the alarm.
+
+A change of any other alarm UID counts as a change of the item.
 
 Without a path, the command imports every calendar that has a directory. Set the directory with `calendar create --path`, `calendar update --path`, or a `[[calendars]]` entry in `config.toml`. With `--calendar`, the command imports only that calendar from its directory. Run the command after each pass of the sync tool, for example from a timer.
 

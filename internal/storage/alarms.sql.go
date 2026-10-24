@@ -85,6 +85,25 @@ func (q *Queries) DeleteAlarmsByEventID(ctx context.Context, eventID int64) erro
 	return err
 }
 
+const eventAlarmUIDHeldByAnotherRow = `-- name: EventAlarmUIDHeldByAnotherRow :one
+SELECT EXISTS(SELECT 1 FROM event_alarms WHERE uid = ? AND id <> ?)
+`
+
+type EventAlarmUIDHeldByAnotherRowParams struct {
+	Uid *string
+	ID  int64
+}
+
+// The import comparison uses this. The unique index on uid refuses a UID
+// that another alarm row holds, so the store keeps a minted UID for the
+// row instead of the UID of the file (issue #915).
+func (q *Queries) EventAlarmUIDHeldByAnotherRow(ctx context.Context, arg EventAlarmUIDHeldByAnotherRowParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, eventAlarmUIDHeldByAnotherRow, arg.Uid, arg.ID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listAlarmSummariesByEventIDs = `-- name: ListAlarmSummariesByEventIDs :many
 SELECT event_id, action, trigger_value, related FROM event_alarms
 WHERE event_id IN (/*SLICE:event_ids*/?)
