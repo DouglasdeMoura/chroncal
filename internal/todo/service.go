@@ -599,8 +599,9 @@ const maxFollowPasses = 8
 // Another client can move an item between two server calendars and keep
 // its UID, and the key of a todo spans calendars, so the local rows follow
 // the server. The move also heals a series that an older version split
-// across two calendars. A refusal of the move rules comes back as an
-// error, and no row moves.
+// across two calendars. The source calendar must hold no state that the
+// move would lose (storage.CheckFollowSource). A refusal of those rules or
+// of the move rules comes back as an error, and no row moves.
 func (s *Service) FollowUIDToCalendar(ctx context.Context, uid string, calendarID int64) (int64, error) {
 	qtx, commit, rollback, err := s.txscope(ctx)
 	if err != nil {
@@ -622,6 +623,9 @@ func (s *Service) FollowUIDToCalendar(ctx context.Context, uid string, calendarI
 		}
 		if !found {
 			break
+		}
+		if err := storage.CheckFollowSource(ctx, qtx, from, uid); err != nil {
+			return 0, err
 		}
 		if err := uidMoveRows(qtx, uid).Update(ctx, todoComponent, "todo", "", from, calendarID, func(context.Context, int64) error { return nil }); err != nil {
 			return 0, fmt.Errorf("follow %s from calendar %q: %w", uid, storage.CalendarLabel(ctx, qtx, from), err)

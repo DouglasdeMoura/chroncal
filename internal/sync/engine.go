@@ -215,12 +215,6 @@ type Engine struct {
 	// testHooks is nil in production. Tests assign an engineTestHooks value
 	// to inject failure windows. Call sites treat nil as "no hook".
 	testHooks *engineTestHooks
-
-	// followWarned holds the etag of the last warned skip of each UID whose
-	// local rows could not follow a server body (issue #911). See
-	// followWarningOnce.
-	followWarnMu gosync.Mutex
-	followWarned map[string]string
 }
 
 type pushLockKey struct {

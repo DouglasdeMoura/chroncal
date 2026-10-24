@@ -592,6 +592,43 @@ var ErrCrossCalendarImport = errors.New("the item lives in another calendar")
 // move uses the rules of uidmove (issue #911).
 var ErrUIDInOtherCalendar = errors.New("the UID lives in another calendar")
 
+// ErrFollowRefused reports that the local rows of a todo or a journal UID
+// cannot follow a pulled server body into another calendar yet (issue
+// #911). The source calendar still holds state that the move would lose:
+// a copy on its server, an edit that waits for its push, or a delete that
+// waits for its push. The pull counts the body as a failure and tries
+// again on the next run.
+var ErrFollowRefused = errors.New("the item cannot follow the server into this calendar yet")
+
+// CheckFollowSource refuses the follow of the rows of uid out of
+// fromCalendarID (ErrFollowRefused) while that calendar holds state that a
+// move would lose. A remote move by another client removes the source
+// object, and the next pull of the source drops its sync row, so a later
+// pass follows. Two server calendars that both keep the UID never pass:
+// the pull reports it on each run, and the server keeps both copies.
+func CheckFollowSource(ctx context.Context, q *Queries, fromCalendarID int64, uid string) error {
+	name := CalendarLabel(ctx, q, fromCalendarID)
+	res, err := q.GetSyncResource(ctx, GetSyncResourceParams{CalendarID: fromCalendarID, Uid: uid})
+	found, err := Found(err)
+	if err != nil {
+		return fmt.Errorf("read the sync row of %s: %w", uid, err)
+	}
+	if found && res.Dirty == 1 {
+		return fmt.Errorf("%w: %s has an edit in calendar %q that waits for its push", ErrFollowRefused, uid, name)
+	}
+	if found && res.RemoteUrl != "" {
+		return fmt.Errorf("%w: %s also has a copy on the server of calendar %q; a UID cannot be in two calendars, so delete one copy", ErrFollowRefused, uid, name)
+	}
+	_, found, err = importTombstone(ctx, q, fromCalendarID, uid)
+	if err != nil {
+		return fmt.Errorf("read the tombstone of %s: %w", uid, err)
+	}
+	if found {
+		return fmt.Errorf("%w: %s has a delete or a move in calendar %q that waits for its push", ErrFollowRefused, uid, name)
+	}
+	return nil
+}
+
 // CheckUIDInOneCalendar returns ErrUIDInOtherCalendar when a row of uid
 // lives outside calendarID. outside reads the calendar of such a row in
 // the transaction of q, or returns sql.ErrNoRows. ownerType is "todo" or
@@ -739,9 +776,9 @@ type PriorLookup func(ctx context.Context) (calendarID int64, trashed, found boo
 //     journal). The import then refuses an upsert that moves a row of a
 //     pending move to another calendar.
 //   - It also refuses an upsert that moves a row out of another synced
-//     calendar (ErrCrossCalendarImport), live or in the trash. A row from
-//     a local calendar moves. The import never writes into another
-//     calendar.
+//     calendar (ErrCrossCalendarImport), live or in the trash. A row of a
+//     local calendar gets the refusal of UpsertByUID
+//     (ErrUIDInOtherCalendar): the upsert never moves a row (issue #911).
 func PrepareImport(ctx context.Context, q *Queries, im *Import, calendarID int64, uid, recurrenceID, ownerType string, prior PriorLookup) (PreparedImport, error) {
 	row, err := prepareImport(ctx, q, im, calendarID, uid, recurrenceID, ownerType, prior)
 	if err != nil {
