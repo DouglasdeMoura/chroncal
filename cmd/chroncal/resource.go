@@ -63,9 +63,9 @@ type resource struct {
 
 	// restoreByID clears the deletion marker on one row. restoreByUID
 	// reverses the delete of the UID by the rule of the resource service.
-	// Each returns the calendars that the push after the restore sends.
-	restoreByID  func(ctx context.Context, a *app.App, id int64) ([]int64, error)
-	restoreByUID func(ctx context.Context, a *app.App, uid string) ([]int64, error)
+	// Each returns the push that follows the restore (see pushAfterRestore).
+	restoreByID  func(ctx context.Context, a *app.App, id int64) (restorePush, error)
+	restoreByUID func(ctx context.Context, a *app.App, uid string) (restorePush, error)
 
 	// purgeCandidate loads one row for the purge confirm. The bool reports
 	// whether the row carries a soft-delete marker.
@@ -225,48 +225,92 @@ func newRestoreCmd(r resource, h verbHelp) *cobra.Command {
 			w := cmd.OutOrStdout()
 
 			if id, parseErr := strconv.ParseInt(ref, 10, 64); parseErr == nil {
-				pushCalendarIDs, err := r.restoreByID(ctx, a, id)
+				push, err := r.restoreByID(ctx, a, id)
 				if err != nil {
 					if errors.Is(err, r.errNotDeleted) {
 						return errNotFoundf("%s %d not found (may have been purged)", r.name, id)
 					}
 					return fmt.Errorf("restore %s: %w", r.name, notFoundErr(err, r.name, id))
 				}
-				return reportWritten(cmd, a, w, pushCalendarIDs,
+				if err := reportWritten(cmd, a, w, nil,
 					map[string]any{"restored": true, "id": id},
-					fmt.Sprintf("Restored %s %d.\n", r.name, id))
+					fmt.Sprintf("Restored %s %d.\n", r.name, id)); err != nil {
+					return err
+				}
+				pushAfterRestore(ctx, cmd, a, push)
+				return nil
 			}
 
 			// UID path: the service reverses the delete of the UID.
-			pushCalendarIDs, err := r.restoreByUID(ctx, a, ref)
+			push, err := r.restoreByUID(ctx, a, ref)
 			if err != nil {
 				if errors.Is(err, r.errNotDeleted) {
 					return errNotFoundf("%s %q not found (may have been purged)", r.name, ref)
 				}
 				return fmt.Errorf("restore %s: %w", r.name, notFoundErr(err, r.name, ref))
 			}
-			return reportWritten(cmd, a, w, pushCalendarIDs,
+			if err := reportWritten(cmd, a, w, nil,
 				map[string]any{"restored": true, "uid": ref},
-				fmt.Sprintf("Restored %s(s) with uid %q.\n", r.name, safeText(ref)))
+				fmt.Sprintf("Restored %s(s) with uid %q.\n", r.name, safeText(ref))); err != nil {
+				return err
+			}
+			pushAfterRestore(ctx, cmd, a, push)
+			return nil
 		},
 	}
 	return cmd
 }
 
-// restorePushCalendars returns the calendars of candidates that the push
-// after a restore of uid must send, in push order. The restore leaves sync
-// state that names them (see storage.ReconcileAfterRestore):
-//  1. A calendar with a dirty sync row of the UID. The push creates or
-//     updates the server object there.
-//  2. A calendar with a tombstone of the UID, for example the calendar of
-//     a legacy override. The push deletes the old server object there.
+// restorePush is the push that follows a restore: the UID of the restored
+// rows, and the candidate calendars of the push. err is a failed read of
+// the candidates after the committed restore.
+type restorePush struct {
+	uid        string
+	candidates []int64
+	err        error
+}
+
+// pushAfterRestore pushes the calendars of a restore (issue #885). It is
+// best-effort, like every opportunistic push. A failed read prints a note,
+// and the next sync sends the rows.
 //
-// The order is the order of sync.PushMove: the target first, then the
-// source. A failed second push then leaves the item on the server. A
-// calendar with no such state stays out, so the push sends no unrelated
-// edits of another series of the UID. A duplicate or a 0 stays out too.
-func restorePushCalendars(ctx context.Context, a *app.App, uid string, candidates []int64) []int64 {
-	var dirty, tombstoned []int64
+// restorePushCalendars gives the targets and the sources. The order is the
+// order of sync.PushMove: the targets first. The sources go only when no
+// target keeps a dirty row of the UID after its push. A source push deletes
+// an old server object, so it waits until a target holds the item.
+func pushAfterRestore(ctx context.Context, cmd *cobra.Command, a *app.App, p restorePush) {
+	if p.err != nil {
+		if outputFmt == "text" {
+			fmt.Fprintf(cmd.OutOrStdout(), "note: skipped auto-sync (%v); change will upload on next sync\n", p.err)
+		}
+		return
+	}
+	targets, sources := restorePushCalendars(ctx, a, p.uid, p.candidates)
+	for _, id := range targets {
+		opportunisticPush(a, id, cmd)
+	}
+	for _, id := range targets {
+		sr, err := a.Queries.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: id, Uid: p.uid})
+		if err != nil || sr.Dirty != 0 {
+			return
+		}
+	}
+	for _, id := range sources {
+		opportunisticPush(a, id, cmd)
+	}
+}
+
+// restorePushCalendars sorts the calendars of candidates by the sync state
+// of uid that the restore leaves (see storage.ReconcileAfterRestore):
+//   - targets: the calendars with a dirty sync row of the UID. The push
+//     creates or updates the server object there.
+//   - sources: the calendars with a tombstone of the UID, for example the
+//     calendar of a legacy override. The push deletes the old server
+//     object there.
+//
+// A calendar with no such state stays out. A duplicate or a 0 stays out
+// too. A failed read drops its calendar: the push is best-effort.
+func restorePushCalendars(ctx context.Context, a *app.App, uid string, candidates []int64) (targets, sources []int64) {
 	seen := map[int64]bool{0: true}
 	for _, id := range candidates {
 		if seen[id] {
@@ -274,14 +318,36 @@ func restorePushCalendars(ctx context.Context, a *app.App, uid string, candidate
 		}
 		seen[id] = true
 		if sr, err := a.Queries.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: id, Uid: uid}); err == nil && sr.Dirty != 0 {
-			dirty = append(dirty, id)
+			targets = append(targets, id)
 			continue
 		}
 		if _, err := a.Queries.GetTombstoneByCalendarAndUID(ctx, storage.GetTombstoneByCalendarAndUIDParams{CalendarID: id, Uid: uid}); err == nil {
-			tombstoned = append(tombstoned, id)
+			sources = append(sources, id)
 		}
 	}
-	return append(dirty, tombstoned...)
+	return targets, sources
+}
+
+// seriesRestoreCandidates lists the candidate calendars of a restore of a
+// todo or a journal: rowCalendarID (0 for none), the calendar of the master
+// of the UID, and the calendars of the live overrides. A UID of these
+// domains has one master in all calendars.
+func seriesRestoreCandidates(ctx context.Context, uid string, rowCalendarID int64, master func(context.Context, string) (int64, error), overrides func(context.Context, string) ([]int64, error)) restorePush {
+	p := restorePush{uid: uid, candidates: []int64{rowCalendarID}}
+	masterCalendarID, err := master(ctx, uid)
+	if found, err := storage.Found(err); err != nil {
+		p.err = err
+		return p
+	} else if found {
+		p.candidates = append(p.candidates, masterCalendarID)
+	}
+	overrideCalendarIDs, err := overrides(ctx, uid)
+	if err != nil {
+		p.err = err
+		return p
+	}
+	p.candidates = append(p.candidates, overrideCalendarIDs...)
+	return p
 }
 
 // newPurgeCmd builds the purge verb for one resource. The body refuses a
