@@ -374,70 +374,58 @@ func (m TrashModel) Update(msg tea.Msg) (TrashModel, tea.Cmd) {
 
 func (m TrashModel) handleKey(msg tea.KeyPressMsg) (TrashModel, tea.Cmd) {
 	switch {
-	case key.Matches(msg, m.keys.Mark) && m.shell.FocusZone() == ListZoneList:
-		// Space on a focused button presses it through the shell.
+	case key.Matches(msg, m.keys.Mark) && m.shell.FocusZone() != ListZoneActions:
+		// Space marks the row. On a focused Restore or Purge button, Space
+		// goes to the shell and presses the button. On the Purge All
+		// button of the title line, Space still marks: a destructive
+		// button fires only by Enter, a click, or its own key.
 		return m.toggleMark(), nil
 	case key.Matches(msg, m.keys.MarkAll):
 		return m.toggleMarkAll(), nil
 	}
-	// Each action fires and puts the focus on the list: the restore and
-	// purge keys, Enter on a button, and a click on a button. The reload
-	// after a refused restore or a canceled purge does not change the
-	// focus. A focus left on a button would stop the list keys (issue
-	// #880).
-	acts := m.buildActions()
+	// Each action fires through the shell (FireAction, FireTitleAction), so
+	// the focus goes to the list. The reload after a refused restore or a
+	// canceled purge does not change the focus. A focus left on a button
+	// would stop the list keys (issue #880).
 	switch {
 	case key.Matches(msg, m.keys.Restore):
-		if len(acts) > 0 {
-			return m.focusList(), acts[0].Msg
-		}
-		return m, nil
+		shell, cmd := m.shell.FireAction(0)
+		m.shell = shell
+		return m.refresh(), cmd
 	case key.Matches(msg, m.keys.Purge):
-		if len(acts) > 1 {
-			return m.focusList(), acts[1].Msg
-		}
-		return m, nil
+		shell, cmd := m.shell.FireAction(1)
+		m.shell = shell
+		return m.refresh(), cmd
 	case key.Matches(msg, m.keys.PurgeAll):
-		// Purge All lives in the title bar, not the action row, so
-		// fire its msg directly. purgeAllTitleAction returns nil for
-		// an empty trash, so the guard mirrors what the button hides.
-		if action := m.purgeAllTitleAction(); action != nil {
-			return m.focusList(), action.Msg
-		}
-		return m, nil
+		// Purge All lives in the title bar, not the action row. The shell
+		// has no title button for an empty trash, so it fires nothing.
+		shell, cmd := m.shell.FireTitleAction()
+		m.shell = shell
+		return m.refresh(), cmd
 	}
 
 	shell, cmd, _ := m.shell.HandleKey(msg, func() tea.Msg { return TrashDialogClosedMsg{} })
 	m.shell = shell
-	if cmd != nil && key.Matches(msg, m.shell.Keys().Enter) {
-		return m.focusList(), cmd
-	}
 	return m.refresh(), cmd
-}
-
-// focusList puts the focus on the list after an action fires.
-func (m TrashModel) focusList() TrashModel {
-	m.shell = m.shell.FocusList()
-	return m.refresh()
 }
 
 func (m TrashModel) handleMouse(msg tea.MouseClickMsg) (TrashModel, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return m, nil
 	}
-	if cmd, ok := m.shell.TitleActionAtPosition(msg.X, msg.Y); ok {
-		return m.focusList(), cmd
+	if _, ok := m.shell.TitleActionAtPosition(msg.X, msg.Y); ok {
+		shell, cmd := m.shell.FireTitleAction()
+		m.shell = shell
+		return m.refresh(), cmd
 	}
 	if idx, ok := m.shell.RowAtPosition(msg.X, msg.Y); ok {
 		m.shell = m.shell.ClickRow(idx)
 		return m.refresh(), nil
 	}
 	if idx, ok := m.shell.ActionAtPosition(msg.X, msg.Y); ok {
-		// A click on a disabled action fires nothing and keeps the focus.
-		if _, cmd := m.shell.ClickAction(idx); cmd != nil {
-			return m.focusList(), cmd
-		}
-		return m, nil
+		shell, cmd := m.shell.FireAction(idx)
+		m.shell = shell
+		return m.refresh(), cmd
 	}
 	return m, nil
 }

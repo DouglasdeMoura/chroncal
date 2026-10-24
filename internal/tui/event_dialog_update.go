@@ -29,15 +29,6 @@ func (m EventDialogModel) currentZone() int {
 	return zoneList
 }
 
-// focusRSVP moves focus to the head of the RSVP button zone. Invoked by the
-// RSVP hotkeys (y/n/m) and by a click of an RSVP button. Tab uses focusStop
-// below to land on a specific element.
-func (m EventDialogModel) focusRSVP() EventDialogModel {
-	m.rsvpFocused = true
-	m.shell = m.shell.SetFocusZone(ListZoneCustom)
-	return m
-}
-
 // tabStop identifies one focusable control in the dialog. Tab/Shift+Tab
 // walk every stop in order. Keyboard navigation then reaches each element
 // the way a web page's tab order would. That is list → each RSVP button
@@ -202,7 +193,7 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 			}
 		case zoneRSVP:
 			if m.focusedRSVP >= 0 && m.focusedRSVP < len(rsvp) {
-				return m, rsvp[m.focusedRSVP].msg
+				return m.fireRSVP(m.focusedRSVP)
 			}
 		case zoneAction, zoneTitleAction:
 			shell, cmd := m.shell.Activate()
@@ -211,22 +202,19 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 		}
 		return m, nil
 
-	// The Edit, Duplicate, and Delete keys fire their action and put the
-	// focus on the list, as a button of the shell does (Activate).
+	// The Edit, Duplicate, and Delete keys fire their action through the
+	// shell (FireAction), so the focus goes to the list.
 	case key.Matches(msg, m.keys.Edit):
 		if _, ok := m.selectedEvent(); ok && len(acts) > 0 {
-			m = m.focusStop(tabStop{kind: zoneList})
-			return m.refresh(), acts[0].Msg
+			return m.fireAction(0)
 		}
 	case key.Matches(msg, m.keys.Duplicate):
 		if _, ok := m.selectedEvent(); ok && len(acts) > 1 {
-			m = m.focusStop(tabStop{kind: zoneList})
-			return m.refresh(), acts[1].Msg
+			return m.fireAction(1)
 		}
 	case key.Matches(msg, m.keys.Delete):
 		if _, ok := m.selectedEvent(); ok && len(acts) > 2 {
-			m = m.focusStop(tabStop{kind: zoneList})
-			return m.refresh(), acts[2].Msg
+			return m.fireAction(2)
 		}
 	case key.Matches(msg, m.keys.Create):
 		day := m.day
@@ -238,21 +226,15 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 		}
 	case key.Matches(msg, m.keys.RSVPYes):
 		if len(rsvp) > 0 {
-			m = m.focusRSVP()
-			m.focusedRSVP = 0
-			return m.refresh(), rsvp[0].msg
+			return m.fireRSVP(0)
 		}
 	case key.Matches(msg, m.keys.RSVPNo):
 		if len(rsvp) > 1 {
-			m = m.focusRSVP()
-			m.focusedRSVP = 1
-			return m.refresh(), rsvp[1].msg
+			return m.fireRSVP(1)
 		}
 	case key.Matches(msg, m.keys.RSVPMaybe):
 		if len(rsvp) > 2 {
-			m = m.focusRSVP()
-			m.focusedRSVP = 2
-			return m.refresh(), rsvp[2].msg
+			return m.fireRSVP(2)
 		}
 	}
 	return m, nil
@@ -263,8 +245,11 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		return m, nil
 	}
 
-	if cmd, ok := m.shell.TitleActionAtPosition(msg.X, msg.Y); ok {
-		return m, cmd
+	if _, ok := m.shell.TitleActionAtPosition(msg.X, msg.Y); ok {
+		shell, cmd := m.shell.FireTitleAction()
+		m.shell = shell
+		m.rsvpFocused = false
+		return m.refresh(), cmd
 	}
 
 	if len(m.events) == 0 {
@@ -277,17 +262,33 @@ func (m EventDialogModel) handleMouse(msg tea.MouseClickMsg) (EventDialogModel, 
 		return m.refresh(), nil
 	}
 	if idx, ok := m.shell.ActionAtPosition(msg.X, msg.Y); ok {
-		shell, cmd := m.shell.ClickAction(idx)
-		m.shell = shell
-		m.rsvpFocused = false
-		return m.refresh(), cmd
+		return m.fireAction(idx)
 	}
-	if idx, cmd, hit := m.hitRSVPBtn(msg.X, msg.Y); hit {
-		m = m.focusRSVP()
-		m.focusedRSVP = idx
-		return m.refresh(), cmd
+	if idx, _, hit := m.hitRSVPBtn(msg.X, msg.Y); hit {
+		return m.fireRSVP(idx)
 	}
 	return m, nil
+}
+
+// fireAction fires the action-bar button idx through the shell. The focus
+// goes to the list (FireAction).
+func (m EventDialogModel) fireAction(idx int) (EventDialogModel, tea.Cmd) {
+	shell, cmd := m.shell.FireAction(idx)
+	m.shell = shell
+	m.rsvpFocused = false
+	return m.refresh(), cmd
+}
+
+// fireRSVP fires the RSVP button idx and puts the focus on the list, as a
+// button of the shell does (FireAction).
+func (m EventDialogModel) fireRSVP(idx int) (EventDialogModel, tea.Cmd) {
+	rsvp := m.rsvpActions()
+	if idx < 0 || idx >= len(rsvp) {
+		return m, nil
+	}
+	m.focusedRSVP = idx
+	m = m.focusStop(tabStop{kind: zoneList})
+	return m.refresh(), rsvp[idx].msg
 }
 
 func (m EventDialogModel) hitRSVPBtn(x, y int) (int, tea.Cmd, bool) {
