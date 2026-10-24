@@ -400,7 +400,7 @@ func (m Model) handleAccountDiscoveryReady(msg accountDiscoveryReadyMsg) (tea.Mo
 	if msg.createdAccount {
 		paths := make([]string, 0, len(msg.discovery.Calendars))
 		for _, remote := range msg.discovery.Calendars {
-			if remote.Importable && !remote.Missing {
+			if remote.Importable && !remote.Missing && remote.LinkedBy == "" {
 				paths = append(paths, remote.Path)
 			}
 		}

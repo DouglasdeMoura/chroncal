@@ -166,6 +166,33 @@ func TestAccountCalendarPickerCannotSelectUnavailableOrExistingCalendar(t *testi
 	}
 }
 
+// TestAccountCalendarPickerCannotSelectALinkedCollection gives the picker a
+// collection that another local calendar links. The picker must not select
+// it, in the add mode and in the manage mode, and the detail must name the
+// other calendar (issue #874).
+func TestAccountCalendarPickerCannotSelectALinkedCollection(t *testing.T) {
+	discovery := pickerDiscovery()
+	discovery.Calendars[0].LinkedBy = "Loc"
+	for _, m := range []AccountCalendarPickerModel{
+		NewAccountCalendarPickerModel(discovery, Theme{}),
+		NewAccountCalendarManagerModel(discovery, Theme{}),
+	} {
+		if m.selected["/primary/"] {
+			t.Fatalf("manage=%v: the linked collection starts selected", m.manage)
+		}
+		m.shell = m.shell.SetSelected(pickerRowForPath(t, m, "/primary/"))
+		if m = m.toggleCurrent(); m.selected["/primary/"] {
+			t.Fatalf("manage=%v: a toggle selected the linked collection", m.manage)
+		}
+		if m = m.toggleAll(); m.selected["/primary/"] {
+			t.Fatalf("manage=%v: a toggle of all selected the linked collection", m.manage)
+		}
+		if lines := strings.Join(m.calendarDetailLines(discovery.Calendars[0]), "\n"); !strings.Contains(lines, "Already linked to the calendar Loc.") {
+			t.Fatalf("manage=%v: detail = %q; want the name of the other calendar", m.manage, lines)
+		}
+	}
+}
+
 func TestAccountCalendarPickerKeyboardLifecycle(t *testing.T) {
 	m := NewAccountCalendarPickerModel(pickerDiscovery(), Theme{}).SetSize(120, 40)
 

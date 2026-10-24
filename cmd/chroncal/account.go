@@ -94,6 +94,12 @@ exposes, import every usable collection, and complete their initial sync.`,
 				return rollback(fmt.Errorf("discover account calendars: %w", err))
 			}
 			selected := addableCalendarPaths(discovery)
+			for _, remote := range discovery.Calendars {
+				if remote.LinkedBy != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "chroncal: skipped the calendar %q: the local calendar %q links it already\n",
+						textsafe.Display(remote.Name), textsafe.Display(remote.LinkedBy))
+				}
+			}
 			if len(selected) == 0 {
 				return rollback(errInvalidInputf(
 					"account %q exposes no usable event, todo, or journal calendars",
@@ -511,7 +517,8 @@ func accountCalendarsAddCmd() *cobra.Command {
 		Short: "Add calendars to an account's selection",
 		Long: `Add one or more discovered calendars without changing calendars already
 selected for the account. Use --calendar repeatedly, or use --all. Newly added
-calendars are synced before the command returns.`,
+calendars are synced before the command returns. A collection that another
+local calendar links cannot be added: --all skips it, and --calendar refuses it.`,
 		Example: `  chroncal account calendars add "Personal Google" --calendar Family
   chroncal account calendars add 3 --calendar Family --calendar "Holidays in Brazil"
   chroncal account calendars add 3 --all --output json`,
@@ -777,7 +784,7 @@ func refreshDiscoveryImportState(
 func addableCalendarPaths(discovery account.Discovery) []string {
 	selected := make([]string, 0, len(discovery.Calendars))
 	for _, remote := range discovery.Calendars {
-		if remote.Importable && !remote.Missing {
+		if remote.Importable && !remote.Missing && remote.LinkedBy == "" {
 			selected = append(selected, remote.Path)
 		}
 	}
@@ -787,7 +794,7 @@ func addableCalendarPaths(discovery account.Discovery) []string {
 func selectableCalendarPaths(discovery account.Discovery) []string {
 	selected := make([]string, 0, len(discovery.Calendars))
 	for _, remote := range discovery.Calendars {
-		if remote.Imported || (remote.Importable && !remote.Missing) {
+		if remote.Imported || (remote.Importable && !remote.Missing && remote.LinkedBy == "") {
 			selected = append(selected, remote.Path)
 		}
 	}
@@ -896,6 +903,10 @@ func resolveDiscoveredSelections(discovery account.Discovery, refs []string) ([]
 			if !matches[0].Imported && (!matches[0].Importable || matches[0].Missing) {
 				return nil, errInvalidInputf("calendar %q cannot be added", matches[0].Name)
 			}
+			if !matches[0].Imported && matches[0].LinkedBy != "" {
+				return nil, errInvalidInputf("calendar %q cannot be added: the local calendar %q links it already; remove that link first",
+					matches[0].Name, matches[0].LinkedBy)
+			}
 			if _, duplicate := seen[matches[0].Path]; duplicate {
 				continue
 			}
@@ -943,6 +954,7 @@ type jsonDiscoveredCalendar struct {
 	Importable  bool     `json:"importable"`
 	CalendarID  int64    `json:"calendar_id,omitempty"`
 	Missing     bool     `json:"missing"`
+	LinkedBy    string   `json:"linked_by,omitempty"`
 }
 
 type jsonDiscovery struct {
@@ -969,7 +981,7 @@ func toJSONDiscovery(discovery account.Discovery, imported account.ImportResult)
 			Path: remote.Path, Name: remote.Name, Description: remote.Description,
 			Color: remote.Color, Access: string(remote.Access), Components: remote.SupportedComponentSet,
 			Imported: remote.Imported, Importable: remote.Importable, CalendarID: remote.CalendarID,
-			Missing: remote.Missing,
+			Missing: remote.Missing, LinkedBy: remote.LinkedBy,
 		}
 	}
 	return jsonDiscovery{Account: toJSONAccount(discovery.Account), Calendars: rows,
@@ -986,6 +998,8 @@ func printAccountDiscovery(w interface{ Write([]byte) (int, error) }, discovery 
 			status = "linked"
 		case !remote.Importable:
 			status = "unsupported"
+		case remote.LinkedBy != "":
+			status = "linked by " + textsafe.Display(remote.LinkedBy)
 		}
 		access := string(remote.Access)
 		if access == "" {

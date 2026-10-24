@@ -170,6 +170,9 @@ func (s *Service) ReconcileSelection(
 			continue
 		}
 		item := discoveredByKey[key]
+		if err := checkCollectionFree(ctx, qtx, discovery.Account, item.Path); err != nil {
+			return SelectionResult{}, fmt.Errorf("add calendar %q: %w", item.Name, err)
+		}
 		if id, ok := unlinkedByURL[key]; ok {
 			if err := relinkDiscoveredCalendar(ctx, qtx, discovery.Account, item, id); err != nil {
 				return SelectionResult{}, fmt.Errorf("re-link calendar %q: %w", item.Name, err)

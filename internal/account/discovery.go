@@ -7,6 +7,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/auth"
 	"github.com/douglasdemoura/chroncal/internal/caldav"
+	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 	"github.com/douglasdemoura/chroncal/internal/synclock"
 )
@@ -136,6 +137,15 @@ func (s *Service) discoverLocked(ctx context.Context, accountID int64, store aut
 			item.CalendarID = local.ID
 			if err := applyDiscoveredCalendarMetadata(ctx, qtx, item, local.ID); err != nil {
 				return Discovery{}, fmt.Errorf("update discovered calendar %q: %w", remote.Name, err)
+			}
+		} else {
+			other, linked, err := calendar.FindCollectionLink(ctx, qtx, remote.Path, account.ServerURL, account.Username,
+				calendar.CollectionLinkScope{AccountID: accountID})
+			if err != nil {
+				return Discovery{}, fmt.Errorf("check the links of calendar %q: %w", remote.Name, err)
+			}
+			if linked {
+				item.LinkedBy = other.Name
 			}
 		}
 		calendars = append(calendars, item)

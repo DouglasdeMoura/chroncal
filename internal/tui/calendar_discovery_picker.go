@@ -156,7 +156,7 @@ func newAccountCalendarPickerModel(discovery account.Discovery, theme Theme, man
 		switch {
 		case manage && remote.Imported:
 			selected[remote.Path] = true
-		case !manage && remote.Importable && !remote.Imported:
+		case !manage && remote.Importable && !remote.Imported && remote.LinkedBy == "":
 			selected[remote.Path] = true
 		}
 	}
@@ -279,12 +279,12 @@ func (m AccountCalendarPickerModel) toggleAll() AccountCalendarPickerModel {
 
 	allSelected := true
 	for _, remote := range m.discovery.Calendars {
-		if remote.Importable && !remote.Imported {
+		if m.canToggle(remote) {
 			allSelected = allSelected && m.selected[remote.Path]
 		}
 	}
 	for _, remote := range m.discovery.Calendars {
-		if !remote.Importable || remote.Imported {
+		if !m.canToggle(remote) {
 			continue
 		}
 		m.selected[remote.Path] = !allSelected
@@ -597,6 +597,8 @@ func (m AccountCalendarPickerModel) calendarDetailLines(remote account.Discovere
 			lines = append(lines, "Kept in Chroncal.")
 		case !remote.Importable:
 			lines = append(lines, unsupportedCalendarExplanation(remote.SupportedComponentSet))
+		case remote.LinkedBy != "":
+			lines = append(lines, linkedByExplanation(remote.LinkedBy))
 		case m.selected[remote.Path]:
 			lines = append(lines, "Ready to add.")
 		default:
@@ -613,6 +615,8 @@ func (m AccountCalendarPickerModel) calendarDetailLines(remote account.Discovere
 		lines = append(lines, "Already added to Chroncal.")
 	case !remote.Importable:
 		lines = append(lines, unsupportedCalendarExplanation(remote.SupportedComponentSet))
+	case remote.LinkedBy != "":
+		lines = append(lines, linkedByExplanation(remote.LinkedBy))
 	case remote.Access == caldav.CalendarAccessRead:
 		lines = append(lines, "Changes made in Chroncal will not be uploaded to this calendar.")
 	case m.selected[remote.Path]:
@@ -621,6 +625,12 @@ func (m AccountCalendarPickerModel) calendarDetailLines(remote account.Discovere
 		lines = append(lines, "Select this calendar to add it.")
 	}
 	return lines
+}
+
+// linkedByExplanation tells the user that the local calendar name links the
+// collection already, so the picker cannot add it (issue #874).
+func linkedByExplanation(name string) string {
+	return "Already linked to the calendar " + textsafe.Display(name) + "."
 }
 
 func (m AccountCalendarPickerModel) selectedCount() int {
@@ -634,10 +644,12 @@ func (m AccountCalendarPickerModel) selectedCount() int {
 }
 
 func (m AccountCalendarPickerModel) canToggle(remote account.DiscoveredCalendar) bool {
+	// A collection that another local calendar links cannot be added
+	// (issue #874).
 	if m.manage {
-		return remote.Imported || (remote.Importable && !remote.Missing)
+		return remote.Imported || (remote.Importable && !remote.Missing && remote.LinkedBy == "")
 	}
-	return remote.Importable && !remote.Imported
+	return remote.Importable && !remote.Imported && remote.LinkedBy == ""
 }
 
 func (m AccountCalendarPickerModel) finalSelectedPaths() []string {

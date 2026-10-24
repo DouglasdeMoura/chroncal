@@ -78,6 +78,9 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 			result.ExistingIDs = append(result.ExistingIDs, id)
 			continue
 		}
+		if err := checkCollectionFree(ctx, qtx, discovery.Account, path); err != nil {
+			return ImportResult{}, fmt.Errorf("import calendar %q: %w", item.Name, err)
+		}
 		if id, ok := unlinkedByURL[key]; ok {
 			if err := relinkDiscoveredCalendar(ctx, qtx, discovery.Account, item, id); err != nil {
 				return ImportResult{}, fmt.Errorf("re-link calendar %q: %w", item.Name, err)
@@ -100,6 +103,14 @@ func (s *Service) Import(ctx context.Context, discovery Discovery, selectedPaths
 		return ImportResult{}, fmt.Errorf("commit calendar import: %w", err)
 	}
 	return result, nil
+}
+
+// checkCollectionFree refuses a collection that a calendar of another
+// account links with the same user (issue #874). Two links of one
+// collection pull each item into two calendars.
+func checkCollectionFree(ctx context.Context, qtx *storage.Queries, acct Account, path string) error {
+	return calendar.CheckCollectionFree(ctx, qtx, path, acct.ServerURL, acct.Username,
+		calendar.CollectionLinkScope{AccountID: acct.ID})
 }
 
 // uniqueUnlinkedByRemoteIdentity maps a remote identity to one unlinked local
