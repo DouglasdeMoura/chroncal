@@ -2,6 +2,7 @@ package icaltransfer_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -244,5 +245,69 @@ func TestImport_ChangedAlarmUIDStillUpdates(t *testing.T) {
 		valarmICS("new@test", "DISPLAY", "-PT15M", "Reminder"))))
 	if s.UpdatedEvents != 1 {
 		t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
+	}
+}
+
+// alarmRowIDs returns the alarm row IDs of the event uid.
+func alarmRowIDs(t *testing.T, a *app.App, uid string) []int64 {
+	t.Helper()
+	ctx := context.Background()
+	e, err := a.Events.GetByUID(ctx, uid)
+	if err != nil {
+		t.Fatalf("GetByUID %s: %v", uid, err)
+	}
+	alarms, err := a.Events.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms %s: %v", uid, err)
+	}
+	out := make([]int64, len(alarms))
+	for i, al := range alarms {
+		out[i] = al.ID
+	}
+	return out
+}
+
+// TestImport_EditKeepsTheAlarmRowsOfARefusedUID covers the alarm write of
+// issue #915. A changed item with a refused alarm UID must keep its alarm
+// rows, so the alarm state stays. The edit must not fail on the unique
+// index either.
+func TestImport_EditKeepsTheAlarmRowsOfARefusedUID(t *testing.T) {
+	const shared = "shared-alarm@test"
+	tests := []struct {
+		name   string
+		alarms func() []string
+	}{
+		{name: "foreign fireable alarm", alarms: func() []string {
+			return []string{valarmICS(shared, "DISPLAY", "-PT15M", "Reminder")}
+		}},
+		{name: "foreign sync-only alarm", alarms: func() []string {
+			return []string{valarmICS(shared, "NONE", "-PT15M", "")}
+		}},
+		{name: "duplicate UID in one event", alarms: func() []string {
+			alarm := valarmICS("dup-alarm@test", "DISPLAY", "-PT15M", "Reminder")
+			return []string{alarm, alarm}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newTestApp(t)
+			owner, roundTrip := twoCalendars(t, a)
+			importFixture(t, a, owner, calendarICS(veventICS("owner@test", "Owner",
+				valarmICS(shared, "DISPLAY", "-PT15M", "Owner alarm"))))
+			importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip", tt.alarms()...)))
+			wantIDs := alarmRowIDs(t, a, "round@test")
+			_, wantUIDs := eventState(t, a, "round@test")
+
+			s := importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip edited", tt.alarms()...)))
+			if s.UpdatedEvents != 1 {
+				t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
+			}
+			if got := alarmRowIDs(t, a, "round@test"); !slices.Equal(got, wantIDs) {
+				t.Errorf("alarm row IDs = %v, want %v", got, wantIDs)
+			}
+			if _, got := eventState(t, a, "round@test"); !slices.Equal(got, wantUIDs) {
+				t.Errorf("alarm UIDs = %v, want %v", got, wantUIDs)
+			}
+		})
 	}
 }

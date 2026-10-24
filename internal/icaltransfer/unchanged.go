@@ -83,55 +83,62 @@ func sortedCategories(list string) string {
 
 // sortedAttendees returns a copy of attendees in one fixed order.
 func sortedAttendees(attendees []model.Attendee) []model.Attendee {
-	out := slices.Clone(attendees)
-	for i := range out {
-		out[i].ID, out[i].EventID = 0, 0
-	}
-	slices.SortStableFunc(out, func(a, b model.Attendee) int {
-		ka, kb := fmt.Sprintf("%+v", a), fmt.Sprintf("%+v", b)
-		switch {
-		case ka < kb:
-			return -1
-		case ka > kb:
-			return 1
-		}
-		return 0
+	return sortedByPrintedForm(attendees, func(a model.Attendee) model.Attendee {
+		a.ID, a.EventID = 0, 0
+		return a
 	})
+}
+
+// sortedByPrintedForm returns the normalized copies of xs, sorted by their
+// printed form. normalize clears the fields that the comparison ignores.
+func sortedByPrintedForm[T any](xs []T, normalize func(T) T) []T {
+	type keyed struct {
+		key string
+		x   T
+	}
+	ks := make([]keyed, len(xs))
+	for i, x := range xs {
+		x = normalize(x)
+		ks[i] = keyed{fmt.Sprintf("%+v", x), x}
+	}
+	slices.SortStableFunc(ks, func(a, b keyed) int { return strings.Compare(a.key, b.key) })
+	out := make([]T, len(ks))
+	for i, k := range ks {
+		out[i] = k.x
+	}
 	return out
 }
 
 // comparableAlarms returns copies of the stored and the parsed alarms in a
-// form that the comparison can use. It pairs each parsed alarm with a
-// stored alarm, first by an equal UID and then by equal content. The
-// stored alarms come back in the order of their row IDs, not in the order
-// of the file, so a pair by place can join two different alarms.
+// form that the comparison can use. It clears each parsed UID that the
+// store refuses, with the rule of the alarm write
+// (model.WithoutRefusedAlarmUIDs, issue #915). It then pairs each parsed
+// alarm with a stored alarm, first by an equal UID and then by equal
+// content. A parsed alarm with no UID clears the UID of its stored alarm,
+// because the store gave that UID. A file UID that the store can keep
+// stays, so a change of it counts.
 //
-// A pair can lose its UIDs:
-//   - A parsed alarm with no UID clears the UID of its stored alarm,
-//     because the store gave that UID.
-//   - A parsed UID that another alarm row holds clears both UIDs. The
-//     unique index of the alarm UIDs refuses that UID, so the store keeps
-//     a minted UID or no UID for the row (issue #915).
-//
-// A file UID that the store can keep stays, so a change of it counts.
-// held reports whether an alarm row other than the stored row holds the
-// parsed UID. ok is false when that lookup fails. The caller then counts
-// the item as changed and writes it.
-func comparableAlarms(stored, parsed []model.Alarm, held func(uid string, rowID int64) (bool, error)) (outStored, outParsed []model.Alarm, ok bool) {
-	outStored, outParsed = slices.Clone(stored), slices.Clone(parsed)
-	pair := make([]int, len(outParsed))
-	used := make([]bool, len(outStored))
-	for i := range pair {
-		pair[i] = -1
+// The stored alarms come back in the order of their row IDs, not in the
+// order of the file, so both lists go in one fixed order.
+func comparableAlarms(stored, parsed []model.Alarm, heldElsewhere func(uid string) (bool, error)) (outStored, outParsed []model.Alarm, err error) {
+	outParsed, err = model.WithoutRefusedAlarmUIDs(parsed, heldElsewhere)
+	if err != nil {
+		return nil, nil, err
 	}
+	outStored = slices.Clone(stored)
+	used := make([]bool, len(outStored))
+	paired := make([]bool, len(outParsed))
 	join := func(same func(p, s model.Alarm) bool) {
 		for i, p := range outParsed {
-			if pair[i] >= 0 {
+			if paired[i] {
 				continue
 			}
 			for j, s := range outStored {
 				if !used[j] && same(p, s) {
-					pair[i], used[j] = j, true
+					paired[i], used[j] = true, true
+					if p.UID == "" {
+						outStored[j].UID = ""
+					}
 					break
 				}
 			}
@@ -139,42 +146,24 @@ func comparableAlarms(stored, parsed []model.Alarm, held func(uid string, rowID 
 	}
 	join(func(p, s model.Alarm) bool { return p.UID != "" && p.UID == s.UID })
 	join(model.Alarm.ContentEqual)
-	for i, j := range pair {
-		if j < 0 {
-			continue
-		}
-		p, s := &outParsed[i], &outStored[j]
-		switch {
-		case p.UID == "":
-			s.UID = ""
-		case p.UID != s.UID:
-			taken, err := held(p.UID, s.ID)
-			if err != nil {
-				return nil, nil, false
-			}
-			if taken {
-				p.UID, s.UID = "", ""
-			}
-		}
-	}
-	return sortedAlarms(outStored), sortedAlarms(outParsed), true
+	return sortedAlarms(outStored), sortedAlarms(outParsed), nil
 }
 
 // sortedAlarms returns alarms in one fixed order. The order of the VALARM
 // components is no change.
 func sortedAlarms(alarms []model.Alarm) []model.Alarm {
-	key := func(a model.Alarm) string {
+	return sortedByPrintedForm(alarms, func(a model.Alarm) model.Alarm {
 		a.ID, a.EventID = 0, 0
 		a.Attendees = slices.Clone(a.Attendees)
 		for i := range a.Attendees {
 			a.Attendees[i].ID = 0
 		}
-		return fmt.Sprintf("%+v", a)
-	}
-	slices.SortStableFunc(alarms, func(a, b model.Alarm) int {
-		return strings.Compare(key(a), key(b))
+		a.XProperties = slices.Clone(a.XProperties)
+		for i := range a.XProperties {
+			a.XProperties[i].ID, a.XProperties[i].OwnerID, a.XProperties[i].OwnerType = 0, 0, ""
+		}
+		return a
 	})
-	return alarms
 }
 
 // unchangedEvent reports whether the import of e changes nothing on the
@@ -192,12 +181,8 @@ func unchangedEvent(ctx context.Context, a *app.App, mode *storage.Import, old, 
 		return false
 	}
 	old.Categories = timeutil.JoinCategoryList(cats)
-	var ok bool
-	old.Alarms, e.Alarms, ok = comparableAlarms(old.Alarms, e.Alarms, func(uid string, rowID int64) (bool, error) {
-		n, err := a.Queries.EventAlarmUIDHeldByAnotherRow(ctx, storage.EventAlarmUIDHeldByAnotherRowParams{Uid: &uid, ID: rowID})
-		return n != 0, err
-	})
-	if !ok {
+	old.Alarms, e.Alarms, err = comparableAlarms(old.Alarms, e.Alarms, event.AlarmUIDHeldElsewhere(ctx, a.Queries, old.ID))
+	if err != nil {
 		return false
 	}
 	form := func(e event.Event) func() ([]byte, error) {
@@ -222,12 +207,8 @@ func unchangedTodo(ctx context.Context, a *app.App, mode *storage.Import, old, t
 		return false
 	}
 	old.Categories = timeutil.JoinCategoryList(cats)
-	var ok bool
-	old.Alarms, t.Alarms, ok = comparableAlarms(old.Alarms, t.Alarms, func(uid string, rowID int64) (bool, error) {
-		n, err := a.Queries.TodoAlarmUIDHeldByAnotherRow(ctx, storage.TodoAlarmUIDHeldByAnotherRowParams{Uid: &uid, ID: rowID})
-		return n != 0, err
-	})
-	if !ok {
+	old.Alarms, t.Alarms, err = comparableAlarms(old.Alarms, t.Alarms, todo.AlarmUIDHeldElsewhere(ctx, a.Queries, old.ID))
+	if err != nil {
 		return false
 	}
 	form := func(t todo.Todo) func() ([]byte, error) {

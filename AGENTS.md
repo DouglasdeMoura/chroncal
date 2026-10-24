@@ -116,6 +116,8 @@ Three paths share one rule set. `alarm.defaultAlarmCandidates` decides which exp
 
 Eligibility filters the notification path only. `alarm.ListPendingDefaultAlarms` returns every unacknowledged row and carries an `Eligible` flag. The `alarm list` output shows an ineligible row as "will not fire again", because a hidden row gives the user no way to find its ID and dismiss it.
 
+Alarm UIDs are unique per table. The store refuses a UID that an alarm of another item holds, and a second use of one UID in one item. `model.WithoutRefusedAlarmUIDs` clears such a UID before the alarm write of the event and the todo services, and before the import comparison in `internal/icaltransfer/unchanged.go` (issue #915). The alarm then pairs with its stored row by content, so the row keeps its alarm state. Fix the rule there, not per caller.
+
 `CheckMissed` returns three slices: stored event alarms, todo alarms, and default alarms. Its forward window includes the default triggers, or a long default lead time never enters the window and `alarm missed` reports nothing.
 
 ### iCal Round-Trip

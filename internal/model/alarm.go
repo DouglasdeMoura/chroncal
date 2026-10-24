@@ -318,6 +318,41 @@ func AlarmUIDForWrite(a Alarm) string {
 	return uuid.NewString()
 }
 
+// WithoutRefusedAlarmUIDs returns a copy of alarms with each UID that the
+// store cannot keep cleared. Alarm UIDs are unique per table, so the store
+// refuses two cases (issue #915):
+//   - an alarm of another item holds the UID; heldElsewhere reports this
+//   - an earlier alarm of the same list has the UID
+//
+// The alarm write of the event and the todo services and the import
+// comparison share this rule. An alarm with no UID then pairs with its
+// stored row by content, so the row keeps its UID and its alarm state.
+// Fix the rule here, not per caller.
+func WithoutRefusedAlarmUIDs(alarms []Alarm, heldElsewhere func(uid string) (bool, error)) ([]Alarm, error) {
+	out := slices.Clone(alarms)
+	seen := make(map[string]bool, len(out))
+	for i := range out {
+		uid := out[i].UID
+		if uid == "" {
+			continue
+		}
+		if seen[uid] {
+			out[i].UID = ""
+			continue
+		}
+		held, err := heldElsewhere(uid)
+		if err != nil {
+			return nil, fmt.Errorf("check alarm uid: %w", err)
+		}
+		if held {
+			out[i].UID = ""
+			continue
+		}
+		seen[uid] = true
+	}
+	return out, nil
+}
+
 // CheckStorableAlarmAction returns a named error for an action the alarm
 // tables reject. It converts an opaque CHECK failure into a named error.
 // The enclosing transaction still rolls back on it. The alarm write

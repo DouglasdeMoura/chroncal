@@ -85,20 +85,20 @@ func (q *Queries) DeleteAlarmsByEventID(ctx context.Context, eventID int64) erro
 	return err
 }
 
-const eventAlarmUIDHeldByAnotherRow = `-- name: EventAlarmUIDHeldByAnotherRow :one
-SELECT EXISTS(SELECT 1 FROM event_alarms WHERE uid = ? AND id <> ?)
+const eventAlarmUIDHeldByAnotherEvent = `-- name: EventAlarmUIDHeldByAnotherEvent :one
+SELECT EXISTS(SELECT 1 FROM event_alarms WHERE uid = ? AND event_id <> ?)
 `
 
-type EventAlarmUIDHeldByAnotherRowParams struct {
-	Uid *string
-	ID  int64
+type EventAlarmUIDHeldByAnotherEventParams struct {
+	Uid     *string
+	EventID int64
 }
 
-// The import comparison uses this. The unique index on uid refuses a UID
-// that another alarm row holds, so the store keeps a minted UID for the
-// row instead of the UID of the file (issue #915).
-func (q *Queries) EventAlarmUIDHeldByAnotherRow(ctx context.Context, arg EventAlarmUIDHeldByAnotherRowParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, eventAlarmUIDHeldByAnotherRow, arg.Uid, arg.ID)
+// The unique index on uid refuses a UID that an alarm of another event
+// holds. The alarm write and the import comparison then treat the alarm as
+// an alarm with no UID (model.WithoutRefusedAlarmUIDs, issue #915).
+func (q *Queries) EventAlarmUIDHeldByAnotherEvent(ctx context.Context, arg EventAlarmUIDHeldByAnotherEventParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, eventAlarmUIDHeldByAnotherEvent, arg.Uid, arg.EventID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err

@@ -44,6 +44,6 @@ UPDATE todo_alarms SET uid = ? WHERE id = ?;
 -- name: UpdateTodoAlarmAcknowledged :exec
 UPDATE todo_alarms SET acknowledged = ? WHERE id = ?;
 
--- name: TodoAlarmUIDHeldByAnotherRow :one
--- The import comparison uses this. See EventAlarmUIDHeldByAnotherRow.
-SELECT EXISTS(SELECT 1 FROM todo_alarms WHERE uid = ? AND id <> ?);
+-- name: TodoAlarmUIDHeldByAnotherTodo :one
+-- See EventAlarmUIDHeldByAnotherEvent.
+SELECT EXISTS(SELECT 1 FROM todo_alarms WHERE uid = ? AND todo_id <> ?);
