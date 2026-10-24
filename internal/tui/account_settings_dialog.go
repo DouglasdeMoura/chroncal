@@ -268,7 +268,7 @@ func (m AccountSettingsDialogModel) View() string {
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "done")),
 	}
-	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+	m.dialog.SetHelpFooter(m.help, helpKeys)
 	width := max(m.dialog.ContentWidth()-1, 1)
 	return mouseSweep(m.dialog.Box(strings.Join(m.bodyRows(width), "\n")))
 }
@@ -358,11 +358,11 @@ func (m AccountOAuthConfigDialogModel) Update(
 }
 
 func (m AccountOAuthConfigDialogModel) View() string {
-	m.dialog.SetFooter(m.help.ShortHelpView([]key.Binding{
+	m.dialog.SetHelpFooter(m.help, []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-	}))
+	})
 	contextLine := lipgloss.NewStyle().Foreground(m.muted).
 		Render("OAuth client configuration for " + m.accountName)
 	return m.dialog.Box(contextLine + "\n\n" + m.form.View())
@@ -509,11 +509,11 @@ func (m AccountCredentialsDialogModel) Update(
 }
 
 func (m AccountCredentialsDialogModel) View() string {
-	m.dialog.SetFooter(m.help.ShortHelpView([]key.Binding{
+	m.dialog.SetHelpFooter(m.help, []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "update")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-	}))
+	})
 	noun := "password or password command"
 	if accountAuthIsBearer(m.authType) {
 		noun = "token"

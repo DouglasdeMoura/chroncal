@@ -638,7 +638,7 @@ func (m EventViewDialogModel) View() string {
 		helpKeys = []key.Binding{m.keys.Edit, m.keys.Duplicate, m.keys.Delete, m.keys.Close}
 	}
 	m.help.SetWidth(cw)
-	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+	m.dialog.SetHelpFooter(m.help, helpKeys)
 
 	return mouseSweep(m.dialog.Box(body))
 }

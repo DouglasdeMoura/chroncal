@@ -747,7 +747,7 @@ func (m RecurrenceEditorModel) View() string {
 	dialog := NewDialog("Custom Repeat", styles)
 	dialog = dialog.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	dialog.SetWidth(recurrenceEditorBoxWidth)
-	dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+	dialog.SetHelpFooter(m.help, helpKeys)
 
 	form := m.form
 	form.SetWidth(dialog.ContentWidth())

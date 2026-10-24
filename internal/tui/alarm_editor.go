@@ -591,7 +591,7 @@ func (m AlarmListEditorModel) View() string {
 	dialog := NewDialog("Alarms", styles)
 	dialog = dialog.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	dialog.SetWidth(alarmEditorBoxWidth)
-	dialog.SetFooter(m.help.ShortHelpView(m.helpKeys()))
+	dialog.SetHelpFooter(m.help, m.helpKeys())
 
 	var content string
 	if m.mode == alarmModeEdit {

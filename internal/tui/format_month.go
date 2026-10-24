@@ -9,7 +9,6 @@ import (
 
 	lipgloss "charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
-	"github.com/charmbracelet/x/ansi"
 )
 
 type CalendarOptions struct {
@@ -343,7 +342,7 @@ func buildCalendarCell(d time.Time, isToday, isSelected, inMonth bool, events []
 				label = short
 			}
 		}
-		label = ansi.Truncate(label, cellW, "…")
+		label = truncateTo(label, cellW)
 		pills[len(pills)-1] = lipgloss.NewStyle().Faint(true).
 			Width(cellW).Render(label)
 	}

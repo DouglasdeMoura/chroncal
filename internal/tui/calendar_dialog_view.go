@@ -179,7 +179,7 @@ func (m CalendarDialogModel) View() string {
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}
-	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+	m.dialog.SetHelpFooter(m.help, helpKeys)
 	m.syncBodyViewport(false)
 	cw := m.dialog.ContentWidth()
 	parts := []string{m.body.View()}

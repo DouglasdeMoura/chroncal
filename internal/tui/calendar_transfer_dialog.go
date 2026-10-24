@@ -288,7 +288,7 @@ func (m CalendarTransferDialogModel) View() string {
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}
-	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+	m.dialog.SetHelpFooter(m.help, helpKeys)
 	parts := []string{m.form.BodyView()}
 	if m.errText != "" {
 		parts = append(parts, lipgloss.NewStyle().Foreground(m.theme.Error).Render(truncateTo(m.errText, m.dialog.ContentWidth())))

@@ -6,8 +6,6 @@ import (
 	"hash/fnv"
 	"strings"
 
-	"charm.land/bubbles/v2/help"
-	"charm.land/bubbles/v2/key"
 	lipgloss "charm.land/lipgloss/v2"
 )
 
@@ -246,12 +244,7 @@ func actionButtonWidth(bs ButtonStyles, a ListDialogAction) int {
 // buttons. A row that does not fit with the join space drops it, so a
 // narrow pane still shows each button (issue #881).
 func (m ListDialogModel) actionGap(w int) int {
-	bs := DefaultButtonStyles()
-	total := max(len(m.actions)-1, 0)
-	for _, a := range m.actions {
-		total += actionButtonWidth(bs, a)
-	}
-	if total <= w {
+	if m.actionRowWidth() <= w {
 		return 1
 	}
 	return 0
@@ -310,28 +303,6 @@ func (m ListDialogModel) renderHelpLine(innerW int) string {
 		m.cache.help = out
 	}
 	return out
-}
-
-// shortHelpLine renders bindings on one line of at most w cells. The help
-// model of bubbles adds an item past its width when the ellipsis does not
-// fit, and the line then wraps. This function drops items from the end
-// until the line fits, and then adds the ellipsis when it fits.
-func shortHelpLine(h help.Model, bindings []key.Binding, w int) string {
-	h.SetWidth(w)
-	for n := len(bindings); n > 0; n-- {
-		line := h.ShortHelpView(bindings[:n])
-		if lipgloss.Width(line) > w {
-			continue
-		}
-		if n < len(bindings) {
-			tail := " " + h.Styles.Ellipsis.Render(h.Ellipsis)
-			if lipgloss.Width(line)+lipgloss.Width(tail) <= w {
-				line += tail
-			}
-		}
-		return line
-	}
-	return ""
 }
 
 // helpCacheKey fingerprints the inputs that affect renderHelpLine: the

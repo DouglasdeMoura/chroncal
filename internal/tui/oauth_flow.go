@@ -303,6 +303,6 @@ func (m OAuthFlowModel) View() string {
 	} else {
 		helpKeys = append(helpKeys, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")))
 	}
-	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+	m.dialog.SetHelpFooter(m.help, helpKeys)
 	return mouseSweep(m.dialog.Box(body))
 }
