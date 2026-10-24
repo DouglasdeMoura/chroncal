@@ -101,4 +101,23 @@ func TestRecurringDeletePromptFocusesCancel(t *testing.T) {
 	if got, want := m.choiceDialog.form.Focused(), m.choiceDialog.form.cancelIndex(); got != want {
 		t.Fatalf("focused control = %d, want cancel index %d", got, want)
 	}
+
+	// A quick Enter cancels, and the series stays live.
+	next, cmd := m.Update(keyPressMsg("enter"))
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("enter produced no command")
+	}
+	result, ok := cmd().(ChoiceDialogResultMsg)
+	if !ok || result.Choice != -1 {
+		t.Fatalf("enter produced %#v, want ChoiceDialogResultMsg{Choice: -1}", result)
+	}
+	next, _ = m.Update(result)
+	m = next.(Model)
+	if m.choiceOpen {
+		t.Fatal("the cancel left the scope dialog open")
+	}
+	if _, err := a.Events.Get(ctx, ev.ID); err != nil {
+		t.Fatalf("the series is not live after a cancel: %v", err)
+	}
 }

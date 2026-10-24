@@ -174,7 +174,8 @@ func TestChoiceDialogDestructiveFocusesCancel(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter produced no command, want cancel")
 	}
-	if msg, ok := cmd().(ChoiceDialogResultMsg); !ok || msg.Choice != -1 {
-		t.Fatalf("enter produced %#v, want ChoiceDialogResultMsg{Choice: -1}", cmd())
+	got := cmd()
+	if msg, ok := got.(ChoiceDialogResultMsg); !ok || msg.Choice != -1 {
+		t.Fatalf("enter produced %#v, want ChoiceDialogResultMsg{Choice: -1}", got)
 	}
 }
