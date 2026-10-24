@@ -397,13 +397,22 @@ func (m Model) handleAccountDiscoveryReady(msg accountDiscoveryReadyMsg) (tea.Mo
 	m.pendingDiscoveryAccountID = msg.discovery.Account.ID
 	m.pendingDiscoveryCreated = msg.createdAccount
 	m.calendarManager = m.calendarManager.ShowDiscovery(msg.discovery).SetSize(m.width, m.height)
-	if msg.createdAccount {
-		paths := make([]string, 0, len(msg.discovery.Calendars))
-		for _, remote := range msg.discovery.Calendars {
-			if remote.Importable && !remote.Missing && remote.LinkedBy == "" {
-				paths = append(paths, remote.Path)
-			}
+	paths := make([]string, 0, len(msg.discovery.Calendars))
+	linkedElsewhere := false
+	for _, remote := range msg.discovery.Calendars {
+		if !remote.Importable || remote.Missing {
+			continue
 		}
+		if remote.LinkedBy != "" {
+			linkedElsewhere = true
+			continue
+		}
+		paths = append(paths, remote.Path)
+	}
+	// When other local calendars link every usable collection, the picker
+	// stays open, so its detail tells the user why nothing was added
+	// (issue #874).
+	if msg.createdAccount && (len(paths) > 0 || !linkedElsewhere) {
 		m.calendarManagerOpen = false
 		m.syncing = true
 		m.syncStatus = "Importing and syncing all calendars…"

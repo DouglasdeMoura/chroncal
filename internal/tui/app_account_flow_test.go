@@ -845,3 +845,27 @@ func TestAppRemovingEveryAccountCalendarAlsoRemovesAccount(t *testing.T) {
 			cmd, m.syncing, m.pending.target.selection)
 	}
 }
+
+// TestAppNewAccountWithOnlyLinkedCalendarsOpensThePicker gives a new account
+// a discovery where other local calendars link each usable collection. The
+// automatic import has nothing to add, so the picker must stay open: its
+// detail tells the user why (issue #874). A cancel then removes the account.
+func TestAppNewAccountWithOnlyLinkedCalendarsOpensThePicker(t *testing.T) {
+	m := NewModel(nil, "")
+	m.width, m.height = 120, 40
+	openCalendarManagerForTest(&m, CalendarDialogParams{})
+	m.calendarManagerOpen = true
+	m.syncing = true
+
+	discovery := pickerDiscovery()
+	discovery.Calendars[0].LinkedBy = "Loc"
+	discovery.Calendars[1].LinkedBy = "Loc 2"
+	discovery.Calendars[2].Imported, discovery.Calendars[2].CalendarID = false, 0
+	discovery.Calendars[2].LinkedBy = "Loc 3"
+	updated, _ := m.Update(accountDiscoveryReadyMsg{discovery: discovery, createdAccount: true})
+	m = updated.(Model)
+	if m.syncing || !m.calendarManagerOpen || m.calendarManager.calendarForm.discoveryPicker == nil || !m.pendingDiscoveryCreated {
+		t.Fatalf("transition: syncing=%v calendarDialog=%v picker=%v pendingCreated=%v; want the open picker",
+			m.syncing, m.calendarManagerOpen, m.calendarManager.calendarForm.discoveryPicker != nil, m.pendingDiscoveryCreated)
+	}
+}

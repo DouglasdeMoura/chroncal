@@ -109,7 +109,7 @@ func (s *Service) ConnectTarget(ctx context.Context, cal Calendar, link RemoteLi
 	}
 	// The check runs before the prompt for a secret, so the user does no
 	// work for a link that Connect refuses (issue #874).
-	if err := CheckCollectionFree(ctx, s.q, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID}); err != nil {
+	if err := checkConnectFree(ctx, s.q, cal, link, serverURL); err != nil {
 		return 0, "", err
 	}
 	fingerprint := auth.AccountFingerprint(serverURL, NormalizeAuthType(link.AuthType), link.Username)
@@ -170,7 +170,7 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		}
 		defer tx.Rollback()
 		qtx := s.q.WithTx(tx)
-		if err := CheckCollectionFree(ctx, qtx, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID}); err != nil {
+		if err := checkConnectFree(ctx, qtx, cal, link, serverURL); err != nil {
 			return err
 		}
 		if err := qtx.UpdateAccount(ctx, storage.UpdateAccountParams{
@@ -231,7 +231,7 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	// does not reuse the account of another calendar. A removal of that
 	// account would then unlink this calendar too, and a selection change
 	// of that account could delete it.
-	if err := CheckCollectionFree(ctx, qtx, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID}); err != nil {
+	if err := checkConnectFree(ctx, qtx, cal, link, serverURL); err != nil {
 		return err
 	}
 	accountName := hiddenAccountName(cal.ID)
@@ -295,6 +295,17 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		return err
 	}
 	return nil
+}
+
+// checkConnectFree refuses a link of cal to a collection that another local
+// calendar links (CheckCollectionFree). A calendar that an account links to
+// the same collection already passes. A relink then changes the credential
+// only, and a double link from before issue #874 keeps working.
+func checkConnectFree(ctx context.Context, q *storage.Queries, cal Calendar, link RemoteLink, serverURL string) error {
+	if cal.AccountID != 0 && sameRemoteCollection(cal.RemoteURL, link.RemoteURL) {
+		return nil
+	}
+	return CheckCollectionFree(ctx, q, link.RemoteURL, serverURL, link.Username, CollectionLinkScope{CalendarID: cal.ID})
 }
 
 func updateCalendarCapabilities(ctx context.Context, q *storage.Queries, calendarID int64, link RemoteLink) error {
@@ -371,16 +382,14 @@ func clearCalendarRemoteState(ctx context.Context, q *storage.Queries, calendarI
 }
 
 func sameRemoteCollection(left, right string) bool {
-	normalize := func(raw string) (scheme, host, collectionPath string, ok bool) {
-		parsed, err := url.Parse(strings.TrimSpace(raw))
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return "", "", "", false
-		}
-		return strings.ToLower(parsed.Scheme), strings.ToLower(parsed.Host), strings.TrimRight(parsed.Path, "/"), true
-	}
-	leftScheme, leftHost, leftPath, leftOK := normalize(left)
-	rightScheme, rightHost, rightPath, rightOK := normalize(right)
-	return leftOK && rightOK && leftScheme == rightScheme && leftHost == rightHost && leftPath == rightPath
+	leftKey, rightKey := CollectionKey(left, ""), CollectionKey(right, "")
+	return isAbsoluteURL(leftKey) && leftKey == rightKey
+}
+
+// isAbsoluteURL reports whether raw parses as a URL with a scheme and a host.
+func isAbsoluteURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && parsed.Scheme != "" && parsed.Host != ""
 }
 
 // Disconnect removes the remote link from a calendar. When the account
