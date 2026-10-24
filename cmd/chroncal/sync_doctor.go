@@ -360,6 +360,9 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 	fmt.Fprintf(out, "\n%d wedged resource(s). Recover one with:\n", len(entries))
 	fmt.Fprintln(out, "  chroncal sync doctor --push <uid> --yes")
 	fmt.Fprintln(out, "The push drops the unreadable relations from the server copy.")
+	if len(waits)+len(notes) > 0 {
+		fmt.Fprintln(out, "The push applies to the wedged resources only, not to the other items above.")
+	}
 	return nil
 }
 

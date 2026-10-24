@@ -435,10 +435,10 @@ func recordResourceMove(ctx context.Context, q *Queries, fromCalendarID, toCalen
 	if fromCalendarID == toCalendarID || uid == "" {
 		return nil
 	}
-	// An open move conflict of the UID anywhere in the accounts of the move
-	// holds an earlier move that waits for the user. A failed cancel counts as
-	// open. A new move runs over its rows (issue #841). The move back of a
-	// cancel stamps its own row first, so it passes.
+	// The guards of checkMoveGuards: an open sync conflict of the UID in
+	// either calendar, and for a new move an open move conflict of the UID
+	// in the accounts of the move. Such a conflict waits for the user. A
+	// new move would run over its rows (issue #841).
 	if kind, _, err := checkMoveGuards(ctx, q, fromCalendarID, toCalendarID, uid, movedTo != nil); err != nil {
 		return err
 	} else if kind != "" {

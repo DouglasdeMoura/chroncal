@@ -128,6 +128,9 @@ func TestSyncDoctorListsWedgedResource(t *testing.T) {
 	if strings.Contains(stderr, "chroncal sync doctor") {
 		t.Errorf("stderr %q carries part of the hint; the hint belongs on stdout", stderr)
 	}
+	if strings.Contains(stdout, "not to the other items above") {
+		t.Errorf("stdout %q names other items, but the doctor lists none", stdout)
+	}
 
 	bumpPushFailCount(t, dbPath, 3)
 	stdout, _, err = runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
@@ -629,6 +632,38 @@ func TestSyncDoctorLegacyOverrideNamesTheSyncState(t *testing.T) {
 	want := `The rows stay, because calendar "Old" holds sync state of the UID, so the startup heal does not move the rows. Move them there with: chroncal event update`
 	if !strings.Contains(stdout, want) {
 		t.Errorf("output %q misses %q", stdout, want)
+	}
+}
+
+// TestSyncDoctorPushHintNamesTheWedgedOnly checks the hint when the doctor
+// lists a wedged resource and an item of another kind. The push applies to
+// the wedged resource only, and the hint says that.
+func TestSyncDoctorPushHintNamesTheWedgedOnly(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	seedWedgedCLIResource(t, dbPath)
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	if _, err := a.DB.ExecContext(context.Background(),
+		`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, edit_unowned)
+		 SELECT 'unowned-hint@example.com', id, 't', '2026-05-18T09:00:00Z', '2026-05-18T10:00:00Z', '2026-05-18T09:00:00Z', 1 FROM calendars LIMIT 1`); err != nil {
+		t.Fatalf("seed an unowned edit: %v", err)
+	}
+	a.Close()
+
+	stdout, stderr, err := runChroncalCommand(t, "sync", "--allow-plaintext", "doctor")
+	if err != nil {
+		t.Fatalf("sync doctor: %v (stderr: %s)", err, stderr)
+	}
+	for _, want := range []string{
+		"uid unowned-hint@example.com (event): the edit stays local",
+		"1 wedged resource(s). Recover one with:",
+		"The push applies to the wedged resources only, not to the other items above.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout %q misses %q", stdout, want)
+		}
 	}
 }
 
