@@ -120,7 +120,8 @@ An alarm UID is unique in its event or its todo (migration 063, issue #922). Two
 
 - The first pass pairs by content. Two different non-empty UIDs do not pair. An alarm with no UID skips a row whose UID another incoming alarm has. An alarm whose UID a stored row has skips the rows with no UID.
 - The second pass pairs by UID, so an edited alarm keeps its row and its alarm state.
-- The third pass repairs a UID that the store minted before migration 063. The store then minted a UID only when an alarm of another item held the UID of the file. An alarm with such a UID and no pair takes a row of equal content with another UID. The row takes the UID of the file (`model.PairedAlarmUID`) and keeps its alarm state. Without that evidence, two different UIDs never pair.
+- The third pass repairs a UID that the store minted before migration 063. The store then minted a UID only when an alarm of another item held the UID of the file. The pass needs two facts. The stored row has the mark `uid_unverified` of migration 063, and an alarm of another item has the incoming UID. The row then takes the UID of the file (`model.PairedAlarmUID`) and keeps its alarm state. Without the two facts, two different UIDs never pair.
+- Migration 063 marks each UID that an older build wrote. A new row has no mark. A write that confirms the UID clears the mark: a UID write, an update in place, or a pair with an alarm of the same UID. Do not set the mark in new code.
 
 Fix the rules in `internal/model/alarm.go`, not per caller.
 

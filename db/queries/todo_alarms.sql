@@ -32,14 +32,14 @@ DELETE FROM todo_alarms WHERE id = ?;
 UPDATE todo_alarms
 SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
     duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?,
-    attach_binary = ?
+    attach_binary = ?, uid_unverified = 0
 WHERE id = ? AND todo_id = ?;
 
 -- name: ListTodoAlarmsWithEmptyUID :many
 SELECT * FROM todo_alarms WHERE uid IS NULL;
 
 -- name: UpdateTodoAlarmUID :exec
-UPDATE todo_alarms SET uid = ? WHERE id = ?;
+UPDATE todo_alarms SET uid = ?, uid_unverified = 0 WHERE id = ?;
 
 -- name: UpdateTodoAlarmAcknowledged :exec
 UPDATE todo_alarms SET acknowledged = ? WHERE id = ?;
@@ -48,3 +48,8 @@ UPDATE todo_alarms SET acknowledged = ? WHERE id = ?;
 -- See ListEventAlarmUIDsHeldByOtherEvents.
 SELECT DISTINCT uid FROM todo_alarms
 WHERE todo_id <> sqlc.arg(todo_id) AND uid IN (sqlc.slice(uids));
+
+-- name: ConfirmTodoAlarmUID :exec
+-- A write that pairs the row with an alarm of the same UID confirms the
+-- UID, so the mark of migration 063 goes.
+UPDATE todo_alarms SET uid_unverified = 0 WHERE id = ?;

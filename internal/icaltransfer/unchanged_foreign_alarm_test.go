@@ -9,7 +9,6 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/icaltransfer"
 	"github.com/douglasdemoura/chroncal/internal/model"
-	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
 // calendarICS wraps components in a VCALENDAR.
@@ -188,16 +187,12 @@ func TestImport_UnchangedItemWithADuplicateAlarmUIDKeepsItsSequence(t *testing.T
 // unchanged (issue #922).
 func TestImport_MintedAlarmUIDWithNoEvidenceUpdatesOnce(t *testing.T) {
 	const fileUID = "shared-alarm@test"
-	ctx := context.Background()
 	a := newTestApp(t)
 	_, roundTrip := twoCalendars(t, a)
 	file := calendarICS(veventICS("round@test", "Round trip",
 		valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder")))
 	importFixture(t, a, roundTrip, file)
-	minted := "minted-before-063"
-	if err := a.Queries.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{Uid: &minted, ID: alarmRowIDs(t, a, "round@test")[0]}); err != nil {
-		t.Fatalf("UpdateAlarmUID: %v", err)
-	}
+	markPre063UID(t, a, "event_alarms", alarmRowIDs(t, a, "round@test")[0], "minted-before-063")
 
 	if s := importFixture(t, a, roundTrip, file); s.UpdatedEvents != 1 {
 		t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
@@ -205,6 +200,60 @@ func TestImport_MintedAlarmUIDWithNoEvidenceUpdatesOnce(t *testing.T) {
 	state := func() (int64, []string) { return eventState(t, a, "round@test") }
 	requireAlarmUIDs(t, state, fileUID)
 	requireUnchanged(t, a, roundTrip, file, state, eventCounts)
+}
+
+// markPre063UID gives the alarm row id of table the UID uid and the mark of
+// migration 063, as a build before that migration left it.
+func markPre063UID(t *testing.T, a *app.App, table string, id int64, uid string) {
+	t.Helper()
+	if _, err := a.DB.ExecContext(context.Background(),
+		`UPDATE `+table+` SET uid = ?, uid_unverified = 1 WHERE id = ?`, uid, id); err != nil {
+		t.Fatalf("mark %s row %d: %v", table, id, err)
+	}
+}
+
+// TestImport_AuthoredAlarmUIDChangeIsANewAlarm covers a UID that a build
+// from migration 063 on wrote. The file changes it to a UID that another
+// item holds. The alarm is a new alarm, so it gets a new row, and the
+// alarm state of the old alarm does not move to it.
+func TestImport_AuthoredAlarmUIDChangeIsANewAlarm(t *testing.T) {
+	a := newTestApp(t)
+	owner, roundTrip := twoCalendars(t, a)
+	importFixture(t, a, owner, calendarICS(veventICS("owner@test", "Owner",
+		valarmICS("b@test", "DISPLAY", "-PT15M", "Reminder"))))
+	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip",
+		valarmICS("a@test", "DISPLAY", "-PT15M", "Reminder"))))
+	row := alarmRowIDs(t, a, "round@test")[0]
+
+	if s := importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip",
+		valarmICS("b@test", "DISPLAY", "-PT15M", "Reminder")))); s.UpdatedEvents != 1 {
+		t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
+	}
+	if got := alarmRowIDs(t, a, "round@test"); slices.Contains(got, row) {
+		t.Errorf("alarm row IDs = %v, want a new row in place of row %d", got, row)
+	}
+	requireAlarmUIDs(t, func() (int64, []string) { return eventState(t, a, "round@test") }, "b@test")
+}
+
+// TestImport_ConfirmedAlarmUIDLosesTheMark covers a write that pairs a
+// marked row with an alarm of the same UID. The file confirms the UID, so
+// the mark of migration 063 goes.
+func TestImport_ConfirmedAlarmUIDLosesTheMark(t *testing.T) {
+	a := newTestApp(t)
+	_, roundTrip := twoCalendars(t, a)
+	alarm := valarmICS("a@test", "DISPLAY", "-PT15M", "Reminder")
+	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip", alarm)))
+	row := alarmRowIDs(t, a, "round@test")[0]
+	markPre063UID(t, a, "event_alarms", row, "a@test")
+
+	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip edited", alarm)))
+	var mark int
+	if err := a.DB.QueryRowContext(context.Background(), `SELECT uid_unverified FROM event_alarms WHERE id = ?`, row).Scan(&mark); err != nil {
+		t.Fatalf("read the mark: %v", err)
+	}
+	if mark != 0 {
+		t.Errorf("uid_unverified = %d, want 0 after the file confirms the UID", mark)
+	}
 }
 
 // TestImport_MintedAlarmUIDTakesTheFileUID covers a row from before
@@ -225,9 +274,7 @@ func TestImport_MintedAlarmUIDTakesTheFileUID(t *testing.T) {
 			valarmICS(fileUID, "DISPLAY", "-PT15M", "Reminder")))
 		importFixture(t, a, roundTrip, file)
 		row := alarmRowIDs(t, a, "round@test")[0]
-		if err := a.Queries.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{Uid: &minted, ID: row}); err != nil {
-			t.Fatalf("UpdateAlarmUID: %v", err)
-		}
+		markPre063UID(t, a, "event_alarms", row, minted)
 
 		if s := importFixture(t, a, roundTrip, file); s.UpdatedEvents != 1 {
 			t.Fatalf("updated events = %d, want 1", s.UpdatedEvents)
@@ -256,9 +303,7 @@ func TestImport_MintedAlarmUIDTakesTheFileUID(t *testing.T) {
 			t.Fatalf("ListAlarms: %v (n=%d)", err, len(alarms))
 		}
 		row := alarms[0].ID
-		if err := a.Queries.UpdateTodoAlarmUID(ctx, storage.UpdateTodoAlarmUIDParams{Uid: &minted, ID: row}); err != nil {
-			t.Fatalf("UpdateTodoAlarmUID: %v", err)
-		}
+		markPre063UID(t, a, "todo_alarms", row, minted)
 
 		if s := importFixture(t, a, roundTrip, file); s.UpdatedTodos != 1 {
 			t.Fatalf("updated todos = %d, want 1", s.UpdatedTodos)

@@ -10,9 +10,20 @@ import (
 	"strings"
 )
 
+const confirmTodoAlarmUID = `-- name: ConfirmTodoAlarmUID :exec
+UPDATE todo_alarms SET uid_unverified = 0 WHERE id = ?
+`
+
+// A write that pairs the row with an alarm of the same UID confirms the
+// UID, so the mark of migration 063 goes.
+func (q *Queries) ConfirmTodoAlarmUID(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, confirmTodoAlarmUID, id)
+	return err
+}
+
 const createTodoAlarm = `-- name: CreateTodoAlarm :one
 INSERT INTO todo_alarms (todo_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype, attach_binary)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary, uid_unverified
 `
 
 type CreateTodoAlarmParams struct {
@@ -63,6 +74,7 @@ func (q *Queries) CreateTodoAlarm(ctx context.Context, arg CreateTodoAlarmParams
 		&i.AttachUri,
 		&i.AttachFmttype,
 		&i.AttachBinary,
+		&i.UidUnverified,
 	)
 	return i, err
 }
@@ -117,7 +129,7 @@ func (q *Queries) ListDistinctTodoAlarmTriggers(ctx context.Context) ([]string, 
 }
 
 const listFireableTodoAlarmsByTodoIDs = `-- name: ListFireableTodoAlarmsByTodoIDs :many
-SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM todo_alarms
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary, uid_unverified FROM todo_alarms
 WHERE todo_id IN (/*SLICE:todo_ids*/?)
   AND action IN ('AUDIO', 'DISPLAY', 'EMAIL')
 ORDER BY id
@@ -161,6 +173,7 @@ func (q *Queries) ListFireableTodoAlarmsByTodoIDs(ctx context.Context, todoIds [
 			&i.AttachUri,
 			&i.AttachFmttype,
 			&i.AttachBinary,
+			&i.UidUnverified,
 		); err != nil {
 			return nil, err
 		}
@@ -221,7 +234,7 @@ func (q *Queries) ListTodoAlarmUIDsHeldByOtherTodos(ctx context.Context, arg Lis
 }
 
 const listTodoAlarmsByTodoID = `-- name: ListTodoAlarmsByTodoID :many
-SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM todo_alarms WHERE todo_id = ? ORDER BY id
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary, uid_unverified FROM todo_alarms WHERE todo_id = ? ORDER BY id
 `
 
 func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]TodoAlarm, error) {
@@ -248,6 +261,7 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 			&i.AttachUri,
 			&i.AttachFmttype,
 			&i.AttachBinary,
+			&i.UidUnverified,
 		); err != nil {
 			return nil, err
 		}
@@ -263,7 +277,7 @@ func (q *Queries) ListTodoAlarmsByTodoID(ctx context.Context, todoID int64) ([]T
 }
 
 const listTodoAlarmsWithEmptyUID = `-- name: ListTodoAlarmsWithEmptyUID :many
-SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM todo_alarms WHERE uid IS NULL
+SELECT id, todo_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary, uid_unverified FROM todo_alarms WHERE uid IS NULL
 `
 
 func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, error) {
@@ -290,6 +304,7 @@ func (q *Queries) ListTodoAlarmsWithEmptyUID(ctx context.Context) ([]TodoAlarm, 
 			&i.AttachUri,
 			&i.AttachFmttype,
 			&i.AttachBinary,
+			&i.UidUnverified,
 		); err != nil {
 			return nil, err
 		}
@@ -322,7 +337,7 @@ const updateTodoAlarmContentByID = `-- name: UpdateTodoAlarmContentByID :exec
 UPDATE todo_alarms
 SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
     duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?,
-    attach_binary = ?
+    attach_binary = ?, uid_unverified = 0
 WHERE id = ? AND todo_id = ?
 `
 
@@ -362,7 +377,7 @@ func (q *Queries) UpdateTodoAlarmContentByID(ctx context.Context, arg UpdateTodo
 }
 
 const updateTodoAlarmUID = `-- name: UpdateTodoAlarmUID :exec
-UPDATE todo_alarms SET uid = ? WHERE id = ?
+UPDATE todo_alarms SET uid = ?, uid_unverified = 0 WHERE id = ?
 `
 
 type UpdateTodoAlarmUIDParams struct {
