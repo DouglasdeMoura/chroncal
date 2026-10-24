@@ -57,3 +57,9 @@ WHERE id = ? AND event_id = ?;
 -- alarms must not apply (issue #815).
 SELECT DISTINCT event_id FROM event_alarms
 WHERE event_id IN (sqlc.slice(event_ids));
+
+-- name: EventAlarmUIDHeldByAnotherRow :one
+-- The import comparison uses this. The unique index on uid refuses a UID
+-- that another alarm row holds, so the store keeps a minted UID for the
+-- row instead of the UID of the file (issue #915).
+SELECT EXISTS(SELECT 1 FROM event_alarms WHERE uid = ? AND id <> ?);
