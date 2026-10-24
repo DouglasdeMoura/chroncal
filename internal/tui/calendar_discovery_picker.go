@@ -246,7 +246,7 @@ func (m AccountCalendarPickerModel) HandleInspectorClick(x, y, w, h int) (Accoun
 			bw := actionButtonWidth(bs, action)
 			if x >= cx && x < cx+bw {
 				var cmd tea.Cmd
-				m.shell, cmd = m.shell.ClickAction(i)
+				m.shell, cmd = m.shell.FireAction(i)
 				return m.refresh(), cmd
 			}
 			cx += bw + gap
@@ -356,7 +356,7 @@ func (m AccountCalendarPickerModel) Update(msg tea.Msg) (AccountCalendarPickerMo
 		}
 		if idx, ok := m.shell.ActionAtPosition(msg.X, msg.Y); ok {
 			var cmd tea.Cmd
-			m.shell, cmd = m.shell.ClickAction(idx)
+			m.shell, cmd = m.shell.FireAction(idx)
 			return m.refresh(), cmd
 		}
 

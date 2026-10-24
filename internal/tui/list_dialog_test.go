@@ -154,12 +154,12 @@ func TestListDialog_DisabledActionsCannotReceiveFocusOrActivate(t *testing.T) {
 		t.Errorf("FocusAction(disabled) focused action = %d, want unchanged 1", got)
 	}
 
-	m, cmd = m.ClickAction(0)
+	m, cmd = m.FireAction(0)
 	if cmd != nil {
-		t.Fatal("ClickAction(disabled) returned a command")
+		t.Fatal("FireAction(disabled) returned a command")
 	}
 	if got := m.FocusedAction(); got != 1 {
-		t.Errorf("ClickAction(disabled) focused action = %d, want unchanged 1", got)
+		t.Errorf("FireAction(disabled) focused action = %d, want unchanged 1", got)
 	}
 
 	m = m.SetActions([]ListDialogAction{{Label: "Unavailable", Disabled: true}})

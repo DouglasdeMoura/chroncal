@@ -25,7 +25,7 @@ func TestListDialog_ActionPutsTheFocusOnTheList(t *testing.T) {
 		}
 	}
 
-	m, cmd := makeListDialogFixture().FocusAction(1).ClickAction(0)
+	m, cmd := makeListDialogFixture().FocusAction(1).FireAction(0)
 	if cmd == nil {
 		t.Fatal("click on a button: no command")
 	}
@@ -132,5 +132,77 @@ func TestTrashModel_SpaceOnAFocusedButtonPressesIt(t *testing.T) {
 	}
 	if len(m.marked) != 0 {
 		t.Errorf("Space on the Restore button marked %v, want no mark", m.marked)
+	}
+}
+
+// TestEventDialog_RSVPAndTitleButtonPutTheFocusOnTheList checks the RSVP
+// keys, Enter on a focused RSVP button, and a click on the title button.
+// Each fires and puts the focus on the list (issue #909).
+func TestEventDialog_RSVPAndTitleButtonPutTheFocusOnTheList(t *testing.T) {
+	m0 := rsvpDialogModel()
+	onRSVP := m0.focusStop(tabStop{kind: zoneRSVP, idx: 1})
+	for _, tc := range []struct {
+		name  string
+		start EventDialogModel
+		msg   tea.Msg
+	}{
+		{"y key", m0, tea.KeyPressMsg{Code: 'y', Text: "y"}},
+		{"Enter on the No button", onRSVP, tea.KeyPressMsg{Code: tea.KeyEnter}},
+	} {
+		m, cmd := tc.start.Update(tc.msg)
+		if cmd == nil {
+			t.Fatalf("%s: no command", tc.name)
+		}
+		if _, ok := cmd().(EventRSVPMsg); !ok {
+			t.Errorf("%s: command gave %T, want an RSVP", tc.name, cmd())
+		}
+		if zone := m.currentZone(); zone != zoneList {
+			t.Errorf("%s: zone = %d, want the list", tc.name, zone)
+		}
+	}
+
+	onDelete := eventDialogForFocus().focusStop(tabStop{kind: zoneAction, idx: 2})
+	var click tea.Msg
+	for y := 0; y < 40 && click == nil; y++ {
+		for x := 0; x < 120; x++ {
+			if _, ok := onDelete.shell.TitleActionAtPosition(x, y); ok {
+				click = tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}
+				break
+			}
+		}
+	}
+	if click == nil {
+		t.Fatal("no screen cell for the title button")
+	}
+	m, cmd := onDelete.Update(click)
+	if cmd == nil {
+		t.Fatal("click on the title button: no command")
+	}
+	if _, ok := cmd().(EventCreateMsg); !ok {
+		t.Errorf("click on the title button gave %T, want a create", cmd())
+	}
+	if zone := m.currentZone(); zone != zoneList {
+		t.Errorf("click on the title button: zone = %d, want the list", zone)
+	}
+}
+
+// TestTrashModel_SpaceMarksAfterACanceledPurge checks Space after the purge
+// key and on the focused Purge All button. Both mark the row: the purge key
+// leaves the focus on the list, and Space never fires Purge All (issue
+// #909).
+func TestTrashModel_SpaceMarksAfterACanceledPurge(t *testing.T) {
+	space := tea.KeyPressMsg{Code: ' ', Text: " "}
+	m := newTrashForTest().SetEntries(trashFixture(), nil)
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	m, cmd := m.Update(space)
+	if cmd != nil || !m.marked[entryKey(trashFixture()[0])] {
+		t.Errorf("Space after the purge key: command %v, marks %v, want the mark of the first row", cmd, m.marked)
+	}
+
+	m = newTrashForTest().SetEntries(trashFixture(), nil)
+	m.shell = m.shell.SetFocusZone(ListZoneTitleAction)
+	m, cmd = m.Update(space)
+	if cmd != nil || !m.marked[entryKey(trashFixture()[0])] {
+		t.Errorf("Space on Purge All: command %v, marks %v, want the mark of the first row", cmd, m.marked)
 	}
 }

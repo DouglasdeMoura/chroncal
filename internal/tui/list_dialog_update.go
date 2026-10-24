@@ -120,16 +120,40 @@ func (m ListDialogModel) ActivateFocused() tea.Cmd {
 	return nil
 }
 
-// Activate fires the focused button and puts the focus on the list. An
-// action can end with a prompt that the user cancels, or with a refusal.
-// The list keys must then work, so no button keeps the focus after it
-// fires (issue #909). With no button to fire, the focus does not change.
+// Activate fires the focused button (FireAction or FireTitleAction). With
+// no button to fire, the focus does not change.
 func (m ListDialogModel) Activate() (ListDialogModel, tea.Cmd) {
-	cmd := m.ActivateFocused()
-	if cmd != nil {
-		m.focusZone = ListZoneList
+	switch m.focusZone {
+	case ListZoneActions:
+		return m.FireAction(m.focusedAction)
+	case ListZoneTitleAction:
+		return m.FireTitleAction()
+	case ListZoneList, ListZoneCustom:
 	}
-	return m, cmd
+	return m, nil
+}
+
+// FireAction returns the command of the action-bar button idx and puts the
+// focus on the list. Every path that fires a button uses it: a hotkey,
+// Enter or Space, and a click. An action can end with a prompt that the
+// user cancels, or with a refusal. The list keys must then work, so no
+// button keeps the focus after it fires (issue #909). A disabled or a
+// missing button fires nothing and keeps the focus.
+func (m ListDialogModel) FireAction(idx int) (ListDialogModel, tea.Cmd) {
+	if idx < 0 || idx >= len(m.actions) || m.actions[idx].Disabled {
+		return m, nil
+	}
+	m.focusZone = ListZoneList
+	return m, m.actions[idx].Msg
+}
+
+// FireTitleAction is FireAction for the button of the title line.
+func (m ListDialogModel) FireTitleAction() (ListDialogModel, tea.Cmd) {
+	if m.titleAction == nil || m.titleAction.Disabled {
+		return m, nil
+	}
+	m.focusZone = ListZoneList
+	return m, m.titleAction.Msg
 }
 
 // RowAtPosition hit-tests a screen-space (x, y) against the rendered list.
@@ -210,23 +234,6 @@ func (m ListDialogModel) ClickRow(idx int) ListDialogModel {
 	m.selected = idx
 	m.focusZone = ListZoneList
 	return m
-}
-
-// FocusList moves the focus to the list zone. The selection does not change.
-func (m ListDialogModel) FocusList() ListDialogModel {
-	m.focusZone = ListZoneList
-	return m
-}
-
-// ClickAction returns the command of an enabled action. As Activate does,
-// it puts the focus on the list.
-func (m ListDialogModel) ClickAction(idx int) (ListDialogModel, tea.Cmd) {
-	if idx < 0 || idx >= len(m.actions) || m.actions[idx].Disabled {
-		return m, nil
-	}
-	m.focusZone = ListZoneList
-	m.focusedAction = idx
-	return m, m.actions[idx].Msg
 }
 
 // DetailsOrigin returns the screen-space (x, y) of the first line of the
