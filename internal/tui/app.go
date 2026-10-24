@@ -671,9 +671,8 @@ type trashActionDoneMsg struct {
 	action string // "restored" or "purged"
 	title  string
 	err    error
-	// done and total count the entries of a bulk restore. A failed restore
-	// with done > 0 is a partial restore, and the toast says so. total also
-	// counts the entries of a purge.
+	// done and total count the entries of a bulk restore or purge. A failed
+	// action with done > 0 is a partial action, and the toast says so.
 	done, total int
 }
 

@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -128,4 +130,38 @@ func TestBulkToastShowsCountWithoutQuotes(t *testing.T) {
 
 	toast.Restored("Standup")
 	require.True(t, strings.Contains(ansi.Strip(toast.View()), `Restored "Standup"`))
+}
+
+// TestRemappedUndoKeyStaysWithDayDialog checks that an undo key remapped
+// to a key of the day dialog moves the selection and does not undo.
+func TestRemappedUndoKeyStaysWithDayDialog(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+	cals, err := a.Calendars.List(ctx)
+	require.NoError(t, err)
+	now := time.Now()
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	ev, err := a.Events.Create(ctx, event.CreateParams{CalendarID: cals[0].ID, Title: "Standup",
+		StartTime: day.Add(9 * time.Hour), EndTime: day.Add(10 * time.Hour)})
+	require.NoError(t, err)
+	meta, err := a.Events.DeleteWithUndo(ctx, ev.ID)
+	require.NoError(t, err)
+	m.undoStack.Push(UndoEntry{Meta: meta, DeletedAt: time.Now()})
+	m.keys.Undo = key.NewBinding(key.WithKeys("k"))
+	m.focus = focusCalendar
+	m.dialog = m.newDayDialog(day, nil)
+	m.dialogOpen = true
+
+	_, _, handled := m.interceptGlobalKeys(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	require.False(t, handled, "k in the day dialog ran the remapped undo")
+}
+
+// TestPartialPurgeToastNamesTheCount checks that a bulk purge that fails
+// part of the way says how many entries it purged.
+func TestPartialPurgeToastNamesTheCount(t *testing.T) {
+	m, _ := newDBBackedModel(t)
+	next, _ := m.handleTrashActionDone(trashActionDoneMsg{action: "purged", title: "3 items",
+		err: errors.New("database is locked"), done: 2, total: 3})
+	got := next.(Model)
+	require.Contains(t, got.toast.reason, "purged 2 of 3")
 }
