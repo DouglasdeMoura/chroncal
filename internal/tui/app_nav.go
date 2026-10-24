@@ -247,7 +247,7 @@ func (m Model) onlyDayDialogOpen() bool {
 // app key that is a plain letter (a remapped help key, for example) must
 // then reach the text field. Each overlay in this list counts as text
 // entry. Add a new overlay here unless it has no text field at all; then
-// add it to keyOnlyOverlayOpen. anyOverlayOpen covers both lists.
+// add it to otherKeyOnlyOverlayOpen. anyOverlayOpen covers both lists.
 func (m Model) textEntryActive() bool {
 	return m.paletteOpen || m.formOpen || m.calendarManagerOpen ||
 		m.accountRenameOpen || m.accountOAuthConfigOpen || m.accountCredentialsOpen ||
