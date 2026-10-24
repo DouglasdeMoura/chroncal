@@ -36,10 +36,13 @@ func resolveTUIOpenEvent(ctx context.Context, a *app.App, ref, recurrenceID, at 
 		return event.Event{}, err
 	} else if ok {
 		return occ, nil
-	} else if dateOnly && isSeriesMaster(ev) {
-		// The series has no occurrence on that date. Do not show a made-up
-		// occurrence at 00:00 (issue #878).
-		return event.Event{}, errInvalidInputf("--at: the series has no occurrence on %s", when.Format(time.DateOnly))
+	} else if isSeriesMaster(ev) {
+		// The series has no occurrence there. Do not show a made-up
+		// occurrence (issue #878).
+		if dateOnly {
+			return event.Event{}, errInvalidInputf("--at: the series has no occurrence on %s", when.Format(time.DateOnly))
+		}
+		return event.Event{}, errInvalidInputf("--at: the series has no occurrence at %s", at)
 	}
 	span := ev.EndTime.Sub(ev.StartTime)
 	ev.StartTime = when
@@ -80,7 +83,9 @@ func findSeriesOccurrence(ctx context.Context, a *app.App, master event.Event, w
 		return event.Event{}, false, err
 	}
 	dayKey := when.Local().Format(time.DateOnly)
-	var shown event.Event
+	// starts is the earliest occurrence that starts on the date. The
+	// expansion sorts an override by its slot, not by its start.
+	var starts, shown event.Event
 	for _, x := range expanded {
 		if x.UID != master.UID {
 			continue
@@ -111,11 +116,17 @@ func findSeriesOccurrence(ctx context.Context, a *app.App, master event.Event, w
 		}
 		days := tui.EventCalendarDays(occ)
 		if days[0].Format(time.DateOnly) == dayKey {
-			return occ, true, nil
+			if starts.ID == 0 || occ.StartTime.Before(starts.StartTime) {
+				starts = occ
+			}
+			continue
 		}
 		if shown.ID == 0 && slices.ContainsFunc(days, func(d time.Time) bool { return d.Format(time.DateOnly) == dayKey }) {
 			shown = occ
 		}
+	}
+	if starts.ID != 0 {
+		return starts, true, nil
 	}
 	return shown, shown.ID != 0, nil
 }
