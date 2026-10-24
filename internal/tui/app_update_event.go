@@ -451,7 +451,7 @@ func (m Model) handleEventDelete(msg EventDeleteMsg) (tea.Model, tea.Cmd) {
 				fmt.Sprintf("Delete %q?", msg.Event.Title),
 				m.theme,
 				"This event", "This and following", "All events",
-			),
+			).Destructive(),
 		), nil
 	}
 	return m.armConfirm(

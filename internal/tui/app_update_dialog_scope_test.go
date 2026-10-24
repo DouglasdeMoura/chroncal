@@ -70,3 +70,35 @@ func TestDeleteScopeValidationBlocksAndSurfaces(t *testing.T) {
 		t.Fatalf("phantom EXDATE written: %q", got.ExDates)
 	}
 }
+
+// TestRecurringDeletePromptFocusesCancel guards issue #877. The scope prompt
+// of a recurring delete is destructive, so a quick Enter cancels.
+func TestRecurringDeletePromptFocusesCancel(t *testing.T) {
+	m, a := newDBBackedModel(t)
+	ctx := context.Background()
+
+	cal, err := a.Calendars.Create(ctx, "Work", "#7C3AED", "")
+	if err != nil {
+		t.Fatalf("calendar create: %v", err)
+	}
+	start := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	ev, err := a.Events.Create(ctx, event.CreateParams{
+		CalendarID:     cal.ID,
+		Title:          "Weekly",
+		StartTime:      start,
+		EndTime:        start.Add(time.Hour),
+		RecurrenceRule: "FREQ=WEEKLY;BYDAY=WE",
+	})
+	if err != nil {
+		t.Fatalf("event create: %v", err)
+	}
+
+	next, _ := m.handleEventDelete(EventDeleteMsg{Event: ev})
+	m = next.(Model)
+	if !m.choiceOpen {
+		t.Fatal("recurring delete did not arm the scope dialog")
+	}
+	if got, want := m.choiceDialog.form.Focused(), m.choiceDialog.form.cancelIndex(); got != want {
+		t.Fatalf("focused control = %d, want cancel index %d", got, want)
+	}
+}
