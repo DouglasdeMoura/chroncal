@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/douglasdemoura/chroncal/internal/event"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
 
@@ -140,7 +141,9 @@ func (m Model) loadEventsIncremental() tea.Cmd {
 // (full refresh).
 func (m Model) queryEventsRange(from, to time.Time, merge bool) tea.Cmd {
 	return func() tea.Msg {
-		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to)
+		// The rows carry their alarms, so the day dialog can show them
+		// (issue #912).
+		expanded, err := m.app.Recurrences.ListExpandedEvents(context.Background(), from, to, recurrence.WithAlarms())
 		events := make([]event.Event, len(expanded))
 		for i, e := range expanded {
 			evt := e.Event

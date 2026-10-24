@@ -53,6 +53,29 @@ func (s *Service) ListAlarms(ctx context.Context, eventID int64) ([]model.Alarm,
 	return buildAlarmsWithAttendees(ctx, s.q, rows)
 }
 
+// LoadAlarmsByEventIDs returns the alarms of each event ID, with their
+// attendees and X-properties, in batch queries. An event with no alarm has
+// no key. The recurrence service calls it to fill the expanded rows of the
+// TUI (issue #912).
+func LoadAlarmsByEventIDs(ctx context.Context, q *storage.Queries, eventIDs []int64) (map[int64][]model.Alarm, error) {
+	if len(eventIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := q.ListAlarmsByEventIDs(ctx, eventIDs)
+	if err != nil {
+		return nil, err
+	}
+	alarms, err := buildAlarmsWithAttendees(ctx, q, rows)
+	if err != nil {
+		return nil, err
+	}
+	byEvent := make(map[int64][]model.Alarm, len(eventIDs))
+	for _, a := range alarms {
+		byEvent[a.EventID] = append(byEvent[a.EventID], a)
+	}
+	return byEvent, nil
+}
+
 // ListFireableAlarmsByEventIDs fetches the fireable alarms for multiple
 // event IDs in a single batch query. Returns a map of event ID to its list
 // of alarms. The query excludes preserved sync-only actions (issue #579):

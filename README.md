@@ -992,7 +992,7 @@ chroncal --event standup-uid --at 2026-04-17T14:00:00Z
 
 **Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`. Press `W` to switch the first day of the week between Sunday and Monday. The TUI stores the choice, the same way it stores the view. `ui.week_start` in `config.toml` sets the default before a stored choice exists.
 
-The TUI can create, edit, view, and delete events. Event details include alarms, attendees, and attachments. The new-event form selects the default calendar (see `calendar set-default`). When the default calendar is hidden or does not accept events, the form selects the first calendar by name. Long titles wrap in the event details. Use `p` to copy event details. Use `u` to undo a delete, in the main view or in the day dialog.
+The TUI can create, edit, view, and delete events. Event details include alarms, attendees, and attachments. The detail pane of the day dialog also lists the alarms of the selected event. The new-event form selects the default calendar (see `calendar set-default`). When the default calendar is hidden or does not accept events, the form selects the first calendar by name. Long titles wrap in the event details. Use `p` to copy event details. Use `u` to undo a delete, in the main view or in the day dialog.
 
 The sidebar uses quiet, collapsible account sections. There is a separate **Local** section. Active calendars show an item-colored filled `●` circle. Hidden calendars show an outline `○` circle. Space or a click on the circle toggles visibility. Calendar colors stay on calendar rows, not on account headings.
 
