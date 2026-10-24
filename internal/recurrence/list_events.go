@@ -281,33 +281,23 @@ func (s *Service) ListExpandedEvents(ctx context.Context, from, to time.Time, op
 }
 
 // sortExpandedEvents orders instances by their local calendar day. The day
-// of an all-day instance is its date (see instanceDay). It places
+// of an all-day instance is its date (LocalInstanceTime). It places
 // all-day events before timed events on the same day. Timed events then sort
 // by start time. SQL-level order is not sufficient. Recurring instances
 // are generated in Go.
 func sortExpandedEvents(results []ExpandedEvent) {
 	sort.SliceStable(results, func(i, j int) bool {
 		a, b := results[i], results[j]
-		ad := instanceDay(a)
-		bd := instanceDay(b)
+		ad := timeutil.LocalDay(a.LocalInstanceTime())
+		bd := timeutil.LocalDay(b.LocalInstanceTime())
 		if !ad.Equal(bd) {
 			return ad.Before(bd)
 		}
 		if a.AllDay != b.AllDay {
 			return a.AllDay
 		}
-		return a.InstanceTime.Before(b.InstanceTime)
+		return a.LocalInstanceTime().Before(b.LocalInstanceTime())
 	})
-}
-
-// instanceDay returns local midnight of the calendar day of an instance.
-// An all-day instance has the day of its date, not the local day of its
-// stored instant (issue #875).
-func instanceDay(e ExpandedEvent) time.Time {
-	if e.AllDay {
-		return timeutil.FloatingLocal(e.InstanceTime)
-	}
-	return timeutil.LocalDay(e.InstanceTime)
 }
 
 func attendeeFromStorage(r storage.EventAttendee) model.Attendee {
@@ -423,7 +413,7 @@ func (s *Service) ListExpandedByDateRange(ctx context.Context, from, to time.Tim
 
 	s.populateEventCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].StartTime.Before(result[j].StartTime)
+		return result[i].LocalStart().Before(result[j].LocalStart())
 	})
 	return result, nil
 }
@@ -437,17 +427,6 @@ type ExportFilterParams struct {
 	To         time.Time
 }
 
-// rangeBoundUTC formats a date-range query bound as an RFC3339 string in UTC,
-// or "" for the zero time. Normalize to UTC because these bounds are compared
-// lexically against the UTC-stored start/end strings (issue #305). A non-UTC
-// offset left in the formatted string breaks that comparison near window edges.
-func rangeBoundUTC(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339)
-}
-
 // ExportExpandedByDateRange returns recurring event masters (not expanded
 // instances) that have at least one occurrence in [from,to). It merges them
 // with non-recurring events whose start_time is in range. This is for ICS
@@ -455,8 +434,8 @@ func rangeBoundUTC(t time.Time) string {
 // filters (calendar, category, status) are applied at the SQL level.
 func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterParams) ([]event.Event, error) {
 	qFrom, qTo := timeutil.CoverWindow(p.From, p.To)
-	fromStr := rangeBoundUTC(qFrom)
-	toStr := rangeBoundUTC(qTo)
+	fromStr := timeutil.RangeBound(qFrom)
+	toStr := timeutil.RangeBound(qTo)
 
 	rangeRows, err := s.q.ListEventsForExport(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
@@ -507,7 +486,7 @@ func (s *Service) ExportExpandedByDateRange(ctx context.Context, p ExportFilterP
 
 	s.populateEventCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].StartTime.Before(result[j].StartTime)
+		return result[i].LocalStart().Before(result[j].LocalStart())
 	})
 	return result, nil
 }
@@ -566,8 +545,8 @@ type EventListParams struct {
 // The todo and journal lists use the same contract.
 func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]event.Event, error) {
 	qFrom, qTo := timeutil.CoverWindow(p.From, p.To)
-	fromStr := rangeBoundUTC(qFrom)
-	toStr := rangeBoundUTC(qTo)
+	fromStr := timeutil.RangeBound(qFrom)
+	toStr := timeutil.RangeBound(qTo)
 	hasRange := fromStr != "" || toStr != ""
 
 	rangeRows, err := s.q.ListEventsFiltered(ctx, storage.EventFilterParams{
@@ -613,7 +592,7 @@ func (s *Service) ListFilteredEvents(ctx context.Context, p EventListParams) ([]
 	s.populateEventCategories(ctx, result)
 	s.populateEventAttendees(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].StartTime.Before(result[j].StartTime)
+		return result[i].LocalStart().Before(result[j].LocalStart())
 	})
 	return result, nil
 }

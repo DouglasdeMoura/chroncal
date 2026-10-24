@@ -44,7 +44,12 @@ func FormatNotification(da alarm.DueAlarm) (title, body string) {
 
 	var parts []string
 	if !da.Event.StartTime.IsZero() {
-		parts = append(parts, da.Event.StartTime.Local().Format("Mon Jan 2, 15:04"))
+		// An all-day event shows its date only (event.Event.LocalStart).
+		layout := "Mon Jan 2, 15:04"
+		if da.Event.AllDay {
+			layout = "Mon Jan 2"
+		}
+		parts = append(parts, da.Event.LocalStart().Format(layout))
 	}
 
 	if da.Event.Location != "" {

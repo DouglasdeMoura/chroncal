@@ -138,19 +138,9 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 
 				triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
 
-				// Use instance time for the todo's due/start date
-				// A date-only anchor keeps the date-only form, so the
-				// display shows the date and not the day before.
-				instanceTodo := t
-				layout := time.RFC3339
-				if t.AnchorIsDateOnly() {
-					layout = time.DateOnly
-				}
-				if t.DueDate != "" {
-					instanceTodo.DueDate = inst.InstanceTime.UTC().Format(layout)
-				} else if t.StartDate != "" {
-					instanceTodo.StartDate = inst.InstanceTime.UTC().Format(layout)
-				}
+				// Move the DUE and DTSTART of the todo to the occurrence.
+				// Each keeps its own form, so a date-only DUE stays a date.
+				instanceTodo := recurrence.TodoAtInstance(inst)
 
 				for _, tt := range triggers {
 					if tt.After(now) {

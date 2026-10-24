@@ -77,6 +77,13 @@ func (t Todo) AnchorIsDateOnly() bool {
 	return timeutil.IsDateOnly(t.DueDate)
 }
 
+// LocalDue returns the DUE of the todo as a local moment, or the zero
+// time. A date-only DUE is due at local midnight of its date
+// (timeutil.FloatingLocal), in every time zone. A sort of todos uses it.
+func (t Todo) LocalDue() time.Time {
+	return timeutil.LocalMoment(t.DueDate)
+}
+
 func (t Todo) ParseDueDate() time.Time {
 	return timeutil.ParseDate(t.DueDate)
 }

@@ -229,8 +229,8 @@ func (s *Service) ListFilteredJournals(ctx context.Context, p JournalListParams)
 
 	s.populateJournalCategories(ctx, result)
 	sort.Slice(result, func(i, j int) bool {
-		di := result[i].ParseStartDate()
-		dj := result[j].ParseStartDate()
+		di := result[i].LocalStart()
+		dj := result[j].LocalStart()
 		if di.IsZero() {
 			return false
 		}

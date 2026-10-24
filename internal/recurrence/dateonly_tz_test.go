@@ -144,3 +144,68 @@ func assertSameSet(t *testing.T, label string, got, want []string) {
 		}
 	}
 }
+
+// TestDateOnlySort_EveryZone guards issue #875 for the order of a list. An
+// all-day event of October 28 sorts after a timed event at 22:00 local on
+// October 27. A date-only todo of October 28 sorts after a timed todo due
+// at 22:00 local on October 27.
+func TestDateOnlySort_EveryZone(t *testing.T) {
+	testutil.ForEachLocalZone(t, func(t *testing.T) {
+		db, q := testutil.NewTestDB(t)
+		ctx := context.Background()
+		svc := NewService(db, q)
+		evening := time.Date(2026, 10, 27, 22, 0, 0, 0, time.Local)
+
+		events := event.NewService(db, q)
+		if _, err := events.Create(ctx, event.CreateParams{
+			CalendarID: 1, Title: "Holiday", AllDay: true,
+			StartTime: day(10, 28), EndTime: day(10, 29),
+		}); err != nil {
+			t.Fatalf("create event: %v", err)
+		}
+		if _, err := events.Create(ctx, event.CreateParams{
+			CalendarID: 1, Title: "Dinner",
+			StartTime: evening, EndTime: evening.Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("create event: %v", err)
+		}
+		todos := todo.NewService(db, q)
+		if _, err := todos.Create(ctx, todo.CreateParams{CalendarID: 1, Summary: "Date", DueDate: "2026-10-28"}); err != nil {
+			t.Fatalf("create todo: %v", err)
+		}
+		if _, err := todos.Create(ctx, todo.CreateParams{CalendarID: 1, Summary: "Timed", DueDate: evening.UTC().Format(time.RFC3339)}); err != nil {
+			t.Fatalf("create todo: %v", err)
+		}
+
+		from, to := localDays(day(10, 27), day(10, 28))
+		listed, err := svc.ListFilteredEvents(ctx, EventListParams{From: from, To: to})
+		if err != nil {
+			t.Fatalf("ListFilteredEvents: %v", err)
+		}
+		if len(listed) != 2 || listed[0].Title != "Dinner" || listed[1].Title != "Holiday" {
+			t.Fatalf("events = %v, want [Dinner Holiday]", titles(listed))
+		}
+		expanded, err := svc.ListExpandedByDateRange(ctx, from, to)
+		if err != nil {
+			t.Fatalf("ListExpandedByDateRange: %v", err)
+		}
+		if len(expanded) != 2 || expanded[0].Title != "Dinner" || expanded[1].Title != "Holiday" {
+			t.Fatalf("expanded = %v, want [Dinner Holiday]", titles(expanded))
+		}
+		listedTodos, err := svc.ListFilteredTodos(ctx, TodoListParams{})
+		if err != nil {
+			t.Fatalf("ListFilteredTodos: %v", err)
+		}
+		if len(listedTodos) != 2 || listedTodos[0].Summary != "Timed" || listedTodos[1].Summary != "Date" {
+			t.Fatalf("todos = %+v, want [Timed Date]", listedTodos)
+		}
+	})
+}
+
+func titles(events []event.Event) []string {
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		out = append(out, e.Title)
+	}
+	return out
+}

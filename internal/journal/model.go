@@ -50,6 +50,13 @@ func (j Journal) IsDateOnly() bool {
 	return timeutil.IsDateOnly(j.StartDate)
 }
 
+// LocalStart returns the DTSTART of the journal as a local moment, or the
+// zero time. A date-only DTSTART starts at local midnight of its date
+// (timeutil.FloatingLocal). A sort of journals uses it.
+func (j Journal) LocalStart() time.Time {
+	return timeutil.LocalMoment(j.StartDate)
+}
+
 func (j Journal) ParseStartDate() time.Time {
 	return timeutil.ParseDate(j.StartDate)
 }
