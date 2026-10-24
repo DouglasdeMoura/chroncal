@@ -34,22 +34,20 @@ func TestEventDialogFitsAt100x30(t *testing.T) {
 		}
 	}
 	view := ansi.Strip(m.shell.View())
-	if !strings.Contains(view, "Delete  ") || strings.Contains(view, "…") {
+	if !strings.Contains(view, "Delete  ") || strings.Contains(view, "Delete …") || strings.Contains(view, "Duplicate …") {
 		t.Errorf("the action row cuts the Delete button:\n%s", view)
 	}
 }
 
-// TestActionAtPositionFollowsNarrowGap checks that the hit test of the
-// action row uses the same join space as renderActions.
-func TestActionAtPositionFollowsNarrowGap(t *testing.T) {
+// TestActionAtPositionFollowsGap checks that the hit test of the action
+// row uses the same join space as renderActions.
+func TestActionAtPositionFollowsGap(t *testing.T) {
 	day := time.Date(2026, 10, 24, 0, 0, 0, 0, time.Local)
 	evs := []event.Event{{ID: 1, Title: "Team Standup", CalendarID: 1,
 		StartTime: day.Add(9 * time.Hour), EndTime: day.Add(10 * time.Hour)}}
 	m := NewEventDialogModel(day, evs, map[int64]CalendarInfo{1: {Name: "Personal"}},
 		newThemedHelp(ActiveTheme())).SetSize(100, 30)
-	if gap := m.shell.actionGap(m.shell.actionsWidth()); gap != 0 {
-		t.Fatalf("actionGap = %d, want 0 at 100x30", gap)
-	}
+	gap := m.shell.actionGap(m.shell.actionsWidth())
 	ox, oy := m.shell.actionBarOrigin()
 	bs := DefaultButtonStyles()
 	x := ox
@@ -57,7 +55,36 @@ func TestActionAtPositionFollowsNarrowGap(t *testing.T) {
 		if idx, ok := m.shell.ActionAtPosition(x, oy); !ok || idx != i {
 			t.Fatalf("ActionAtPosition(%d) = %d, %v, want %d", x, idx, ok, i)
 		}
-		x += actionButtonWidth(bs, a)
+		x += actionButtonWidth(bs, a) + gap
+	}
+}
+
+// TestEventDialogActionRowFitsAtEverySize guards issue #881. A short window
+// gives a narrow golden box, so the box widens until the action row fits.
+func TestEventDialogActionRowFitsAtEverySize(t *testing.T) {
+	day := time.Date(2026, 10, 24, 0, 0, 0, 0, time.Local)
+	evs := []event.Event{{ID: 1, Title: "Team Standup", CalendarID: 1,
+		StartTime: day.Add(9 * time.Hour), EndTime: day.Add(10 * time.Hour)}}
+	for h := minWindowHeight; h <= 30; h++ {
+		for w := minWindowWidth; w <= 160; w += 4 {
+			m := NewEventDialogModel(day, evs, map[int64]CalendarInfo{1: {Name: "Personal"}},
+				newThemedHelp(ActiveTheme())).SetSize(w, h)
+			boxW, boxH := m.BoxSize()
+			view := m.shell.View()
+			lines := strings.Split(view, "\n")
+			if len(lines) != boxH || boxW > w {
+				t.Fatalf("%dx%d: box %dx%d, %d lines", w, h, boxW, boxH, len(lines))
+			}
+			for _, l := range lines {
+				if lipgloss.Width(l) != boxW {
+					t.Fatalf("%dx%d: line width %d, want %d: %q", w, h, lipgloss.Width(l), boxW, l)
+				}
+			}
+			plain := ansi.Strip(view)
+			if !strings.Contains(plain, "Delete") || strings.Contains(plain, "Duplicate …") {
+				t.Fatalf("%dx%d: the action row is cut:\n%s", w, h, plain)
+			}
+		}
 	}
 }
 
@@ -169,12 +196,38 @@ func TestSmallWindowIgnoresInput(t *testing.T) {
 	if _, cmd = m.Update(tea.PasteMsg{Content: "text"}); cmd != nil {
 		t.Fatal("a paste in a small window produced a command")
 	}
-	_, cmd = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	// ctrl+c keeps the quit confirm, and the notice shows it.
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	updated, _ = m.Update(ctrlC)
+	q := updated.(Model)
+	if !q.confirmOpen || q.pending.kind != pendingActionQuit {
+		t.Fatal("ctrl+c in a small window did not open the quit confirm")
+	}
+	if !strings.Contains(q.View().Content, "Quit chroncal?") {
+		t.Fatalf("the notice does not show the quit confirm:\n%s", q.View().Content)
+	}
+	updated, cmd = q.Update(keyPressMsg("esc"))
+	if cmd != nil {
+		updated, _ = updated.(Model).Update(cmd())
+	}
+	if updated.(Model).confirmOpen {
+		t.Fatal("esc did not close the quit confirm in a small window")
+	}
+	_, cmd = q.Update(ctrlC)
 	if cmd == nil {
-		t.Fatal("ctrl+c in a small window produced no command")
+		t.Fatal("a second ctrl+c produced no command")
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Fatal("ctrl+c in a small window did not quit")
+		t.Fatal("a second ctrl+c in a small window did not quit")
+	}
+
+	// esc stops a running operation.
+	cancelled := false
+	m.syncing = true
+	m.opCancel = func() { cancelled = true }
+	updated, _ = m.Update(keyPressMsg("esc"))
+	if !cancelled || !updated.(Model).opCancelled {
+		t.Fatal("esc in a small window did not stop the running operation")
 	}
 }
 

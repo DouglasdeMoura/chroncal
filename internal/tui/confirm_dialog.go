@@ -118,6 +118,6 @@ func (m ConfirmDialogModel) View() string {
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	}
-	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+	m.dialog.SetHelpFooter(m.help, helpKeys)
 	return m.dialog.Box(m.form.View())
 }

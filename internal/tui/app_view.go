@@ -34,7 +34,10 @@ func (m Model) smallWindowNotice() string {
 		"Window too small",
 		fmt.Sprintf("Need %dx%d", minWindowWidth, minWindowHeight),
 		fmt.Sprintf("Now %dx%d", m.width, m.height),
-		"ctrl+c quits",
+		"ctrl+c: quit",
+	}
+	if m.confirmOpen && m.pending.kind == pendingActionQuit {
+		lines = []string{"Quit chroncal?", "ctrl+c: quit", "esc: cancel"}
 	}
 	lines = lines[:min(len(lines), max(m.height, 1))]
 	for i, l := range lines {

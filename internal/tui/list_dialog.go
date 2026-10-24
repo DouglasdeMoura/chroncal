@@ -55,11 +55,14 @@ type ListDialogModel struct {
 	rows        []string
 	rowDisabled []bool
 
-	detailTitle   string
-	detailLines   []string
-	emptyList     string
-	emptyDetails  []string
-	actions       []ListDialogAction
+	detailTitle  string
+	detailLines  []string
+	emptyList    string
+	emptyDetails []string
+	actions      []ListDialogAction
+	// actionsW is the width of the action row with one join space between
+	// two buttons. SetActions measures it once (see actionRowWidth).
+	actionsW      int
 	shortHelp     []key.Binding
 	keys          ListDialogKeys
 	help          help.Model
@@ -261,6 +264,7 @@ func (m ListDialogModel) SetEmptyList(listMsg string, details []string) ListDial
 // SetActions replaces the action-bar buttons and clamps the focused index.
 func (m ListDialogModel) SetActions(actions []ListDialogAction) ListDialogModel {
 	m.actions = actions
+	m.actionsW = measureActionRow(actions)
 	if m.focusedAction < 0 || m.focusedAction >= len(actions) || actions[m.focusedAction].Disabled {
 		m.focusedAction = m.firstEnabledAction()
 	}
@@ -399,7 +403,31 @@ func (m ListDialogModel) boxSize() (int, int) {
 	if boxW < 50 {
 		boxW = 50
 	}
+	// A short window gives a narrow golden box. Widen it until the detail
+	// pane holds the action row, so no button is cut (issue #881).
+	if need := m.actionRowWidth(); need > 0 {
+		for boxW < m.width-2 && detailColumnWidth(max(boxW-5, 10)) < need {
+			boxW++
+		}
+	}
 	return boxW, boxH
+}
+
+// actionRowWidth returns the width of the action row with one join space
+// between two buttons.
+func (m ListDialogModel) actionRowWidth() int { return m.actionsW }
+
+// measureActionRow renders each button once to measure the action row.
+func measureActionRow(actions []ListDialogAction) int {
+	if len(actions) == 0 {
+		return 0
+	}
+	bs := DefaultButtonStyles()
+	total := len(actions) - 1
+	for _, a := range actions {
+		total += actionButtonWidth(bs, a)
+	}
+	return total
 }
 
 func (m ListDialogModel) isNarrow() bool { return m.width < narrowThreshold }

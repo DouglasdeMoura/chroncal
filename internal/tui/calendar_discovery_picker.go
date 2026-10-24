@@ -95,11 +95,11 @@ func (m AccountRenameDialogModel) Update(msg tea.Msg) (AccountRenameDialogModel,
 }
 
 func (m AccountRenameDialogModel) View() string {
-	m.dialog.SetFooter(m.help.ShortHelpView([]key.Binding{
+	m.dialog.SetHelpFooter(m.help, []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-	}))
+	})
 	return m.dialog.Box(m.form.View())
 }
 

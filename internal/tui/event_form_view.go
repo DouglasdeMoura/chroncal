@@ -228,7 +228,7 @@ func (m EventFormModel) View() string {
 		m.keys.Save,
 		m.keys.Close,
 	}
-	m.dialog.SetFooter(m.help.ShortHelpView(helpKeys))
+	m.dialog.SetHelpFooter(m.help, helpKeys)
 	m.syncBodyViewport(false)
 	cw := m.dialog.ContentWidth()
 	body := strings.Join([]string{
