@@ -281,10 +281,9 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 	// span must come from the dates); DUE-only occurrences are already anchored
 	// at DUE; otherwise fall back to START+DURATION.
 	//
-	// dateOnly tells whether base comes from a date-only value. A date-only
-	// DUE or DTSTART is a floating date (RFC 5545 section 3.3.4), so the
-	// day starts at local midnight. A relative trigger counts from there,
-	// as other clients do (issue #875).
+	// dateOnly tells whether base is a date-only value (see
+	// relativeTrigger). A DTSTART+DUE end mixes the two values, so it is
+	// date-only only when both values are date-only.
 	dateOnly := inst.AnchorIsDateOnly()
 	if alarm.Related == "END" {
 		start := inst.ParseStartDate()
@@ -292,7 +291,7 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 		switch {
 		case !start.IsZero() && !due.IsZero():
 			base = inst.InstanceTime.Add(due.Sub(start))
-			dateOnly = timeutil.IsDateOnly(inst.DueDate)
+			dateOnly = timeutil.IsDateOnly(inst.StartDate) && timeutil.IsDateOnly(inst.DueDate)
 		case !due.IsZero():
 			base = inst.InstanceTime
 		case inst.Duration != "":
@@ -321,16 +320,7 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 
 	// Duration trigger (relative)
 	if duration.Validate(alarm.TriggerValue) == nil {
-		if dateOnly {
-			return duration.Add(timeutil.FloatingLocal(base), alarm.TriggerValue), nil
-		}
-		anchor := base
-		if inst.Timezone != "" {
-			if loc, err := time.LoadLocation(inst.Timezone); err == nil {
-				anchor = anchor.In(loc)
-			}
-		}
-		return duration.Add(anchor, alarm.TriggerValue), nil
+		return relativeTrigger(base, alarm.TriggerValue, dateOnly, inst.Timezone), nil
 	}
 
 	// Absolute triggers

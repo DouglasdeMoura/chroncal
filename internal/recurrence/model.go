@@ -29,10 +29,7 @@ type ExpandedEvent struct {
 // all-day instance starts at local midnight of its date
 // (timeutil.FloatingLocal).
 func (e ExpandedEvent) LocalInstanceTime() time.Time {
-	if e.AllDay {
-		return timeutil.FloatingLocal(e.InstanceTime)
-	}
-	return e.InstanceTime.Local()
+	return timeutil.Moment(e.InstanceTime, e.AllDay)
 }
 
 // ExpandedTodo wraps a todo with its occurrence time for alarm checks

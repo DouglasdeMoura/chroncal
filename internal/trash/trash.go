@@ -17,6 +17,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/journal"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -64,6 +65,11 @@ type Entry struct {
 	StartTime             time.Time
 	EndTime               time.Time
 	AllDay                bool
+
+	// DateOnly reports that the todo DUE or the journal DTSTART is a
+	// date-only value. DueDate and StartTime of a todo or a journal are
+	// local moments: a date-only value is at local midnight of its date.
+	DateOnly bool
 
 	// Todo-specific (KindTodo).
 	DueDate         time.Time
@@ -465,14 +471,6 @@ func fromTodo(td todo.Todo) Entry {
 		// deleted_at in SoftDeleteTodo, so it's a close stand-in.
 		deletedAt = td.UpdatedAt
 	}
-	dueDate := time.Time{}
-	if td.DueDate != "" {
-		if t, err := time.Parse(time.RFC3339, td.DueDate); err == nil {
-			dueDate = t
-		} else if t, err := time.Parse("2006-01-02", td.DueDate); err == nil {
-			dueDate = t
-		}
-	}
 	return Entry{
 		Kind:            KindTodo,
 		ID:              td.ID,
@@ -480,7 +478,8 @@ func fromTodo(td todo.Todo) Entry {
 		UID:             td.UID,
 		Title:           td.Summary,
 		DeletedAt:       deletedAt,
-		DueDate:         dueDate,
+		DueDate:         td.LocalDue(),
+		DateOnly:        timeutil.IsDateOnly(td.DueDate),
 		PercentComplete: td.PercentComplete,
 		Location:        td.Location,
 		Description:     td.Description,
@@ -496,14 +495,6 @@ func fromJournal(j journal.Journal) Entry {
 	} else if !j.UpdatedAt.IsZero() {
 		deletedAt = j.UpdatedAt
 	}
-	startDate := time.Time{}
-	if j.StartDate != "" {
-		if t, err := time.Parse(time.RFC3339, j.StartDate); err == nil {
-			startDate = t
-		} else if t, err := time.Parse("2006-01-02", j.StartDate); err == nil {
-			startDate = t
-		}
-	}
 	return Entry{
 		Kind:        KindJournal,
 		ID:          j.ID,
@@ -511,7 +502,8 @@ func fromJournal(j journal.Journal) Entry {
 		UID:         j.UID,
 		Title:       j.Summary,
 		DeletedAt:   deletedAt,
-		StartTime:   startDate,
+		StartTime:   j.LocalStart(),
+		DateOnly:    j.IsDateOnly(),
 		Description: j.Description,
 		Status:      j.Status,
 		Categories:  j.Categories,

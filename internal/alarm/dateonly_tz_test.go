@@ -7,6 +7,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/testutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
@@ -167,6 +168,27 @@ func TestTodoAlarm_InstanceKeepsDueForm(t *testing.T) {
 		}
 		if due[0].Todo.DueDate != "2026-10-26T17:00:00Z" || due[0].Todo.StartDate != "2026-10-24" {
 			t.Fatalf("due todo = DUE %q START %q, want the stored values", due[0].Todo.DueDate, due[0].Todo.StartDate)
+		}
+	})
+}
+
+// TestTodoTrigger_MixedEndEveryZone checks a RELATED=END trigger of a todo
+// with a timed DTSTART and a date-only DUE. The end mixes the two forms,
+// so the trigger keeps the instant reading. It does not move by the zone
+// offset.
+func TestTodoTrigger_MixedEndEveryZone(t *testing.T) {
+	testutil.ForEachLocalZone(t, func(t *testing.T) {
+		start := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+		inst := recurrence.ExpandedTodo{
+			Todo:         todo.Todo{StartDate: start.Format(time.RFC3339), DueDate: "2026-10-29"},
+			InstanceTime: start,
+		}
+		got, err := computeTodoTriggerTimeForInstance(inst, model.Alarm{TriggerValue: "-PT1H", Related: "END"})
+		if err != nil {
+			t.Fatalf("computeTodoTriggerTimeForInstance: %v", err)
+		}
+		if want := time.Date(2026, 10, 28, 23, 0, 0, 0, time.UTC); !got.Equal(want) {
+			t.Fatalf("trigger = %s, want %s", got, want)
 		}
 	})
 }

@@ -82,7 +82,11 @@ func LocalDay(t time.Time) time.Time {
 // floating time. t holds the wall clock in UTC, as the database stores it.
 // The result has the same wall clock in the local location. For example,
 // 2026-10-28T00:00:00Z gives local midnight at the start of October 28.
+// The zero time stays zero, so an IsZero test of the caller still works.
 func FloatingLocal(t time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
 	u := t.UTC()
 	return time.Date(u.Year(), u.Month(), u.Day(), u.Hour(), u.Minute(), u.Second(), u.Nanosecond(), time.Local)
 }
@@ -97,6 +101,16 @@ func FloatingBound(t time.Time) time.Time {
 	}
 	l := t.Local()
 	return time.Date(l.Year(), l.Month(), l.Day(), l.Hour(), l.Minute(), l.Second(), l.Nanosecond(), time.UTC)
+}
+
+// Moment returns t as a local moment. A date-only value gives local
+// midnight of its date (FloatingLocal). Any other value gives t.Local().
+// Every local accessor of a model calls it, so the rule has one form.
+func Moment(t time.Time, dateOnly bool) time.Time {
+	if dateOnly {
+		return FloatingLocal(t)
+	}
+	return t.Local()
 }
 
 // WindowFor returns the window that applies to a value. A moment uses
@@ -131,10 +145,7 @@ func LocalMoment(s string) time.Time {
 	if t.IsZero() {
 		return t
 	}
-	if IsDateOnly(s) {
-		return FloatingLocal(t)
-	}
-	return t.Local()
+	return Moment(t, IsDateOnly(s))
 }
 
 // RangeBound formats a range bound as an RFC 3339 string in UTC, or "" for

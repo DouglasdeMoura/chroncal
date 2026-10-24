@@ -528,7 +528,11 @@ func trashDetailLines(e trash.Entry, cal CalendarInfo, w, labelWidth int, rw url
 		}
 	case trash.KindTodo:
 		if !e.DueDate.IsZero() {
-			lines = append(lines, detailLine(faint, "Due", e.DueDate.Local().Format("Mon, Jan 2 15:04"), labelWidth, w))
+			layout := "Mon, Jan 2 15:04"
+			if e.DateOnly {
+				layout = "Mon, Jan 2"
+			}
+			lines = append(lines, detailLine(faint, "Due", e.DueDate.Local().Format(layout), labelWidth, w))
 		}
 		if e.PercentComplete > 0 {
 			lines = append(lines, detailLine(faint, "Progress", fmt.Sprintf("%d%%", e.PercentComplete), labelWidth, w))

@@ -154,7 +154,7 @@ func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage
 			return jj
 		},
 		uid:            func(r storage.Journal) string { return seriesKey(r.CalendarID, r.Uid) },
-		dateOnly:       func(r storage.Journal) bool { return journalFromRow(r).IsDateOnly() },
+		dateOnly:       func(r storage.Journal) bool { return timeutil.IsDateOnly(storage.NullableToString(r.StartDate)) },
 		status:         func(r storage.Journal) string { return r.Status },
 		recurrenceID:   func(r storage.Journal) string { return r.RecurrenceID },
 		overridesByUID: s.journalOverridesByUID,

@@ -57,20 +57,13 @@ func (e Event) Span() time.Duration {
 // event starts at local midnight of its date (timeutil.FloatingLocal), in
 // every time zone.
 func (e Event) LocalStart() time.Time {
-	return localMoment(e.StartTime, e.AllDay)
+	return timeutil.Moment(e.StartTime, e.AllDay)
 }
 
 // LocalEnd returns the end of the event as a local moment. It follows the
 // rule of LocalStart.
 func (e Event) LocalEnd() time.Time {
-	return localMoment(e.EndTime, e.AllDay)
-}
-
-func localMoment(t time.Time, allDay bool) time.Time {
-	if allDay {
-		return timeutil.FloatingLocal(t)
-	}
-	return t.Local()
+	return timeutil.Moment(e.EndTime, e.AllDay)
 }
 
 // Overlaps reports whether the event overlaps the half-open window

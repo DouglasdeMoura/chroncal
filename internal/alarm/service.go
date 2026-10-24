@@ -470,23 +470,30 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 		if alarm.Related == "END" {
 			anchor = expEvt.InstanceTime.Add(expEvt.Span())
 		}
-		// An all-day event starts at local midnight of its date (RFC 5545
-		// section 3.3.4: a DATE value is floating). The alarm then fires
-		// at the same wall clock in every time zone (issue #875).
-		if expEvt.AllDay {
-			return duration.Add(timeutil.FloatingLocal(anchor), trigger), nil
-		}
-		// Convert to event's named timezone so that day-level arithmetic
-		// (P1D, P1W) handles DST transitions correctly.
-		if expEvt.Timezone != "" {
-			if loc, err := time.LoadLocation(expEvt.Timezone); err == nil {
-				anchor = anchor.In(loc)
-			}
-		}
-		return duration.Add(anchor, trigger), nil
+		return relativeTrigger(anchor, trigger, expEvt.AllDay, expEvt.Timezone), nil
 	}
 
 	return model.ParseAbsoluteTime(trigger, expEvt.Timezone)
+}
+
+// relativeTrigger adds a relative trigger to its anchor. The event and the
+// todo alarm paths share it.
+//
+// A date-only anchor is a floating date (RFC 5545 section 3.3.4). Its day
+// starts at local midnight, so the trigger counts from there in every time
+// zone, as other clients do (issue #875). Any other anchor moves to its
+// named timezone tz first, so that day-level arithmetic (P1D, P1W) handles
+// DST transitions correctly.
+func relativeTrigger(anchor time.Time, trigger string, dateOnly bool, tz string) time.Time {
+	if dateOnly {
+		return duration.Add(timeutil.FloatingLocal(anchor), trigger)
+	}
+	if tz != "" {
+		if loc, err := time.LoadLocation(tz); err == nil {
+			anchor = anchor.In(loc)
+		}
+	}
+	return duration.Add(anchor, trigger)
 }
 
 // resolveStateEvent returns the event whose start/end times correspond to the
