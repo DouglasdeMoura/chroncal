@@ -523,3 +523,31 @@ func TestTrashActionDone_FailedPurgeNamesThePurge(t *testing.T) {
 		t.Errorf("toast = %q, want the purge in the failed toast", got)
 	}
 }
+
+// TestTrashModel_ActionKeysKeepTheListFocus checks that the restore and the
+// purge keys keep the focus on the list. A refused restore or a canceled
+// purge sends no message back to the list, so the list keys must still
+// work after the action key (issue #880).
+func TestTrashModel_ActionKeysKeepTheListFocus(t *testing.T) {
+	for _, k := range []tea.KeyPressMsg{
+		{Code: 'r', Text: "r"},
+		{Code: 'x', Text: "x"},
+	} {
+		m := newTrashForTest().SetEntries(trashFixture(), nil)
+		m, cmd := m.Update(k)
+		if cmd == nil {
+			t.Fatalf("%q: no command", k.Text)
+		}
+		if got := m.shell.FocusZone(); got != ListZoneList {
+			t.Errorf("%q: focus zone = %v, want the list", k.Text, got)
+		}
+		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		if e, _ := m.selectedEntry(); e.ID != 7 {
+			t.Errorf("%q: Down after the action key selected %+v, want the entry with ID 7", k.Text, e)
+		}
+		m, _ = m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+		if len(m.markedEntries()) != 1 || !m.marked[entryKey(trashFixture()[1])] {
+			t.Errorf("%q: Space after the action key marked %v, want the entry with ID 7", k.Text, m.marked)
+		}
+	}
+}
