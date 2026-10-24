@@ -120,6 +120,18 @@ func (m ListDialogModel) ActivateFocused() tea.Cmd {
 	return nil
 }
 
+// Activate fires the focused button and puts the focus on the list. An
+// action can end with a prompt that the user cancels, or with a refusal.
+// The list keys must then work, so no button keeps the focus after it
+// fires (issue #909). With no button to fire, the focus does not change.
+func (m ListDialogModel) Activate() (ListDialogModel, tea.Cmd) {
+	cmd := m.ActivateFocused()
+	if cmd != nil {
+		m.focusZone = ListZoneList
+	}
+	return m, cmd
+}
+
 // RowAtPosition hit-tests a screen-space (x, y) against the rendered list.
 // Returns the row index when the click lands on a row, false otherwise.
 func (m ListDialogModel) RowAtPosition(x, y int) (int, bool) {
@@ -206,12 +218,13 @@ func (m ListDialogModel) FocusList() ListDialogModel {
 	return m
 }
 
-// ClickAction focuses an enabled action and returns its command.
+// ClickAction returns the command of an enabled action. As Activate does,
+// it puts the focus on the list.
 func (m ListDialogModel) ClickAction(idx int) (ListDialogModel, tea.Cmd) {
 	if idx < 0 || idx >= len(m.actions) || m.actions[idx].Disabled {
 		return m, nil
 	}
-	m.focusZone = ListZoneActions
+	m.focusZone = ListZoneList
 	m.focusedAction = idx
 	return m, m.actions[idx].Msg
 }
@@ -324,7 +337,8 @@ func (m ListDialogModel) HandleKey(msg tea.KeyPressMsg, onClose func() tea.Msg) 
 		m.body.GotoBottom()
 		return m, nil, true
 	case key.Matches(msg, m.keys.Enter):
-		return m, m.ActivateFocused(), true
+		m, cmd := m.Activate()
+		return m, cmd, true
 	}
 	return m, nil, false
 }

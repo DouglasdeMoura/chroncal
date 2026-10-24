@@ -205,27 +205,28 @@ func (m EventDialogModel) handleKey(msg tea.KeyPressMsg) (EventDialogModel, tea.
 				return m, rsvp[m.focusedRSVP].msg
 			}
 		case zoneAction, zoneTitleAction:
-			return m, m.shell.ActivateFocused()
+			shell, cmd := m.shell.Activate()
+			m.shell = shell
+			return m.refresh(), cmd
 		}
 		return m, nil
 
+	// The Edit, Duplicate, and Delete keys fire their action and put the
+	// focus on the list, as a button of the shell does (Activate).
 	case key.Matches(msg, m.keys.Edit):
 		if _, ok := m.selectedEvent(); ok && len(acts) > 0 {
-			m.shell = m.shell.FocusAction(0)
-			m.rsvpFocused = false
-			return m, acts[0].Msg
+			m = m.focusStop(tabStop{kind: zoneList})
+			return m.refresh(), acts[0].Msg
 		}
 	case key.Matches(msg, m.keys.Duplicate):
 		if _, ok := m.selectedEvent(); ok && len(acts) > 1 {
-			m.shell = m.shell.FocusAction(1)
-			m.rsvpFocused = false
-			return m, acts[1].Msg
+			m = m.focusStop(tabStop{kind: zoneList})
+			return m.refresh(), acts[1].Msg
 		}
 	case key.Matches(msg, m.keys.Delete):
 		if _, ok := m.selectedEvent(); ok && len(acts) > 2 {
-			m.shell = m.shell.FocusAction(2)
-			m.rsvpFocused = false
-			return m, acts[2].Msg
+			m = m.focusStop(tabStop{kind: zoneList})
+			return m.refresh(), acts[2].Msg
 		}
 	case key.Matches(msg, m.keys.Create):
 		day := m.day
