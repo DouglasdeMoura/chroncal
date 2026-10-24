@@ -672,6 +672,9 @@ type trashActionDoneMsg struct {
 	// done and total count the entries of a bulk restore. A failed restore
 	// with done > 0 is a partial restore, and the toast says so.
 	done, total int
+	// entries are the entries of the restore. The toast of a refused
+	// restore reads them to show a cutoff as the detail pane shows it.
+	entries []trash.Entry
 }
 
 func (m Model) Init() tea.Cmd {

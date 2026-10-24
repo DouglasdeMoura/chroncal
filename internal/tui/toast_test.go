@@ -91,6 +91,18 @@ func TestToast_FailedState(t *testing.T) {
 	}
 }
 
+func TestToast_ActionFailedNamesTheAction(t *testing.T) {
+	m := NewToastModel(NewTheme(true))
+	m.ActionFailed("Restore", "calendar deleted")
+	if !strings.Contains(m.View(), "Restore failed: calendar deleted") {
+		t.Errorf("View = %q, want the restore in the failed toast", m.View())
+	}
+	m.Failed("calendar deleted")
+	if !strings.Contains(m.View(), "Undo failed: calendar deleted") {
+		t.Errorf("View = %q, want the undo in the failed toast", m.View())
+	}
+}
+
 func TestToast_Clear(t *testing.T) {
 	m := NewToastModel(NewTheme(true))
 	m.Deleted("X", false)

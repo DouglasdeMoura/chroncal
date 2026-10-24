@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"image/color"
 	"time"
@@ -10,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 
+	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/textsafe"
 	"github.com/douglasdemoura/chroncal/internal/trash"
 )
@@ -461,6 +463,25 @@ func trashRestoreOrderNote(e trash.Entry) string {
 		return "restore the newer truncation at the same cutoff first"
 	}
 	return "restore the truncation with cutoff " + trashOccurrenceTime(e.NewerTruncationCutoff, e.AllDay) + " first"
+}
+
+// trashFailureReason renders the error of a trash action for the toast. A
+// refusal for a newer truncation names its cutoff as the detail pane does:
+// in local time, or as a date for an all-day series. The entry of the
+// restore that the newer truncation blocks gives the all-day flag.
+func trashFailureReason(err error, entries []trash.Entry) string {
+	var newer *event.NewerTruncationError
+	if !errors.As(err, &newer) || newer.Cutoff.IsZero() {
+		return err.Error()
+	}
+	for _, e := range entries {
+		if e.NewerTruncationID != 0 && e.NewerTruncationCutoff.Equal(newer.Cutoff) {
+			if note := trashRestoreOrderNote(e); note != "" {
+				return note
+			}
+		}
+	}
+	return "restore the truncation with cutoff " + trashOccurrenceTime(newer.Cutoff, false) + " first"
 }
 
 // trashOccurrenceTime renders the time of an occurrence of the series of a
