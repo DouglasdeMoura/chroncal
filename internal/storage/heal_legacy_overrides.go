@@ -17,8 +17,8 @@ import (
 // their delete-log rows (MoveEventUIDRows). It moves the rows only when all
 // of these conditions are true:
 //   - The source calendar and the owner calendar are quiet (localQuiet):
-//     no account link, no read-only access, and no sync row, tombstone, or
-//     open sync conflict of the UID. The heal then makes no server write,
+//     no account link, an access that lets a user move write events, and
+//     no sync row, tombstone, or open sync conflict of the UID. The heal then makes no server write,
 //     and no pull can prune the moved rows. An older version did not always
 //     put the rows into the server object of the owner.
 //   - The owner master is live. A series in the trash keeps its rows as
@@ -104,7 +104,7 @@ func legacyMoveTarget(ctx context.Context, q *Queries, calendarID int64, uid str
 		return 0, false, nil
 	}
 	for _, id := range []int64{calendarID, owner.CalendarID} {
-		if quiet, err := localQuiet(ctx, q, id, uid); err != nil || !quiet {
+		if reason, err := localQuiet(ctx, q, id, uid); err != nil || reason != "" {
 			return 0, false, err
 		}
 	}
@@ -117,10 +117,11 @@ func legacyMoveTarget(ctx context.Context, q *Queries, calendarID int64, uid str
 // legacyMoveBlock is the rule that refuses the move of a set of legacy
 // overrides (see LegacyMoveRefusal). The zero value refuses nothing.
 type legacyMoveBlock struct {
-	// kind is "" (no refusal), "collision", "sync_conflict", or
-	// "move_conflict".
+	// kind is "" (no refusal), "read_only", "no_events", "collision",
+	// "sync_conflict", or "move_conflict".
 	kind string
-	// calendarID is the calendar of a sync_conflict.
+	// calendarID is the calendar of a read_only, no_events, or
+	// sync_conflict rule.
 	calendarID int64
 	// live and trashed are the counts of a collision.
 	live, trashed int64
@@ -128,14 +129,25 @@ type legacyMoveBlock struct {
 
 // checkLegacyMove finds the first rule of a user move that refuses the move
 // of the legacy overrides of uid from calendarID to ownerCalendarID. The
-// order is the order of uidmove.Rows.Update after the access check:
-//  1. The owner calendar holds no row, live or in the trash, with the UID
+// order is the order of uidmove.Rows.Update:
+//  1. Each calendar lets a user write events (calendaraccess.EnsureWritable,
+//     with the rules CalendarReadOnly and CalendarSupportsComponent).
+//  2. The owner calendar holds no row, live or in the trash, with the UID
 //     and a recurrence ID of a moved row (uidmove.Rows.CheckTarget).
-//  2. Each calendar holds no open sync conflict of the UID
-//     (RecordResourceMove).
-//  3. The calendars hold no open move conflict of the UID
-//     (RecordResourceMove).
+//  3. The guards of RecordResourceMove (checkMoveGuards).
 func checkLegacyMove(ctx context.Context, q *Queries, calendarID, ownerCalendarID int64, uid string) (legacyMoveBlock, error) {
+	for _, id := range []int64{calendarID, ownerCalendarID} {
+		cal, err := q.GetCalendar(ctx, id)
+		if err != nil {
+			return legacyMoveBlock{}, fmt.Errorf("get calendar %d: %w", id, err)
+		}
+		if CalendarReadOnly(cal.RemoteAccess) {
+			return legacyMoveBlock{kind: "read_only", calendarID: id}, nil
+		}
+		if !CalendarSupportsComponent(cal.RemoteComponents, "VEVENT") {
+			return legacyMoveBlock{kind: "no_events", calendarID: id}, nil
+		}
+	}
 	collisions, err := q.CountEventUIDMoveCollisions(ctx, CountEventUIDMoveCollisionsParams{
 		ToCalendarID: ownerCalendarID, Uid: uid, FromCalendarID: calendarID,
 	})
@@ -145,35 +157,46 @@ func checkLegacyMove(ctx context.Context, q *Queries, calendarID, ownerCalendarI
 	if collisions.Live > 0 || collisions.Trashed > 0 {
 		return legacyMoveBlock{kind: "collision", live: collisions.Live, trashed: collisions.Trashed}, nil
 	}
-	for _, id := range []int64{calendarID, ownerCalendarID} {
-		open, err := q.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: id, Uid: uid})
-		if err != nil {
-			return legacyMoveBlock{}, fmt.Errorf("count open conflicts: %w", err)
-		}
-		if open > 0 {
-			return legacyMoveBlock{kind: "sync_conflict", calendarID: id}, nil
-		}
-	}
-	moves, err := q.CountOpenMoveConflictsInMoveScope(ctx, CountOpenMoveConflictsInMoveScopeParams{
-		Uid: uid, FromCalendarID: calendarID, ToCalendarID: ownerCalendarID,
-	})
-	if err != nil {
-		return legacyMoveBlock{}, fmt.Errorf("count open move conflicts: %w", err)
-	}
-	if moves > 0 {
-		return legacyMoveBlock{kind: "move_conflict"}, nil
-	}
-	return legacyMoveBlock{}, nil
+	kind, conflictCalendarID, err := checkMoveGuards(ctx, q, calendarID, ownerCalendarID, uid, true)
+	return legacyMoveBlock{kind: kind, calendarID: conflictCalendarID}, err
 }
 
-// LegacyMoveRefusal names the rule that refuses the move of the legacy
+// checkMoveGuards holds the guards of a move of uid from fromCalendarID to
+// toCalendarID that RecordResourceMove checks. It returns the kind of the
+// guard that refuses, or "":
+//   - "sync_conflict": a calendar of the move holds an open sync conflict
+//     of the UID. calendarID names that calendar.
+//   - "move_conflict": an open move conflict of the UID in the scope of the
+//     move waits for the user. Only a new move (newMove) checks it. The move
+//     back of a cancel stamps its own row first.
+func checkMoveGuards(ctx context.Context, q *Queries, fromCalendarID, toCalendarID int64, uid string, newMove bool) (kind string, calendarID int64, err error) {
+	for _, id := range []int64{fromCalendarID, toCalendarID} {
+		open, err := q.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: id, Uid: uid})
+		if err != nil {
+			return "", 0, fmt.Errorf("check open conflict: %w", err)
+		}
+		if open > 0 {
+			return "sync_conflict", id, nil
+		}
+	}
+	if !newMove {
+		return "", 0, nil
+	}
+	open, err := q.CountOpenMoveConflictsInMoveScope(ctx, CountOpenMoveConflictsInMoveScopeParams{
+		Uid: uid, FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID,
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("check open move conflicts: %w", err)
+	}
+	if open > 0 {
+		return "move_conflict", 0, nil
+	}
+	return "", 0, nil
+}
+
+// LegacyMoveRefusal names the rule that refuses the user move of the legacy
 // overrides of uid from calendarID to ownerCalendarID. It returns "" when
 // no rule refuses the move. checkLegacyMove holds the rules and their order.
-//
-// The access rule (calendaraccess.EnsureWritable) is not here, because
-// calendaraccess imports storage. The startup heal checks the read-only
-// access in localQuiet. The sync doctor checks the access first, as
-// uidmove.Rows.Update does.
 func LegacyMoveRefusal(ctx context.Context, q *Queries, calendarID, ownerCalendarID int64, uid string) (string, error) {
 	block, err := checkLegacyMove(ctx, q, calendarID, ownerCalendarID, uid)
 	if err != nil {
@@ -181,6 +204,10 @@ func LegacyMoveRefusal(ctx context.Context, q *Queries, calendarID, ownerCalenda
 	}
 	owner := CalendarLabel(ctx, q, ownerCalendarID)
 	switch {
+	case block.kind == "read_only":
+		return fmt.Sprintf("calendar %q is read-only", CalendarLabel(ctx, q, block.calendarID)), nil
+	case block.kind == "no_events":
+		return fmt.Sprintf("calendar %q does not support events", CalendarLabel(ctx, q, block.calendarID)), nil
 	case block.kind == "collision" && block.live > 0 && block.trashed > 0:
 		return fmt.Sprintf("calendar %q holds a live row and a row in the trash at the same occurrence; delete the live row, and purge or restore the row in the trash first", owner), nil
 	case block.kind == "collision" && block.live > 0:
@@ -198,58 +225,55 @@ func LegacyMoveRefusal(ctx context.Context, q *Queries, calendarID, ownerCalenda
 
 // LegacyKeptReason names the reason that the startup heal keeps the legacy
 // overrides of uid in calendarID, when no rule of a user move refuses their
-// move. The heal moves no rows of a calendar with an account link, or with
-// a sync row or a tombstone of the UID (localQuiet).
+// move. localQuiet gives the reason. When both calendars are quiet, the
+// heal of the next start moves the rows.
 func LegacyKeptReason(ctx context.Context, q *Queries, calendarID, ownerCalendarID int64, uid string) (string, error) {
 	for _, id := range []int64{calendarID, ownerCalendarID} {
-		cal, err := q.GetCalendar(ctx, id)
-		if err != nil {
-			return "", fmt.Errorf("get calendar %d: %w", id, err)
-		}
-		if CalendarLinked(cal) {
-			return fmt.Sprintf("calendar %q has an account link, so the startup heal does not move the rows", cal.Name), nil
-		}
-		_, err = q.GetSyncResource(ctx, GetSyncResourceParams{CalendarID: id, Uid: uid})
-		found, err := Found(err)
-		if err != nil {
-			return "", fmt.Errorf("get sync resource: %w", err)
-		}
-		if !found {
-			_, err = q.GetTombstoneByCalendarAndUID(ctx, GetTombstoneByCalendarAndUIDParams{CalendarID: id, Uid: uid})
-			if found, err = Found(err); err != nil {
-				return "", fmt.Errorf("get tombstone: %w", err)
-			}
-		}
-		if found {
-			return fmt.Sprintf("calendar %q holds sync state of the UID, so the startup heal does not move the rows", cal.Name), nil
+		reason, err := localQuiet(ctx, q, id, uid)
+		if err != nil || reason != "" {
+			return reason, err
 		}
 	}
-	return "the startup heal did not move the rows", nil
+	return "the startup heal moves the rows at the next start", nil
 }
 
-// localQuiet reports whether calendarID is a local calendar with no sync
-// state of uid: no account link, no read-only access (a user edit there
-// refuses), and no sync row, tombstone, or open sync conflict of uid. An
-// unlink can leave such state.
-func localQuiet(ctx context.Context, q *Queries, calendarID int64, uid string) (bool, error) {
+// localQuiet returns "" when calendarID is a local calendar with no sync
+// state of uid. Else it names the cause, for the sync doctor. The checks:
+//   - The calendar has no account link.
+//   - A user move can write events there: no read-only access, and a
+//     VEVENT component (see calendaraccess.EnsureWritable).
+//   - The calendar holds no sync row, tombstone, or open sync conflict of
+//     uid. An unlink can leave such state.
+func localQuiet(ctx context.Context, q *Queries, calendarID int64, uid string) (string, error) {
 	cal, err := q.GetCalendar(ctx, calendarID)
 	if err != nil {
-		return false, fmt.Errorf("get calendar %d: %w", calendarID, err)
+		return "", fmt.Errorf("get calendar %d: %w", calendarID, err)
 	}
-	if CalendarLinked(cal) || CalendarReadOnly(cal.RemoteAccess) {
-		return false, nil
+	keeps := func(cause string) string {
+		return fmt.Sprintf("calendar %q %s, so the startup heal does not move the rows", cal.Name, cause)
+	}
+	switch {
+	case CalendarLinked(cal):
+		return keeps("has an account link"), nil
+	case CalendarReadOnly(cal.RemoteAccess):
+		return keeps("is read-only"), nil
+	case !CalendarSupportsComponent(cal.RemoteComponents, "VEVENT"):
+		return keeps("does not support events"), nil
 	}
 	_, err = q.GetSyncResource(ctx, GetSyncResourceParams{CalendarID: calendarID, Uid: uid})
 	if found, err := Found(err); err != nil || found {
-		return false, err
+		return keeps("holds sync state of the UID"), err
 	}
 	_, err = q.GetTombstoneByCalendarAndUID(ctx, GetTombstoneByCalendarAndUIDParams{CalendarID: calendarID, Uid: uid})
 	if found, err := Found(err); err != nil || found {
-		return false, err
+		return keeps("holds sync state of the UID"), err
 	}
 	open, err := q.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: calendarID, Uid: uid})
 	if err != nil {
-		return false, fmt.Errorf("count open conflicts: %w", err)
+		return "", fmt.Errorf("count open conflicts: %w", err)
 	}
-	return open == 0, nil
+	if open > 0 {
+		return keeps("holds an open sync conflict of the UID"), nil
+	}
+	return "", nil
 }

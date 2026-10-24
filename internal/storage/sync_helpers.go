@@ -435,29 +435,14 @@ func recordResourceMove(ctx context.Context, q *Queries, fromCalendarID, toCalen
 	if fromCalendarID == toCalendarID || uid == "" {
 		return nil
 	}
-	for _, calendarID := range []int64{fromCalendarID, toCalendarID} {
-		open, err := q.CountOpenSyncConflicts(ctx, CountOpenSyncConflictsParams{CalendarID: calendarID, Uid: uid})
-		if err != nil {
-			return fmt.Errorf("check open conflict: %w", err)
-		}
-		if open > 0 {
-			return fmt.Errorf("move %s: %w", uid, ErrMoveOpenConflict)
-		}
-	}
 	// An open move conflict of the UID anywhere in the accounts of the move
 	// holds an earlier move that waits for the user. A failed cancel counts as
 	// open. A new move runs over its rows (issue #841). The move back of a
 	// cancel stamps its own row first, so it passes.
-	if movedTo != nil {
-		open, err := q.CountOpenMoveConflictsInMoveScope(ctx, CountOpenMoveConflictsInMoveScopeParams{
-			Uid: uid, FromCalendarID: fromCalendarID, ToCalendarID: toCalendarID,
-		})
-		if err != nil {
-			return fmt.Errorf("check open move conflicts: %w", err)
-		}
-		if open > 0 {
-			return fmt.Errorf("move %s: %w", uid, ErrMoveOpenConflict)
-		}
+	if kind, _, err := checkMoveGuards(ctx, q, fromCalendarID, toCalendarID, uid, movedTo != nil); err != nil {
+		return err
+	} else if kind != "" {
+		return fmt.Errorf("move %s: %w", uid, ErrMoveOpenConflict)
 	}
 	if err := moveRows(ctx); err != nil {
 		return fmt.Errorf("move rows: %w", err)
@@ -858,6 +843,24 @@ func checkNoSyncedCrossCalendarUpsert(ctx context.Context, q *Queries, p importR
 // startup heal of legacy overrides reads it.
 func CalendarReadOnly(remoteAccess string) bool {
 	return strings.EqualFold(strings.TrimSpace(remoteAccess), "read")
+}
+
+// CalendarSupportsComponent reports whether a calendars.remote_components
+// value accepts the iCalendar component (for example "VEVENT"). An empty
+// value or an empty component accepts all: such a row predates the
+// discovery of the components. calendaraccess.EnsureWritable and the
+// startup heal use the rule.
+func CalendarSupportsComponent(remoteComponents, component string) bool {
+	components := strings.TrimSpace(remoteComponents)
+	if components == "" || strings.TrimSpace(component) == "" {
+		return true
+	}
+	for _, advertised := range strings.Split(components, ",") {
+		if strings.EqualFold(strings.TrimSpace(advertised), component) {
+			return true
+		}
+	}
+	return false
 }
 
 // CalendarLinked reports whether cal is linked to an account.

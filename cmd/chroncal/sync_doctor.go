@@ -340,10 +340,11 @@ func runDoctorList(cmd *cobra.Command, svc *syncPkg.Service, cals []storage.Cale
 			safeText(n.calendarName), safeText(n.uid), safeText(n.ownerType), safeText(n.reason))
 	}
 	if len(entries) == 0 {
-		// The lines above list no wedged resource. The summary must not
-		// read as "nothing found" after them.
+		// The lines above list no wedged resource. The summary keeps its
+		// first sentence for scripts, and it must not read as "nothing
+		// found" after the lines.
 		if len(waits)+len(notes) > 0 {
-			fmt.Fprintf(out, "\n%d item(s) above. None of them is wedged, so --push does not apply.\n", len(waits)+len(notes))
+			fmt.Fprintf(out, "\nNo wedged resources. The %d item(s) above are not wedged, so --push does not apply.\n", len(waits)+len(notes))
 			return nil
 		}
 		fmt.Fprintln(out, "No wedged resources.")

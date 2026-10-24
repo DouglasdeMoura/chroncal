@@ -284,7 +284,7 @@ func TestSyncDoctorListsAWaitingResource(t *testing.T) {
 	if !strings.Contains(stdout, `uid wait-cli@example.com (event): waiting on the source delete of the UID in another calendar`) {
 		t.Errorf("output %q misses the waiting line", stdout)
 	}
-	if !strings.Contains(stdout, "1 item(s) above. None of them is wedged, so --push does not apply.") {
+	if !strings.Contains(stdout, "No wedged resources. The 1 item(s) above are not wedged, so --push does not apply.") {
 		t.Errorf("output %q misses the empty wedge report", stdout)
 	}
 
@@ -356,16 +356,11 @@ func TestSyncDoctorListsPushFailuresAndUnownedEdits(t *testing.T) {
 	for _, want := range []string{
 		"uid fail-cli@example.com (event): 2 failed push attempt(s); last error: HTTP 500",
 		"uid unowned-cli@example.com (event): the edit stays local: " + storage.NoSeriesOwnerMsg,
-		"2 item(s) above. None of them is wedged, so --push does not apply.",
+		"No wedged resources. The 2 item(s) above are not wedged, so --push does not apply.",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("output %q misses %q", stdout, want)
 		}
-	}
-	// The summary must not read as "nothing found" after the listed items
-	// (issue #873).
-	if strings.Contains(stdout, "No wedged resources.") {
-		t.Errorf("output %q says that it found nothing after the listed items", stdout)
 	}
 
 	stdout, _, err = runChroncalCommand(t, "sync", "--allow-plaintext", "doctor", "--output", "json")
@@ -496,6 +491,11 @@ func TestSyncDoctorLegacyOverrideNamesTheMoveRefusal(t *testing.T) {
 			name:   "read-only owner",
 			seed:   []string{`UPDATE calendars SET remote_access = 'read' WHERE name = 'Home'`},
 			reason: `calendar "Home" is read-only`,
+		},
+		{
+			name:   "owner calendar with no events",
+			seed:   []string{`UPDATE calendars SET remote_components = 'VTODO' WHERE name = 'Home'`},
+			reason: `calendar "Home" does not support events`,
 		},
 		{
 			name: "open move conflict",
