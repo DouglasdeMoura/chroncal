@@ -157,10 +157,10 @@ func (m *Model) blockReadOnlyCalendarMutation(calendarID int64) (tea.Cmd, bool) 
 		name = "This calendar"
 	}
 	if calendaraccess.IsReadOnly(info.RemoteAccess) {
-		return m.toast.Failed(fmt.Sprintf("%s is read-only", name)), true
+		return m.toast.Failed("Change", fmt.Sprintf("%s is read-only", name)), true
 	}
 	if info.RemoteComponents != "" && !supportsVEVENT(info.RemoteComponents) {
-		return m.toast.Failed(fmt.Sprintf("%s does not support events", name)), true
+		return m.toast.Failed("Change", fmt.Sprintf("%s does not support events", name)), true
 	}
 	return nil, false
 }

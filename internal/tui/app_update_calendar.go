@@ -126,7 +126,7 @@ func (m Model) handleCalendarReordered(msg CalendarReorderedMsg) (tea.Model, tea
 
 func (m Model) handleCalendarOrderSaved(msg calendarOrderSavedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		return m, m.toast.Failed(msg.err.Error())
+		return m, m.toast.Failed("Reorder", msg.err.Error())
 	}
 	// Clear only the positions this save confirmed. A newer reorder may
 	// have updated m.pendingOrder while this write was in flight. That

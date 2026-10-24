@@ -2254,6 +2254,9 @@ func TestRestoreTruncation_NewerAtAnEarlierCutoffComesFirst(t *testing.T) {
 	if !errors.As(err, &newer) || !errors.Is(err, ErrNewerTruncation) || !newer.Cutoff.Equal(second) {
 		t.Fatalf("restore the later cutoff first = %v, want NewerTruncationError at %s", err, second)
 	}
+	if newer.AllDay {
+		t.Errorf("NewerTruncationError.AllDay = true for a timed series")
+	}
 	if !strings.Contains(err.Error(), "restore the newer truncation of this series first (cutoff "+second.Format(time.RFC3339)+")") {
 		t.Errorf("text = %q, want the cutoff of the newer truncation", err.Error())
 	}
@@ -3117,5 +3120,34 @@ func TestListTrash_NamesTheNewerTruncationToRestoreFirst(t *testing.T) {
 	}
 	if e := truncations()[laterLog]; e.NewerTruncationID != 0 {
 		t.Errorf("older entry after the restore of the newer names %d, want none", e.NewerTruncationID)
+	}
+}
+
+// TestRestoreTruncation_NewerTruncationErrorNamesAnAllDaySeries checks that
+// the refusal of an older truncation of an all-day series sets AllDay. A
+// caller then shows the UTC date of the cutoff (issue #872).
+func TestRestoreTruncation_NewerTruncationErrorNamesAnAllDaySeries(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	start := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	master, err := svc.UpsertByUID(ctx, UpsertParams{
+		UID: "all-day-truncations", CalendarID: 1, Title: "Holiday", AllDay: true,
+		StartTime: start, EndTime: start.AddDate(0, 0, 1), RecurrenceRule: "FREQ=DAILY;COUNT=20",
+	})
+	if err != nil {
+		t.Fatalf("create the series: %v", err)
+	}
+	later, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, start.AddDate(0, 0, 9))
+	if err != nil {
+		t.Fatalf("truncate at the later cutoff: %v", err)
+	}
+	earlierCutoff := start.AddDate(0, 0, 3)
+	if _, err := svc.DeleteFromInstanceWithUndo(ctx, 1, master.UID, earlierCutoff); err != nil {
+		t.Fatalf("truncate at the earlier cutoff: %v", err)
+	}
+	err = svc.restoreTruncationByLogID(ctx, truncationLogID(t, svc, master.UID, later.DeleteToken), 0)
+	var newer *NewerTruncationError
+	if !errors.As(err, &newer) || !newer.Cutoff.Equal(earlierCutoff) || !newer.AllDay {
+		t.Fatalf("restore the later cutoff first = %#v, want an all-day NewerTruncationError at %s", err, earlierCutoff)
 	}
 }

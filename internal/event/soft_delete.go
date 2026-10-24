@@ -72,9 +72,11 @@ var ErrMasterAdvanced = errors.New("event: the master changed after the delete")
 var ErrNewerTruncation = errors.New("event: restore the newer truncation of this series first")
 
 // NewerTruncationError is ErrNewerTruncation with the cutoff of the newer
-// truncation.
+// truncation. AllDay reports an all-day series. Its cutoff is a UTC
+// midnight, so a caller shows the UTC date of the cutoff.
 type NewerTruncationError struct {
 	Cutoff time.Time
+	AllDay bool
 }
 
 func (e *NewerTruncationError) Error() string {

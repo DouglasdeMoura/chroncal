@@ -465,23 +465,18 @@ func trashRestoreOrderNote(e trash.Entry) string {
 	return "restore the truncation with cutoff " + trashOccurrenceTime(e.NewerTruncationCutoff, e.AllDay) + " first"
 }
 
-// trashFailureReason renders the error of a trash action for the toast. A
+// refusalReason renders the error of a restore or an undo for the toast. A
 // refusal for a newer truncation names its cutoff as the detail pane does:
-// in local time, or as a date for an all-day series. The entry of the
-// restore that the newer truncation blocks gives the all-day flag.
-func trashFailureReason(err error, entries []trash.Entry) string {
+// in local time, or as the UTC date for an all-day series.
+func refusalReason(err error) string {
 	var newer *event.NewerTruncationError
-	if !errors.As(err, &newer) || newer.Cutoff.IsZero() {
+	if !errors.As(err, &newer) {
 		return err.Error()
 	}
-	for _, e := range entries {
-		if e.NewerTruncationID != 0 && e.NewerTruncationCutoff.Equal(newer.Cutoff) {
-			if note := trashRestoreOrderNote(e); note != "" {
-				return note
-			}
-		}
+	if newer.Cutoff.IsZero() {
+		return "restore the newer truncation of this series first"
 	}
-	return "restore the truncation with cutoff " + trashOccurrenceTime(newer.Cutoff, false) + " first"
+	return "restore the truncation with cutoff " + trashOccurrenceTime(newer.Cutoff, newer.AllDay) + " first"
 }
 
 // trashOccurrenceTime renders the time of an occurrence of the series of a

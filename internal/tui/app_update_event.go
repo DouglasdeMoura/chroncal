@@ -544,39 +544,39 @@ func (m Model) handleEventRestored(msg eventRestoredMsg) (tea.Model, tea.Cmd) {
 			// trash still restores them.
 			reason = event.MsgChangedSince
 		}
-		return m, tea.Batch(m.loadEvents(), m.toast.Failed(reason))
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed("Undo", reason))
 	}
 	if errors.Is(msg.err, event.ErrMasterInTrash) {
 		// The entry needs its series back first. It leaves the stack, so
 		// it never blocks the older entries. The delete stays in the
 		// trash, and the trash restores it after the series.
 		m.undoStack.Remove(msg.meta)
-		return m, tea.Batch(m.loadEvents(), m.toast.Failed("restore the series first, then restore this from the trash"))
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed("Undo", "restore the series first, then restore this from the trash"))
 	}
 	if errors.Is(msg.err, event.ErrMasterPurged) {
 		// A purge took the master. The rows can never come back, so the
 		// entry leaves the stack.
 		m.undoStack.Remove(msg.meta)
-		return m, tea.Batch(m.loadEvents(), m.toast.Failed("the master is purged; nothing to restore"))
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed("Undo", "the master is purged; nothing to restore"))
 	}
 	if errors.Is(msg.err, event.ErrUndoNotYet) {
 		// The undo can succeed after another restore, for example of a
 		// newer truncation of the series. The entry stays on the stack,
 		// and the toast tells the user what to restore first.
-		return m, m.toast.Failed(msg.err.Error())
+		return m, m.toast.Failed("Undo", refusalReason(msg.err))
 	}
 	if errors.Is(msg.err, event.ErrUndoNotPossible) {
 		// Any other permanent refusal: a read-only calendar, an ambiguous
 		// UID, or a master that changed. A retry gives the same refusal,
 		// so the entry leaves the stack and never hides the older entries.
 		m.undoStack.Remove(msg.meta)
-		return m, tea.Batch(m.loadEvents(), m.toast.Failed(msg.err.Error()))
+		return m, tea.Batch(m.loadEvents(), m.toast.Failed("Undo", msg.err.Error()))
 	}
 	if msg.err != nil {
 		// A transient error, for example a busy database or a canceled
 		// context. The entry stays on the stack, so the user can retry.
 		// The toast schedules its own dismiss tick.
-		return m, m.toast.Failed(msg.err.Error())
+		return m, m.toast.Failed("Undo", msg.err.Error())
 	}
 	// Remove the entry that was actually restored, by identity, not the
 	// current top. A delete that lands while the restore is in flight may
@@ -603,7 +603,7 @@ func (m Model) handleTrashRestoreRequested(msg TrashRestoreRequestedMsg) (tea.Mo
 	title := trashBulkTitle(entries)
 	return m, func() tea.Msg {
 		done, err := m.app.Trash.RestoreAll(context.Background(), entries)
-		return trashActionDoneMsg{action: "restored", title: title, err: err, done: done, total: len(entries), entries: entries}
+		return trashActionDoneMsg{action: "restored", title: title, err: err, done: done, total: len(entries)}
 	}
 }
 
@@ -632,15 +632,15 @@ func (m Model) handleTrashActionDone(msg trashActionDoneMsg) (tea.Model, tea.Cmd
 	if msg.err != nil {
 		// A bulk action can fail after it changes some entries. The reload
 		// shows the entries that remain, with notes that are current.
-		reason := trashFailureReason(msg.err, msg.entries)
+		reason := refusalReason(msg.err)
 		if msg.done > 0 {
-			reason = fmt.Sprintf("restored %d of %d; %s", msg.done, msg.total, reason)
+			reason = fmt.Sprintf("%s %d of %d; %s", msg.action, msg.done, msg.total, reason)
 		}
-		action := "Restore"
-		if msg.action == "purged" {
-			action = "Purge"
+		action := "Purge"
+		if msg.action == "restored" {
+			action = "Restore"
 		}
-		return m, tea.Batch(m.loadTrash(), m.loadEvents(), m.toast.ActionFailed(action, reason))
+		return m, tea.Batch(m.loadTrash(), m.loadEvents(), m.toast.Failed(action, reason))
 	}
 	m.trash = m.trash.ClearMarks()
 	cmds := []tea.Cmd{m.loadTrash(), m.loadEvents()}
