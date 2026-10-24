@@ -58,8 +58,9 @@ WHERE id = ? AND event_id = ?;
 SELECT DISTINCT event_id FROM event_alarms
 WHERE event_id IN (sqlc.slice(event_ids));
 
--- name: EventAlarmUIDHeldByAnotherEvent :one
+-- name: ListEventAlarmUIDsHeldByOtherEvents :many
 -- The unique index on uid refuses a UID that an alarm of another event
 -- holds. The alarm write and the import comparison then treat the alarm as
 -- an alarm with no UID (model.WithoutRefusedAlarmUIDs, issue #915).
-SELECT EXISTS(SELECT 1 FROM event_alarms WHERE uid = ? AND event_id <> ?);
+SELECT DISTINCT uid FROM event_alarms
+WHERE event_id <> sqlc.arg(event_id) AND uid IN (sqlc.slice(uids));

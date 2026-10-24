@@ -217,33 +217,33 @@ func (s *Service) ReplaceAlarmsForSync(ctx context.Context, todoID int64, alarms
 	if err != nil {
 		return err
 	}
-	alarms, err = model.WithoutRefusedAlarmUIDs(alarms, AlarmUIDHeldElsewhere(ctx, qtx, todoID))
+	alarms, err = model.WithoutRefusedAlarmUIDs(alarms, AlarmUIDsHeldElsewhere(ctx, qtx, todoID))
 	if err != nil {
 		return err
 	}
 
+	pairs := model.PairAlarms(existing, alarms)
 	matched := make([]bool, len(existing))
-	var unmatched []model.Alarm
-	for _, a := range alarms {
-		if j, found := matchTodoAlarm(existing, matched, a); found {
-			matched[j] = true
-			if err := syncMatchedTodoAlarm(ctx, qtx, a, existing[j]); err != nil {
+	for i, a := range alarms {
+		if p := pairs[i]; p.ByContent {
+			matched[p.Stored] = true
+			if err := syncMatchedTodoAlarm(ctx, qtx, a, existing[p.Stored]); err != nil {
 				return err
 			}
-		} else {
-			unmatched = append(unmatched, a)
 		}
 	}
 
-	// Second pass: content changed but the RFC 9074 UID is stable — the same
-	// alarm edited. Update in place so the row ID (and its state) survives.
-	for _, a := range unmatched {
-		if j, found := matchTodoAlarmByUID(existing, matched, a); found {
-			matched[j] = true
-			if err := updateTodoAlarmInPlace(ctx, qtx, todoID, a, existing[j]); err != nil {
+	// A pair by UID is the same alarm edited. Update in place so the row
+	// ID (and its state) survives.
+	for i, a := range alarms {
+		switch p := pairs[i]; {
+		case p.ByContent:
+		case p.Stored >= 0:
+			matched[p.Stored] = true
+			if err := updateTodoAlarmInPlace(ctx, qtx, todoID, a, existing[p.Stored]); err != nil {
 				return err
 			}
-		} else {
+		default:
 			if err := createNewTodoAlarm(ctx, qtx, todoID, a); err != nil {
 				return err
 			}
@@ -265,13 +265,17 @@ func (s *Service) ReplaceAlarmsForSync(ctx context.Context, todoID int64, alarms
 	return nil
 }
 
-// AlarmUIDHeldElsewhere returns the check of model.WithoutRefusedAlarmUIDs
+// AlarmUIDsHeldElsewhere returns the check of model.WithoutRefusedAlarmUIDs
 // for the alarms of todoID. The alarm write and the import comparison use
 // it.
-func AlarmUIDHeldElsewhere(ctx context.Context, q *storage.Queries, todoID int64) func(uid string) (bool, error) {
-	return func(uid string) (bool, error) {
-		n, err := q.TodoAlarmUIDHeldByAnotherTodo(ctx, storage.TodoAlarmUIDHeldByAnotherTodoParams{Uid: &uid, TodoID: todoID})
-		return n != 0, err
+func AlarmUIDsHeldElsewhere(ctx context.Context, q *storage.Queries, todoID int64) func(uids []string) (map[string]bool, error) {
+	return func(uids []string) (map[string]bool, error) {
+		args := make([]*string, len(uids))
+		for i := range uids {
+			args[i] = &uids[i]
+		}
+		rows, err := q.ListTodoAlarmUIDsHeldByOtherTodos(ctx, storage.ListTodoAlarmUIDsHeldByOtherTodosParams{TodoID: todoID, Uids: args})
+		return storage.HeldUIDSet(rows), err
 	}
 }
 
@@ -308,41 +312,6 @@ func loadExistingTodoAlarms(ctx context.Context, qtx *storage.Queries, todoID in
 		return nil, err
 	}
 	return alarms, nil
-}
-
-// matchTodoAlarm tries to match an alarm that arrives with stored ones by
-// content. Rows whose non-empty RFC 9074 UIDs differ are never paired.
-// See event.matchAlarm for the rationale.
-func matchTodoAlarm(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
-	for j, ex := range existing {
-		if matched[j] {
-			continue
-		}
-		if a.UID != "" && ex.UID != "" && a.UID != ex.UID {
-			continue
-		}
-		if a.ContentEqual(ex) {
-			return j, true
-		}
-	}
-	return 0, false
-}
-
-// matchTodoAlarmByUID matches an alarm that arrives against unmatched stored
-// ones by RFC 9074 UID.
-func matchTodoAlarmByUID(existing []model.Alarm, matched []bool, a model.Alarm) (int, bool) {
-	if a.UID == "" {
-		return 0, false
-	}
-	for j, ex := range existing {
-		if matched[j] || ex.UID == "" {
-			continue
-		}
-		if ex.UID == a.UID {
-			return j, true
-		}
-	}
-	return 0, false
 }
 
 // syncMatchedTodoAlarm syncs a content-matched alarm's UID and ACKNOWLEDGED state.

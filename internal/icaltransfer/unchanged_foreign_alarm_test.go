@@ -311,3 +311,38 @@ func TestImport_EditKeepsTheAlarmRowsOfARefusedUID(t *testing.T) {
 		})
 	}
 }
+
+// TestImport_RefusedAlarmUIDDoesNotTakeTheRowOfAnotherAlarm covers a file
+// that adds an alarm with a refused UID and edits an alarm with its own
+// UID. The edited alarm must keep its row, its UID, and its alarm state.
+func TestImport_RefusedAlarmUIDDoesNotTakeTheRowOfAnotherAlarm(t *testing.T) {
+	const shared = "shared-alarm@test"
+	a := newTestApp(t)
+	owner, roundTrip := twoCalendars(t, a)
+	importFixture(t, a, owner, calendarICS(veventICS("owner@test", "Owner",
+		valarmICS(shared, "DISPLAY", "-PT15M", "Reminder"))))
+	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip",
+		valarmICS("own@test", "DISPLAY", "-PT15M", "Reminder"))))
+	ownRow := alarmRowIDs(t, a, "round@test")[0]
+
+	importFixture(t, a, roundTrip, calendarICS(veventICS("round@test", "Round trip",
+		valarmICS(shared, "DISPLAY", "-PT15M", "Reminder"),
+		valarmICS("own@test", "DISPLAY", "-PT5M", "Reminder"))))
+	ctx := context.Background()
+	e, err := a.Events.GetByUID(ctx, "round@test")
+	if err != nil {
+		t.Fatalf("GetByUID: %v", err)
+	}
+	alarms, err := a.Events.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("ListAlarms: %v", err)
+	}
+	for _, al := range alarms {
+		if al.ID == ownRow && (al.UID != "own@test" || al.TriggerValue != "-PT5M") {
+			t.Errorf("row %d = UID %q trigger %q, want own@test and -PT5M", al.ID, al.UID, al.TriggerValue)
+		}
+	}
+	if ids := alarmRowIDs(t, a, "round@test"); !slices.Contains(ids, ownRow) {
+		t.Errorf("alarm row IDs = %v, want row %d to stay", ids, ownRow)
+	}
+}
