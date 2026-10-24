@@ -274,3 +274,50 @@ func TestResolveTUIOpenEvent_AtEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveTUIOpenEvent_AtOrdersByStart checks that a date takes the
+// occurrence that starts first on it, and that a timestamp with no
+// occurrence gives an error.
+func TestResolveTUIOpenEvent_AtOrdersByStart(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("TZ", "UTC")
+	prev := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = prev })
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	ctx := context.Background()
+
+	// Two occurrences a day: 07:00 and 12:00.
+	start := time.Date(2026, 4, 16, 7, 0, 0, 0, time.UTC)
+	master, err := a.Events.Create(ctx, event.CreateParams{
+		CalendarID: 1, Title: "Check", StartTime: start, EndTime: start.Add(time.Hour),
+		RecurrenceRule: "FREQ=DAILY;BYHOUR=7,12;COUNT=8",
+	})
+	if err != nil {
+		t.Fatalf("create series: %v", err)
+	}
+	// The 12:00 slot of the 16th moves to 08:00 on the 17th.
+	slot := time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)
+	moved := time.Date(2026, 4, 17, 8, 0, 0, 0, time.UTC)
+	if _, err := a.Events.UpdateInstance(ctx, 1, master.UID, slot, event.UpdateParams{
+		CalendarID: 1, Title: "Moved", StartTime: moved, EndTime: moved.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("create override: %v", err)
+	}
+
+	got, err := resolveTUIOpenEvent(ctx, a, master.UID, "", "2026-04-17")
+	if err != nil {
+		t.Fatalf("resolveTUIOpenEvent: %v", err)
+	}
+	if want := time.Date(2026, 4, 17, 7, 0, 0, 0, time.UTC); got.ID != master.ID || !got.StartTime.Equal(want) {
+		t.Fatalf("got ID %d at %s, want the master at %s", got.ID, got.StartTime, want)
+	}
+	if _, err := resolveTUIOpenEvent(ctx, a, master.UID, "", "2026-04-17T09:30:00Z"); err == nil || !strings.Contains(err.Error(), "no occurrence at") {
+		t.Fatalf("a timestamp with no occurrence gave %v, want an error", err)
+	}
+}

@@ -968,7 +968,7 @@ chroncal --event 42
 chroncal --event standup-uid --at 2026-04-17T14:00:00Z
 ```
 
-`--at` accepts an RFC 3339 timestamp, `YYYY-MM-DD`, or a relative date word such as `tomorrow`. It selects an occurrence of a recurring series. A date selects the first occurrence that starts on that date, or else an occurrence that runs over that date. A date with no occurrence of the series gives an error. A timestamp selects the occurrence that starts at that time. The details show the times of that occurrence, not the series start. When an override replaces the occurrence, the TUI opens the override with its own fields. `--recurrence-id` also opens a stored override by the series UID. `--at` requires `--event` and excludes `--recurrence-id`.
+`--at` accepts an RFC 3339 timestamp, `YYYY-MM-DD`, or a relative date word such as `tomorrow`. It selects an occurrence of a recurring series. A date selects the first occurrence that starts on that date, or else an occurrence that runs over that date. A date or a timestamp with no occurrence of the series gives an error. A timestamp selects the occurrence that starts at that time. The details show the times of that occurrence, not the series start. When an override replaces the occurrence, the TUI opens the override with its own fields. `--recurrence-id` also opens a stored override by the series UID. `--at` requires `--event` and excludes `--recurrence-id`.
 
 **Views**: month, week, day, agenda. Switch with `m`, `w`, `d`, `a`. Press `W` to switch the first day of the week between Sunday and Monday. The TUI stores the choice, the same way it stores the view. `ui.week_start` in `config.toml` sets the default before a stored choice exists.
 
