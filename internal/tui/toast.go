@@ -57,6 +57,9 @@ type ToastModel struct {
 	// undoKey is the label of the undo key in the delete toast. A [keys]
 	// remap of the undo action changes it (WithUndoKey).
 	undoKey string
+	// count is the number of items of a bulk restore or purge. A count
+	// above one replaces the quoted title (issue #889).
+	count int
 }
 
 // NewToastModel returns an empty toast bound to the given theme.
@@ -113,9 +116,16 @@ func (t *ToastModel) Failed(action, reason string) tea.Cmd {
 // token bump) and auto-dismisses after a short 3s window. By the time it
 // shows, the user has already seen the row reappear in the grid.
 func (t *ToastModel) Restored(title string) tea.Cmd {
+	return t.RestoredCount(title, 1)
+}
+
+// RestoredCount confirms the restore of n items. For n above one, the
+// toast shows the count, and it does not show title.
+func (t *ToastModel) RestoredCount(title string, n int) tea.Cmd {
 	t.token++
 	t.state = ToastRestored
 	t.title = title
+	t.count = n
 	t.reason = ""
 	t.deadline = time.Now().Add(ToastRestoredDismissDelay)
 	return t.scheduleDismiss(ToastRestoredDismissDelay)
@@ -125,9 +135,16 @@ func (t *ToastModel) Restored(title string) tea.Cmd {
 // same short dismiss window as Restored — the row has already disappeared
 // from the list by the time the toast shows.
 func (t *ToastModel) Purged(title string) tea.Cmd {
+	return t.PurgedCount(title, 1)
+}
+
+// PurgedCount confirms the purge of n items. For n above one, the toast
+// shows the count, and it does not show title.
+func (t *ToastModel) PurgedCount(title string, n int) tea.Cmd {
 	t.token++
 	t.state = ToastPurged
 	t.title = title
+	t.count = n
 	t.reason = ""
 	t.deadline = time.Now().Add(ToastRestoredDismissDelay)
 	return t.scheduleDismiss(ToastRestoredDismissDelay)
@@ -196,13 +213,19 @@ func (t ToastModel) View() string {
 		return dimStyle.Render("Restoring…")
 	case ToastRestored:
 		label := "Restored event"
-		if t.title != "" {
+		switch {
+		case t.count > 1:
+			label = fmt.Sprintf("Restored %d items", t.count)
+		case t.title != "":
 			label = fmt.Sprintf("Restored %q", t.title)
 		}
 		return fmt.Sprintf("%s %s", okStyle.Render("✓"), dimStyle.Render(label))
 	case ToastPurged:
 		label := "Purged forever"
-		if t.title != "" {
+		switch {
+		case t.count > 1:
+			label = fmt.Sprintf("Purged %d items forever", t.count)
+		case t.title != "":
 			label = fmt.Sprintf("Purged %q forever", t.title)
 		}
 		return fmt.Sprintf("%s %s", okStyle.Render("✓"), dimStyle.Render(label))

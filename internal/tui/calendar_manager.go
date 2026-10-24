@@ -425,6 +425,13 @@ func (m CalendarManagerModel) selectCalendar(id int64) CalendarManagerModel {
 	return m
 }
 
+// SelectAfterReload selects the calendar id when the next SetData holds it.
+// A new calendar is not in the list until the calendars reload.
+func (m CalendarManagerModel) SelectAfterReload(id int64) CalendarManagerModel {
+	m.pendingSelectionID = id
+	return m
+}
+
 func (m CalendarManagerModel) SelectCalendar(id int64) CalendarManagerModel {
 	return m.selectCalendar(id)
 }

@@ -223,13 +223,22 @@ func (m Model) undoIsAllowed() bool {
 	if m.focus != focusCalendar {
 		return false
 	}
-	if m.anyOverlayOpen() {
+	if m.anyOverlayOpen() && !m.onlyDayDialogOpen() {
 		return false
 	}
 	if m.undoRestoreInFlight {
 		return false
 	}
 	return m.undoStack != nil && m.undoStack.Len() > 0
+}
+
+// onlyDayDialogOpen reports whether the day dialog is the one open overlay.
+// A delete in the day dialog shows the undo toast, so the undo key works
+// there too (issue #889). The day dialog has no text field and no binding
+// on the undo key.
+func (m Model) onlyDayDialogOpen() bool {
+	return m.dialogOpen && !m.textEntryActive() && !m.viewDialogOpen &&
+		!m.confirmOpen && !m.choiceOpen && !m.helpDialogOpen && !m.trashOpen
 }
 
 // textEntryActive reports whether an open overlay can take typed text. An
