@@ -415,9 +415,10 @@ func (s *Service) Delete(ctx context.Context, accountID int64, store auth.Creden
 			continue
 		}
 		if err := qtx.LinkCalendarToAccount(ctx, storage.LinkCalendarToAccountParams{
-			ID:        cal.ID,
-			AccountID: &accountID,
-			RemoteUrl: storage.StringToNullable(origin),
+			ID:             cal.ID,
+			AccountID:      &accountID,
+			RemoteUrl:      storage.StringToNullable(origin),
+			SameCollection: 1,
 		}); err != nil {
 			return fmt.Errorf("preserve calendar origin: %w", err)
 		}

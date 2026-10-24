@@ -1190,7 +1190,7 @@ func (e *Engine) settleRelink(ctx context.Context, calendarID int64) {
 // updateSyncHealth records one sync attempt of calendarID. A clean run
 // stamps last_sync_at and clears last_sync_error. A failed run records the
 // error and keeps the last_sync_at of the last clean run, so the user can
-// see how long the calendar has failed (issue #886). The TUI sidebar glyph
+// see when the last clean sync was (issue #886). The TUI sidebar glyph
 // and the calendar detail check last_sync_error first. The JSON output of
 // `calendar` and `sync status` carries last_sync_ok, because a time alone no
 // longer means a clean sync.

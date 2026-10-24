@@ -1155,6 +1155,13 @@ func TestLinkToAccountClearsTheSyncHealthOfAnotherLink(t *testing.T) {
 	if got := health(); got != "a|b|c" {
 		t.Fatalf("health after the same link = %q; want it kept", got)
 	}
+	// The same collection in another spelling is the same link.
+	if err := svc.LinkToAccount(ctx, 1, ids[0], "https://EXAMPLE.com/cal/work"); err != nil {
+		t.Fatalf("LinkToAccount in another spelling: %v", err)
+	}
+	if got := health(); got != "a|b|c" {
+		t.Fatalf("health after the same collection in another spelling = %q; want it kept", got)
+	}
 	if err := svc.LinkToAccount(ctx, 1, ids[1], url); err != nil {
 		t.Fatalf("LinkToAccount to another account: %v", err)
 	}
