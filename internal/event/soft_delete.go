@@ -73,10 +73,12 @@ var ErrNewerTruncation = errors.New("event: restore the newer truncation of this
 
 // NewerTruncationError is ErrNewerTruncation with the cutoff of the newer
 // truncation. AllDay reports an all-day series. Its cutoff is a UTC
-// midnight, so a caller shows the UTC date of the cutoff.
+// midnight, so a caller shows the UTC date of the cutoff. SameCutoff reports
+// a newer truncation at the cutoff of the refused one.
 type NewerTruncationError struct {
-	Cutoff time.Time
-	AllDay bool
+	Cutoff     time.Time
+	AllDay     bool
+	SameCutoff bool
 }
 
 func (e *NewerTruncationError) Error() string {

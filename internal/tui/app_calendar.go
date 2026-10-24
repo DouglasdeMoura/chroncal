@@ -146,8 +146,9 @@ func (m *Model) beginAccountOrderSave(ids []int64) tea.Cmd {
 // server has declared off-limits for VEVENT writes. Those are read-only
 // collections, and collections whose non-empty supported-component set omits
 // VEVENT. A calendar with no reported components is treated as unconstrained
-// (backward compatible). Service-layer guards are enforced separately.
-func (m *Model) blockReadOnlyCalendarMutation(calendarID int64) (tea.Cmd, bool) {
+// (backward compatible). Service-layer guards are enforced separately. The
+// toast names action, the mutation of the caller.
+func (m *Model) blockReadOnlyCalendarMutation(action string, calendarID int64) (tea.Cmd, bool) {
 	info, ok := m.calendars[calendarID]
 	if !ok {
 		return nil, false
@@ -157,10 +158,10 @@ func (m *Model) blockReadOnlyCalendarMutation(calendarID int64) (tea.Cmd, bool) 
 		name = "This calendar"
 	}
 	if calendaraccess.IsReadOnly(info.RemoteAccess) {
-		return m.toast.Failed("Change", fmt.Sprintf("%s is read-only", name)), true
+		return m.toast.Failed(action, fmt.Sprintf("%s is read-only", name)), true
 	}
 	if info.RemoteComponents != "" && !supportsVEVENT(info.RemoteComponents) {
-		return m.toast.Failed("Change", fmt.Sprintf("%s does not support events", name)), true
+		return m.toast.Failed(action, fmt.Sprintf("%s does not support events", name)), true
 	}
 	return nil, false
 }

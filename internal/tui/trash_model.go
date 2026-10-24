@@ -456,27 +456,32 @@ func trashRestoreOrderNote(e trash.Entry) string {
 	if e.Kind != trash.KindEventSeriesTail || e.NewerTruncationID == 0 {
 		return ""
 	}
-	if e.NewerTruncationCutoff.IsZero() {
-		return "restore the newer truncation of this series first"
-	}
-	if e.NewerTruncationCutoff.Equal(e.CutoffTime) {
-		return "restore the newer truncation at the same cutoff first"
-	}
-	return "restore the truncation with cutoff " + trashOccurrenceTime(e.NewerTruncationCutoff, e.AllDay) + " first"
+	same := !e.NewerTruncationCutoff.IsZero() && e.NewerTruncationCutoff.Equal(e.CutoffTime)
+	return truncationOrderNote(e.NewerTruncationCutoff, same, e.AllDay)
 }
 
 // refusalReason renders the error of a restore or an undo for the toast. A
-// refusal for a newer truncation names its cutoff as the detail pane does:
-// in local time, or as the UTC date for an all-day series.
+// refusal for a newer truncation gives the note of the detail pane
+// (truncationOrderNote).
 func refusalReason(err error) string {
 	var newer *event.NewerTruncationError
 	if !errors.As(err, &newer) {
 		return err.Error()
 	}
-	if newer.Cutoff.IsZero() {
+	return truncationOrderNote(newer.Cutoff, newer.SameCutoff, newer.AllDay)
+}
+
+// truncationOrderNote names the newer truncation to restore first. It shows
+// the cutoff in local time, or as the UTC date for an all-day series. A zero
+// cutoff gives the note with no cutoff.
+func truncationOrderNote(cutoff time.Time, sameCutoff, allDay bool) string {
+	switch {
+	case cutoff.IsZero():
 		return "restore the newer truncation of this series first"
+	case sameCutoff:
+		return "restore the newer truncation at the same cutoff first"
 	}
-	return "restore the truncation with cutoff " + trashOccurrenceTime(newer.Cutoff, newer.AllDay) + " first"
+	return "restore the truncation with cutoff " + trashOccurrenceTime(cutoff, allDay) + " first"
 }
 
 // trashOccurrenceTime renders the time of an occurrence of the series of a
