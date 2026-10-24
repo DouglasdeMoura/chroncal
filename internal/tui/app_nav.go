@@ -194,7 +194,9 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			SetSize(m.width, m.height)
 		return m, m.loadTrash(), true
 	}
-	// Undo: only active on the main grid, with no overlay competing for input.
+	// Undo: active on the main grid, and in the day dialog when it is the
+	// one open overlay (see undoIsAllowed). A key that the day dialog binds
+	// stays with the dialog.
 	if key.Matches(msg, m.keys.Undo) && m.undoIsAllowed() && (!m.dialogOpen || !m.dialog.UsesKey(msg)) {
 		entry, ok := m.undoStack.Peek()
 		if ok {
@@ -216,9 +218,9 @@ func (m Model) interceptGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 }
 
 // undoIsAllowed reports whether the `u` key should trigger an undo. The guard
-// is intentionally strict. Any overlay, editor, or palette that might consume
-// character input takes priority. Otherwise a stray `u` in a title field
-// would trigger a restore in silence.
+// is intentionally strict. Any overlay, editor, or palette takes priority,
+// except the day dialog alone (onlyDayDialogOpen). Otherwise a stray `u` in
+// a title field would trigger a restore in silence.
 func (m Model) undoIsAllowed() bool {
 	if m.focus != focusCalendar {
 		return false

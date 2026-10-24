@@ -522,7 +522,9 @@ func (m CalendarDialogModel) dirtyMetadata() bool {
 		return false
 	}
 	return strings.TrimSpace(name.Value()) != strings.TrimSpace(m.localDraft.Name) ||
-		strings.TrimSpace(colorField.Value()) != strings.TrimSpace(m.localDraft.Color) ||
+		// A hex color is case-insensitive. The palette writes a lowercase
+		// swatch, and a stored color can be uppercase (issue #889).
+		!strings.EqualFold(strings.TrimSpace(colorField.Value()), strings.TrimSpace(m.localDraft.Color)) ||
 		strings.TrimSpace(desc.Value()) != strings.TrimSpace(m.localDraft.Description) ||
 		strings.TrimSpace(email.Value()) != strings.TrimSpace(m.localDraft.OwnerEmail)
 }
