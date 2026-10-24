@@ -33,8 +33,8 @@ import (
 // content:
 //   - the row ID, the calendar ID, and the SEQUENCE
 //   - DTSTAMP, CREATED, and LAST-MODIFIED
-//   - the UID of an alarm, because the store gives a UID to an alarm
-//     without one
+//   - the stored UID of an alarm that has no UID in the file, because the
+//     store gives a UID to an alarm without one
 //   - the order of the categories and of the attendees, because the store
 //     reads them in a sorted order
 //
@@ -95,11 +95,15 @@ func sortedAttendees(attendees []model.Attendee) []model.Attendee {
 	return out
 }
 
-// withoutAlarmUIDs returns a copy of alarms with no UID.
-func withoutAlarmUIDs(alarms []model.Alarm) []model.Alarm {
-	out := slices.Clone(alarms)
+// withoutGivenAlarmUIDs returns a copy of the stored alarms. An alarm
+// whose parsed alarm at the same place has no UID loses its UID: the store
+// gave that UID. A UID that the file sets stays, so a change of it counts.
+func withoutGivenAlarmUIDs(stored, parsed []model.Alarm) []model.Alarm {
+	out := slices.Clone(stored)
 	for i := range out {
-		out[i].UID = ""
+		if i < len(parsed) && parsed[i].UID == "" {
+			out[i].UID = ""
+		}
 	}
 	return out
 }
@@ -119,11 +123,11 @@ func unchangedEvent(ctx context.Context, a *app.App, mode *storage.Import, old, 
 		return false
 	}
 	old.Categories = timeutil.JoinCategoryList(cats)
+	old.Alarms = withoutGivenAlarmUIDs(old.Alarms, e.Alarms)
 	form := func(e event.Event) func() ([]byte, error) {
 		e.ID, e.CalendarID, e.Sequence, e.DtStamp = 0, 0, 0, ""
 		e.CreatedAt, e.UpdatedAt, e.DeletedAt = time.Time{}, time.Time{}, nil
 		e.Categories = sortedCategories(e.Categories)
-		e.Alarms = withoutAlarmUIDs(e.Alarms)
 		e.Attendees = sortedAttendees(e.Attendees)
 		return func() ([]byte, error) { return ical.ExportEvents([]event.Event{e}, "") }
 	}
@@ -142,11 +146,11 @@ func unchangedTodo(ctx context.Context, a *app.App, mode *storage.Import, old, t
 		return false
 	}
 	old.Categories = timeutil.JoinCategoryList(cats)
+	old.Alarms = withoutGivenAlarmUIDs(old.Alarms, t.Alarms)
 	form := func(t todo.Todo) func() ([]byte, error) {
 		t.ID, t.CalendarID, t.Sequence, t.DtStamp = 0, 0, 0, ""
 		t.CreatedAt, t.UpdatedAt, t.DeletedAt = time.Time{}, time.Time{}, nil
 		t.Categories = sortedCategories(t.Categories)
-		t.Alarms = withoutAlarmUIDs(t.Alarms)
 		t.Attendees = sortedAttendees(t.Attendees)
 		return func() ([]byte, error) { return ical.ExportTodos([]todo.Todo{t}, "") }
 	}

@@ -115,6 +115,7 @@ func TestImport_ChangedItemStillUpdates(t *testing.T) {
 		{"row field", "SUMMARY:Imported todo", "SUMMARY:Renamed todo"},
 		{"child row", "DESCRIPTION:todo rem", "DESCRIPTION:todo reminder"},
 		{"category", "CATEGORIES:import,test", "CATEGORIES:import"},
+		{"alarm UID", "DESCRIPTION:todo rem", "UID:todo-alarm@test\nDESCRIPTION:todo rem"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
