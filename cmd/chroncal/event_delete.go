@@ -84,28 +84,16 @@ var eventResource = resource{
 		return meta.PushCalendarIDs(target.CalendarID), nil
 	},
 	restoreByID: func(ctx context.Context, a *app.App, id int64) (restorePush, error) {
-		// Read the row first: its calendar names the series of the push.
-		// A failed read leaves the error to the restore.
-		e, readErr := a.Events.GetIncludingDeleted(ctx, id)
-		if err := a.Events.RestoreByID(ctx, id); err != nil {
-			return restorePush{}, err
+		// The UID names the rows to compare. With no row, the restore
+		// gives its own error.
+		e, err := a.Events.GetIncludingDeleted(ctx, id)
+		if err != nil {
+			return restorePush{}, a.Events.RestoreByID(ctx, id)
 		}
-		if readErr != nil {
-			return restorePush{err: readErr}, nil
-		}
-		return eventRestorePush(ctx, a, e.UID, []int64{e.CalendarID}, nil), nil
+		return restoreEventRows(ctx, a, e.UID, func() error { return a.Events.RestoreByID(ctx, id) })
 	},
 	restoreByUID: func(ctx context.Context, a *app.App, uid string) (restorePush, error) {
-		// The rows that can come back are in the trash now.
-		trashed, readErr := a.Queries.ListTrashedEventsByUID(ctx, uid)
-		if err := a.Events.RestoreByUID(ctx, uid); err != nil {
-			return restorePush{}, err
-		}
-		calendarIDs := make([]int64, 0, len(trashed))
-		for _, r := range trashed {
-			calendarIDs = append(calendarIDs, r.CalendarID)
-		}
-		return eventRestorePush(ctx, a, uid, calendarIDs, readErr), nil
+		return restoreEventRows(ctx, a, uid, func() error { return a.Events.RestoreByUID(ctx, uid) })
 	},
 	purgeCandidate: func(ctx context.Context, a *app.App, id int64) (row, bool, error) {
 		e, err := a.Events.GetIncludingDeleted(ctx, id)
@@ -419,20 +407,46 @@ func seriesDeleteErr(ctx context.Context, a *app.App, target row, err error) err
 	return err
 }
 
-// eventRestorePush lists the candidate calendars of an event restore of
-// uid: calendarIDs, the calendars of the restored rows, and the calendar of
-// the series that owns the rows of each (see GetSeriesMasterOfCalendar).
-// The calendar of another series of the UID stays out (issue #842), so its
-// push sends no unrelated edits. readErr is a failed read before the
-// restore.
-func eventRestorePush(ctx context.Context, a *app.App, uid string, calendarIDs []int64, readErr error) restorePush {
-	p := restorePush{uid: uid, err: readErr}
-	if readErr != nil {
+// restoreEventRows runs restore, a restore of rows of uid, and lists the
+// candidate calendars of its push. It reads the rows of the UID in the trash
+// before and after the restore. The rows that leave the trash are the rows
+// of the restore. A restore of a master can also bring back legacy
+// overrides in other calendars. The candidates are the calendars of these
+// rows, and the calendar of the series that owns the rows of each (see
+// GetSeriesMasterOfCalendar). The calendar of another series of the UID
+// stays out (issue #842), so its push sends no unrelated edits. A failed
+// read after the restore goes to restorePush.err.
+func restoreEventRows(ctx context.Context, a *app.App, uid string, restore func() error) (restorePush, error) {
+	before, beforeErr := a.Queries.ListTrashedEventsByUID(ctx, uid)
+	if err := restore(); err != nil {
+		return restorePush{}, err
+	}
+	return eventRestorePush(ctx, a, uid, before, beforeErr), nil
+}
+
+// eventRestorePush lists the candidate calendars of an event restore (see
+// restoreEventRows). before holds the rows of uid in the trash before the
+// restore, and beforeErr is a failed read of them.
+func eventRestorePush(ctx context.Context, a *app.App, uid string, before []storage.Event, beforeErr error) restorePush {
+	p := restorePush{uid: uid, err: beforeErr}
+	if beforeErr != nil {
 		return p
 	}
-	for _, id := range calendarIDs {
-		p.candidates = append(p.candidates, id)
-		m, err := a.Queries.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{CalendarID: id, Uid: uid, IncludeDeleted: true})
+	after, err := a.Queries.ListTrashedEventsByUID(ctx, uid)
+	if err != nil {
+		p.err = err
+		return p
+	}
+	stillTrashed := make(map[int64]bool, len(after))
+	for _, r := range after {
+		stillTrashed[r.ID] = true
+	}
+	for _, r := range before {
+		if stillTrashed[r.ID] {
+			continue
+		}
+		p.candidates = append(p.candidates, r.CalendarID)
+		m, err := a.Queries.GetSeriesMasterOfCalendar(ctx, storage.GetSeriesMasterOfCalendarParams{CalendarID: r.CalendarID, Uid: uid, IncludeDeleted: true})
 		if found, err := storage.Found(err); err != nil {
 			p.err = err
 			return p

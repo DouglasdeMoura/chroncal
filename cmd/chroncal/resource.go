@@ -277,7 +277,11 @@ type restorePush struct {
 // restorePushCalendars gives the targets and the sources. The order is the
 // order of sync.PushMove: the targets first. The sources go only when no
 // target keeps a dirty row of the UID after its push. A source push deletes
-// an old server object, so it waits until a target holds the item.
+// an old server object, so it waits until a target holds the item. With no
+// target (for example a master in a local calendar), no server object can
+// hold the item, and the source push sends the delete that the next sync
+// sends too. The restore leaves a tombstone with no move target, so
+// storage.MoveSourceDeleteSafe does not apply.
 func pushAfterRestore(ctx context.Context, cmd *cobra.Command, a *app.App, p restorePush) {
 	if p.err != nil {
 		if outputFmt == "text" {
