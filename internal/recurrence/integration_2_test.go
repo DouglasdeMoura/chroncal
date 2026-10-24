@@ -400,8 +400,10 @@ func TestAllDayDateOnlyOverride_Consistent(t *testing.T) {
 		t.Fatalf("create all-day override: %v", err)
 	}
 
-	from := time.Date(2026, 4, 8, 0, 0, 0, 0, time.UTC)
-	to := time.Date(2026, 4, 9, 0, 0, 0, 0, time.UTC)
+	// The window is the local day of April 8. An all-day event is a
+	// floating date, so it matches by its date in every zone (issue #875).
+	from := time.Date(2026, 4, 8, 0, 0, 0, 0, time.Local)
+	to := time.Date(2026, 4, 9, 0, 0, 0, 0, time.Local)
 
 	for _, tc := range []struct {
 		name string

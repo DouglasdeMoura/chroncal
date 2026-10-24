@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // ExpandedEventSource provides recurrence-expanded VEVENT instances.
@@ -76,15 +77,18 @@ func Compute(ctx context.Context, source ExpandedEventSource, from, to time.Time
 	}, nil
 }
 
+// eventWindow returns the busy interval of an instance. An all-day
+// instance is busy from local midnight of its first date to local midnight
+// after its last date (timeutil.FloatingLocal), not from midnight UTC.
 func eventWindow(evt recurrence.ExpandedEvent) (time.Time, time.Time) {
-	if evt.RecurrenceID != "" {
-		return evt.StartTime.UTC(), evt.EndTime.UTC()
+	start, end := evt.StartTime, evt.EndTime
+	if evt.RecurrenceID == "" && !evt.InstanceTime.IsZero() {
+		start, end = evt.InstanceTime, evt.InstanceTime.Add(evt.Span())
 	}
-	start := evt.InstanceTime
-	if start.IsZero() {
-		start = evt.StartTime
+	if evt.AllDay {
+		start, end = timeutil.FloatingLocal(start), timeutil.FloatingLocal(end)
 	}
-	return start.UTC(), start.Add(evt.EndTime.Sub(evt.StartTime)).UTC()
+	return start.UTC(), end.UTC()
 }
 
 // ownerDeclined reports whether the calendar owner has DECLINED this

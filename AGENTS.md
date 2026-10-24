@@ -119,6 +119,14 @@ UID is required for round-trip fidelity. `recurrence_id` marks an overridden ins
 
 All database times are RFC 3339 strings in UTC. Go code uses `time.Time` with `time.UTC`. An all-day event has the time component 00:00:00.
 
+A date-only value is a floating date (RFC 5545 section 3.3.4). This rule applies to an all-day event, a date-only todo DUE or DTSTART, and a date-only journal DTSTART. The database stores the value at midnight UTC, but the day starts at local midnight in every zone (issue #875). Do not call `.Local()` on a date-only value. West of UTC, the result is the evening of the day before. Use the helpers in `internal/timeutil`:
+
+- `FloatingLocal` gives the local moment of a stored date. Use it for a display, a free/busy interval, an alarm anchor, and a snooze until the start. `event.Event.LocalStart` and `LocalEnd` call it for an all-day event.
+- `WindowFor` gives the window of a date-only row for a range filter. `expandRecurringRowsBy` applies it to each master and each override.
+- `CoverWindow` gives the SQL bounds that read the rows of both kinds. The caller then keeps each row with `event.Event.Overlaps`.
+
+A relative alarm trigger on a date-only value counts from local midnight of the date. Other clients use the same rule.
+
 ### Logs
 
 Code that can run while the TUI owns the terminal must never write to stderr. Bubble Tea runs in the alternate screen. A write to stderr prints over the display. This includes `slog.Default()`.

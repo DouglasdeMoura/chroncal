@@ -103,7 +103,9 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 		}
 
 		// Expand recurring instances (returns single instance for non-recurring)
-		instances := recurrence.ExpandTodo(t, windowStart, windowEnd)
+		// A date-only anchor matches the window by its local date.
+		from, to := timeutil.WindowFor(t.AnchorIsDateOnly(), windowStart, windowEnd)
+		instances := recurrence.ExpandTodo(t, from, to)
 
 		// For recurring masters, suppress occurrences that have been overridden.
 		// Without this, the master fires its alarm for the overridden slot while
@@ -137,11 +139,17 @@ func (s *TodoService) CheckTodos(ctx context.Context, now time.Time) ([]TodoDueA
 				triggers := buildRepeatTriggers(triggerAt, a.Repeat, a.Duration)
 
 				// Use instance time for the todo's due/start date
+				// A date-only anchor keeps the date-only form, so the
+				// display shows the date and not the day before.
 				instanceTodo := t
+				layout := time.RFC3339
+				if t.AnchorIsDateOnly() {
+					layout = time.DateOnly
+				}
 				if t.DueDate != "" {
-					instanceTodo.DueDate = inst.InstanceTime.Format(time.RFC3339)
+					instanceTodo.DueDate = inst.InstanceTime.UTC().Format(layout)
 				} else if t.StartDate != "" {
-					instanceTodo.StartDate = inst.InstanceTime.Format(time.RFC3339)
+					instanceTodo.StartDate = inst.InstanceTime.UTC().Format(layout)
 				}
 
 				for _, tt := range triggers {
@@ -282,12 +290,19 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 	// (issue #367: a VTODO with DTSTART+DUE has an empty Duration field, so the
 	// span must come from the dates); DUE-only occurrences are already anchored
 	// at DUE; otherwise fall back to START+DURATION.
+	//
+	// dateOnly tells whether base comes from a date-only value. A date-only
+	// DUE or DTSTART is a floating date (RFC 5545 section 3.3.4), so the
+	// day starts at local midnight. A relative trigger counts from there,
+	// as other clients do (issue #875).
+	dateOnly := inst.AnchorIsDateOnly()
 	if alarm.Related == "END" {
 		start := inst.ParseStartDate()
 		due := inst.ParseDueDate()
 		switch {
 		case !start.IsZero() && !due.IsZero():
 			base = inst.InstanceTime.Add(due.Sub(start))
+			dateOnly = timeutil.IsDateOnly(inst.DueDate)
 		case !due.IsZero():
 			base = inst.InstanceTime
 		case inst.Duration != "":
@@ -316,6 +331,9 @@ func computeTodoTriggerTimeForInstance(inst recurrence.ExpandedTodo, alarm model
 
 	// Duration trigger (relative)
 	if duration.Validate(alarm.TriggerValue) == nil {
+		if dateOnly {
+			return duration.Add(timeutil.FloatingLocal(base), alarm.TriggerValue), nil
+		}
 		anchor := base
 		if inst.Timezone != "" {
 			if loc, err := time.LoadLocation(inst.Timezone); err == nil {

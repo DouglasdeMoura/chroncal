@@ -589,13 +589,15 @@ func (s *Service) SnoozeDefaultUntilStart(ctx context.Context, stateID int64, no
 	if err != nil {
 		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
 	}
-	if now.After(evt.StartTime) {
+	// An all-day event starts at local midnight of its date.
+	start, end := evt.LocalStart(), evt.LocalEnd()
+	if now.After(start) {
 		return SnoozeResult{}, fmt.Errorf("event %q has already started", evt.Title)
 	}
 	return SnoozeResult{
-		Until:      evt.StartTime,
-		EventStart: evt.StartTime,
-		EventEnd:   evt.EndTime,
+		Until:      start,
+		EventStart: start,
+		EventEnd:   end,
 	}, nil
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/model"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // StaleThreshold is the maximum age of an unfired alarm before it is skipped.
@@ -222,7 +223,8 @@ func (s *Service) CheckMissed(ctx context.Context, now time.Time, lookback time.
 				continue
 			}
 
-			instances := recurrence.ExpandTodo(td, windowStart, windowEnd)
+			from, to := timeutil.WindowFor(td.AnchorIsDateOnly(), windowStart, windowEnd)
+			instances := recurrence.ExpandTodo(td, from, to)
 			if isRecurringTodoMaster(td) {
 				if suppressed := overrideKeys[td.UID]; len(suppressed) > 0 {
 					kept := instances[:0]
@@ -467,6 +469,12 @@ func computeTriggerTimeForInstance(expEvt recurrence.ExpandedEvent, alarm model.
 		anchor := expEvt.InstanceTime
 		if alarm.Related == "END" {
 			anchor = expEvt.InstanceTime.Add(expEvt.Span())
+		}
+		// An all-day event starts at local midnight of its date (RFC 5545
+		// section 3.3.4: a DATE value is floating). The alarm then fires
+		// at the same wall clock in every time zone (issue #875).
+		if expEvt.AllDay {
+			return duration.Add(timeutil.FloatingLocal(anchor), trigger), nil
 		}
 		// Convert to event's named timezone so that day-level arithmetic
 		// (P1D, P1W) handles DST transitions correctly.
@@ -825,14 +833,16 @@ func (s *Service) SnoozeUntilStart(ctx context.Context, stateID int64, now time.
 		return SnoozeResult{}, fmt.Errorf("get event %d: %w", st.EventID, err)
 	}
 
-	if now.After(evt.StartTime) {
+	// An all-day event starts at local midnight of its date.
+	start, end := evt.LocalStart(), evt.LocalEnd()
+	if now.After(start) {
 		return SnoozeResult{}, fmt.Errorf("event %q has already started", evt.Title)
 	}
 
 	res := SnoozeResult{
-		Until:      evt.StartTime,
-		EventStart: evt.StartTime,
-		EventEnd:   evt.EndTime,
+		Until:      start,
+		EventStart: start,
+		EventEnd:   end,
 	}
 	return res, nil
 }

@@ -67,6 +67,16 @@ func (t Todo) IsOverdue() bool {
 	return now.After(due)
 }
 
+// AnchorIsDateOnly reports whether the recurrence anchor of the todo
+// (DTSTART, else DUE) is a date-only value. A date-only value is a
+// floating date (see timeutil.FloatingLocal).
+func (t Todo) AnchorIsDateOnly() bool {
+	if t.StartDate != "" {
+		return timeutil.IsDateOnly(t.StartDate)
+	}
+	return timeutil.IsDateOnly(t.DueDate)
+}
+
 func (t Todo) ParseDueDate() time.Time {
 	return timeutil.ParseDate(t.DueDate)
 }

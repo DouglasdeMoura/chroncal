@@ -170,6 +170,7 @@ func (s *Service) expandRecurringTodoRows(ctx context.Context, rows []storage.To
 			return t
 		},
 		uid:            func(r storage.Todo) string { return seriesKey(r.CalendarID, r.Uid) },
+		dateOnly:       func(r storage.Todo) bool { return todoFromRow(r).AnchorIsDateOnly() },
 		status:         func(r storage.Todo) string { return r.Status },
 		recurrenceID:   func(r storage.Todo) string { return r.RecurrenceID },
 		overridesByUID: s.todoOverridesByUID,

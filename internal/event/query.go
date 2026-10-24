@@ -33,28 +33,30 @@ func (s *Service) CountByCalendar(ctx context.Context, calendarID int64) (int64,
 }
 
 func (s *Service) ListByDateRange(ctx context.Context, from, to time.Time) ([]Event, error) {
+	qFrom, qTo := timeutil.CoverWindow(from, to)
 	rows, err := s.q.ListEventsByDateRange(ctx, storage.ListEventsByDateRangeParams{
-		StartTime: to.UTC().Format(time.RFC3339),   // start_time < to
-		EndTime:   from.UTC().Format(time.RFC3339), // end_time > from
+		StartTime: qTo.UTC().Format(time.RFC3339),   // start_time < to
+		EndTime:   qFrom.UTC().Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
 	}
-	events := fromStorageSlice(rows)
+	events := inWindow(fromStorageSlice(rows), from, to)
 	s.populateCategories(ctx, events)
 	return events, nil
 }
 
 func (s *Service) ListByCalendarAndDateRange(ctx context.Context, calID int64, from, to time.Time) ([]Event, error) {
+	qFrom, qTo := timeutil.CoverWindow(from, to)
 	rows, err := s.q.ListEventsByCalendarAndDateRange(ctx, storage.ListEventsByCalendarAndDateRangeParams{
 		CalendarID: calID,
-		StartTime:  to.UTC().Format(time.RFC3339),   // start_time < to
-		EndTime:    from.UTC().Format(time.RFC3339), // end_time > from
+		StartTime:  qTo.UTC().Format(time.RFC3339),   // start_time < to
+		EndTime:    qFrom.UTC().Format(time.RFC3339), // end_time > from
 	})
 	if err != nil {
 		return nil, err
 	}
-	events := fromStorageSlice(rows)
+	events := inWindow(fromStorageSlice(rows), from, to)
 	s.populateCategories(ctx, events)
 	return events, nil
 }
@@ -74,19 +76,44 @@ func (s *Service) Search(ctx context.Context, p SearchParams) ([]Event, error) {
 }
 
 func (s *Service) ExportFiltered(ctx context.Context, p ExportParams) ([]Event, error) {
+	from, to := timeutil.ParseDateTime(p.From), timeutil.ParseDateTime(p.To)
+	qFrom, qTo := timeutil.CoverWindow(from, to)
 	rows, err := s.q.ListEventsForExport(ctx, storage.EventFilterParams{
 		CalendarID:   p.CalendarID,
-		FromTime:     p.From,
-		ToTime:       p.To,
+		FromTime:     rangeBound(qFrom),
+		ToTime:       rangeBound(qTo),
 		Category:     p.Category,
 		FilterStatus: p.Status,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("export events: %w", err)
 	}
-	events := fromStorageSlice(rows)
+	events := inWindow(fromStorageSlice(rows), from, to)
 	s.populateCategories(ctx, events)
 	return events, nil
+}
+
+// inWindow keeps the events that overlap [from, to) by the rule of their
+// own kind (Event.Overlaps). The rows come from a query over
+// timeutil.CoverWindow, so the query also reads the events of the other
+// kind of window.
+func inWindow(events []Event, from, to time.Time) []Event {
+	kept := events[:0]
+	for _, e := range events {
+		if e.Overlaps(from, to) {
+			kept = append(kept, e)
+		}
+	}
+	return kept
+}
+
+// rangeBound formats a query bound as an RFC 3339 string in UTC, or ""
+// for the zero time (no bound).
+func rangeBound(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func (s *Service) Get(ctx context.Context, id int64) (Event, error) {
