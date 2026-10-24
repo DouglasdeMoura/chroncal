@@ -26,8 +26,24 @@ var journalResource = resource{
 	delSeries: func(ctx context.Context, a *app.App, target row) ([]int64, error) {
 		return []int64{target.CalendarID}, a.Journals.DeleteSeries(ctx, target.UID)
 	},
-	restoreByID:  func(ctx context.Context, a *app.App, id int64) error { return a.Journals.RestoreByID(ctx, id) },
-	restoreByUID: func(ctx context.Context, a *app.App, uid string) error { return a.Journals.RestoreByUID(ctx, uid) },
+	restoreByID: func(ctx context.Context, a *app.App, id int64) ([]int64, error) {
+		if err := a.Journals.RestoreByID(ctx, id); err != nil {
+			return nil, err
+		}
+		r, err := a.Journals.GetIncludingDeleted(ctx, id)
+		if err != nil {
+			// The restore committed. The push is best-effort, so a failed
+			// read skips it, and the next sync sends the rows.
+			return nil, nil
+		}
+		return journalRestorePushCalendars(ctx, a, r.UID, r.CalendarID), nil
+	},
+	restoreByUID: func(ctx context.Context, a *app.App, uid string) ([]int64, error) {
+		if err := a.Journals.RestoreByUID(ctx, uid); err != nil {
+			return nil, err
+		}
+		return journalRestorePushCalendars(ctx, a, uid, 0), nil
+	},
 	purgeCandidate: func(ctx context.Context, a *app.App, id int64) (row, bool, error) {
 		j, err := a.Journals.GetIncludingDeleted(ctx, id)
 		if err != nil {
@@ -52,4 +68,20 @@ entire recurring series.`,
   chroncal journal delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
   chroncal journal delete weekly-review-uid --series`,
 	})
+}
+
+// journalRestorePushCalendars returns the calendars that the push after a
+// restore of uid sends: rowCalendarID (0 for none) and the calendar of the
+// master of the UID. The restore marks the calendar of the master dirty
+// (see storage.ReconcileAfterRestore). A failed read of the master returns
+// rowCalendarID only: the push is best-effort.
+func journalRestorePushCalendars(ctx context.Context, a *app.App, uid string, rowCalendarID int64) []int64 {
+	var ids []int64
+	if rowCalendarID != 0 {
+		ids = append(ids, rowCalendarID)
+	}
+	if m, err := a.Queries.GetJournalByUIDIncludingDeleted(ctx, uid); err == nil && m.CalendarID != rowCalendarID {
+		ids = append(ids, m.CalendarID)
+	}
+	return ids
 }

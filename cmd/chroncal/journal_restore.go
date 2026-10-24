@@ -10,8 +10,10 @@ func journalRestoreCmd() *cobra.Command {
 		long: `Restore clears the deletion marker on a soft-deleted journal entry
 so it reappears in list and TUI views.
 
-If the journal was synced to a remote server, restore marks it dirty so
-the next sync cycle recreates it remotely.`,
+If the journal was synced to a remote server, restore marks it dirty and
+pushes the calendar at once, as a delete does. The push creates the
+journal on the server again. When the push fails, the next sync
+sends it.`,
 		example: `  chroncal journal restore 3
   chroncal journal restore retro-uid`,
 	})

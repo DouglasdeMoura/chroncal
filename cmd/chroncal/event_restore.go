@@ -21,8 +21,10 @@ rows of the newest delete in one calendar come back.
 The event must have been deleted via chroncal (soft-delete, not purged).
 Use 'events list --include-deleted' to see deletable candidates.
 
-If the event was synced to a remote server, restore marks it dirty so
-the next sync cycle recreates it remotely (with a fresh resource URL).`,
+If the event was synced to a remote server, restore marks it dirty and
+pushes the calendar at once, as a delete does. The push creates the
+event on the server again (with a fresh resource URL). When the push fails, the next sync
+sends it.`,
 		example: `  chroncal event restore 42
   chroncal event restore my-event-uid`,
 	})
