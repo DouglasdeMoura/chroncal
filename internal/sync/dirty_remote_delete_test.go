@@ -9,6 +9,7 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/calendar"
 	"github.com/douglasdemoura/chroncal/internal/event"
 	"github.com/douglasdemoura/chroncal/internal/storage"
+	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
 // The tests in this file check the rule for a local edit that no push sent
@@ -81,10 +82,11 @@ func TestUpdateOfAGoneObjectIsCreatedAgain(t *testing.T) {
 // TestUpdateOfAGoneObjectIsCreatedAgain. The push sends no create, and the
 // pull moves the event to the trash. The pass reports no error and records
 // no conflict: the GET after the 412 finds no object, and the delete is the
-// side that a server-wins pass keeps (issue #884).
+// side that a server-wins pass keeps. A warning tells the user that the
+// local edit goes to the trash (issue #884).
 func TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit(t *testing.T) {
 	t.Parallel()
-	engine, _, srv, calA, _ := newICloudPairEngine(t)
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
 	ctx := context.Background()
 	evt := createPushedEvent(t, engine, calA)
 	path := "/cal/a/" + evt.UID + ".ics"
@@ -93,17 +95,61 @@ func TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit(t *testing.T) {
 
 	putsBefore, _ := srv.counts()
 	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
-	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 {
-		t.Fatalf("pass of A = %+v, %v; want no push, no error, and the remote delete applied", res, err)
-	}
-	if n, err := engine.q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{CalendarID: calA, Uid: evt.UID}); err != nil || n != 0 {
-		t.Fatalf("open conflicts = %d, %v; want none", n, err)
+	if err != nil || res.Pushed != 0 || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("pass of A = %+v, %v; want no push, no error, one warning, and the remote delete applied", res, err)
 	}
 	if puts, _ := srv.counts(); puts != putsBefore+1 || srv.has(path) {
 		t.Fatalf("PUTs = %d (want %d), object = %v; want no create", puts, putsBefore+1, srv.has(path))
 	}
-	if got, err := engine.events.Get(ctx, evt.ID); err == nil && got.DeletedAt == nil {
-		t.Fatalf("event = %+v; want it in the trash", got)
+	wantTrashed(t, engine, "events", evt.ID)
+	wantNoOpenConflictOrRow(t, q, calA, evt.UID)
+}
+
+// TestServerWinsPassKeepsTheRemoteDeleteOfATodoEdit is the todo case of
+// TestServerWinsPassKeepsTheRemoteDeleteOfAnEdit, as in issue #884.
+func TestServerWinsPassKeepsTheRemoteDeleteOfATodoEdit(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+	td, err := engine.todos.Create(ctx, todo.CreateParams{CalendarID: calA, Summary: "T5"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || res.Pushed != 1 {
+		t.Fatalf("initial push = %+v, %v; want one push", res, err)
+	}
+	srv.deleteRemote("/cal/a/" + td.UID + ".ics")
+	if _, err := engine.todos.Update(ctx, td.ID, todo.UpdateParams{Summary: "T5 (local)"}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	res, err := engine.SyncCalendar(ctx, calA, ConflictServerWins)
+	if err != nil || res.Deleted != 1 || len(res.Errors) != 0 || res.Conflicts != 0 {
+		t.Fatalf("pass of A = %+v, %v; want no error and the remote delete applied", res, err)
+	}
+	wantTrashed(t, engine, "todos", td.ID)
+	wantNoOpenConflictOrRow(t, q, calA, td.UID)
+}
+
+// wantTrashed checks that the row id of table is in the trash. Get reads
+// live rows only, so the check reads the table.
+func wantTrashed(t *testing.T, engine *Engine, table string, id int64) {
+	t.Helper()
+	var deletedAt *string
+	if err := engine.db.QueryRowContext(context.Background(), "SELECT deleted_at FROM "+table+" WHERE id = ?", id).Scan(&deletedAt); err != nil || deletedAt == nil {
+		t.Fatalf("%s row %d: deleted_at = %v, %v; want it in the trash", table, id, deletedAt, err)
+	}
+}
+
+// wantNoOpenConflictOrRow checks that uid has no open conflict in calendarID
+// and no dirty sync row: the pull applied the remote delete.
+func wantNoOpenConflictOrRow(t *testing.T, q *storage.Queries, calendarID int64, uid string) {
+	t.Helper()
+	ctx := context.Background()
+	if n, err := q.CountOpenSyncConflicts(ctx, storage.CountOpenSyncConflictsParams{CalendarID: calendarID, Uid: uid}); err != nil || n != 0 {
+		t.Fatalf("open conflicts = %d, %v; want none", n, err)
+	}
+	if sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calendarID, Uid: uid}); err == nil && (sr.Dirty != 0 || sr.PushFailCount != 0) {
+		t.Fatalf("sync row = %+v; want no dirty row and no push failure after the delete", sr)
 	}
 }
 
