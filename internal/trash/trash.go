@@ -8,6 +8,7 @@
 package trash
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -153,11 +154,18 @@ func (s *Service) List(ctx context.Context, calendarID int64) ([]Entry, error) {
 	return entries, nil
 }
 
-// SortNewestFirst sorts entries newest-first by DeletedAt. The sort is
-// stable, so entries with the same deletion time keep their order.
+// SortNewestFirst sorts entries newest-first by DeletedAt. DeletedAt has
+// second precision, so entries with the same deletion time sort by Kind,
+// then by the higher ID first. The order is then the same for each read.
 func SortNewestFirst(entries []Entry) {
-	slices.SortStableFunc(entries, func(a, b Entry) int {
-		return b.DeletedAt.Compare(a.DeletedAt)
+	slices.SortFunc(entries, func(a, b Entry) int {
+		if c := b.DeletedAt.Compare(a.DeletedAt); c != 0 {
+			return c
+		}
+		if a.Kind != b.Kind {
+			return cmp.Compare(a.Kind, b.Kind)
+		}
+		return cmp.Compare(b.ID, a.ID)
 	})
 }
 
