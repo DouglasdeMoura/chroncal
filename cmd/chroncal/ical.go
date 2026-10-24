@@ -273,6 +273,8 @@ func (o icalImportOutcome) json() map[string]any {
 		"unchanged_events":   o.summary.UnchangedEvents,
 		"unchanged_todos":    o.summary.UnchangedTodos,
 		"unchanged_journals": o.summary.UnchangedJournals,
+		"skipped_todos":      o.summary.SkippedTodos,
+		"skipped_journals":   o.summary.SkippedJournals,
 		"failed":             o.summary.Failed,
 		"warnings":           o.summary.Warnings,
 	}
@@ -372,6 +374,10 @@ func printImportSummary(w io.Writer, o icalImportOutcome, named bool) {
 		o.summary.UpdatedEvents+o.summary.UpdatedTodos+o.summary.UpdatedJournals,
 		o.summary.UnchangedEvents+o.summary.UnchangedTodos+o.summary.UnchangedJournals,
 		len(o.summary.Events), len(o.summary.Todos), len(o.summary.Journals))
+	if skipped := o.summary.SkippedTodos + o.summary.SkippedJournals; skipped > 0 {
+		// The warnings name the calendar of each skipped item (issue #882).
+		fmt.Fprintf(w, "Skipped %d item(s) that live in another calendar.\n", skipped)
+	}
 	if len(o.freeBusy) > 0 {
 		fmt.Fprintf(w, "Parsed %d VFREEBUSY component(s); they were not imported into local storage.\n", len(o.freeBusy))
 	}

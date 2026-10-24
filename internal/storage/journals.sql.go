@@ -527,6 +527,44 @@ func (q *Queries) ListDeletedJournalsByCalendar(ctx context.Context, calendarID 
 	return items, nil
 }
 
+const listJournalCalendarsOfUID = `-- name: ListJournalCalendarsOfUID :many
+SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM journals
+WHERE uid = ?
+ORDER BY deleted_at IS NOT NULL, recurrence_id = '' DESC, id
+`
+
+type ListJournalCalendarsOfUIDRow struct {
+	CalendarID int64
+	Trashed    int64
+}
+
+// The calendar of each row of a UID, live or in the trash, and whether the
+// row is in the trash. A live row comes first, and a master comes before
+// an override. The import uses it for an item with no row of its own
+// (issue #882).
+func (q *Queries) ListJournalCalendarsOfUID(ctx context.Context, uid string) ([]ListJournalCalendarsOfUIDRow, error) {
+	rows, err := q.db.QueryContext(ctx, listJournalCalendarsOfUID, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListJournalCalendarsOfUIDRow
+	for rows.Next() {
+		var i ListJournalCalendarsOfUIDRow
+		if err := rows.Scan(&i.CalendarID, &i.Trashed); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listJournalOverridesByUID = `-- name: ListJournalOverridesByUID :many
 SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL ORDER BY recurrence_id
 `

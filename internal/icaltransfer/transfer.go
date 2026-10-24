@@ -8,7 +8,6 @@ package icaltransfer
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -65,6 +64,12 @@ type Summary struct {
 	// hold them too.
 	UnchangedEvents, UnchangedTodos, UnchangedJournals int
 
+	// SkippedTodos and SkippedJournals count the items whose UID lives in
+	// another local calendar (issue #882). The import does not write them,
+	// and a warning names both calendars. Failed leaves them out, so a
+	// directory import from a timer does not fail.
+	SkippedTodos, SkippedJournals int
+
 	// Failed counts components whose own upsert failed (and were therefore
 	// skipped entirely). Child-field failures are recorded as Warnings
 	// instead, since the parent component itself did land.
@@ -105,8 +110,10 @@ func ParseFile(path string) (Preview, error) {
 // first write. Each present family must be writable at the destination.
 // Event UIDs are unique per calendar (issue #756), so an event that already
 // lives on another calendar does not move. Todos and journals still use a
-// global UID. A todo or journal UID that already lives in another calendar
-// must live in a calendar the caller can write to.
+// global UID. The import skips a todo or journal whose UID lives in another
+// local calendar, and it refuses one in another synced calendar
+// (storage.PrepareImport, issue #882). Both rules work per item, so they do
+// not stop the other items here.
 func ValidateDestination(ctx context.Context, a *app.App, calendarID int64, preview Preview) error {
 	result := preview.Result
 
@@ -132,39 +139,6 @@ func ValidateDestination(ctx context.Context, a *app.App, calendarID int64, prev
 		}
 	}
 
-	checkSource := func(sourceID int64, component, uid string) error {
-		if sourceID == calendarID {
-			return nil
-		}
-		if err := calendaraccess.EnsureWritable(ctx, a.Queries, sourceID, component); err != nil {
-			return fmt.Errorf("import %s UID %q from calendar %d: %w", component, uid, sourceID, err)
-		}
-		return nil
-	}
-	for _, imported := range result.Todos {
-		existing, err := a.Queries.GetTodoByUIDAndRecurrenceID(ctx, storage.GetTodoByUIDAndRecurrenceIDParams{
-			Uid: imported.UID, RecurrenceID: imported.RecurrenceID,
-		})
-		if err == nil {
-			if err := checkSource(existing.CalendarID, FamilyTodo, imported.UID); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check existing %s UID %q: %w", FamilyTodo, imported.UID, err)
-		}
-	}
-	for _, imported := range result.Journals {
-		existing, err := a.Queries.GetJournalByUIDAndRecurrenceID(ctx, storage.GetJournalByUIDAndRecurrenceIDParams{
-			Uid: imported.UID, RecurrenceID: imported.RecurrenceID,
-		})
-		if err == nil {
-			if err := checkSource(existing.CalendarID, FamilyJournal, imported.UID); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check existing %s UID %q: %w", FamilyJournal, imported.UID, err)
-		}
-	}
 	return nil
 }
 
@@ -267,6 +241,13 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 			RecurrenceID: t.RecurrenceID, Geo: t.Geo,
 			DtStamp: t.DtStamp,
 		})
+		if errors.Is(err, storage.ErrCrossCalendarSkip) {
+			// The UID lives in another local calendar: the item stays
+			// there, and the run does not fail (issue #882).
+			result.Warnings = append(result.Warnings, fmt.Sprintf("import todo %q: %v", textsafe.Display(t.Summary), err))
+			summary.SkippedTodos++
+			continue
+		}
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("import todo %q: %v", textsafe.Display(t.Summary), err))
 			summary.Failed++
@@ -302,6 +283,13 @@ func Import(ctx context.Context, a *app.App, calendarID int64, result *ical.Impo
 			RecurrenceID: j.RecurrenceID,
 			DtStamp:      j.DtStamp,
 		})
+		if errors.Is(err, storage.ErrCrossCalendarSkip) {
+			// The UID lives in another local calendar: the item stays
+			// there, and the run does not fail (issue #882).
+			result.Warnings = append(result.Warnings, fmt.Sprintf("import journal %q: %v", textsafe.Display(j.Summary), err))
+			summary.SkippedJournals++
+			continue
+		}
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("import journal %q: %v", textsafe.Display(j.Summary), err))
 			summary.Failed++

@@ -877,10 +877,11 @@ func TestImport_FailsWhenTheCalendarLookupFails(t *testing.T) {
 	}
 }
 
-// TestImport_RefusesATodoOfAnotherSyncedCalendar imports a todo whose row
-// lives in another synced calendar, with no pending move. The upsert
-// would move the row with no move record, so the import must refuse it.
-// A todo from a local calendar still moves.
+// TestImport_RefusesATodoOfAnotherSyncedCalendar imports two todos whose
+// rows live in other calendars, with no pending move. The row of the synced
+// calendar would move with no move record, so the import refuses it. The
+// row of the local calendar stays there, and the import skips it with a
+// warning, not a failure (issue #882).
 func TestImport_RefusesATodoOfAnotherSyncedCalendar(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()
@@ -899,14 +900,17 @@ func TestImport_RefusesATodoOfAnotherSyncedCalendar(t *testing.T) {
 	}
 	result := &ical.ImportResult{Todos: []todo.Todo{{UID: "synced-todo", Summary: "Imported"}, {UID: "local-todo", Summary: "Imported local"}}}
 	summary := icaltransfer.Import(ctx, a, calA.ID, result)
-	if summary.Failed != 1 || !containsSubstring(summary.Warnings, `synced-todo lives in calendar "b"; move it there or delete it first`) {
+	if summary.Failed != 1 || !containsSubstring(summary.Warnings, `synced-todo lives in calendar "b"; a todo UID cannot be in two calendars, so move the todo to this calendar or delete it there first`) {
 		t.Fatalf("import = failed %d, warnings %v; want one refusal", summary.Failed, summary.Warnings)
+	}
+	if summary.SkippedTodos != 1 || !containsSubstring(summary.Warnings, `skipped: local-todo lives in calendar "local", not in calendar "a"`) {
+		t.Fatalf("import = skipped %d, warnings %v; want one skip", summary.SkippedTodos, summary.Warnings)
 	}
 	if got, err := a.Todos.Get(ctx, inB.ID); err != nil || got.CalendarID != calB.ID || got.Summary != "In B" {
 		t.Fatalf("todo in B = %+v, %v; want it unchanged", got, err)
 	}
-	if got, err := a.Todos.Get(ctx, inLocal.ID); err != nil || got.CalendarID != calA.ID {
-		t.Fatalf("todo from local = %+v, %v; want it moved to A", got, err)
+	if got, err := a.Todos.Get(ctx, inLocal.ID); err != nil || got.CalendarID != local.ID || got.Summary != "In local" {
+		t.Fatalf("todo in local = %+v, %v; want it unchanged", got, err)
 	}
 }
 
@@ -958,7 +962,7 @@ func TestImport_RefusesASyncedTodoIntoALocalCalendar(t *testing.T) {
 	}
 	result := &ical.ImportResult{Todos: []todo.Todo{{UID: "synced-todo", Summary: "Imported"}}}
 	summary := icaltransfer.Import(ctx, a, local.ID, result)
-	if summary.Failed != 1 || !containsSubstring(summary.Warnings, `synced-todo lives in calendar "b"; move it there or delete it first`) {
+	if summary.Failed != 1 || !containsSubstring(summary.Warnings, `synced-todo lives in calendar "b"; a todo UID cannot be in two calendars, so move the todo to this calendar or delete it there first`) {
 		t.Fatalf("import = failed %d, warnings %v; want a refusal", summary.Failed, summary.Warnings)
 	}
 	if got, err := a.Todos.Get(ctx, inB.ID); err != nil || got.CalendarID != calB.ID || got.Summary != "In B" {

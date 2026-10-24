@@ -589,6 +589,13 @@ var ErrPendingMove = errors.New("the item waits for its move")
 // server then holds two copies (issue #841).
 var ErrCrossCalendarImport = errors.New("the item lives in another calendar")
 
+// ErrCrossCalendarSkip reports an import of a todo or a journal whose UID
+// lives in another local calendar (issue #882). The import does not write
+// the item: a copy is not possible, and a move would take the item from
+// that calendar. The import counts the item as skipped, not as failed, so
+// a directory import from a timer does not fail.
+var ErrCrossCalendarSkip = errors.New("skipped")
+
 // ClearTombstonesOfUID deletes the tombstones of uid in calendarID through
 // q. A tombstone with the source_gone mark names a server object that is
 // gone. So the sync row first drops its href and its etag, and the next
@@ -696,16 +703,27 @@ type importRow struct {
 	ExistingCalendarID int64
 	// ExistingTrashed is true when that row was in the trash.
 	ExistingTrashed bool
+	// ExistingIsSeries is true when the item had no row of its own, so
+	// ExistingCalendarID and ExistingTrashed describe another row of its
+	// UID: the master or an override.
+	ExistingIsSeries bool
 	// tombstoneFound is true when the import calendar holds a plain
 	// tombstone of the UID. PrepareImport reads it.
 	tombstoneFound bool
 }
 
-// PriorLookup returns the row of the imported UID and recurrence ID
-// before the upsert: its calendar, and whether it is in the trash. found is
-// false when no row exists. A domain whose key spans calendars passes it to
-// PrepareImport.
-type PriorLookup func(ctx context.Context) (calendarID int64, trashed, found bool, err error)
+// PriorLookup reads the rows of the imported UID before the upsert. A
+// domain whose key spans calendars passes it to PrepareImport. Each
+// function returns the calendar of a row and whether the row is in the
+// trash. found is false when no row exists.
+type PriorLookup struct {
+	// Row reads the row of the imported UID and recurrence ID.
+	Row func(ctx context.Context) (calendarID int64, trashed, found bool, err error)
+	// OtherRow reads the row of the UID that names the calendar of its
+	// series: a row in calendarID first, else a live row before a row in
+	// the trash, and a master before an override.
+	OtherRow func(ctx context.Context, calendarID int64) (otherCalendarID int64, trashed, found bool, err error)
+}
 
 // PrepareImport applies the import rules that come before the upsert, and
 // it returns the row for ApplyImport. Call it in the transaction of the
@@ -719,10 +737,15 @@ type PriorLookup func(ctx context.Context) (calendarID int64, trashed, found boo
 //     journal). The import then refuses an upsert that moves a row of a
 //     pending move to another calendar.
 //   - It also refuses an upsert that moves a row out of another synced
-//     calendar (ErrCrossCalendarImport), live or in the trash. A row from
-//     a local calendar moves. The import never writes into another
-//     calendar.
-func PrepareImport(ctx context.Context, q *Queries, im *Import, calendarID int64, uid, recurrenceID, ownerType string, prior PriorLookup) (PreparedImport, error) {
+//     calendar (ErrCrossCalendarImport), live or in the trash. The import
+//     holds no lock of that calendar, and the move would have no record.
+//   - It skips an item whose row lives in another local calendar
+//     (ErrCrossCalendarSkip). The import never moves a row and never
+//     writes into another calendar (issue #882).
+//   - An item with no row of its own takes the calendar of any other row
+//     of its UID, the master or an override. The import then never splits
+//     a series across two calendars.
+func PrepareImport(ctx context.Context, q *Queries, im *Import, calendarID int64, uid, recurrenceID, ownerType string, prior *PriorLookup) (PreparedImport, error) {
 	row, err := prepareImport(ctx, q, im, calendarID, uid, recurrenceID, ownerType, prior)
 	if err != nil {
 		return PreparedImport{}, err
@@ -738,7 +761,7 @@ type PreparedImport struct {
 	ok  bool
 }
 
-func prepareImport(ctx context.Context, q *Queries, im *Import, calendarID int64, uid, recurrenceID, ownerType string, prior PriorLookup) (importRow, error) {
+func prepareImport(ctx context.Context, q *Queries, im *Import, calendarID int64, uid, recurrenceID, ownerType string, prior *PriorLookup) (importRow, error) {
 	row := importRow{Import: im, CalendarID: calendarID, UID: uid, RecurrenceID: recurrenceID, OwnerType: ownerType}
 	if im.Synced {
 		ts, found, err := importTombstone(ctx, q, calendarID, uid)
@@ -755,17 +778,27 @@ func prepareImport(ctx context.Context, q *Queries, im *Import, calendarID int64
 	if prior == nil {
 		return row, nil
 	}
-	priorCalendar, trashed, found, err := prior(ctx)
+	priorCalendar, trashed, found, err := prior.Row(ctx)
+	if err == nil && !found {
+		priorCalendar, trashed, found, err = prior.OtherRow(ctx, calendarID)
+		row.ExistingIsSeries = found
+	}
 	if err != nil {
 		return row, fmt.Errorf("find the row of %s: %w", uid, err)
 	}
 	if found {
 		row.ExistingCalendarID, row.ExistingTrashed = priorCalendar, trashed
 	}
+	// A skip writes nothing, so it comes before the pending-move rule: an
+	// item of another local calendar never counts as failed.
+	crossErr := checkNoCrossCalendarUpsert(ctx, q, row)
+	if errors.Is(crossErr, ErrCrossCalendarSkip) {
+		return row, crossErr
+	}
 	if err := CheckNoCrossCalendarMove(ctx, q, calendarID, row.ExistingCalendarID, uid); err != nil {
 		return row, err
 	}
-	return row, checkNoSyncedCrossCalendarUpsert(ctx, q, row)
+	return row, crossErr
 }
 
 // ApplyImport applies the import rules of issue #841 to one upserted row,
@@ -821,11 +854,14 @@ func ApplyImport(ctx context.Context, q *Queries, prepared PreparedImport) error
 	return nil
 }
 
-// checkNoSyncedCrossCalendarUpsert refuses the import upsert of p when the
-// prior row lives in another synced calendar (ErrCrossCalendarImport),
-// live or in the trash. The import holds no lock of that calendar, so it
-// never writes there. The user restores or purges the row there.
-func checkNoSyncedCrossCalendarUpsert(ctx context.Context, q *Queries, p importRow) error {
+// checkNoCrossCalendarUpsert stops the import upsert of p when a row of
+// its UID lives in another calendar, live or in the trash. The import
+// holds no lock of that calendar, so it never writes there.
+//   - A synced calendar gives ErrCrossCalendarImport. The user moves the
+//     item, or restores or purges the row there.
+//   - A local calendar gives ErrCrossCalendarSkip. The item stays where it
+//     is, and the import goes on with the next item.
+func checkNoCrossCalendarUpsert(ctx context.Context, q *Queries, p importRow) error {
 	if p.ExistingCalendarID == 0 || p.ExistingCalendarID == p.CalendarID {
 		return nil
 	}
@@ -834,12 +870,31 @@ func checkNoSyncedCrossCalendarUpsert(ctx context.Context, q *Queries, p importR
 		return fmt.Errorf("get the calendar of %s: %w", p.UID, err)
 	}
 	if !CalendarLinked(cal) {
-		return nil
+		what := p.UID
+		if p.ExistingIsSeries {
+			what = "the series of " + p.UID
+		}
+		where := "lives in"
+		if p.ExistingTrashed {
+			where = "is in the trash of"
+		}
+		return fmt.Errorf("%w: %s %s calendar %q, not in calendar %q; a %s UID cannot be in two calendars",
+			ErrCrossCalendarSkip, what, where, cal.Name, CalendarLabel(ctx, q, p.CalendarID), p.OwnerType)
 	}
-	if !p.ExistingTrashed {
-		return fmt.Errorf("%w: %s lives in calendar %q; move it there or delete it first", ErrCrossCalendarImport, p.UID, cal.Name)
+	if CalendarReadOnly(cal.RemoteAccess) {
+		// The user cannot move or delete a row of a read-only calendar,
+		// so the message gives no such advice.
+		return fmt.Errorf("%w: %s lives in the read-only calendar %q; a %s UID cannot be in two calendars", ErrCrossCalendarImport, p.UID, cal.Name, p.OwnerType)
 	}
-	return fmt.Errorf("%w: %s is in the trash of calendar %q; restore it there or purge it first", ErrCrossCalendarImport, p.UID, cal.Name)
+	switch {
+	case p.ExistingIsSeries && p.ExistingTrashed:
+		return fmt.Errorf("%w: the series of %s is in the trash of calendar %q; restore it there or purge it first", ErrCrossCalendarImport, p.UID, cal.Name)
+	case p.ExistingIsSeries:
+		return fmt.Errorf("%w: the series of %s lives in calendar %q; import the item into that calendar", ErrCrossCalendarImport, p.UID, cal.Name)
+	case p.ExistingTrashed:
+		return fmt.Errorf("%w: %s is in the trash of calendar %q; restore it there or purge it first", ErrCrossCalendarImport, p.UID, cal.Name)
+	}
+	return fmt.Errorf("%w: %s lives in calendar %q; a %s UID cannot be in two calendars, so move the %s to this calendar or delete it there first", ErrCrossCalendarImport, p.UID, cal.Name, p.OwnerType, p.OwnerType)
 }
 
 // CalendarReadOnly reports whether a calendars.remote_access value marks a

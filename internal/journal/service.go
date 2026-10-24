@@ -418,10 +418,25 @@ func (s *Service) UpsertByUID(ctx context.Context, p UpsertParams) (Journal, err
 	var guard storage.PreparedImport
 	if p.Import != nil {
 		var err error
-		guard, err = storage.PrepareImport(ctx, qtx, p.Import, p.CalendarID, p.UID, p.RecurrenceID, "journal", func(ctx context.Context) (int64, bool, bool, error) {
-			row, err := qtx.GetJournalCalendarByUIDAndRecurrenceID(ctx, storage.GetJournalCalendarByUIDAndRecurrenceIDParams{Uid: p.UID, RecurrenceID: p.RecurrenceID})
-			found, err := storage.Found(err)
-			return row.CalendarID, row.Trashed == 1, found, err
+		guard, err = storage.PrepareImport(ctx, qtx, p.Import, p.CalendarID, p.UID, p.RecurrenceID, "journal", &storage.PriorLookup{
+			Row: func(ctx context.Context) (int64, bool, bool, error) {
+				row, err := qtx.GetJournalCalendarByUIDAndRecurrenceID(ctx, storage.GetJournalCalendarByUIDAndRecurrenceIDParams{Uid: p.UID, RecurrenceID: p.RecurrenceID})
+				found, err := storage.Found(err)
+				return row.CalendarID, row.Trashed == 1, found, err
+			},
+			OtherRow: func(ctx context.Context, calendarID int64) (int64, bool, bool, error) {
+				rows, err := qtx.ListJournalCalendarsOfUID(ctx, p.UID)
+				if err != nil || len(rows) == 0 {
+					return 0, false, false, err
+				}
+				// A row in the import calendar names the series there.
+				for _, r := range rows {
+					if r.CalendarID == calendarID {
+						return r.CalendarID, r.Trashed == 1, true, nil
+					}
+				}
+				return rows[0].CalendarID, rows[0].Trashed == 1, true, nil
+			},
 		})
 		if err != nil {
 			return Journal{}, err

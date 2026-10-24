@@ -729,6 +729,44 @@ func (q *Queries) ListRecurringTodosByCalendar(ctx context.Context, calendarID i
 	return items, nil
 }
 
+const listTodoCalendarsOfUID = `-- name: ListTodoCalendarsOfUID :many
+SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM todos
+WHERE uid = ?
+ORDER BY deleted_at IS NOT NULL, recurrence_id = '' DESC, id
+`
+
+type ListTodoCalendarsOfUIDRow struct {
+	CalendarID int64
+	Trashed    int64
+}
+
+// The calendar of each row of a UID, live or in the trash, and whether the
+// row is in the trash. A live row comes first, and a master comes before
+// an override. The import uses it for an item with no row of its own
+// (issue #882).
+func (q *Queries) ListTodoCalendarsOfUID(ctx context.Context, uid string) ([]ListTodoCalendarsOfUIDRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTodoCalendarsOfUID, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTodoCalendarsOfUIDRow
+	for rows.Next() {
+		var i ListTodoCalendarsOfUIDRow
+		if err := rows.Scan(&i.CalendarID, &i.Trashed); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTodoOverridesByUID = `-- name: ListTodoOverridesByUID :many
 SELECT id, uid, calendar_id, summary, description, location, due_date, start_date, duration, completed_at, percent_complete, status, priority, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, geo, created_at, updated_at, dtstamp, deleted_at FROM todos WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL ORDER BY recurrence_id
 `
