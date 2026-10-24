@@ -504,23 +504,10 @@ func remoteCalendarName(remote caldav.RemoteCalendar) string {
 // key. A legacy absolute link (for example "https://host/cal/work") and the
 // server-relative path discovery returns ("/cal/work/") then reconcile to the
 // same row instead of a duplicate. Relative references resolve against the
-// account server URL. Absolute references are kept as-is. Both are normalized
-// to a form with no slash at the end.
+// account server URL. calendar.CollectionKey holds the rule, so the
+// account discovery and the calendar link compare collections the same way.
 func remoteIdentityKey(raw, serverURL string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	ref, err := url.Parse(raw)
-	if err != nil {
-		return strings.TrimRight(raw, "/")
-	}
-	if base, baseErr := url.Parse(strings.TrimSpace(serverURL)); baseErr == nil && base.IsAbs() && !ref.IsAbs() {
-		ref = base.ResolveReference(ref)
-	}
-	ref.Path = strings.TrimRight(ref.Path, "/")
-	ref.RawPath = ""
-	return ref.String()
+	return calendar.CollectionKey(raw, serverURL)
 }
 
 // uniqueLocalName returns base when it is free, otherwise appends " (n)" until

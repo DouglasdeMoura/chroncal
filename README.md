@@ -454,7 +454,7 @@ An account stores one credential. It discovers every CalDAV calendar collection 
 
 `account calendars set` replaces the exact local selection. After confirmation, Chroncal deletes deselected calendars and their downloaded data. It never deletes the remote collections. If you deselect the current default calendar, pass `--default` with a retained local calendar or a new remote collection. The command syncs new collections before it returns.
 
-One remote collection links to one local calendar only. `account calendars list` shows a collection that another local calendar links as `linked by <calendar>`. `account add` and `--all` skip such a collection. `--calendar` refuses it with an error. Remove the other link first, for example with `calendar update <calendar> --disconnect-remote`. The check compares the collection URL and the user name of the account. It ignores the case of the user name.
+One remote collection links to one local calendar only. `account calendars list` shows a collection that another local calendar links as `linked by <calendar>`. `account add` and `--all` skip such a collection. When other calendars link each usable collection, `account add` stops with an error and removes the new account. `--calendar` refuses such a collection with an error. Remove the other link first, for example with `calendar update <calendar> --disconnect-remote`. The check compares the collection URL and the user name of the account. It ignores the case of the user name.
 
 If you select none, the command also removes the empty account and credential. `account remove` deletes the credential and remote links. It keeps downloaded calendars as local copies.
 

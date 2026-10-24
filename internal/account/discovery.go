@@ -120,6 +120,10 @@ func (s *Service) discoverLocked(ctx context.Context, accountID int64, store aut
 		return Discovery{}, fmt.Errorf("mark account calendars missing: %w", err)
 	}
 
+	links, err := calendar.LoadCollectionLinks(ctx, qtx)
+	if err != nil {
+		return Discovery{}, fmt.Errorf("read the calendar links: %w", err)
+	}
 	calendars := make([]DiscoveredCalendar, 0, len(found))
 	seen := make(map[string]struct{}, len(found))
 	for _, remote := range found {
@@ -138,15 +142,9 @@ func (s *Service) discoverLocked(ctx context.Context, accountID int64, store aut
 			if err := applyDiscoveredCalendarMetadata(ctx, qtx, item, local.ID); err != nil {
 				return Discovery{}, fmt.Errorf("update discovered calendar %q: %w", remote.Name, err)
 			}
-		} else {
-			other, linked, err := calendar.FindCollectionLink(ctx, qtx, remote.Path, account.ServerURL, account.Username,
-				calendar.CollectionLinkScope{AccountID: accountID})
-			if err != nil {
-				return Discovery{}, fmt.Errorf("check the links of calendar %q: %w", remote.Name, err)
-			}
-			if linked {
-				item.LinkedBy = other.Name
-			}
+		} else if other, linked := links.Find(remote.Path, account.ServerURL, account.Username,
+			calendar.CollectionLinkScope{AccountID: accountID}); linked {
+			item.LinkedBy = other.Name
 		}
 		calendars = append(calendars, item)
 	}

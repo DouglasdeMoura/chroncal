@@ -1044,3 +1044,56 @@ func TestResolveDiscoveredSelectionsRejectsAmbiguousAndUnknown(t *testing.T) {
 		t.Fatalf("resolved paths = %v, want [/cal/a/]", paths)
 	}
 }
+
+// TestAccountAddRollsBackWhenOtherCalendarsLinkEachCollection links each
+// usable collection of the server to a local calendar first. `account add`
+// then has nothing to add. It must name that reason, not "no usable
+// calendars", and it must remove the new account (issue #874).
+func TestAccountAddRollsBackWhenOtherCalendarsLinkEachCollection(t *testing.T) {
+	dbPath := setupCalendarCLITestEnv(t)
+	t.Setenv("CHRONCAL_BEARER_TOKEN", "test-token")
+	srv := newAccountDiscoveryServer(t)
+
+	a, err := app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	ctx := context.Background()
+	for i, path := range []string{"/calendars/me/personal/", "/calendars/me/holidays/"} {
+		if _, err := a.DB.ExecContext(ctx, `INSERT INTO accounts (name, server_url, auth_type, username) VALUES (?, ?, 'bearer', 'me@example.test')`,
+			fmt.Sprintf("__calendar_%d", 100+i), srv.URL); err != nil {
+			t.Fatalf("seed account: %v", err)
+		}
+		if _, err := a.DB.ExecContext(ctx, `INSERT INTO calendars (name, color, account_id, remote_url) VALUES (?, '#000000', last_insert_rowid(), ?)`,
+			fmt.Sprintf("Linked %d", i), srv.URL+path); err != nil {
+			t.Fatalf("seed calendar: %v", err)
+		}
+	}
+	a.Close()
+
+	_, _, err = runChroncalCommand(t,
+		"account", "add", "Test account",
+		"--server", srv.URL+"/",
+		"--username", "me@example.test",
+		"--auth", "bearer",
+		"--allow-insecure",
+		"--allow-plaintext",
+	)
+	if err == nil || !strings.Contains(err.Error(), "other local calendars link each usable calendar already") {
+		t.Fatalf("account add error = %v; want the linked reason", err)
+	}
+	a, err = app.New(dbPath)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	defer a.Close()
+	accounts, err := a.Accounts.List(ctx)
+	if err != nil {
+		t.Fatalf("list accounts: %v", err)
+	}
+	for _, item := range accounts {
+		if item.Name == "Test account" {
+			t.Fatalf("the incomplete account was retained: %+v", item)
+		}
+	}
+}

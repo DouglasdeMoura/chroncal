@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/douglasdemoura/chroncal/internal/model"
@@ -19,8 +20,10 @@ var ErrCollectionLinked = model.NewInputError(
 
 // CollectionKey returns the identity of a remote collection. It resolves a
 // relative remoteURL against serverURL. It changes the scheme and the host
-// to lowercase, and it removes the trailing slash of the path. It returns ""
-// for an empty remoteURL.
+// to lowercase, and it removes a default port and the user information. It
+// cleans the path (dot segments, double slashes) and removes the trailing
+// slash. It returns "" for an empty remoteURL. The account discovery and
+// the calendar link use this one rule.
 func CollectionKey(remoteURL, serverURL string) string {
 	remoteURL = strings.TrimSpace(remoteURL)
 	if remoteURL == "" {
@@ -35,6 +38,13 @@ func CollectionKey(remoteURL, serverURL string) string {
 	}
 	ref.Scheme = strings.ToLower(ref.Scheme)
 	ref.Host = strings.ToLower(ref.Host)
+	if port := ref.Port(); (ref.Scheme == "https" && port == "443") || (ref.Scheme == "http" && port == "80") {
+		ref.Host = ref.Hostname()
+	}
+	ref.User = nil
+	if ref.Path != "" {
+		ref.Path = path.Clean(ref.Path)
+	}
 	ref.Path = strings.TrimRight(ref.Path, "/")
 	ref.RawPath = ""
 	return ref.String()
@@ -49,21 +59,25 @@ type CollectionLinkScope struct {
 	AccountID  int64
 }
 
-// FindCollectionLink returns a calendar of an account with the user username
-// that links the collection remoteURL. A relative remoteURL resolves against
-// serverURL. The second result is false when no such calendar exists. The
-// usernames compare with no case.
-//
-// A different user can see the same collection with other rights, so the
-// check names the user too.
-func FindCollectionLink(ctx context.Context, q *storage.Queries, remoteURL, serverURL, username string, scope CollectionLinkScope) (storage.Calendar, bool, error) {
-	key := CollectionKey(remoteURL, serverURL)
-	if key == "" {
-		return storage.Calendar{}, false, nil
-	}
+// collectionLink is one linked calendar of a CollectionLinks index.
+type collectionLink struct {
+	calendar  storage.Calendar
+	accountID int64
+	username  string
+}
+
+// CollectionLinks indexes the linked calendars by CollectionKey. A caller
+// that checks many collections, such as the discovery, reads the calendars
+// and the accounts one time.
+type CollectionLinks struct {
+	byKey map[string][]collectionLink
+}
+
+// LoadCollectionLinks reads the linked calendars and their accounts through q.
+func LoadCollectionLinks(ctx context.Context, q *storage.Queries) (*CollectionLinks, error) {
 	accounts, err := q.ListAccounts(ctx)
 	if err != nil {
-		return storage.Calendar{}, false, fmt.Errorf("list accounts: %w", err)
+		return nil, fmt.Errorf("list accounts: %w", err)
 	}
 	byID := make(map[int64]storage.Account, len(accounts))
 	for _, account := range accounts {
@@ -71,22 +85,59 @@ func FindCollectionLink(ctx context.Context, q *storage.Queries, remoteURL, serv
 	}
 	rows, err := q.ListCalendars(ctx)
 	if err != nil {
-		return storage.Calendar{}, false, fmt.Errorf("list calendars: %w", err)
+		return nil, fmt.Errorf("list calendars: %w", err)
 	}
-	username = strings.TrimSpace(username)
+	links := &CollectionLinks{byKey: make(map[string][]collectionLink)}
 	for _, row := range rows {
-		if row.AccountID == nil || row.ID == scope.CalendarID || *row.AccountID == scope.AccountID {
+		if row.AccountID == nil {
 			continue
 		}
 		account, ok := byID[*row.AccountID]
-		if !ok || !strings.EqualFold(strings.TrimSpace(account.Username), username) {
+		if !ok {
 			continue
 		}
-		if CollectionKey(storage.NullableToString(row.RemoteUrl), account.ServerUrl) == key {
-			return row, true, nil
+		key := CollectionKey(storage.NullableToString(row.RemoteUrl), account.ServerUrl)
+		if key == "" {
+			continue
+		}
+		links.byKey[key] = append(links.byKey[key], collectionLink{
+			calendar: row, accountID: account.ID, username: strings.TrimSpace(account.Username),
+		})
+	}
+	return links, nil
+}
+
+// Find returns a calendar of an account with the user username that links
+// the collection remoteURL. A relative remoteURL resolves against serverURL.
+// The second result is false when no such calendar exists. The usernames
+// compare with no case.
+//
+// A different user can see the same collection with other rights, so the
+// check names the user too.
+func (l *CollectionLinks) Find(remoteURL, serverURL, username string, scope CollectionLinkScope) (storage.Calendar, bool) {
+	username = strings.TrimSpace(username)
+	for _, link := range l.byKey[CollectionKey(remoteURL, serverURL)] {
+		if link.calendar.ID == scope.CalendarID || link.accountID == scope.AccountID {
+			continue
+		}
+		if strings.EqualFold(link.username, username) {
+			return link.calendar, true
 		}
 	}
-	return storage.Calendar{}, false, nil
+	return storage.Calendar{}, false
+}
+
+// FindCollectionLink is LoadCollectionLinks and Find for one collection.
+func FindCollectionLink(ctx context.Context, q *storage.Queries, remoteURL, serverURL, username string, scope CollectionLinkScope) (storage.Calendar, bool, error) {
+	if CollectionKey(remoteURL, serverURL) == "" {
+		return storage.Calendar{}, false, nil
+	}
+	links, err := LoadCollectionLinks(ctx, q)
+	if err != nil {
+		return storage.Calendar{}, false, err
+	}
+	other, linked := links.Find(remoteURL, serverURL, username, scope)
+	return other, linked, nil
 }
 
 // collectionLinkedError is ErrCollectionLinked with the name of the other

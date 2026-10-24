@@ -94,11 +94,19 @@ exposes, import every usable collection, and complete their initial sync.`,
 				return rollback(fmt.Errorf("discover account calendars: %w", err))
 			}
 			selected := addableCalendarPaths(discovery)
+			linkedElsewhere := 0
 			for _, remote := range discovery.Calendars {
-				if remote.LinkedBy != "" {
+				if remote.LinkedBy != "" && remote.Importable && !remote.Missing {
+					linkedElsewhere++
 					fmt.Fprintf(cmd.ErrOrStderr(), "chroncal: skipped the calendar %q: the local calendar %q links it already\n",
 						textsafe.Display(remote.Name), textsafe.Display(remote.LinkedBy))
 				}
+			}
+			if len(selected) == 0 && linkedElsewhere > 0 {
+				return rollback(errInvalidInputf(
+					"account %q has no calendar to add: other local calendars link each usable calendar already",
+					created.DisplayName,
+				))
 			}
 			if len(selected) == 0 {
 				return rollback(errInvalidInputf(
