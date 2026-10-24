@@ -271,7 +271,7 @@ apply to it.`,
 
 			var t todo.Todo
 			if createOverride {
-				t, err = a.Todos.UpdateInstance(ctx, existing.UID, existing.RecurrenceID, p)
+				t, err = a.Todos.CreateOverride(ctx, existing.UID, existing.RecurrenceID, p)
 			} else {
 				t, err = a.Todos.Update(ctx, existing.ID, p)
 			}
