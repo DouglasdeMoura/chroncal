@@ -14,14 +14,30 @@ import (
 var todoResource = resource{
 	name: "todo",
 	resolve: func(ctx context.Context, a *app.App, ref, recurrenceID string) (row, error) {
-		t, err := resolveTodo(ctx, a, ref, recurrenceID)
+		t, create, err := resolveTodoOccurrence(ctx, a, ref, recurrenceID)
 		if err != nil {
 			return row{}, err
+		}
+		if create {
+			// The occurrence has no row yet: delOccurrence writes it.
+			t.ID = 0
 		}
 		return row{ID: t.ID, UID: t.UID, CalendarID: t.CalendarID, Summary: t.Summary}, nil
 	},
 	del: func(ctx context.Context, a *app.App, target row) (int64, error) {
 		return target.CalendarID, a.Todos.Delete(ctx, target.ID)
+	},
+	delOccurrence: func(ctx context.Context, a *app.App, ref, recurrenceID string) (int64, int64, error) {
+		occ, create, err := resolveTodoOccurrence(ctx, a, ref, recurrenceID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if !create {
+			// A row of the occurrence came first.
+			return occ.CalendarID, occ.ID, a.Todos.Delete(ctx, occ.ID)
+		}
+		t, err := a.Todos.DeleteInstance(ctx, occ.UID, occ.RecurrenceID, todoParamsOf(occ))
+		return t.CalendarID, t.ID, err
 	},
 	delSeries: func(ctx context.Context, a *app.App, target row) ([]int64, error) {
 		return []int64{target.CalendarID}, a.Todos.DeleteSeries(ctx, target.UID)
@@ -60,8 +76,12 @@ var todoResource = resource{
 func todoDeleteCmd() *cobra.Command {
 	return newDeleteCmd(todoResource, verbHelp{
 		short: "Delete a todo",
-		long: `Delete a single todo, a specific recurring override, or an entire
-recurring series.`,
+		long: `Delete a single todo, one occurrence of a recurring todo, or an entire
+recurring series.
+
+With --recurrence-id and the UID of a recurring todo, the command deletes
+one occurrence. The trash keeps the occurrence, so "chroncal todo restore"
+brings it back.`,
 		example: `  chroncal todo delete 7
   chroncal todo delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
   chroncal todo delete weekly-review-uid --series`,

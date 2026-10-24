@@ -409,7 +409,7 @@ func (q *Queries) GetTodoByUIDIncludingDeleted(ctx context.Context, uid string) 
 }
 
 const getTodoCalendarByUIDAndRecurrenceID = `-- name: GetTodoCalendarByUIDAndRecurrenceID :one
-SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM todos WHERE uid = ? AND recurrence_id = ?
+SELECT id, calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM todos WHERE uid = ? AND recurrence_id = ?
 `
 
 type GetTodoCalendarByUIDAndRecurrenceIDParams struct {
@@ -418,17 +418,18 @@ type GetTodoCalendarByUIDAndRecurrenceIDParams struct {
 }
 
 type GetTodoCalendarByUIDAndRecurrenceIDRow struct {
+	ID         int64
 	CalendarID int64
 	Trashed    int64
 }
 
-// The calendar of the row of one UID and recurrence ID, live or in the
-// trash, and whether the row is in the trash. The key spans calendars.
-// See issue #841.
+// The ID and the calendar of the row of one UID and recurrence ID, live
+// or in the trash, and whether the row is in the trash. The key spans
+// calendars. See issue #841 and issue #887.
 func (q *Queries) GetTodoCalendarByUIDAndRecurrenceID(ctx context.Context, arg GetTodoCalendarByUIDAndRecurrenceIDParams) (GetTodoCalendarByUIDAndRecurrenceIDRow, error) {
 	row := q.db.QueryRowContext(ctx, getTodoCalendarByUIDAndRecurrenceID, arg.Uid, arg.RecurrenceID)
 	var i GetTodoCalendarByUIDAndRecurrenceIDRow
-	err := row.Scan(&i.CalendarID, &i.Trashed)
+	err := row.Scan(&i.ID, &i.CalendarID, &i.Trashed)
 	return i, err
 }
 
