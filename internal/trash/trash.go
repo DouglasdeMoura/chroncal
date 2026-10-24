@@ -11,7 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/event"
@@ -149,10 +149,16 @@ func (s *Service) List(ctx context.Context, calendarID int64) ([]Entry, error) {
 		}
 	}
 
-	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].DeletedAt.After(entries[j].DeletedAt)
-	})
+	SortNewestFirst(entries)
 	return entries, nil
+}
+
+// SortNewestFirst sorts entries newest-first by DeletedAt. The sort is
+// stable, so entries with the same deletion time keep their order.
+func SortNewestFirst(entries []Entry) {
+	slices.SortStableFunc(entries, func(a, b Entry) int {
+		return b.DeletedAt.Compare(a.DeletedAt)
+	})
 }
 
 // RestoreAll restores entries, in order. An entry can depend on another
