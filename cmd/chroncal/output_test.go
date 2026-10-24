@@ -361,3 +361,26 @@ func TestPrintTextOutputDoesNotEmitLegacyGlyphs(t *testing.T) {
 	}
 	assertASCII(t, got)
 }
+
+// TestJSONCalendarLastSyncOK checks last_sync_ok. A failed sync keeps
+// last_sync_at (issue #886), so a script needs the flag to tell a clean
+// sync from a failed one. A local calendar has no flag.
+func TestJSONCalendarLastSyncOK(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cal  calendar.Calendar
+		want *bool
+	}{
+		{"local", calendar.Calendar{LastSyncAt: "2026-10-20T08:00:00Z"}, nil},
+		{"clean", calendar.Calendar{AccountID: 1, LastSyncAt: "2026-10-20T08:00:00Z"}, boolPtr(true)},
+		{"failed after a clean sync", calendar.Calendar{AccountID: 1, LastSyncAt: "2026-10-20T08:00:00Z", LastSyncError: "401"}, boolPtr(false)},
+		{"never synced", calendar.Calendar{AccountID: 1}, boolPtr(false)},
+	} {
+		got := toJSONCalendar(tc.cal).LastSyncOK
+		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Errorf("%s: last_sync_ok = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

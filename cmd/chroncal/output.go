@@ -142,7 +142,11 @@ type jsonCalendar struct {
 	RemoteAccess  string `json:"remote_access,omitempty"`
 	LastSyncAt    string `json:"last_sync_at,omitempty"`
 	LastSyncError string `json:"last_sync_error,omitempty"`
-	Hidden        bool   `json:"hidden,omitempty"`
+	// LastSyncOK reports whether the last sync of a linked calendar was
+	// clean. A failed sync keeps last_sync_at (issue #886), so a time alone
+	// does not tell. A local calendar has no value.
+	LastSyncOK *bool `json:"last_sync_ok,omitempty"`
+	Hidden     bool  `json:"hidden,omitempty"`
 	// LocalPath is the directory of .ics files that feeds the calendar
 	// (issue #809). Empty when the calendar has no directory.
 	LocalPath string `json:"local_path,omitempty"`
@@ -223,6 +227,7 @@ func toJSONCalendar(c calendar.Calendar) jsonCalendar {
 		RemoteAccess:  c.RemoteAccess,
 		LastSyncAt:    c.LastSyncAt,
 		LastSyncError: c.LastSyncError,
+		LastSyncOK:    lastSyncOK(c),
 		DefaultAlarms: c.DefaultAlarms,
 		LocalPath:     c.LocalPath,
 		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),
@@ -855,4 +860,14 @@ func remapFlex(flex map[int]bool, removed int) map[int]bool {
 		}
 	}
 	return out
+}
+
+// lastSyncOK is the last_sync_ok value of c: nil for a calendar with no
+// account, else whether a clean sync happened and no error followed it.
+func lastSyncOK(c calendar.Calendar) *bool {
+	if c.AccountID == 0 {
+		return nil
+	}
+	ok := c.LastSyncAt != "" && c.LastSyncError == ""
+	return &ok
 }

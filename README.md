@@ -539,7 +539,7 @@ chroncal calendar show     <id|name>
 
 `set-default` makes a calendar the default. New events, todos, and journals without an explicit `--calendar` go there. Exactly one calendar is the default at any time.
 
-`calendar hide` opts a calendar out of the TUI sidebar without deleting it: events stay in the database and still sync. `calendar show` reverses it. Calendar JSON (`--output json`) carries the link and sync state per calendar: `account_id`, `account_name`, `remote_url`, `remote_access`, `last_sync_at`, `last_sync_error`, and `hidden`.
+`calendar hide` opts a calendar out of the TUI sidebar without deleting it: events stay in the database and still sync. `calendar show` reverses it. Calendar JSON (`--output json`) carries the link and sync state per calendar: `account_id`, `account_name`, `remote_url`, `remote_access`, `last_sync_at`, `last_sync_error`, `last_sync_ok`, and `hidden`.
 
 You can still use remote flags with `create` or `update` to attach one local calendar to a known CalDAV collection. Prefer `chroncal account` when one credential exposes multiple collections:
 
@@ -631,7 +631,7 @@ When you attach a local calendar, the next sync uploads its items. Some items st
 - A collection that does not support a component (for example `VTODO`) gets no item of that component.
 - An override without its series stays local.
 
-`sync status` shows one line for each connected calendar. `last_sync` is the time of the last clean sync. `last_attempt` is the time of the last sync, clean or not. `last_error` is the error of the last sync, or `-` when it was clean. A failed sync keeps `last_sync`, so you can see how long the calendar has failed.
+`sync status` shows one line for each connected calendar. `last_sync` is the time of the last clean sync. `last_attempt` is the time of the last sync, clean or not. `last_error` is the error of the last sync, or `-` when it was clean. A failed sync keeps `last_sync`, so you can see how long the calendar has failed. The TUI calendar detail shows that time below the error. In JSON, a value in `last_sync_at` does not mean that the last sync was clean. Read `last_sync_ok` for that: it is `true` only when a clean sync happened and no error followed it. A local calendar has no `last_sync_ok`. A link to another server, user, or authentication type clears `last_sync_at`.
 
 Narrow a run with `--calendar NAME` (one local calendar) or `--account NAME` (every calendar linked to one CalDAV account). The two flags are mutually exclusive. An account with no linked calendars is a clean no-op.
 

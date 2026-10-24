@@ -318,7 +318,8 @@ type syncHealthLine struct {
 }
 
 // syncHealthDialogLines renders compact account sync health for the calendar:
-// a loud error plus an Account Settings remedy, or a quiet last-sync line.
+// a loud error, the time of the last clean sync, and an Account Settings
+// remedy, or a quiet last-sync line.
 func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealthLine {
 	if !params.RemoteLinked {
 		return nil
@@ -328,6 +329,14 @@ func syncHealthDialogLines(params CalendarDialogParams, theme Theme) []syncHealt
 			text:  "⚠ Sync failed: " + humanizeSyncError(params.LastSyncError),
 			style: lipgloss.NewStyle().Foreground(theme.Error),
 		}}
+		// A failed sync keeps the time of the last clean sync (issue
+		// #886), so the user sees how long the calendar has failed.
+		if params.LastSyncAt != "" {
+			lines = append(lines, syncHealthLine{
+				text:  "Last good sync: " + formatSyncTime(params.LastSyncAt),
+				style: lipgloss.NewStyle().Foreground(theme.Muted),
+			})
+		}
 		if hint := reLinkHint(params); hint != "" {
 			lines = append(lines, syncHealthLine{text: hint, style: lipgloss.NewStyle().Foreground(theme.Muted)})
 		}
