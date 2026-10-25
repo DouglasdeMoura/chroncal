@@ -438,3 +438,26 @@ func TestListDialog_ActionAtPositionWidthMatchesRender(t *testing.T) {
 			"click inside Purge's pill must route to Purge", purgeStartX+1, oy, purgeIdx, purgeOK)
 	}
 }
+
+// TestListDialog_DangerTitleActionUsesDangerStyle covers issue #919. A
+// destructive button of the title line uses the ButtonDanger style, at
+// rest and on focus.
+func TestListDialog_DangerTitleActionUsesDangerStyle(t *testing.T) {
+	bs := DefaultButtonStyles()
+	action := ListDialogAction{Label: "Purge All (3)", Danger: true}
+	for _, focused := range []bool{false, true} {
+		want := bs.Danger.Normal
+		if focused {
+			want = bs.Danger.Focused
+		}
+		got := renderTitleActionButton(action, focused)
+		if got != want.UnsetMarginRight().Render(action.Label) {
+			t.Errorf("focused=%v: title action does not use the danger style: %q", focused, got)
+		}
+	}
+	m := makeListDialogFixture().SetTitleAction(&action)
+	m = m.CycleZone(false)
+	if !strings.Contains(m.View(), bs.Danger.Focused.UnsetMarginRight().Render(action.Label)) {
+		t.Error("the focused danger title action does not draw in the focused danger style")
+	}
+}

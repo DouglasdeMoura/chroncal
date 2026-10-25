@@ -466,9 +466,14 @@ func (m ListDialogModel) renderTitleRow(innerW int) string {
 
 // renderTitleActionButton renders a title-line button without the extra
 // margin-right cell used by action-bar buttons. It then sits flush with the
-// dialog's right edge.
+// dialog's right edge. A Danger action uses ButtonDanger, as in the action
+// bar (issue #919).
 func renderTitleActionButton(a ListDialogAction, focused bool) string {
-	bs := DefaultButtonStyles().Normal
+	styles := DefaultButtonStyles()
+	bs := styles.Normal
+	if a.Danger {
+		bs = styles.Danger
+	}
 	style := bs.Normal
 	if focused && !a.Disabled {
 		style = bs.Focused
