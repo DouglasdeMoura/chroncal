@@ -9,6 +9,7 @@ import (
 	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/chroncal/internal/model"
+	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // ProductID is the PRODID value written into exported VCALENDAR objects.
@@ -178,6 +179,35 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates, timezone str
 // VALUE=DATE (YYYYMMDD). When floating (no timezone) it is emitted as a
 // floating DATE-TIME (no Z, no TZID). Otherwise it is a UTC DATE-TIME. A type
 // mismatch prevents CalDAV servers from a bind of the override to its master.
+// ridType is the value type of a RECURRENCE-ID: DATE, a floating
+// DATE-TIME, or a DATE-TIME in UTC.
+type ridType struct{ allDay, floating bool }
+
+// seriesRIDTypes returns the RECURRENCE-ID type of each series of rows by
+// UID. RFC 5545 gives an override the value type of the DTSTART of its
+// series, so the type comes from the master, not from the override (issue
+// #929). anchor returns the date string of the series anchor of a row.
+// A row with a recurrence ID is an override and gives no type.
+func seriesRIDTypes[T any](rows []T, uid, recurrenceID, anchor, timezone func(T) string) map[string]ridType {
+	types := map[string]ridType{}
+	for _, r := range rows {
+		if recurrenceID(r) == "" {
+			types[uid(r)] = ridType{allDay: timeutil.IsDateOnly(anchor(r)), floating: timezone(r) == "FLOATING"}
+		}
+	}
+	return types
+}
+
+// overrideRIDType returns the RECURRENCE-ID type of an override: the type
+// of its series in masters, else the type of its own anchor. An export
+// with no master of the UID (a single override) keeps the old rule.
+func overrideRIDType(masters map[string]ridType, uid, anchor, timezone string) ridType {
+	if t, ok := masters[uid]; ok {
+		return t
+	}
+	return ridType{allDay: timeutil.IsDateOnly(anchor), floating: timezone == "FLOATING"}
+}
+
 func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bool) {
 	t, err := time.Parse(time.RFC3339, recurrenceID)
 	if err != nil {
