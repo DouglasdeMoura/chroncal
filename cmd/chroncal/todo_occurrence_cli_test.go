@@ -132,6 +132,7 @@ func TestTodoOccurrenceErrorsNameTheCause(t *testing.T) {
 		{[]string{"todo", "complete", "no-such-uid", "--recurrence-id", "2026-10-24T00:00:00Z"}, "todo no-such-uid not found"},
 		{[]string{"todo", "update", uid, "--recurrence-id", "2026-10-31T00:00:00Z", "--recurrence-rule", "FREQ=DAILY"}, "--recurrence-rule changes the series"},
 		{[]string{"todo", "update", uid, "--recurrence-id", "tomorrow"}, "use RFC 3339 or YYYY-MM-DD"},
+		{[]string{"todo", "delete", uid, "--recurrence-id", "   ", "--yes"}, "--recurrence-id: the value is empty"},
 		{[]string{"todo", "complete", cancelled.UID, "--recurrence-id", "2026-10-31T00:00:00Z"}, "is cancelled, so it has no occurrences"},
 	}
 	for _, tc := range tests {

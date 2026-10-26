@@ -25,8 +25,14 @@ import (
 // recur, a cancelled series, a time that is not an occurrence, or an
 // override in the trash.
 func resolveJournalOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string) (j journal.Journal, create bool, err error) {
-	// A stray space must not miss the override row below.
-	recurrenceID = strings.TrimSpace(recurrenceID)
+	// A stray space must not miss the override row below. A value of
+	// spaces only names no occurrence, so it must not fall back to the
+	// series: a delete would then delete the whole series.
+	if recurrenceID != "" {
+		if recurrenceID = strings.TrimSpace(recurrenceID); recurrenceID == "" {
+			return journal.Journal{}, false, errInvalidInputf("--recurrence-id: the value is empty")
+		}
+	}
 	if recurrenceID == "" {
 		j, err := resolveJournal(ctx, a, ref, "")
 		return j, false, err
