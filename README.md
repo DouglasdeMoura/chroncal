@@ -567,6 +567,8 @@ Pass `--disconnect-remote` on `update` to remove the remote link of a calendar.
 
 `--remote-url` refuses a collection that another local calendar links with the same user. Two links of one collection show each item twice. The link makes a new account for the calendar. It does not reuse the account of the other calendar.
 
+`--remote-url` also refuses the login of an account that you added: the same server, user name, and auth type. One login then keeps one account. The error names the account. Add the collection through that account with `chroncal account calendars add <account> --calendar <name>`. The link does not reuse that account: a removal of the account would unlink the calendar, and `account calendars set` could delete it.
+
 `calendar create --default-alarm` and `calendar update --default-alarm` set
 the per-calendar default alarms. See [Default alarms](#default-alarms).
 
