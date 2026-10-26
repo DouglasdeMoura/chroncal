@@ -72,3 +72,34 @@ func TestExportJournals_OverrideRIDWithNoMaster(t *testing.T) {
 		t.Errorf("export lacks the DATE RECURRENCE-ID of the override:\n%s", got)
 	}
 }
+
+// TestExportJournals_OverrideRIDOfAnotherCalendar keeps the series of a
+// calendar apart: an override in another calendar than a master of its
+// UID takes the type of its own anchor.
+func TestExportJournals_OverrideRIDOfAnotherCalendar(t *testing.T) {
+	master := journal.Journal{CalendarID: 1, UID: "x", Summary: "Log", StartDate: "2026-10-19", RecurrenceRule: "FREQ=WEEKLY"}
+	over := journal.Journal{CalendarID: 2, UID: "x", Summary: "Log", StartDate: "2026-10-26T15:00:00Z", RecurrenceID: "2026-10-26T15:00:00Z"}
+	out, err := ExportJournals([]journal.Journal{master, over}, "")
+	if err != nil {
+		t.Fatalf("ExportJournals: %v", err)
+	}
+	if got := string(out); !strings.Contains(got, "RECURRENCE-ID:20261026T150000Z") {
+		t.Errorf("export lacks the DATE-TIME RECURRENCE-ID of the override:\n%s", got)
+	}
+}
+
+// TestExportJournals_DateRIDKeepsTheStoredDate checks the DATE form of a
+// stored RECURRENCE-ID with an offset, and of a date-only stored value.
+func TestExportJournals_DateRIDKeepsTheStoredDate(t *testing.T) {
+	master := journal.Journal{UID: "d", Summary: "Log", StartDate: "2026-10-19", RecurrenceRule: "FREQ=WEEKLY"}
+	for _, rid := range []string{"2026-10-26T00:00:00+02:00", "2026-10-26"} {
+		over := journal.Journal{UID: "d", Summary: "Log", StartDate: "2026-10-26", RecurrenceID: rid}
+		out, err := ExportJournals([]journal.Journal{master, over}, "")
+		if err != nil {
+			t.Fatalf("ExportJournals: %v", err)
+		}
+		if got := string(out); !strings.Contains(got, "RECURRENCE-ID;VALUE=DATE:20261026") {
+			t.Errorf("%s: export lacks the DATE of the stored value:\n%s", rid, got)
+		}
+	}
+}
