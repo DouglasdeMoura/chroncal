@@ -118,6 +118,11 @@ func (s *Service) ConnectTarget(ctx context.Context, cal Calendar, link RemoteLi
 		return 0, "", err
 	}
 	if !reuse {
+		// A new link makes a hidden account, so the login of an account
+		// that the user added refuses it (issue #917).
+		if err := checkLoginFree(ctx, s.q, cal, link, serverURL); err != nil {
+			return 0, "", err
+		}
 		return 0, fingerprint, nil
 	}
 	return existing.ID, fingerprint, nil
@@ -127,7 +132,8 @@ func (s *Service) ConnectTarget(ctx context.Context, cal Calendar, link RemoteLi
 // When the calendar is already linked to a hidden account, Connect updates
 // that account in place; otherwise it creates a new hidden account. Connect
 // refuses a collection that another local calendar links with the same user
-// (ErrCollectionLinked).
+// (ErrCollectionLinked), and a new link with the login of an account that
+// the user added (ErrLoginHasAccount).
 func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cred auth.Credential, credStore auth.CredentialStore) error {
 	lockedCal, release, err := s.lockRemoteLifecycle(ctx, cal.ID)
 	if err != nil {
@@ -238,6 +244,11 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	// account would then unlink this calendar too, and a selection change
 	// of that account could delete it.
 	if err := checkConnectFree(ctx, qtx, cal, link, serverURL); err != nil {
+		return err
+	}
+	// One login has one account. The link of a login that an account of
+	// the user holds goes through that account (issue #917).
+	if err := checkLoginFree(ctx, qtx, cal, link, serverURL); err != nil {
 		return err
 	}
 	accountName := hiddenAccountName(cal.ID)
