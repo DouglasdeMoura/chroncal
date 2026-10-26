@@ -10,20 +10,9 @@ import (
 	"strings"
 )
 
-const confirmAlarmUID = `-- name: ConfirmAlarmUID :exec
-UPDATE event_alarms SET uid_unverified = 0 WHERE id = ?
-`
-
-// A write that pairs the row with an alarm of the same UID confirms the
-// UID, so the mark of migration 063 goes.
-func (q *Queries) ConfirmAlarmUID(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, confirmAlarmUID, id)
-	return err
-}
-
 const createAlarm = `-- name: CreateAlarm :one
 INSERT INTO event_alarms (event_id, uid, action, trigger_value, description, summary, repeat, duration, related, acknowledged, attach_uri, attach_fmttype, attach_binary)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary, uid_unverified
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary
 `
 
 type CreateAlarmParams struct {
@@ -74,7 +63,6 @@ func (q *Queries) CreateAlarm(ctx context.Context, arg CreateAlarmParams) (Event
 		&i.AttachUri,
 		&i.AttachFmttype,
 		&i.AttachBinary,
-		&i.UidUnverified,
 	)
 	return i, err
 }
@@ -151,7 +139,7 @@ func (q *Queries) ListAlarmSummariesByEventIDs(ctx context.Context, eventIds []i
 }
 
 const listAlarmsByEventID = `-- name: ListAlarmsByEventID :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary, uid_unverified FROM event_alarms WHERE event_id = ? ORDER BY id
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM event_alarms WHERE event_id = ? ORDER BY id
 `
 
 func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]EventAlarm, error) {
@@ -178,7 +166,6 @@ func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]Eve
 			&i.AttachUri,
 			&i.AttachFmttype,
 			&i.AttachBinary,
-			&i.UidUnverified,
 		); err != nil {
 			return nil, err
 		}
@@ -194,7 +181,7 @@ func (q *Queries) ListAlarmsByEventID(ctx context.Context, eventID int64) ([]Eve
 }
 
 const listAlarmsWithEmptyUID = `-- name: ListAlarmsWithEmptyUID :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary, uid_unverified FROM event_alarms WHERE uid IS NULL
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM event_alarms WHERE uid IS NULL
 `
 
 func (q *Queries) ListAlarmsWithEmptyUID(ctx context.Context) ([]EventAlarm, error) {
@@ -221,7 +208,6 @@ func (q *Queries) ListAlarmsWithEmptyUID(ctx context.Context) ([]EventAlarm, err
 			&i.AttachUri,
 			&i.AttachFmttype,
 			&i.AttachBinary,
-			&i.UidUnverified,
 		); err != nil {
 			return nil, err
 		}
@@ -257,53 +243,6 @@ func (q *Queries) ListDistinctAlarmTriggers(ctx context.Context) ([]string, erro
 			return nil, err
 		}
 		items = append(items, trigger_value)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listEventAlarmUIDsHeldByOtherEvents = `-- name: ListEventAlarmUIDsHeldByOtherEvents :many
-SELECT DISTINCT uid FROM event_alarms
-WHERE event_id <> ?1 AND uid IN (/*SLICE:uids*/?)
-`
-
-type ListEventAlarmUIDsHeldByOtherEventsParams struct {
-	EventID int64
-	Uids    []*string
-}
-
-// Before migration 063, the store minted a UID for an alarm when an alarm
-// of another event held the UID of the file. model.PairAlarms uses this
-// set as the evidence of such a minted UID (issue #922).
-func (q *Queries) ListEventAlarmUIDsHeldByOtherEvents(ctx context.Context, arg ListEventAlarmUIDsHeldByOtherEventsParams) ([]*string, error) {
-	query := listEventAlarmUIDsHeldByOtherEvents
-	var queryParams []interface{}
-	queryParams = append(queryParams, arg.EventID)
-	if len(arg.Uids) > 0 {
-		for _, v := range arg.Uids {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:uids*/?", strings.Repeat(",?", len(arg.Uids))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:uids*/?", "NULL", 1)
-	}
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []*string
-	for rows.Next() {
-		var uid *string
-		if err := rows.Scan(&uid); err != nil {
-			return nil, err
-		}
-		items = append(items, uid)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -357,7 +296,7 @@ func (q *Queries) ListEventIDsWithAlarms(ctx context.Context, eventIds []int64) 
 }
 
 const listFireableAlarmsByEventIDs = `-- name: ListFireableAlarmsByEventIDs :many
-SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary, uid_unverified FROM event_alarms
+SELECT id, event_id, "action", trigger_value, description, repeat, duration, related, summary, uid, acknowledged, attach_uri, attach_fmttype, attach_binary FROM event_alarms
 WHERE event_id IN (/*SLICE:event_ids*/?)
   AND action IN ('AUDIO', 'DISPLAY', 'EMAIL')
 ORDER BY event_id, id
@@ -400,7 +339,6 @@ func (q *Queries) ListFireableAlarmsByEventIDs(ctx context.Context, eventIds []i
 			&i.AttachUri,
 			&i.AttachFmttype,
 			&i.AttachBinary,
-			&i.UidUnverified,
 		); err != nil {
 			return nil, err
 		}
@@ -434,7 +372,7 @@ const updateAlarmContentByID = `-- name: UpdateAlarmContentByID :exec
 UPDATE event_alarms
 SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
     duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?,
-    attach_binary = ?, uid_unverified = 0
+    attach_binary = ?
 WHERE id = ? AND event_id = ?
 `
 
@@ -474,7 +412,7 @@ func (q *Queries) UpdateAlarmContentByID(ctx context.Context, arg UpdateAlarmCon
 }
 
 const updateAlarmUID = `-- name: UpdateAlarmUID :exec
-UPDATE event_alarms SET uid = ?, uid_unverified = 0 WHERE id = ?
+UPDATE event_alarms SET uid = ? WHERE id = ?
 `
 
 type UpdateAlarmUIDParams struct {

@@ -167,39 +167,16 @@ func updateAlarmInPlace(ctx context.Context, qtx *storage.Queries, eventID int64
 	return storage.ReplaceAlarmXProperties(ctx, qtx, storage.OwnerTypeEventAlarm, ex.ID, a.XProperties)
 }
 
-// AlarmUIDsHeldElsewhere returns the UIDs of uids that an alarm of another
-// event than eventID has: the evidence of model.PairAlarms for a minted UID. The
-// alarm write and the import comparison use it.
-func AlarmUIDsHeldElsewhere(ctx context.Context, q *storage.Queries, eventID int64, uids []string) (map[string]bool, error) {
-	if len(uids) == 0 {
-		return nil, nil
-	}
-	args := make([]*string, len(uids))
-	for i := range uids {
-		args[i] = &uids[i]
-	}
-	rows, err := q.ListEventAlarmUIDsHeldByOtherEvents(ctx, storage.ListEventAlarmUIDsHeldByOtherEventsParams{EventID: eventID, Uids: args})
-	if err != nil {
-		return nil, fmt.Errorf("list alarm uids of other events: %w", err)
-	}
-	return storage.HeldUIDSet(rows), nil
-}
-
 // syncMatchedAlarm syncs a matched alarm's UID and ACKNOWLEDGED state.
-func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, p model.AlarmPair, a model.Alarm, ex model.Alarm) error {
+func syncMatchedAlarm(ctx context.Context, qtx *storage.Queries, eventID int64, a model.Alarm, ex model.Alarm) error {
 	// Write the UID of model.PairedAlarmUID. A preserved foreign alarm
 	// keeps its empty UID (issue #586).
-	if uid, write := model.PairedAlarmUID(p, a, ex); write {
+	if uid, write := model.PairedAlarmUID(a, ex); write {
 		if err := qtx.UpdateAlarmUID(ctx, storage.UpdateAlarmUIDParams{
 			Uid: storage.StringToNullable(uid),
 			ID:  ex.ID,
 		}); err != nil {
 			return fmt.Errorf("set alarm uid: %w", err)
-		}
-	} else if ex.UIDUnverified && a.UID != "" && a.UID == ex.UID {
-		// The file confirms the UID, so the mark of migration 063 goes.
-		if err := qtx.ConfirmAlarmUID(ctx, ex.ID); err != nil {
-			return fmt.Errorf("confirm alarm uid: %w", err)
 		}
 	}
 	// Sync ACKNOWLEDGED if the incoming value differs (including clearing).
@@ -412,19 +389,15 @@ func replaceAlarmsTx(ctx context.Context, qtx *storage.Queries, eventID int64, a
 		return err
 	}
 	alarms = model.WithoutRefusedAlarmUIDs(alarms)
-	held, err := AlarmUIDsHeldElsewhere(ctx, qtx, eventID, model.AlarmUIDs(alarms))
-	if err != nil {
-		return err
-	}
 
 	// Pair incoming alarms with existing ones (model.PairAlarms). Each
 	// existing alarm takes one incoming alarm at most, so duplicates work.
-	pairs := model.PairAlarms(existing, alarms, held)
+	pairs := model.PairAlarms(existing, alarms)
 	matched := make([]bool, len(existing))
 	for i, a := range alarms {
 		if p := pairs[i]; p.ByContent {
 			matched[p.Stored] = true
-			if err := syncMatchedAlarm(ctx, qtx, eventID, p, a, existing[p.Stored]); err != nil {
+			if err := syncMatchedAlarm(ctx, qtx, eventID, a, existing[p.Stored]); err != nil {
 				return err
 			}
 		}
@@ -484,6 +457,5 @@ func fromStorageAlarm(r storage.EventAlarm) model.Alarm {
 		AttachURI:     storage.NullableToString(r.AttachUri),
 		AttachBinary:  r.AttachBinary,
 		AttachFmtType: storage.NullableToString(r.AttachFmttype),
-		UIDUnverified: r.UidUnverified != 0,
 	}
 }
