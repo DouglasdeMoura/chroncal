@@ -80,7 +80,9 @@ func ExportEvents(events []event.Event, calName string) ([]byte, error) {
 		}
 
 		if e.ConferenceURI != "" {
-			p := &ical.Prop{Name: "CONFERENCE"}
+			// The property needs its own Params map: Set on a nil map
+			// panics (issue #934).
+			p := &ical.Prop{Name: "CONFERENCE", Params: make(ical.Params)}
 			p.Value = e.ConferenceURI
 			p.Params.Set("VALUE", "URI")
 			vevent.Props.Set(p)
