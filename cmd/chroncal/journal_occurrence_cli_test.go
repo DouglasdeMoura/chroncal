@@ -111,6 +111,7 @@ func TestJournalOccurrenceErrorsNameTheCause(t *testing.T) {
 		{[]string{"journal", "update", "no-such-uid", "--recurrence-id", "2026-10-19", "--summary", "x"}, "journal no-such-uid not found"},
 		{[]string{"journal", "update", uid, "--recurrence-id", "2026-10-26", "--rrule", "FREQ=DAILY"}, "--rrule changes the series"},
 		{[]string{"journal", "update", uid, "--recurrence-id", "tomorrow"}, "use RFC 3339 or YYYY-MM-DD"},
+		{[]string{"journal", "delete", uid, "--recurrence-id", "   ", "--yes"}, "--recurrence-id: the value is empty"},
 		{[]string{"journal", "update", cancelled, "--recurrence-id", "2026-10-26", "--summary", "x"}, "is cancelled, so it has no occurrences"},
 	}
 	for _, tc := range tests {
