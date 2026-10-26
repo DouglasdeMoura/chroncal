@@ -9,7 +9,6 @@ import (
 	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/chroncal/internal/duration"
-	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
 )
 
@@ -36,6 +35,11 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 	}
 	spans.emit(cal)
 
+	masters := seriesRIDTypes(todos,
+		func(t todo.Todo) string { return t.UID },
+		func(t todo.Todo) string { return t.RecurrenceID },
+		todoAnchorValue,
+		func(t todo.Todo) string { return t.Timezone })
 	for _, t := range todos {
 		vtodo := ical.NewComponent(ical.CompToDo)
 
@@ -131,13 +135,10 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		emitDateListOnComponent(vtodo, ical.PropRecurrenceDates, t.RDates, t.Timezone)
 
 		if t.RecurrenceID != "" {
-			// A VTODO is all-day when its recurrence anchor (DTSTART, else DUE)
-			// is a date-only value; the RECURRENCE-ID type must match.
-			anchor := t.StartDate
-			if anchor == "" {
-				anchor = t.DueDate
-			}
-			emitRecurrenceID(vtodo.Props, t.RecurrenceID, timeutil.IsDateOnly(anchor), t.Timezone == "FLOATING")
+			// The RECURRENCE-ID takes the type of the recurrence anchor of
+			// the series (DTSTART, else DUE).
+			rt := overrideRIDType(masters, t.UID, todoAnchorValue(t), t.Timezone)
+			emitRecurrenceID(vtodo.Props, t.RecurrenceID, rt.allDay, rt.floating)
 		}
 
 		if t.Geo != "" {
@@ -192,6 +193,15 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 // todoAnchor returns a todo's recurrence/VTIMEZONE anchor date. It prefers its
 // start date over its due date. Returns the zero time when the todo carries
 // neither.
+// todoAnchorValue returns the stored value of the recurrence anchor of t:
+// DTSTART, else DUE.
+func todoAnchorValue(t todo.Todo) string {
+	if t.StartDate != "" {
+		return t.StartDate
+	}
+	return t.DueDate
+}
+
 func todoAnchor(t todo.Todo) time.Time {
 	if d := t.ParseStartDate(); !d.IsZero() {
 		return d

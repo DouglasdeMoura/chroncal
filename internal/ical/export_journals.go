@@ -9,7 +9,6 @@ import (
 	"github.com/emersion/go-ical"
 
 	"github.com/douglasdemoura/chroncal/internal/journal"
-	"github.com/douglasdemoura/chroncal/internal/timeutil"
 )
 
 // journalYear returns the calendar year to anchor a journal's VTIMEZONE on.
@@ -45,6 +44,11 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 	}
 	spans.emit(cal)
 
+	masters := seriesRIDTypes(journals,
+		func(j journal.Journal) string { return j.UID },
+		func(j journal.Journal) string { return j.RecurrenceID },
+		func(j journal.Journal) string { return j.StartDate },
+		func(j journal.Journal) string { return j.Timezone })
 	for _, j := range journals {
 		vjournal := ical.NewComponent(ical.CompJournal)
 
@@ -106,9 +110,9 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 		emitDateListOnComponent(vjournal, ical.PropRecurrenceDates, j.RDates, j.Timezone)
 
 		if j.RecurrenceID != "" {
-			// A VJOURNAL is all-day when its DTSTART is a date-only value;
-			// the RECURRENCE-ID type must match.
-			emitRecurrenceID(vjournal.Props, j.RecurrenceID, timeutil.IsDateOnly(j.StartDate), j.Timezone == "FLOATING")
+			// The RECURRENCE-ID takes the type of the DTSTART of the series.
+			rt := overrideRIDType(masters, j.UID, j.StartDate, j.Timezone)
+			emitRecurrenceID(vjournal.Props, j.RecurrenceID, rt.allDay, rt.floating)
 		}
 
 		emitTimestamps(vjournal.Props, j.DtStamp, j.CreatedAt, j.UpdatedAt)
