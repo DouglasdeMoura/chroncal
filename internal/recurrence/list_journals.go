@@ -123,16 +123,42 @@ func ExpandJournal(j journal.Journal, from, to time.Time) []ExpandedJournal {
 	return instances
 }
 
+// JournalAtInstance returns the journal of the occurrence i: the master
+// with DTSTART moved to the instance time.
+func JournalAtInstance(i ExpandedJournal) journal.Journal {
+	j := i.Journal
+	if anchor := j.ParseStartDate(); !anchor.IsZero() {
+		j.StartDate = shiftDateString(j.StartDate, anchor, i.InstanceTime.Sub(anchor))
+	}
+	return j
+}
+
+// JournalOccurrence returns the occurrence of the recurring journal master
+// at at, in the form of a new override: the date of the occurrence, the
+// RECURRENCE-ID of at, and no rule and no date lists (issue #916). ok is
+// false when master does not recur or has no occurrence at at. EXDATEs
+// apply.
+func JournalOccurrence(master journal.Journal, at time.Time) (journal.Journal, bool) {
+	want := at.UTC()
+	rid := want.Format(time.RFC3339)
+	// journal.OccursAt holds the rule, so the CLI and CreateOverride agree.
+	if !journal.OccursAt(master, rid) {
+		return journal.Journal{}, false
+	}
+	j := JournalAtInstance(ExpandedJournal{Journal: master, InstanceTime: want})
+	j.ID = 0
+	j.RecurrenceID = rid
+	j.RecurrenceRule, j.ExDates, j.RDates = "", "", ""
+	return j, true
+}
+
 func (s *Service) expandRecurringJournalRows(ctx context.Context, rows []storage.Journal, from, to time.Time) ([]journal.Journal, error) {
 	k := recurringKind[storage.Journal, journal.Journal, ExpandedJournal]{
 		fromRow:  journal.FromStorage,
 		expand:   ExpandJournal,
 		instTime: func(i ExpandedJournal) time.Time { return i.InstanceTime },
 		applyInstance: func(i ExpandedJournal) journal.Journal {
-			jj := i.Journal
-			if anchor := jj.ParseStartDate(); !anchor.IsZero() {
-				jj.StartDate = shiftDateString(jj.StartDate, anchor, i.InstanceTime.Sub(anchor))
-			}
+			jj := JournalAtInstance(i)
 			if !i.lone {
 				jj.RecurrenceTime = i.InstanceTime
 			}
