@@ -573,19 +573,19 @@ func (q *Queries) ListDeletedTodoOverrideRecurrenceIDs(ctx context.Context, uid 
 	return items, nil
 }
 
-const listDeletedTodoOverrideRecurrenceIDsByDeleteToken = `-- name: ListDeletedTodoOverrideRecurrenceIDsByDeleteToken :many
+const listDeletedTodoOverrideRecurrenceIDsSinceDeleteToken = `-- name: ListDeletedTodoOverrideRecurrenceIDsSinceDeleteToken :many
 SELECT recurrence_id FROM todos
-WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL AND delete_token = ?
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL AND delete_token >= ?
 ORDER BY recurrence_id
 `
 
-type ListDeletedTodoOverrideRecurrenceIDsByDeleteTokenParams struct {
+type ListDeletedTodoOverrideRecurrenceIDsSinceDeleteTokenParams struct {
 	Uid         string
 	DeleteToken int64
 }
 
-func (q *Queries) ListDeletedTodoOverrideRecurrenceIDsByDeleteToken(ctx context.Context, arg ListDeletedTodoOverrideRecurrenceIDsByDeleteTokenParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listDeletedTodoOverrideRecurrenceIDsByDeleteToken, arg.Uid, arg.DeleteToken)
+func (q *Queries) ListDeletedTodoOverrideRecurrenceIDsSinceDeleteToken(ctx context.Context, arg ListDeletedTodoOverrideRecurrenceIDsSinceDeleteTokenParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listDeletedTodoOverrideRecurrenceIDsSinceDeleteToken, arg.Uid, arg.DeleteToken)
 	if err != nil {
 		return nil, err
 	}
@@ -1245,23 +1245,24 @@ func (q *Queries) RestoreTodosByUID(ctx context.Context, uid string) (int64, err
 	return result.RowsAffected()
 }
 
-const restoreTodosByUIDAndDeleteToken = `-- name: RestoreTodosByUIDAndDeleteToken :execrows
+const restoreTodosByUIDSinceDeleteToken = `-- name: RestoreTodosByUIDSinceDeleteToken :execrows
 UPDATE todos SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NOT NULL AND delete_token = ?
+WHERE uid = ? AND deleted_at IS NOT NULL AND delete_token >= ?
 `
 
-type RestoreTodosByUIDAndDeleteTokenParams struct {
+type RestoreTodosByUIDSinceDeleteTokenParams struct {
 	Uid         string
 	DeleteToken int64
 }
 
-// Restore the rows of one UID that one soft-delete statement hid (see the
-// column delete_token of migration 064).
-func (q *Queries) RestoreTodosByUIDAndDeleteToken(ctx context.Context, arg RestoreTodosByUIDAndDeleteTokenParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, restoreTodosByUIDAndDeleteToken, arg.Uid, arg.DeleteToken)
+// Restore the rows of one UID that the soft-delete statement with the
+// token, or a later one, hid (see the column delete_token of migration
+// 064). A row that an earlier statement hid stays in the trash.
+func (q *Queries) RestoreTodosByUIDSinceDeleteToken(ctx context.Context, arg RestoreTodosByUIDSinceDeleteTokenParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreTodosByUIDSinceDeleteToken, arg.Uid, arg.DeleteToken)
 	if err != nil {
 		return 0, err
 	}

@@ -80,3 +80,37 @@ func TestRestoreByUID_WithALiveMasterRestoresEachOverride(t *testing.T) {
 		t.Errorf("live overrides = %d, %v; want 2", len(overrides), err)
 	}
 }
+
+// TestRestoreByUID_BringsBackARowOfALaterDelete restores one override by
+// its ID while the master stays in the trash, and deletes the series
+// again. The second delete hides the override with a newer token than the
+// master. The restore of the series must bring back both rows.
+func TestRestoreByUID_BringsBackARowOfALaterDelete(t *testing.T) {
+	db, q := testutil.NewTestDB(t)
+	svc := NewService(db, q)
+	ctx := context.Background()
+	master := seedWeekly(t, svc)
+	ov, err := svc.CreateOverride(ctx, "weekly", "2026-10-31T00:00:00Z", UpdateParams{Summary: "Moved", DueDate: "2026-11-01", CalendarID: 1})
+	if err != nil {
+		t.Fatalf("CreateOverride: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, "weekly"); err != nil {
+		t.Fatalf("DeleteSeries: %v", err)
+	}
+	if err := svc.RestoreByID(ctx, ov.ID); err != nil {
+		t.Fatalf("RestoreByID of the override: %v", err)
+	}
+	if err := svc.DeleteSeries(ctx, "weekly"); err != nil {
+		t.Fatalf("second DeleteSeries: %v", err)
+	}
+
+	if err := svc.RestoreByUID(ctx, "weekly"); err != nil {
+		t.Fatalf("RestoreByUID: %v", err)
+	}
+	if _, err := svc.Get(ctx, master.ID); err != nil {
+		t.Errorf("the master is not live: %v", err)
+	}
+	if _, err := svc.Get(ctx, ov.ID); err != nil {
+		t.Errorf("the override of the later delete is not live: %v", err)
+	}
+}

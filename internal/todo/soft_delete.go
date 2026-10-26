@@ -146,7 +146,9 @@ func (s *Service) RestoreByUID(ctx context.Context, uid string) error {
 // restoreByUIDClearingExdates un-hides the soft-deleted rows of uid and
 // clears the master EXDATE for each override that it un-hides, all in one
 // transaction. With the master in the trash, it un-hides the rows of the
-// delete that hid the master only (the delete token of migration 064). A
+// delete that hid the master, and of each later delete (the delete token
+// of migration 064). A later delete hid a row while the master was in the
+// trash, for example a series delete after a restore of one override. A
 // row that an earlier delete hid, for example a deleted occurrence, stays
 // in the trash, and its EXDATE stays on the master (issue #928). With a
 // live master, or a master from before migration 064, it un-hides every
@@ -170,11 +172,11 @@ func (s *Service) restoreByUIDClearingExdates(ctx context.Context, uid string) (
 	var recurrenceIDs []string
 	var n int64
 	if token := master.DeleteToken; found && master.DeletedAt != nil && token != 0 {
-		recurrenceIDs, err = qtx.ListDeletedTodoOverrideRecurrenceIDsByDeleteToken(ctx, storage.ListDeletedTodoOverrideRecurrenceIDsByDeleteTokenParams{Uid: uid, DeleteToken: token})
+		recurrenceIDs, err = qtx.ListDeletedTodoOverrideRecurrenceIDsSinceDeleteToken(ctx, storage.ListDeletedTodoOverrideRecurrenceIDsSinceDeleteTokenParams{Uid: uid, DeleteToken: token})
 		if err != nil {
 			return 0, fmt.Errorf("list deleted override recurrence ids: %w", err)
 		}
-		n, err = qtx.RestoreTodosByUIDAndDeleteToken(ctx, storage.RestoreTodosByUIDAndDeleteTokenParams{Uid: uid, DeleteToken: token})
+		n, err = qtx.RestoreTodosByUIDSinceDeleteToken(ctx, storage.RestoreTodosByUIDSinceDeleteTokenParams{Uid: uid, DeleteToken: token})
 	} else {
 		recurrenceIDs, err = qtx.ListDeletedTodoOverrideRecurrenceIDs(ctx, uid)
 		if err != nil {
