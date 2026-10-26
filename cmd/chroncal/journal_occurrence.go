@@ -25,6 +25,8 @@ import (
 // recur, a cancelled series, a time that is not an occurrence, or an
 // override in the trash.
 func resolveJournalOccurrence(ctx context.Context, a *app.App, ref, recurrenceID string) (j journal.Journal, create bool, err error) {
+	// A stray space must not miss the override row below.
+	recurrenceID = strings.TrimSpace(recurrenceID)
 	if recurrenceID == "" {
 		j, err := resolveJournal(ctx, a, ref, "")
 		return j, false, err
@@ -58,7 +60,7 @@ func resolveJournalOccurrence(ctx context.Context, a *app.App, ref, recurrenceID
 	}
 	// The lookup above takes a date-only RECURRENCE-ID too, so the create
 	// takes the same forms.
-	at, err := timeutil.ParseRecurrenceID(strings.TrimSpace(recurrenceID))
+	at, err := timeutil.ParseRecurrenceID(recurrenceID)
 	if err != nil {
 		return journal.Journal{}, false, errInvalidInputf("--recurrence-id: invalid time %q (use RFC 3339 or YYYY-MM-DD)", recurrenceID)
 	}
