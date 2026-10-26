@@ -82,8 +82,8 @@ func TestConnect_RelinksACalendarOfAnOlderDoubleLink(t *testing.T) {
 // two calendars with two users. A relink of the first calendar to the user
 // of the second must refuse: the two links then have the same user. An
 // account calendar stores a relative path. Its relink with the same user
-// keeps its collection, so it passes also when a double link from before
-// issue #874 exists.
+// keeps its collection, so it passes the collection check also when a
+// double link from before issue #874 exists.
 func TestConnect_RefusesARelinkToTheUserOfAnotherLink(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -123,7 +123,10 @@ func TestConnect_RefusesARelinkToTheUserOfAnotherLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if _, _, err := svc.ConnectTarget(ctx, third, RemoteLink{RemoteURL: url, Username: "carol", AuthType: "basic"}); err != nil {
-		t.Fatalf("relink of the account calendar as carol = %v; want nil", err)
+	// The collection check passes. The link would make a hidden account
+	// with the login of the account "acct-2", so the login check of issue
+	// #917 refuses it.
+	if _, _, err := svc.ConnectTarget(ctx, third, RemoteLink{RemoteURL: url, Username: "carol", AuthType: "basic"}); errors.Is(err, ErrCollectionLinked) || !errors.Is(err, ErrLoginHasAccount) {
+		t.Fatalf("relink of the account calendar as carol = %v; want ErrLoginHasAccount, not ErrCollectionLinked", err)
 	}
 }

@@ -32,38 +32,46 @@ func (e *loginAccountError) Is(target error) bool { return target == ErrLoginHas
 func (e *loginAccountError) InvalidInput() bool { return true }
 
 // checkLoginFree returns ErrLoginHasAccount, with the name of the account,
-// when an account that the user added has the server origin of serverURL,
-// the user of link, and the auth type of link. A hidden account of a
-// calendar link does not count: each calendar link keeps its own. When the
-// account of cal has the login already, the link adds no login, and the
-// check passes.
-func checkLoginFree(ctx context.Context, q *storage.Queries, cal Calendar, link RemoteLink, serverURL string) error {
-	origin := serverOrigin(serverURL)
-	if origin == "" {
+// when an account that the user added has the login of link: the server
+// origin of serverURL, the user, and the auth type. A hidden account of a
+// calendar link does not count: each calendar link keeps its own. Connect
+// never keeps an account that the user added, so the account of the
+// calendar does not count as an exception.
+func checkLoginFree(ctx context.Context, q *storage.Queries, link RemoteLink, serverURL string) error {
+	if serverOrigin(serverURL) == "" {
 		return nil
 	}
 	accounts, err := q.ListAccounts(ctx)
 	if err != nil {
 		return fmt.Errorf("list accounts: %w", err)
 	}
-	user := strings.TrimSpace(link.Username)
-	authType := NormalizeAuthType(link.AuthType)
-	sameLogin := func(a storage.Account) bool {
-		return serverOrigin(a.ServerUrl) == origin &&
-			strings.EqualFold(strings.TrimSpace(a.Username), user) &&
-			NormalizeAuthType(a.AuthType) == authType
-	}
 	for _, a := range accounts {
-		if a.ID == cal.AccountID && sameLogin(a) {
-			return nil
-		}
-	}
-	for _, a := range accounts {
-		if !strings.HasPrefix(a.Name, hiddenAccountPrefix) && sameLogin(a) {
+		if !strings.HasPrefix(a.Name, hiddenAccountPrefix) && sameLogin(a, link, serverURL) {
 			return &loginAccountError{name: a.Name}
 		}
 	}
 	return nil
+}
+
+// checkRelinkLoginFree runs checkLoginFree for a relink that keeps the
+// hidden account existing. A relink with the login of that account adds no
+// login, for example a new credential, so it passes. A relink that changes
+// the login gets the check of a new link.
+func checkRelinkLoginFree(ctx context.Context, q *storage.Queries, existing storage.Account, link RemoteLink, serverURL string) error {
+	if sameLogin(existing, link, serverURL) {
+		return nil
+	}
+	return checkLoginFree(ctx, q, link, serverURL)
+}
+
+// sameLogin reports whether account a has the login of link: the server
+// origin of serverURL, the user (case and outer spaces ignored), and the
+// auth type.
+func sameLogin(a storage.Account, link RemoteLink, serverURL string) bool {
+	origin := serverOrigin(serverURL)
+	return origin != "" && serverOrigin(a.ServerUrl) == origin &&
+		strings.EqualFold(strings.TrimSpace(a.Username), strings.TrimSpace(link.Username)) &&
+		NormalizeAuthType(a.AuthType) == NormalizeAuthType(link.AuthType)
 }
 
 // serverOrigin returns the scheme and the host of raw in lowercase, with no
