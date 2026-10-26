@@ -267,6 +267,7 @@ type Journal struct {
 	CreatedAt      string
 	UpdatedAt      string
 	DeletedAt      *string
+	DeleteToken    int64
 }
 
 type JournalAttachment struct {
@@ -444,6 +445,7 @@ type Todo struct {
 	UpdatedAt       string
 	Dtstamp         *string
 	DeletedAt       *string
+	DeleteToken     int64
 }
 
 type TodoAlarm struct {

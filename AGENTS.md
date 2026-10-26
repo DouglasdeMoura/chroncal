@@ -281,6 +281,8 @@ n, err := svc.PurgeDeleted(ctx, cutoff) // all rows older than cutoff
 
 For todos and journals, a restore of an override of a series clears the EXDATE that its delete recorded. The same transaction does both. Expansion then shows the occurrence again. Events follow the occurrence invariant below.
 
+Each soft-delete statement of a todo or a journal writes a new delete token on the rows that it hides (`todos.delete_token` and `journals.delete_token`, migration 064). The token is the highest token of the table plus one. With the master in the trash, a restore by UID brings back the rows with the token of the master only. A row that an earlier delete hid, for example a deleted occurrence, stays in the trash, and its EXDATE stays (issue #928). Give a new soft-delete query of these tables the same token expression.
+
 The EXDATE-provenance rule lives in `internal/softdelete`. Strip only EXDATEs that a delete recorded. Do not strip imported EXDATEs (issue #86). The todo and journal services call `softdelete.ClearMasterEXDATE` through a thin `clearMasterEXDATE` wrapper. Fix the contract in the shared helper. Do not fix it per domain.
 
 Events keep one invariant. An EXDATE that a delete recorded exists at an occurrence only while no live override of the series sits there. Locally, an EXDATE never hides an override. But Google and iCloud drop an override whose RECURRENCE-ID has an EXDATE, so the export must never carry both. The occurrence log (`event_exdate_deletes`) holds the record. `hidden_ids` has one `seq:row` entry for each row of each delete. `owns_exdate` flags the copy of the EXDATE that the log owns. `delete_seq` numbers the deletes. Two helpers in `internal/softdelete` hold the invariant:
