@@ -57,7 +57,13 @@ const defaultHTTPTimeout = 5 * time.Minute
 const maxHTTPResponseBytes = 8 << 20
 const maxRedirects = 10
 
+// defaultHTTPClient has its own transport, a clone of
+// http.DefaultTransport with the same settings. Code that calls
+// CloseIdleConnections on http.DefaultTransport, for example
+// httptest.Server.Close in a parallel test, then cannot break a CalDAV
+// request that takes an idle connection (issue #936).
 var defaultHTTPClient = &http.Client{
+	Transport:     http.DefaultTransport.(*http.Transport).Clone(),
 	Timeout:       defaultHTTPTimeout,
 	CheckRedirect: checkRedirect,
 }
