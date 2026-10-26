@@ -65,8 +65,15 @@ func ContentJournal(j journal.Journal) journal.Journal {
 // an alarm without one, and it reads the alarms in the order of their rows.
 // Each side takes the defaults of the store (WithStoreDefaults), because a
 // stored row has them and a server body can omit them.
-// A body that does not parse, or that holds no item, is not the same.
-func SameContent(sent []byte, server *ical.Calendar) bool {
+// A body that does not parse, or that holds no item, is not the same. A
+// panic in the comparison counts as a difference, so the caller keeps its
+// old path and the sync goes on.
+func SameContent(sent []byte, server *ical.Calendar) (same bool) {
+	defer func() {
+		if recover() != nil {
+			same = false
+		}
+	}()
 	a, err := ImportFileRemote(bytes.NewReader(sent))
 	if err != nil || a.SkippedComponents > 0 {
 		return false

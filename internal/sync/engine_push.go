@@ -370,6 +370,13 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			// conflict: the push links the row to that object (issue #918).
 			if etag, ok := e.sameContentCreate(ctx, client, putPath, icalData); ok {
 				e.logger.Info("the server holds the same item; the create links to it", "uid", res.Uid)
+				// A create conflict of an earlier pass has no difference
+				// left to choose, so it closes. Its recorded server body is
+				// stale now, and a pick of it would bring that body back.
+				if err := e.q.CloseOpenEditConflict(ctx, storage.CloseOpenEditConflictParams{CalendarID: calendarID, Uid: res.Uid}); err != nil {
+					result.errors = append(result.errors, fmt.Errorf("close the create conflict of %s: %w", res.Uid, err))
+					continue
+				}
 				newEtag, putErr = etag, nil
 			}
 		}

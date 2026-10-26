@@ -69,3 +69,35 @@ func TestCreateOfAnotherItemStillRecordsAConflict(t *testing.T) {
 		t.Fatalf("push = %+v, %v; want one conflict", res, err)
 	}
 }
+
+// TestLinkClosesAnEarlierCreateConflict closes the create conflict of an
+// earlier push when the server object then holds the same item. The
+// recorded server body is stale, so the conflict must not stay open.
+func TestLinkClosesAnEarlierCreateConflict(t *testing.T) {
+	t.Parallel()
+	engine, q, srv, calA, _ := newICloudPairEngine(t)
+	ctx := context.Background()
+
+	uid, path := seedCreateConflict(t, engine, q, srv, calA)
+	if res, err := engine.PushLocalEdits(ctx, calA); err != nil || res.Conflicts != 1 {
+		t.Fatalf("first push = %+v, %v; want one conflict", res, err)
+	}
+	srv.editRemoteSummary(path, "Local")
+
+	res, err := engine.PushLocalEdits(ctx, calA)
+	if err != nil || len(res.Errors) != 0 || res.Conflicts != 0 {
+		t.Fatalf("second push = %+v, %v; want no conflict", res, err)
+	}
+	var open, closed int
+	if err := engine.db.QueryRowContext(ctx, `SELECT COUNT(*) FILTER (WHERE resolved_at IS NULL), COUNT(*) FILTER (WHERE resolved_at IS NOT NULL)
+		FROM sync_conflicts WHERE calendar_id = ? AND uid = ?`, calA, uid).Scan(&open, &closed); err != nil {
+		t.Fatalf("count conflicts: %v", err)
+	}
+	if open != 0 || closed != 1 {
+		t.Fatalf("conflicts: %d open, %d closed; want the earlier conflict closed", open, closed)
+	}
+	sr, err := q.GetSyncResource(ctx, storage.GetSyncResourceParams{CalendarID: calA, Uid: uid})
+	if err != nil || sr.Dirty != 0 || sr.RemoteUrl == "" {
+		t.Fatalf("sync resource = %+v, %v; want a clean linked row", sr, err)
+	}
+}
