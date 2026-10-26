@@ -281,7 +281,7 @@ n, err := svc.PurgeDeleted(ctx, cutoff) // all rows older than cutoff
 
 For todos and journals, a restore of an override of a series clears the EXDATE that its delete recorded. The same transaction does both. Expansion then shows the occurrence again. Events follow the occurrence invariant below.
 
-Each soft-delete statement of a todo or a journal writes a new delete token on the rows that it hides (`todos.delete_token` and `journals.delete_token`, migration 064). The token is the highest token of the table plus one. With the master in the trash, a restore by UID brings back the rows with the token of the master only. A row that an earlier delete hid, for example a deleted occurrence, stays in the trash, and its EXDATE stays (issue #928). Give a new soft-delete query of these tables the same token expression.
+Each soft-delete statement of a todo or a journal writes a new delete token on the rows that it hides (`todos.delete_token` and `journals.delete_token`, migration 064). The token is the highest token of the table plus one. With the master in the trash, a restore by UID brings back the rows with the token of the master or a higher token. A row that an earlier delete hid, for example a deleted occurrence, stays in the trash, and its EXDATE stays (issue #928). Give a new soft-delete query of these tables the same token expression.
 
 The EXDATE-provenance rule lives in `internal/softdelete`. Strip only EXDATEs that a delete recorded. Do not strip imported EXDATEs (issue #86). The todo and journal services call `softdelete.ClearMasterEXDATE` through a thin `clearMasterEXDATE` wrapper. Fix the contract in the shared helper. Do not fix it per domain.
 

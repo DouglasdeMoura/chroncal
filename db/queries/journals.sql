@@ -136,18 +136,19 @@ UPDATE journals SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
 
--- name: RestoreJournalsByUIDAndDeleteToken :execrows
--- Restore the rows of one UID that one soft-delete statement hid (see the
--- column delete_token of migration 064).
+-- name: RestoreJournalsByUIDSinceDeleteToken :execrows
+-- Restore the rows of one UID that the soft-delete statement with the
+-- token, or a later one, hid (see the column delete_token of migration
+-- 064). A row that an earlier statement hid stays in the trash.
 UPDATE journals SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NOT NULL AND delete_token = ?;
+WHERE uid = ? AND deleted_at IS NOT NULL AND delete_token >= ?;
 
--- name: ListDeletedJournalOverrideRecurrenceIDsByDeleteToken :many
+-- name: ListDeletedJournalOverrideRecurrenceIDsSinceDeleteToken :many
 SELECT recurrence_id FROM journals
-WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL AND delete_token = ?
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL AND delete_token >= ?
 ORDER BY recurrence_id;
 
 -- name: RestoreJournalsByUID :execrows

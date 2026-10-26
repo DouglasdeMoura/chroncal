@@ -486,19 +486,19 @@ func (q *Queries) ListDeletedJournalOverrideRecurrenceIDs(ctx context.Context, u
 	return items, nil
 }
 
-const listDeletedJournalOverrideRecurrenceIDsByDeleteToken = `-- name: ListDeletedJournalOverrideRecurrenceIDsByDeleteToken :many
+const listDeletedJournalOverrideRecurrenceIDsSinceDeleteToken = `-- name: ListDeletedJournalOverrideRecurrenceIDsSinceDeleteToken :many
 SELECT recurrence_id FROM journals
-WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL AND delete_token = ?
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL AND delete_token >= ?
 ORDER BY recurrence_id
 `
 
-type ListDeletedJournalOverrideRecurrenceIDsByDeleteTokenParams struct {
+type ListDeletedJournalOverrideRecurrenceIDsSinceDeleteTokenParams struct {
 	Uid         string
 	DeleteToken int64
 }
 
-func (q *Queries) ListDeletedJournalOverrideRecurrenceIDsByDeleteToken(ctx context.Context, arg ListDeletedJournalOverrideRecurrenceIDsByDeleteTokenParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listDeletedJournalOverrideRecurrenceIDsByDeleteToken, arg.Uid, arg.DeleteToken)
+func (q *Queries) ListDeletedJournalOverrideRecurrenceIDsSinceDeleteToken(ctx context.Context, arg ListDeletedJournalOverrideRecurrenceIDsSinceDeleteTokenParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listDeletedJournalOverrideRecurrenceIDsSinceDeleteToken, arg.Uid, arg.DeleteToken)
 	if err != nil {
 		return nil, err
 	}
@@ -1102,23 +1102,24 @@ func (q *Queries) RestoreJournalsByUID(ctx context.Context, uid string) (int64, 
 	return result.RowsAffected()
 }
 
-const restoreJournalsByUIDAndDeleteToken = `-- name: RestoreJournalsByUIDAndDeleteToken :execrows
+const restoreJournalsByUIDSinceDeleteToken = `-- name: RestoreJournalsByUIDSinceDeleteToken :execrows
 UPDATE journals SET
     deleted_at = NULL,
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NOT NULL AND delete_token = ?
+WHERE uid = ? AND deleted_at IS NOT NULL AND delete_token >= ?
 `
 
-type RestoreJournalsByUIDAndDeleteTokenParams struct {
+type RestoreJournalsByUIDSinceDeleteTokenParams struct {
 	Uid         string
 	DeleteToken int64
 }
 
-// Restore the rows of one UID that one soft-delete statement hid (see the
-// column delete_token of migration 064).
-func (q *Queries) RestoreJournalsByUIDAndDeleteToken(ctx context.Context, arg RestoreJournalsByUIDAndDeleteTokenParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, restoreJournalsByUIDAndDeleteToken, arg.Uid, arg.DeleteToken)
+// Restore the rows of one UID that the soft-delete statement with the
+// token, or a later one, hid (see the column delete_token of migration
+// 064). A row that an earlier statement hid stays in the trash.
+func (q *Queries) RestoreJournalsByUIDSinceDeleteToken(ctx context.Context, arg RestoreJournalsByUIDSinceDeleteTokenParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreJournalsByUIDSinceDeleteToken, arg.Uid, arg.DeleteToken)
 	if err != nil {
 		return 0, err
 	}
