@@ -435,7 +435,16 @@ values. Use an empty string to clear optional fields like --date,
 --description, --url, --categories, or --rrule.
 
 Repeatable flags (--attendee, --comment, --contact, --attach,
---related-to) replace all existing values when specified.`,
+--related-to) replace all existing values when specified.
+
+With --recurrence-id and the UID of a recurring journal entry, the command
+edits one occurrence. When the occurrence has no override yet, the command
+creates one from the occurrence. The series and the other occurrences do
+not change. An occurrence cannot move to another calendar, and the series
+flags (--recurrence-rule, --exception-date-times, --recurrence-date-times)
+do not apply to a new override. A new override takes the attendees, the
+attachments, and the other child rows of the series. A flag such as
+--attendee then replaces them on the override only.`,
 		Example: `  # Change the summary
   chroncal journal update 1 --summary "Updated notes"
 
@@ -446,7 +455,10 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
   chroncal journal update 1 --status DRAFT
 
   # Move to a different calendar
-  chroncal journal update 1 --calendar Work`,
+  chroncal journal update 1 --calendar Work
+
+  # Edit one occurrence of a recurring journal entry
+  chroncal journal update weekly-log-uid --recurrence-id 2026-04-10 --summary "Short week"`,
 		Args: exactOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := initApp()
@@ -456,25 +468,23 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 			defer a.Close()
 			ctx := context.Background()
 
-			existing, err := resolveJournal(ctx, a, args[0], recurrenceID)
+			existing, createOverride, err := resolveJournalOccurrence(ctx, a, args[0], recurrenceID)
 			if err != nil {
 				return fmt.Errorf("get journal: %w", err)
 			}
-
-			p := journal.UpdateParams{
-				Summary:        existing.Summary,
-				Description:    existing.Description,
-				StartDate:      existing.StartDate,
-				Status:         existing.Status,
-				CalendarID:     existing.CalendarID,
-				Class:          existing.Class,
-				URL:            existing.URL,
-				Categories:     existing.Categories,
-				RecurrenceRule: existing.RecurrenceRule,
-				Timezone:       existing.Timezone,
-				ExDates:        existing.ExDates,
-				RDates:         existing.RDates,
+			if createOverride {
+				// An override is one occurrence, so the rule and the date
+				// lists of the series do not apply to it. An existing
+				// override row keeps the flags, so the user can still
+				// clear a stray rule on an imported row.
+				for _, name := range []string{"recurrence-rule", "rrule", "exception-date-times", "exdate", "recurrence-date-times", "rdate"} {
+					if cmd.Flags().Changed(name) {
+						return errInvalidInputf("--%s changes the series; drop --recurrence-id to edit the series", name)
+					}
+				}
 			}
+
+			p := journalParamsOf(existing)
 
 			if cmd.Flags().Changed("summary") {
 				p.Summary = summary
@@ -558,7 +568,13 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 				}
 			}
 
-			j, err := a.Journals.Update(ctx, existing.ID, p)
+			var j journal.Journal
+			if createOverride {
+				j, err = a.Journals.CreateOverride(ctx, existing.UID, existing.RecurrenceID, p)
+				err = occurrenceWriteErr(err)
+			} else {
+				j, err = a.Journals.Update(ctx, existing.ID, p)
+			}
 			if errors.Is(err, journal.ErrInstanceCalendarMove) {
 				// A journal UID has one master in all calendars.
 				return errOccurrenceMove(ctx, a, "journal", existing.UID, existing.RecurrenceID, existing.CalendarID, err)
@@ -635,7 +651,7 @@ Repeatable flags (--attendee, --comment, --contact, --attach,
 	cmd.Flags().StringArrayVar(&relationFlags, "related-to", nil, "related UID with optional PARENT:/CHILD:/SIBLING: prefix (repeatable)")
 	// Aliases
 	registerRecurrenceAliases(cmd, &rrule, &exdates, &rdates)
-	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target a specific override instance (RFC 3339 timestamp)")
+	cmd.Flags().StringVar(&recurrenceID, "recurrence-id", "", "target one occurrence of a recurring journal entry (RFC 3339 timestamp)")
 	return cmd
 }
 

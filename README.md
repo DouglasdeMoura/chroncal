@@ -441,6 +441,14 @@ chroncal journal purge-deleted  [--older-than DURATION] [--yes]
 
 Journal flags: `--date`, `--description`, `--calendar`, `--status`, `--class`, `--url`, `--categories`, `--rrule`, `--exdate`, `--rdate`, `--attach`, `--attendee`, `--organizer`, `--contact`, `--comment`, `--related-to`
 
+`--recurrence-id <RFC3339 or YYYY-MM-DD>` with the UID of a recurring journal entry names one occurrence:
+
+- `journal update` edits that occurrence. When the occurrence has no override yet, chroncal creates one from the occurrence. The series and the other occurrences do not change.
+- `journal delete` deletes that occurrence. chroncal writes an EXDATE on the master and puts the override in the trash. `journal restore <id>` brings the occurrence back.
+- An occurrence stays in the calendar of its series. `--rrule`, `--exdate`, and `--rdate` apply to the series, so `journal update` refuses them on a new override.
+- A new override takes the attendees, the attachments, and the other child rows of the series. A flag such as `--attendee` then replaces them on the override only.
+- A time that is not an occurrence of the series gives an error that says so. A journal entry that does not recur gives an error too.
+
 ### CalDAV accounts
 
 ```

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/softdelete"
@@ -305,27 +306,47 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 			return fmt.Errorf("begin tx: %w", err)
 		}
 		defer tx.Rollback()
-		qtx := s.q.WithTx(tx)
-
-		master, err := qtx.GetJournalByUID(ctx, j.UID)
-		// A genuine lookup error (for example SQLITE_BUSY) must not collapse
-		// into the "no master" path. That path would soft-delete the override
-		// and skip its EXDATE/provenance records. Series expansion would then
-		// restore the occurrence (issue #290). Only a missing master (ErrNoRows)
-		// may skip those records.
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("get master: %w", err)
+		if err := deleteOverrideTx(ctx, s.q.WithTx(tx), j); err != nil {
+			return err
 		}
-		if err == nil {
-			existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
-			recIDTime, parseErr := timeutil.ParseRecurrenceID(j.RecurrenceID)
-			if parseErr != nil {
-				// A malformed recurrence_id cannot be excluded from the
-				// master. A soft-delete of the override would then restore the
-				// occurrence via series expansion. Return an error. The restore
-				// path treats the same parse failure as fatal.
-				return fmt.Errorf("parse recurrence_id %q: %w", j.RecurrenceID, parseErr)
-			}
+		return tx.Commit()
+	}
+
+	// Unreachable: RecurrenceID is either "" (handled above) or non-empty.
+	if err := s.q.SoftDeleteJournal(ctx, id); err != nil {
+		return err
+	}
+	_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
+	return nil
+}
+
+// deleteOverrideTx soft-deletes the override j through the transaction of
+// qtx. It adds the EXDATE of the occurrence to the master and records it,
+// so a restore can remove it again. When the master already holds that
+// EXDATE, the delete adds nothing and records nothing: a restore must never
+// strip an EXDATE that a delete did not add (issue #86). Delete and
+// DeleteInstance share it.
+func deleteOverrideTx(ctx context.Context, qtx *storage.Queries, j Journal) error {
+	master, err := qtx.GetJournalByUID(ctx, j.UID)
+	// A genuine lookup error (for example SQLITE_BUSY) must not collapse
+	// into the "no master" path. That path would soft-delete the override
+	// and skip its EXDATE/provenance records. Series expansion would then
+	// restore the occurrence (issue #290). Only a missing master (ErrNoRows)
+	// may skip those records.
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("get master: %w", err)
+	}
+	if err == nil {
+		existing := timeutil.ParseTimeList(storage.NullableToString(master.Exdates))
+		recIDTime, parseErr := timeutil.ParseRecurrenceID(j.RecurrenceID)
+		if parseErr != nil {
+			// A malformed recurrence_id cannot be excluded from the
+			// master. A soft-delete of the override would then restore the
+			// occurrence via series expansion. Return an error. The restore
+			// path treats the same parse failure as fatal.
+			return fmt.Errorf("parse recurrence_id %q: %w", j.RecurrenceID, parseErr)
+		}
+		if !slices.ContainsFunc(existing, recIDTime.Equal) {
 			existing = append(existing, recIDTime)
 			if err := qtx.UpdateJournalExdates(ctx, storage.UpdateJournalExdatesParams{
 				Exdates: storage.StringToNullable(timeutil.SerializeTimeList(existing)),
@@ -343,24 +364,17 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 				return fmt.Errorf("record exdate delete: %w", err)
 			}
 		}
-
-		if err := qtx.SoftDeleteJournal(ctx, id); err != nil {
-			return fmt.Errorf("soft-delete journal: %w", err)
-		}
-		// Mark the master dirty — its EXDATE was modified — inside the same
-		// transaction. A failed mark then rolls the EXDATE change back. The
-		// path does not commit a change that is never pushed (issue #107).
-		if err := storage.MarkResourceDirty(ctx, tx, j.CalendarID, j.UID, "journal"); err != nil {
-			return fmt.Errorf("mark resource dirty: %w", err)
-		}
-		return tx.Commit()
 	}
 
-	// Unreachable: RecurrenceID is either "" (handled above) or non-empty.
-	if err := s.q.SoftDeleteJournal(ctx, id); err != nil {
-		return err
+	if err := qtx.SoftDeleteJournal(ctx, j.ID); err != nil {
+		return fmt.Errorf("soft-delete journal: %w", err)
 	}
-	_ = storage.MarkResourceDirty(ctx, s.db, j.CalendarID, j.UID, "journal")
+	// Mark the master dirty — its EXDATE was modified — inside the same
+	// transaction. A failed mark then rolls the EXDATE change back. The
+	// path does not commit a change that is never pushed (issue #107).
+	if err := qtx.MarkResourceDirty(ctx, j.CalendarID, j.UID, "journal"); err != nil {
+		return fmt.Errorf("mark resource dirty: %w", err)
+	}
 	return nil
 }
 

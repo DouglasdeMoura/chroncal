@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
+	"github.com/douglasdemoura/chroncal/internal/journal"
 	"github.com/douglasdemoura/chroncal/internal/recurrence"
 	"github.com/douglasdemoura/chroncal/internal/timeutil"
 	"github.com/douglasdemoura/chroncal/internal/todo"
@@ -81,10 +82,13 @@ func resolveTodoOccurrence(ctx context.Context, a *app.App, ref, recurrenceID st
 }
 
 // occurrenceWriteErr gives an invalid-input error for the refusals of
-// todo.Service.CreateOverride and DeleteInstance. A sync pull between the
-// lookup and the write can cause them.
+// CreateOverride and DeleteInstance of the todo and the journal services.
+// A sync pull between the lookup and the write can cause them.
 func occurrenceWriteErr(err error) error {
-	for _, refusal := range []error{todo.ErrNotOccurrence, todo.ErrOverrideExists, todo.ErrOccurrenceInTrash} {
+	for _, refusal := range []error{
+		todo.ErrNotOccurrence, todo.ErrOverrideExists, todo.ErrOccurrenceInTrash,
+		journal.ErrNotOccurrence, journal.ErrOverrideExists, journal.ErrOccurrenceInTrash,
+	} {
 		if errors.Is(err, refusal) {
 			return errInvalidInputf("%v", err)
 		}

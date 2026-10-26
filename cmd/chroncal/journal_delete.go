@@ -14,14 +14,27 @@ import (
 var journalResource = resource{
 	name: "journal",
 	resolve: func(ctx context.Context, a *app.App, ref, recurrenceID string) (row, error) {
-		j, err := resolveJournal(ctx, a, ref, recurrenceID)
+		j, create, err := resolveJournalOccurrence(ctx, a, ref, recurrenceID)
 		if err != nil {
 			return row{}, err
 		}
-		return row{ID: j.ID, UID: j.UID, CalendarID: j.CalendarID, Summary: j.Summary}, nil
+		// An occurrence with no row yet has ID 0; delOccurrence writes it.
+		return row{ID: j.ID, UID: j.UID, CalendarID: j.CalendarID, Summary: j.Summary, Occurrence: create}, nil
 	},
 	del: func(ctx context.Context, a *app.App, target row) (int64, error) {
 		return target.CalendarID, a.Journals.Delete(ctx, target.ID)
+	},
+	delOccurrence: func(ctx context.Context, a *app.App, ref, recurrenceID string) (int64, int64, error) {
+		occ, create, err := resolveJournalOccurrence(ctx, a, ref, recurrenceID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if !create {
+			// A row of the occurrence came first.
+			return occ.CalendarID, occ.ID, a.Journals.Delete(ctx, occ.ID)
+		}
+		j, err := a.Journals.DeleteInstance(ctx, occ.UID, occ.RecurrenceID, journalParamsOf(occ))
+		return j.CalendarID, j.ID, occurrenceWriteErr(err)
 	},
 	delSeries: func(ctx context.Context, a *app.App, target row) ([]int64, error) {
 		return []int64{target.CalendarID}, a.Journals.DeleteSeries(ctx, target.UID)
@@ -65,14 +78,21 @@ var journalResource = resource{
 }
 
 func journalDeleteCmd() *cobra.Command {
-	return newDeleteCmd(journalResource, verbHelp{
+	cmd := newDeleteCmd(journalResource, verbHelp{
 		short: "Delete a journal entry",
-		long: `Delete a single journal entry, a specific recurring override, or an
-entire recurring series.`,
+		long: `Delete a single journal entry, one occurrence of a recurring journal
+entry, or an entire recurring series.
+
+With --recurrence-id and the UID of a recurring journal entry, the command
+deletes one occurrence, with or without an override row. The trash keeps
+the occurrence, so "chroncal journal restore" brings it back.`,
 		example: `  chroncal journal delete 12
   chroncal journal delete weekly-review-uid --recurrence-id 2026-04-10T00:00:00Z
   chroncal journal delete weekly-review-uid --series`,
 	})
+	// A journal occurrence needs no override row (issue #916).
+	cmd.Flags().Lookup("recurrence-id").Usage = "target one occurrence of a recurring journal entry (RFC 3339 timestamp)"
+	return cmd
 }
 
 // journalRestorePush lists the candidate calendars of a journal restore of uid

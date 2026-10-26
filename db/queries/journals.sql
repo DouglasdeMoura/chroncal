@@ -230,10 +230,10 @@ SELECT id FROM journals WHERE calendar_id = ? AND uid = ? ORDER BY id;
 SELECT calendar_id FROM journals WHERE id = ?;
 
 -- name: GetJournalCalendarByUIDAndRecurrenceID :one
--- The calendar of the row of one UID and recurrence ID, live or in the
--- trash, and whether the row is in the trash. The key spans calendars.
--- See issue #841.
-SELECT calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM journals WHERE uid = ? AND recurrence_id = ?;
+-- The ID and the calendar of the row of one UID and recurrence ID, live
+-- or in the trash, and whether the row is in the trash. The key spans
+-- calendars. See issue #841 and issue #916.
+SELECT id, calendar_id, CAST(deleted_at IS NOT NULL AS INTEGER) AS trashed FROM journals WHERE uid = ? AND recurrence_id = ?;
 
 -- name: ListJournalCalendarsOfUID :many
 -- The calendar of each row of a UID, live or in the trash, and whether the
