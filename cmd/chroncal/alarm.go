@@ -178,7 +178,7 @@ func claimAndFireAlarm(ctx context.Context, c dueClaim, policy alarmExecutionPol
 	fireErr := fireAlarmFn(c.due, policy)
 	if fireErr != nil {
 		fmt.Fprintf(os.Stderr, "chroncal: alarm error: %s (%s=%q action=%s): %v\n",
-			c.due.TriggerAt.Local().Format("15:04"), c.label, c.summary, c.action, fireErr)
+			c.due.TriggerAt.Local().Format("2006-01-02 15:04"), c.label, c.summary, c.action, fireErr)
 	}
 	return fireResult{StateID: stateID, Fired: true, FireErr: fireErr}
 }

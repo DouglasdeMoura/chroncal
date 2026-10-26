@@ -482,13 +482,13 @@ func TestSyncDoctorLegacyOverrideNamesTheMoveRefusal(t *testing.T) {
 			name: "collision",
 			seed: []string{`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id)
 			 SELECT 'refuse-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z' FROM calendars WHERE name = 'Home'`},
-			reason: `calendar "Home" holds a live row at the same occurrence; delete or move that row first`,
+			reason: `calendar "Home" holds a live copy at the same occurrence; delete or move that copy first`,
 		},
 		{
 			name: "collision in the trash",
 			seed: []string{`INSERT INTO events (uid, calendar_id, title, start_time, end_time, recurrence_id, deleted_at)
 			 SELECT 'refuse-cli@example.com', id, 't', '2026-05-18T09:30:00Z', '2026-05-18T10:30:00Z', '2026-05-18T09:00:00Z', '2026-05-01T00:00:00Z' FROM calendars WHERE name = 'Home'`},
-			reason: `calendar "Home" holds a row in the trash at the same occurrence; purge or restore that row first`,
+			reason: `calendar "Home" holds a copy in the trash at the same occurrence; purge or restore that copy first`,
 		},
 		{
 			name:   "read-only owner",
@@ -525,7 +525,7 @@ func TestSyncDoctorLegacyOverrideNamesTheMoveRefusal(t *testing.T) {
 				`INSERT INTO sync_conflicts (calendar_id, owner_type, owner_id, uid, local_ical, server_ical, server_etag)
 				 SELECT id, 'event', 1, 'refuse-cli@example.com', 'l', 's', 'e' FROM calendars WHERE name = 'Linked'`,
 			},
-			reason:  `calendar "Home" holds a live row at the same occurrence; delete or move that row first`,
+			reason:  `calendar "Home" holds a live copy at the same occurrence; delete or move that copy first`,
 			moveErr: "holds a live copy",
 		},
 	}

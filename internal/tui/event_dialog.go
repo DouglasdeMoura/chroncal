@@ -387,7 +387,7 @@ func eventDetailLines(ev event.Event, cal CalendarInfo, w, labelWidth int, rsvpL
 
 	if len(ev.Alarms) > 0 {
 		lines = append(lines, "")
-		lines = append(lines, faint.Render("Reminders:"))
+		lines = append(lines, faint.Render("Alarms:"))
 		for _, a := range ev.Alarms {
 			lines = append(lines, truncateTo("  "+formatAlarmWithAction(a), w))
 		}

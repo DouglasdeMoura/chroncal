@@ -11,12 +11,11 @@ import (
 
 func (m EventDialogModel) View() string { return m.shell.View() }
 
-func (m EventDialogModel) labelWidth() int {
-	if m.shell.isNarrow() {
-		return 7
-	}
-	return 10
-}
+// labelWidth returns the width of the label column of the detail pane. The
+// width fits the longest label ("Conference"), so each label of the pane
+// ends in the same column. The narrow layout uses the same width (issue
+// #920).
+func (m EventDialogModel) labelWidth() int { return 10 }
 
 func (m EventDialogModel) detailWidth() int {
 	boxW, _ := m.shell.BoxSize()
