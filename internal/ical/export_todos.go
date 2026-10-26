@@ -36,7 +36,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 	spans.emit(cal)
 
 	masters := seriesRIDTypes(todos,
-		func(t todo.Todo) string { return t.UID },
+		func(t todo.Todo) seriesKey { return seriesKey{t.CalendarID, t.UID} },
 		func(t todo.Todo) string { return t.RecurrenceID },
 		todoAnchorValue,
 		func(t todo.Todo) string { return t.Timezone })
@@ -137,7 +137,7 @@ func ExportTodos(todos []todo.Todo, calName string) ([]byte, error) {
 		if t.RecurrenceID != "" {
 			// The RECURRENCE-ID takes the type of the recurrence anchor of
 			// the series (DTSTART, else DUE).
-			rt := overrideRIDType(masters, t.UID, todoAnchorValue(t), t.Timezone)
+			rt := overrideRIDType(masters, seriesKey{t.CalendarID, t.UID}, todoAnchorValue(t), t.Timezone)
 			emitRecurrenceID(vtodo.Props, t.RecurrenceID, rt.allDay, rt.floating)
 		}
 

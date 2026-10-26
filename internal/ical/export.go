@@ -173,26 +173,29 @@ func emitDateListOnComponent(comp *ical.Component, propName, dates, timezone str
 	}
 }
 
-// emitRecurrenceID writes RECURRENCE-ID onto props. recurrenceID is the stored
-// RFC 3339 string. Per RFC 5545 §3.8.4.4 the RECURRENCE-ID value type must
-// match the master's DTSTART. When the component is all-day it is emitted as
-// VALUE=DATE (YYYYMMDD). When floating (no timezone) it is emitted as a
-// floating DATE-TIME (no Z, no TZID). Otherwise it is a UTC DATE-TIME. A type
-// mismatch prevents CalDAV servers from a bind of the override to its master.
 // ridType is the value type of a RECURRENCE-ID: DATE, a floating
 // DATE-TIME, or a DATE-TIME in UTC.
 type ridType struct{ allDay, floating bool }
 
-// seriesRIDTypes returns the RECURRENCE-ID type of each series of rows by
-// UID. RFC 5545 gives an override the value type of the DTSTART of its
-// series, so the type comes from the master, not from the override (issue
-// #929). anchor returns the date string of the series anchor of a row.
-// A row with a recurrence ID is an override and gives no type.
-func seriesRIDTypes[T any](rows []T, uid, recurrenceID, anchor, timezone func(T) string) map[string]ridType {
-	types := map[string]ridType{}
+// seriesKey names one series in an export: the calendar and the UID. A
+// todo or journal override can sit in another calendar than the master
+// of its UID, and an export with no calendar filter holds both.
+type seriesKey struct {
+	calendarID int64
+	uid        string
+}
+
+// seriesRIDTypes returns the RECURRENCE-ID type of each series of rows.
+// RFC 5545 gives an override the value type of the DTSTART of its series,
+// so the type comes from the master, not from the override (issue #929).
+// key returns the series of a row, and anchor returns the date string of
+// its series anchor. A row with a recurrence ID is an override and gives
+// no type.
+func seriesRIDTypes[T any](rows []T, key func(T) seriesKey, recurrenceID, anchor, timezone func(T) string) map[seriesKey]ridType {
+	types := map[seriesKey]ridType{}
 	for _, r := range rows {
 		if recurrenceID(r) == "" {
-			types[uid(r)] = ridType{allDay: timeutil.IsDateOnly(anchor(r)), floating: timezone(r) == "FLOATING"}
+			types[key(r)] = ridType{allDay: timeutil.IsDateOnly(anchor(r)), floating: timezone(r) == "FLOATING"}
 		}
 	}
 	return types
@@ -200,22 +203,31 @@ func seriesRIDTypes[T any](rows []T, uid, recurrenceID, anchor, timezone func(T)
 
 // overrideRIDType returns the RECURRENCE-ID type of an override: the type
 // of its series in masters, else the type of its own anchor. An export
-// with no master of the UID (a single override) keeps the old rule.
-func overrideRIDType(masters map[string]ridType, uid, anchor, timezone string) ridType {
-	if t, ok := masters[uid]; ok {
+// with no master of the series (a single override) keeps the old rule.
+func overrideRIDType(masters map[seriesKey]ridType, key seriesKey, anchor, timezone string) ridType {
+	if t, ok := masters[key]; ok {
 		return t
 	}
 	return ridType{allDay: timeutil.IsDateOnly(anchor), floating: timezone == "FLOATING"}
 }
 
+// emitRecurrenceID writes RECURRENCE-ID onto props. recurrenceID is the
+// stored RFC 3339 string, or a date-only string. Per RFC 5545 §3.8.4.4 the
+// RECURRENCE-ID value type must match the master's DTSTART. When the
+// component is all-day it is emitted as VALUE=DATE (YYYYMMDD), with the
+// date of the stored value: a conversion of an offset value to UTC can move
+// it to the day before. When floating (no timezone) it is emitted as a
+// floating DATE-TIME (no Z, no TZID). Otherwise it is a UTC DATE-TIME. A
+// type mismatch prevents CalDAV servers from a bind of the override to its
+// master.
 func emitRecurrenceID(props ical.Props, recurrenceID string, allDay, floating bool) {
-	t, err := time.Parse(time.RFC3339, recurrenceID)
+	t, err := timeutil.ParseRecurrenceID(recurrenceID)
 	if err != nil {
 		return
 	}
 	switch {
 	case allDay:
-		props.SetDate(ical.PropRecurrenceID, t.UTC())
+		props.SetDate(ical.PropRecurrenceID, time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC))
 	case floating:
 		props.Set(&ical.Prop{
 			Name:  ical.PropRecurrenceID,

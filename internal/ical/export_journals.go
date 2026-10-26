@@ -45,7 +45,7 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 	spans.emit(cal)
 
 	masters := seriesRIDTypes(journals,
-		func(j journal.Journal) string { return j.UID },
+		func(j journal.Journal) seriesKey { return seriesKey{j.CalendarID, j.UID} },
 		func(j journal.Journal) string { return j.RecurrenceID },
 		func(j journal.Journal) string { return j.StartDate },
 		func(j journal.Journal) string { return j.Timezone })
@@ -111,7 +111,7 @@ func ExportJournals(journals []journal.Journal, calName string) ([]byte, error) 
 
 		if j.RecurrenceID != "" {
 			// The RECURRENCE-ID takes the type of the DTSTART of the series.
-			rt := overrideRIDType(masters, j.UID, j.StartDate, j.Timezone)
+			rt := overrideRIDType(masters, seriesKey{j.CalendarID, j.UID}, j.StartDate, j.Timezone)
 			emitRecurrenceID(vjournal.Props, j.RecurrenceID, rt.allDay, rt.floating)
 		}
 
