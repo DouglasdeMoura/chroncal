@@ -117,13 +117,16 @@ func (s *Service) ConnectTarget(ctx context.Context, cal Calendar, link RemoteLi
 	if err != nil {
 		return 0, "", err
 	}
+	// One login has one account (issue #917). A new link makes a hidden
+	// account, and a relink can change the login of the hidden account.
 	if !reuse {
-		// A new link makes a hidden account, so the login of an account
-		// that the user added refuses it (issue #917).
-		if err := checkLoginFree(ctx, s.q, cal, link, serverURL); err != nil {
+		if err := checkLoginFree(ctx, s.q, link, serverURL); err != nil {
 			return 0, "", err
 		}
 		return 0, fingerprint, nil
+	}
+	if err := checkRelinkLoginFree(ctx, s.q, existing, link, serverURL); err != nil {
+		return 0, "", err
 	}
 	return existing.ID, fingerprint, nil
 }
@@ -177,6 +180,9 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 		defer tx.Rollback()
 		qtx := s.q.WithTx(tx)
 		if err := checkConnectFree(ctx, qtx, cal, link, serverURL); err != nil {
+			return err
+		}
+		if err := checkRelinkLoginFree(ctx, qtx, existing, link, serverURL); err != nil {
 			return err
 		}
 		if err := qtx.UpdateAccount(ctx, storage.UpdateAccountParams{
@@ -248,7 +254,7 @@ func (s *Service) Connect(ctx context.Context, cal Calendar, link RemoteLink, cr
 	}
 	// One login has one account. The link of a login that an account of
 	// the user holds goes through that account (issue #917).
-	if err := checkLoginFree(ctx, qtx, cal, link, serverURL); err != nil {
+	if err := checkLoginFree(ctx, qtx, link, serverURL); err != nil {
 		return err
 	}
 	accountName := hiddenAccountName(cal.ID)
