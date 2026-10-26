@@ -107,8 +107,9 @@ DELETE FROM journals WHERE id = ?;
 -- name: SoftDeleteJournal :exec
 UPDATE journals SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = (SELECT COALESCE(MAX(prior.delete_token), 0) + 1 FROM journals AS prior),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? AND deleted_at IS NULL;
+WHERE journals.id = ? AND journals.deleted_at IS NULL;
 
 -- name: SoftDeleteJournalsByCalendarUID :exec
 -- Soft-delete every live row of one UID in one calendar. A pull that sees
@@ -117,14 +118,16 @@ WHERE id = ? AND deleted_at IS NULL;
 -- in the pulled calendar.
 UPDATE journals SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = (SELECT COALESCE(MAX(prior.delete_token), 0) + 1 FROM journals AS prior),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
+WHERE journals.calendar_id = ? AND journals.uid = ? AND journals.deleted_at IS NULL;
 
 -- name: SoftDeleteJournalsByUID :exec
 UPDATE journals SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = (SELECT COALESCE(MAX(prior.delete_token), 0) + 1 FROM journals AS prior),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NULL;
+WHERE journals.uid = ? AND journals.deleted_at IS NULL;
 
 -- name: RestoreJournal :exec
 UPDATE journals SET
@@ -132,6 +135,20 @@ UPDATE journals SET
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
+
+-- name: RestoreJournalsByUIDAndDeleteToken :execrows
+-- Restore the rows of one UID that one soft-delete statement hid (see the
+-- column delete_token of migration 064).
+UPDATE journals SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND deleted_at IS NOT NULL AND delete_token = ?;
+
+-- name: ListDeletedJournalOverrideRecurrenceIDsByDeleteToken :many
+SELECT recurrence_id FROM journals
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL AND delete_token = ?
+ORDER BY recurrence_id;
 
 -- name: RestoreJournalsByUID :execrows
 UPDATE journals SET

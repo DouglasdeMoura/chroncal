@@ -1094,3 +1094,57 @@ func TestMigration063UpDown(t *testing.T) {
 	mustExec(`UPDATE event_alarms SET uid = 'shared'`)
 	mustExec(`UPDATE todo_alarms SET uid = 'shared'`)
 }
+
+// Verifies migration 064: each soft-delete statement of todos and journals
+// writes one new delete token on the rows that it hides (issue #928).
+func TestMigration064UpDown(t *testing.T) {
+	conn, q, err := Open(t.TempDir() + "/mig.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec, count := migHelpers(t, ctx, conn)
+	provider := migProvider(t, conn)
+	for _, table := range []string{"todos", "journals"} {
+		mustExec(`INSERT INTO ` + table + ` (uid, calendar_id, summary, recurrence_id) VALUES ('s', 1, 'Master', '')`)
+		mustExec(`INSERT INTO ` + table + ` (uid, calendar_id, summary, recurrence_id) VALUES ('s', 1, 'Early', '2026-01-02T00:00:00Z')`)
+		mustExec(`INSERT INTO ` + table + ` (uid, calendar_id, summary, recurrence_id) VALUES ('s', 1, 'Late', '2026-01-03T00:00:00Z')`)
+	}
+	if err := q.SoftDeleteTodo(ctx, 2); err != nil {
+		t.Fatalf("SoftDeleteTodo: %v", err)
+	}
+	if err := q.SoftDeleteTodosByUID(ctx, "s"); err != nil {
+		t.Fatalf("SoftDeleteTodosByUID: %v", err)
+	}
+	if err := q.SoftDeleteJournal(ctx, 2); err != nil {
+		t.Fatalf("SoftDeleteJournal: %v", err)
+	}
+	if err := q.SoftDeleteJournalsByUID(ctx, "s"); err != nil {
+		t.Fatalf("SoftDeleteJournalsByUID: %v", err)
+	}
+	for _, table := range []string{"todos", "journals"} {
+		early := count(`SELECT delete_token FROM ` + table + ` WHERE summary = 'Early'`)
+		master := count(`SELECT delete_token FROM ` + table + ` WHERE summary = 'Master'`)
+		late := count(`SELECT delete_token FROM ` + table + ` WHERE summary = 'Late'`)
+		if early == 0 || master != early+1 || late != master {
+			t.Errorf("%s tokens: early %d, master %d, late %d; want one token per statement", table, early, master, late)
+		}
+	}
+
+	if _, err := provider.DownTo(ctx, 63); err != nil {
+		t.Fatalf("down to 63: %v", err)
+	}
+	for _, table := range []string{"todos", "journals"} {
+		if n := count(`SELECT COUNT(*) FROM pragma_table_info('` + table + `') WHERE name = 'delete_token'`); n != 0 {
+			t.Errorf("%s keeps delete_token after Down", table)
+		}
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	if n := count(`SELECT COUNT(*) FROM todos WHERE delete_token != 0`); n != 0 {
+		t.Errorf("rows from before the migration have %d tokens, want token 0", n)
+	}
+}

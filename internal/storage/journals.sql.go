@@ -103,7 +103,7 @@ INSERT INTO journals (
     start_date, status, class, url,
     recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at
+RETURNING id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token
 `
 
 type CreateJournalParams struct {
@@ -163,6 +163,7 @@ func (q *Queries) CreateJournal(ctx context.Context, arg CreateJournalParams) (J
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeleteToken,
 	)
 	return i, err
 }
@@ -186,7 +187,7 @@ func (q *Queries) DeleteJournalsByUID(ctx context.Context, uid string) error {
 }
 
 const getJournal = `-- name: GetJournal :one
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE id = ? AND deleted_at IS NULL
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE id = ? AND deleted_at IS NULL
 `
 
 func (q *Queries) GetJournal(ctx context.Context, id int64) (Journal, error) {
@@ -212,12 +213,13 @@ func (q *Queries) GetJournal(ctx context.Context, id int64) (Journal, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeleteToken,
 	)
 	return i, err
 }
 
 const getJournalByUID = `-- name: GetJournalByUID :one
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE uid = ? AND recurrence_id = '' AND deleted_at IS NULL
 `
 
 func (q *Queries) GetJournalByUID(ctx context.Context, uid string) (Journal, error) {
@@ -243,12 +245,13 @@ func (q *Queries) GetJournalByUID(ctx context.Context, uid string) (Journal, err
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeleteToken,
 	)
 	return i, err
 }
 
 const getJournalByUIDAndRecurrenceID = `-- name: GetJournalByUIDAndRecurrenceID :one
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE uid = ? AND recurrence_id = ? AND deleted_at IS NULL
 `
 
 type GetJournalByUIDAndRecurrenceIDParams struct {
@@ -279,12 +282,13 @@ func (q *Queries) GetJournalByUIDAndRecurrenceID(ctx context.Context, arg GetJou
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeleteToken,
 	)
 	return i, err
 }
 
 const getJournalByUIDIncludingDeleted = `-- name: GetJournalByUIDIncludingDeleted :one
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE uid = ? AND recurrence_id = ''
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE uid = ? AND recurrence_id = ''
 `
 
 func (q *Queries) GetJournalByUIDIncludingDeleted(ctx context.Context, uid string) (Journal, error) {
@@ -310,6 +314,7 @@ func (q *Queries) GetJournalByUIDIncludingDeleted(ctx context.Context, uid strin
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeleteToken,
 	)
 	return i, err
 }
@@ -351,7 +356,7 @@ func (q *Queries) GetJournalCalendarOfRow(ctx context.Context, id int64) (int64,
 }
 
 const getJournalIncludingDeleted = `-- name: GetJournalIncludingDeleted :one
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE id = ?
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE id = ?
 `
 
 func (q *Queries) GetJournalIncludingDeleted(ctx context.Context, id int64) (Journal, error) {
@@ -377,6 +382,7 @@ func (q *Queries) GetJournalIncludingDeleted(ctx context.Context, id int64) (Jou
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeleteToken,
 	)
 	return i, err
 }
@@ -404,7 +410,7 @@ func (q *Queries) JournalUIDMasterCalendars(ctx context.Context, uid string) (Jo
 }
 
 const listAllJournals = `-- name: ListAllJournals :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE deleted_at IS NULL ORDER BY start_date, summary
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE deleted_at IS NULL ORDER BY start_date, summary
 `
 
 func (q *Queries) ListAllJournals(ctx context.Context) ([]Journal, error) {
@@ -436,6 +442,7 @@ func (q *Queries) ListAllJournals(ctx context.Context) ([]Journal, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -479,8 +486,42 @@ func (q *Queries) ListDeletedJournalOverrideRecurrenceIDs(ctx context.Context, u
 	return items, nil
 }
 
+const listDeletedJournalOverrideRecurrenceIDsByDeleteToken = `-- name: ListDeletedJournalOverrideRecurrenceIDsByDeleteToken :many
+SELECT recurrence_id FROM journals
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL AND delete_token = ?
+ORDER BY recurrence_id
+`
+
+type ListDeletedJournalOverrideRecurrenceIDsByDeleteTokenParams struct {
+	Uid         string
+	DeleteToken int64
+}
+
+func (q *Queries) ListDeletedJournalOverrideRecurrenceIDsByDeleteToken(ctx context.Context, arg ListDeletedJournalOverrideRecurrenceIDsByDeleteTokenParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listDeletedJournalOverrideRecurrenceIDsByDeleteToken, arg.Uid, arg.DeleteToken)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var recurrence_id string
+		if err := rows.Scan(&recurrence_id); err != nil {
+			return nil, err
+		}
+		items = append(items, recurrence_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeletedJournalsByCalendar = `-- name: ListDeletedJournalsByCalendar :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals
 WHERE calendar_id = ? AND deleted_at IS NOT NULL
 ORDER BY deleted_at DESC
 `
@@ -514,6 +555,7 @@ func (q *Queries) ListDeletedJournalsByCalendar(ctx context.Context, calendarID 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -567,7 +609,7 @@ func (q *Queries) ListJournalCalendarsOfUID(ctx context.Context, uid string) ([]
 }
 
 const listJournalOverridesByUID = `-- name: ListJournalOverridesByUID :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL ORDER BY recurrence_id
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NULL ORDER BY recurrence_id
 `
 
 func (q *Queries) ListJournalOverridesByUID(ctx context.Context, uid string) ([]Journal, error) {
@@ -599,6 +641,7 @@ func (q *Queries) ListJournalOverridesByUID(ctx context.Context, uid string) ([]
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -650,7 +693,7 @@ func (q *Queries) ListJournalRowIDsOfUIDInCalendar(ctx context.Context, arg List
 }
 
 const listJournals = `-- name: ListJournals :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals
 WHERE status != 'CANCELLED' AND deleted_at IS NULL
 ORDER BY start_date, summary
 `
@@ -684,6 +727,7 @@ func (q *Queries) ListJournals(ctx context.Context) ([]Journal, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -699,7 +743,7 @@ func (q *Queries) ListJournals(ctx context.Context) ([]Journal, error) {
 }
 
 const listJournalsByCalendar = `-- name: ListJournalsByCalendar :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals
 WHERE calendar_id = ? AND status != 'CANCELLED' AND deleted_at IS NULL
 ORDER BY start_date, summary
 `
@@ -733,6 +777,7 @@ func (q *Queries) ListJournalsByCalendar(ctx context.Context, calendarID int64) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -748,7 +793,7 @@ func (q *Queries) ListJournalsByCalendar(ctx context.Context, calendarID int64) 
 }
 
 const listJournalsByStartDateRange = `-- name: ListJournalsByStartDateRange :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE start_date >= ? AND start_date < ? AND deleted_at IS NULL ORDER BY start_date, summary
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE start_date >= ? AND start_date < ? AND deleted_at IS NULL ORDER BY start_date, summary
 `
 
 type ListJournalsByStartDateRangeParams struct {
@@ -785,6 +830,7 @@ func (q *Queries) ListJournalsByStartDateRange(ctx context.Context, arg ListJour
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -800,7 +846,7 @@ func (q *Queries) ListJournalsByStartDateRange(ctx context.Context, arg ListJour
 }
 
 const listJournalsByStatus = `-- name: ListJournalsByStatus :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE status = ? AND deleted_at IS NULL ORDER BY start_date, summary
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE status = ? AND deleted_at IS NULL ORDER BY start_date, summary
 `
 
 func (q *Queries) ListJournalsByStatus(ctx context.Context, status string) ([]Journal, error) {
@@ -832,6 +878,7 @@ func (q *Queries) ListJournalsByStatus(ctx context.Context, status string) ([]Jo
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -847,7 +894,7 @@ func (q *Queries) ListJournalsByStatus(ctx context.Context, status string) ([]Jo
 }
 
 const listRecurringJournals = `-- name: ListRecurringJournals :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = '' AND deleted_at IS NULL
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE (recurrence_rule IS NOT NULL OR (rdates IS NOT NULL AND rdates != '')) AND recurrence_id = '' AND deleted_at IS NULL
 `
 
 func (q *Queries) ListRecurringJournals(ctx context.Context) ([]Journal, error) {
@@ -879,6 +926,7 @@ func (q *Queries) ListRecurringJournals(ctx context.Context) ([]Journal, error) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -894,7 +942,7 @@ func (q *Queries) ListRecurringJournals(ctx context.Context) ([]Journal, error) 
 }
 
 const listRecurringJournalsByCalendar = `-- name: ListRecurringJournalsByCalendar :many
-SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at FROM journals WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ? AND deleted_at IS NULL
+SELECT id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token FROM journals WHERE recurrence_rule IS NOT NULL AND recurrence_id = '' AND calendar_id = ? AND deleted_at IS NULL
 `
 
 func (q *Queries) ListRecurringJournalsByCalendar(ctx context.Context, calendarID int64) ([]Journal, error) {
@@ -926,6 +974,7 @@ func (q *Queries) ListRecurringJournalsByCalendar(ctx context.Context, calendarI
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeleteToken,
 		); err != nil {
 			return nil, err
 		}
@@ -1053,11 +1102,35 @@ func (q *Queries) RestoreJournalsByUID(ctx context.Context, uid string) (int64, 
 	return result.RowsAffected()
 }
 
+const restoreJournalsByUIDAndDeleteToken = `-- name: RestoreJournalsByUIDAndDeleteToken :execrows
+UPDATE journals SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND deleted_at IS NOT NULL AND delete_token = ?
+`
+
+type RestoreJournalsByUIDAndDeleteTokenParams struct {
+	Uid         string
+	DeleteToken int64
+}
+
+// Restore the rows of one UID that one soft-delete statement hid (see the
+// column delete_token of migration 064).
+func (q *Queries) RestoreJournalsByUIDAndDeleteToken(ctx context.Context, arg RestoreJournalsByUIDAndDeleteTokenParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreJournalsByUIDAndDeleteToken, arg.Uid, arg.DeleteToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const softDeleteJournal = `-- name: SoftDeleteJournal :exec
 UPDATE journals SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = (SELECT COALESCE(MAX(prior.delete_token), 0) + 1 FROM journals AS prior),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? AND deleted_at IS NULL
+WHERE journals.id = ? AND journals.deleted_at IS NULL
 `
 
 func (q *Queries) SoftDeleteJournal(ctx context.Context, id int64) error {
@@ -1068,8 +1141,9 @@ func (q *Queries) SoftDeleteJournal(ctx context.Context, id int64) error {
 const softDeleteJournalsByCalendarUID = `-- name: SoftDeleteJournalsByCalendarUID :exec
 UPDATE journals SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = (SELECT COALESCE(MAX(prior.delete_token), 0) + 1 FROM journals AS prior),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL
+WHERE journals.calendar_id = ? AND journals.uid = ? AND journals.deleted_at IS NULL
 `
 
 type SoftDeleteJournalsByCalendarUIDParams struct {
@@ -1089,8 +1163,9 @@ func (q *Queries) SoftDeleteJournalsByCalendarUID(ctx context.Context, arg SoftD
 const softDeleteJournalsByUID = `-- name: SoftDeleteJournalsByUID :exec
 UPDATE journals SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = (SELECT COALESCE(MAX(prior.delete_token), 0) + 1 FROM journals AS prior),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NULL
+WHERE journals.uid = ? AND journals.deleted_at IS NULL
 `
 
 func (q *Queries) SoftDeleteJournalsByUID(ctx context.Context, uid string) error {
@@ -1109,7 +1184,7 @@ UPDATE journals SET
     exdates = ?, rdates = ?,
     dtstamp = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? RETURNING id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at
+WHERE id = ? RETURNING id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token
 `
 
 type UpdateJournalParams struct {
@@ -1165,6 +1240,7 @@ func (q *Queries) UpdateJournal(ctx context.Context, arg UpdateJournalParams) (J
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeleteToken,
 	)
 	return i, err
 }
@@ -1202,7 +1278,7 @@ ON CONFLICT(uid, recurrence_id) DO UPDATE SET
     dtstamp = excluded.dtstamp,
     deleted_at = NULL,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-RETURNING id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at
+RETURNING id, uid, calendar_id, summary, description, start_date, status, class, url, recurrence_rule, timezone, sequence, exdates, rdates, recurrence_id, dtstamp, created_at, updated_at, deleted_at, delete_token
 `
 
 type UpsertJournalByUIDParams struct {
@@ -1267,6 +1343,7 @@ func (q *Queries) UpsertJournalByUID(ctx context.Context, arg UpsertJournalByUID
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeleteToken,
 	)
 	return i, err
 }

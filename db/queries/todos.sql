@@ -122,8 +122,9 @@ DELETE FROM todos WHERE id = ?;
 -- name: SoftDeleteTodo :exec
 UPDATE todos SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = (SELECT COALESCE(MAX(prior.delete_token), 0) + 1 FROM todos AS prior),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = ? AND deleted_at IS NULL;
+WHERE todos.id = ? AND todos.deleted_at IS NULL;
 
 -- name: SoftDeleteTodosByCalendarUID :exec
 -- Soft-delete every live row of one UID in one calendar. A pull that sees
@@ -132,14 +133,16 @@ WHERE id = ? AND deleted_at IS NULL;
 -- in the pulled calendar.
 UPDATE todos SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = (SELECT COALESCE(MAX(prior.delete_token), 0) + 1 FROM todos AS prior),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE calendar_id = ? AND uid = ? AND deleted_at IS NULL;
+WHERE todos.calendar_id = ? AND todos.uid = ? AND todos.deleted_at IS NULL;
 
 -- name: SoftDeleteTodosByUID :exec
 UPDATE todos SET
     deleted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    delete_token = (SELECT COALESCE(MAX(prior.delete_token), 0) + 1 FROM todos AS prior),
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE uid = ? AND deleted_at IS NULL;
+WHERE todos.uid = ? AND todos.deleted_at IS NULL;
 
 -- name: RestoreTodo :exec
 UPDATE todos SET
@@ -147,6 +150,20 @@ UPDATE todos SET
     sequence = sequence + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE id = ? AND deleted_at IS NOT NULL;
+
+-- name: RestoreTodosByUIDAndDeleteToken :execrows
+-- Restore the rows of one UID that one soft-delete statement hid (see the
+-- column delete_token of migration 064).
+UPDATE todos SET
+    deleted_at = NULL,
+    sequence = sequence + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE uid = ? AND deleted_at IS NOT NULL AND delete_token = ?;
+
+-- name: ListDeletedTodoOverrideRecurrenceIDsByDeleteToken :many
+SELECT recurrence_id FROM todos
+WHERE uid = ? AND recurrence_id != '' AND deleted_at IS NOT NULL AND delete_token = ?
+ORDER BY recurrence_id;
 
 -- name: RestoreTodosByUID :execrows
 UPDATE todos SET
