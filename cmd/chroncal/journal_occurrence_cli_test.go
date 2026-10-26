@@ -35,8 +35,8 @@ func TestJournalOccurrenceCommands(t *testing.T) {
 	if err != nil || !strings.Contains(stdout, `"summary": "Short week"`) || !strings.Contains(stdout, `"recurrence_id": "2026-10-26T00:00:00Z"`) {
 		t.Fatalf("journal update occurrence = %s, %v", stdout, err)
 	}
-	// The second edit finds the override row.
-	if _, _, err := runChroncalCommand(t, "journal", "update", uid, "--recurrence-id", "2026-10-26T00:00:00Z", "--status", "DRAFT"); err != nil {
+	// The second edit finds the override row, also with a stray space.
+	if _, _, err := runChroncalCommand(t, "journal", "update", uid, "--recurrence-id", " 2026-10-26T00:00:00Z", "--status", "DRAFT"); err != nil {
 		t.Fatalf("second journal update: %v", err)
 	}
 
