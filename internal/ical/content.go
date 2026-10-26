@@ -150,7 +150,7 @@ func exportIfAny(n int, export func() ([]byte, error)) ([]byte, error) {
 func contentAlarms(alarms []model.Alarm) []model.Alarm {
 	out := slices.Clone(alarms)
 	for i := range out {
-		out[i].ID, out[i].UID, out[i].UIDUnverified = 0, "", false
+		out[i].ID, out[i].UID = 0, ""
 	}
 	slices.SortStableFunc(out, func(a, b model.Alarm) int {
 		return cmp.Compare(fmt.Sprintf("%+v", a), fmt.Sprintf("%+v", b))

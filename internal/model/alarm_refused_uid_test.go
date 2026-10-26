@@ -24,18 +24,11 @@ func alarmAt(uid, trigger string) Alarm {
 	return Alarm{UID: uid, Action: "DISPLAY", TriggerValue: trigger, Related: "START"}
 }
 
-// unverified returns a with the mark of migration 063.
-func unverified(a Alarm) Alarm {
-	a.UIDUnverified = true
-	return a
-}
-
 func TestPairAlarms(t *testing.T) {
 	tests := []struct {
 		name     string
 		stored   []Alarm
 		incoming []Alarm
-		held     map[string]bool
 		want     []AlarmPair
 	}{
 		{
@@ -51,37 +44,12 @@ func TestPairAlarms(t *testing.T) {
 			want:     []AlarmPair{{Stored: -1}},
 		},
 		{
-			// Another item holds the UID of the file, and a build before
-			// migration 063 wrote the stored UID: the store minted it.
-			name:     "a UID that another item holds takes a minted row",
-			stored:   []Alarm{unverified(alarmAt("minted", "-PT15M"))},
+			// Issue #924 removed the repair of issue #922: a UID that
+			// another item holds pairs with no row of another UID.
+			name:     "a UID that another item holds is a new alarm",
+			stored:   []Alarm{alarmAt("minted", "-PT15M")},
 			incoming: []Alarm{alarmAt("file", "-PT15M")},
-			held:     map[string]bool{"file": true},
-			want:     []AlarmPair{{Stored: 0, ByContent: true, TakeUID: true}},
-		},
-		{
-			// A build from migration 063 on wrote the stored UID, so a
-			// client authored it. A change to a UID that another item
-			// holds is a new alarm.
-			name:     "the evidence needs the mark of migration 063",
-			stored:   []Alarm{alarmAt("authored", "-PT15M")},
-			incoming: []Alarm{alarmAt("file", "-PT15M")},
-			held:     map[string]bool{"file": true},
 			want:     []AlarmPair{{Stored: -1}},
-		},
-		{
-			name:     "the evidence needs equal content",
-			stored:   []Alarm{unverified(alarmAt("minted", "-PT15M"))},
-			incoming: []Alarm{alarmAt("file", "-PT5M")},
-			held:     map[string]bool{"file": true},
-			want:     []AlarmPair{{Stored: -1}},
-		},
-		{
-			name:     "the evidence skips a row that another alarm claims",
-			stored:   []Alarm{unverified(alarmAt("a", "-PT15M"))},
-			incoming: []Alarm{alarmAt("file", "-PT15M"), alarmAt("a", "-PT5M")},
-			held:     map[string]bool{"file": true},
-			want:     []AlarmPair{{Stored: -1}, {Stored: 0}},
 		},
 		{
 			// Alarm a must not take the row with no UID: the backfill
@@ -108,7 +76,7 @@ func TestPairAlarms(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := PairAlarms(tt.stored, tt.incoming, tt.held); !slices.Equal(got, tt.want) {
+			if got := PairAlarms(tt.stored, tt.incoming); !slices.Equal(got, tt.want) {
 				t.Errorf("PairAlarms = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -118,27 +86,25 @@ func TestPairAlarms(t *testing.T) {
 func TestPairedAlarmUID(t *testing.T) {
 	tests := []struct {
 		name      string
-		p         AlarmPair
 		a, ex     Alarm
 		wantUID   string
 		wantWrite bool
 	}{
-		{"same UID", AlarmPair{}, alarmAt("a", "-PT15M"), alarmAt("a", "-PT15M"), "", false},
-		{"stored row with no UID", AlarmPair{}, alarmAt("a", "-PT15M"), alarmAt("", "-PT15M"), "a", true},
-		{"stored UID stays", AlarmPair{}, alarmAt("file", "-PT15M"), alarmAt("minted", "-PT15M"), "", false},
-		{"third pass takes the file UID", AlarmPair{TakeUID: true}, alarmAt("file", "-PT15M"), alarmAt("minted", "-PT15M"), "file", true},
-		{"incoming with no UID keeps the stored UID", AlarmPair{}, alarmAt("", "-PT15M"), alarmAt("minted", "-PT15M"), "", false},
-		{"foreign alarm keeps no UID", AlarmPair{}, Alarm{Action: "X-APPLE-SOUND"}, Alarm{Action: "X-APPLE-SOUND"}, "", false},
+		{"same UID", alarmAt("a", "-PT15M"), alarmAt("a", "-PT15M"), "", false},
+		{"stored row with no UID", alarmAt("a", "-PT15M"), alarmAt("", "-PT15M"), "a", true},
+		{"stored UID stays", alarmAt("file", "-PT15M"), alarmAt("minted", "-PT15M"), "", false},
+		{"incoming with no UID keeps the stored UID", alarmAt("", "-PT15M"), alarmAt("minted", "-PT15M"), "", false},
+		{"foreign alarm keeps no UID", Alarm{Action: "X-APPLE-SOUND"}, Alarm{Action: "X-APPLE-SOUND"}, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			uid, write := PairedAlarmUID(tt.p, tt.a, tt.ex)
+			uid, write := PairedAlarmUID(tt.a, tt.ex)
 			if write != tt.wantWrite || (write && uid != tt.wantUID) {
 				t.Errorf("PairedAlarmUID = %q, %v; want %q, %v", uid, write, tt.wantUID, tt.wantWrite)
 			}
 		})
 	}
-	if uid, write := PairedAlarmUID(AlarmPair{}, alarmAt("", "-PT15M"), alarmAt("", "-PT15M")); !write || uid == "" {
+	if uid, write := PairedAlarmUID(alarmAt("", "-PT15M"), alarmAt("", "-PT15M")); !write || uid == "" {
 		t.Errorf("fireable alarm with no UID on both sides = %q, %v; want a minted UID", uid, write)
 	}
 }
