@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasdemoura/chroncal/internal/caldav"
 	"github.com/douglasdemoura/chroncal/internal/calendaraccess"
+	icalPkg "github.com/douglasdemoura/chroncal/internal/ical"
 	"github.com/douglasdemoura/chroncal/internal/storage"
 )
 
@@ -363,6 +364,14 @@ func (e *Engine) push(ctx context.Context, client *caldav.Client, calendarID int
 			result.errors = append(result.errors, moveErr)
 			e.recordPushFailure(ctx, calendarID, res.Uid, moveErr)
 			continue
+		}
+		if res.RemoteUrl == "" && caldav.IsConflict(putErr) {
+			// A refused create whose href holds the same items is no
+			// conflict: the push links the row to that object (issue #918).
+			if etag, ok := e.sameContentCreate(ctx, client, putPath, icalData); ok {
+				e.logger.Info("the server holds the same item; the create links to it", "uid", res.Uid)
+				newEtag, putErr = etag, nil
+			}
 		}
 		if putErr != nil {
 			// A 412 Precondition Failed is an ETag conflict. A refused create
@@ -1882,6 +1891,23 @@ func (e *Engine) putResource(ctx context.Context, client *caldav.Client, putPath
 		}
 		return newEtag, err
 	})
+}
+
+// sameContentCreate reports whether the object at putPath holds the items
+// of icalData, the body of a create that the server refused (issue #918).
+// That happens after the link of a local calendar to a collection that
+// already holds its items, for example after a disconnect and a new link.
+// ok is false for a failed fetch, an object with no etag, or other content.
+// The caller then records the conflict as before.
+func (e *Engine) sameContentCreate(ctx context.Context, client *caldav.Client, putPath string, icalData []byte) (etag string, ok bool) {
+	serverRes, err := client.GetResource(ctx, putPath)
+	if err != nil || serverRes.ETag == "" {
+		return "", false
+	}
+	if !icalPkg.SameContent(icalData, serverRes.Data) {
+		return "", false
+	}
+	return serverRes.ETag, true
 }
 
 // putConflictOutcome classifies how a 412 on one resource was settled.

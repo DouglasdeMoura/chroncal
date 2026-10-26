@@ -3,9 +3,7 @@ package icaltransfer
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"slices"
-	"time"
 
 	"github.com/douglasdemoura/chroncal/internal/app"
 	"github.com/douglasdemoura/chroncal/internal/event"
@@ -30,7 +28,8 @@ import (
 // duration column, so the rule also compares those columns directly.
 //
 // The comparison ignores the fields that an import does not count as
-// content:
+// content. The content form of internal/ical (ical.ContentEvent,
+// ical.ContentTodo, ical.ContentJournal) holds the shared rules:
 //   - the row ID, the calendar ID, and the SEQUENCE
 //   - DTSTAMP, CREATED, and LAST-MODIFIED
 //   - the stored UID of an alarm that has no UID in the file, because the
@@ -71,32 +70,6 @@ func sameExport(stored, imported func() ([]byte, error)) bool {
 	}
 	b, err := imported()
 	return err == nil && bytes.Equal(a, b)
-}
-
-// sortedCategories returns the categories of list in sorted order.
-func sortedCategories(list string) string {
-	cats := timeutil.ParseCategoryList(list)
-	slices.Sort(cats)
-	return timeutil.JoinCategoryList(cats)
-}
-
-// sortedAttendees returns a copy of attendees in one fixed order.
-func sortedAttendees(attendees []model.Attendee) []model.Attendee {
-	out := slices.Clone(attendees)
-	for i := range out {
-		out[i].ID, out[i].EventID = 0, 0
-	}
-	slices.SortStableFunc(out, func(a, b model.Attendee) int {
-		ka, kb := fmt.Sprintf("%+v", a), fmt.Sprintf("%+v", b)
-		switch {
-		case ka < kb:
-			return -1
-		case ka > kb:
-			return 1
-		}
-		return 0
-	})
-	return out
 }
 
 // comparableAlarms returns copies of the stored and the parsed alarms in a
@@ -158,10 +131,7 @@ func unchangedEvent(ctx context.Context, a *app.App, mode *storage.Import, old, 
 		return false
 	}
 	form := func(e event.Event) func() ([]byte, error) {
-		e.ID, e.CalendarID, e.Sequence, e.DtStamp = 0, 0, 0, ""
-		e.CreatedAt, e.UpdatedAt, e.DeletedAt = time.Time{}, time.Time{}, nil
-		e.Categories = sortedCategories(e.Categories)
-		e.Attendees = sortedAttendees(e.Attendees)
+		e = ical.ContentEvent(e)
 		return func() ([]byte, error) { return ical.ExportEvents([]event.Event{e}, "") }
 	}
 	return sameExport(form(old), form(e))
@@ -187,10 +157,7 @@ func unchangedTodo(ctx context.Context, a *app.App, mode *storage.Import, old, t
 		return false
 	}
 	form := func(t todo.Todo) func() ([]byte, error) {
-		t.ID, t.CalendarID, t.Sequence, t.DtStamp = 0, 0, 0, ""
-		t.CreatedAt, t.UpdatedAt, t.DeletedAt = time.Time{}, time.Time{}, nil
-		t.Categories = sortedCategories(t.Categories)
-		t.Attendees = sortedAttendees(t.Attendees)
+		t = ical.ContentTodo(t)
 		return func() ([]byte, error) { return ical.ExportTodos([]todo.Todo{t}, "") }
 	}
 	return sameExport(form(old), form(t))
@@ -209,13 +176,7 @@ func unchangedJournal(ctx context.Context, a *app.App, mode *storage.Import, old
 	}
 	old.Categories = timeutil.JoinCategoryList(cats)
 	form := func(j journal.Journal) func() ([]byte, error) {
-		j.ID, j.CalendarID, j.Sequence, j.DtStamp = 0, 0, 0, ""
-		j.CreatedAt, j.UpdatedAt, j.DeletedAt = time.Time{}, time.Time{}, nil
-		j.Categories = sortedCategories(j.Categories)
-		j.Attendees = sortedAttendees(j.Attendees)
-		// The store keeps the joined Description only, so the split of
-		// the parsed DESCRIPTION properties is no change.
-		j.Descriptions = nil
+		j = ical.ContentJournal(j)
 		return func() ([]byte, error) { return ical.ExportJournals([]journal.Journal{j}, "") }
 	}
 	return sameExport(form(old), form(j))
