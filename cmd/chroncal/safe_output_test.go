@@ -318,3 +318,18 @@ func TestWriteSyncStatusLine_NamesWaitingRows(t *testing.T) {
 		t.Fatalf("sync status output %q misses the waiting line", out)
 	}
 }
+
+// TestWriteAlarmCheckLine_PrintsTheDate covers issue #920. A trigger can be
+// on another day, so the line prints the date, as alarm list does.
+func TestWriteAlarmCheckLine_PrintsTheDate(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	at := time.Date(2026, 4, 4, 9, 30, 0, 0, time.UTC)
+	writeAlarmCheckLine(&buf, at, "DISPLAY", "Standup", false)
+
+	want := at.Local().Format("2006-01-02 15:04") + "\tDISPLAY\tStandup\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("alarm check line = %q, want %q", got, want)
+	}
+}

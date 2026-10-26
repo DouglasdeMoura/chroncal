@@ -209,11 +209,11 @@ func LegacyMoveRefusal(ctx context.Context, q *Queries, calendarID, ownerCalenda
 	case block.kind == "no_events":
 		return fmt.Sprintf("calendar %q does not support events", CalendarLabel(ctx, q, block.calendarID)), nil
 	case block.kind == "collision" && block.live > 0 && block.trashed > 0:
-		return fmt.Sprintf("calendar %q holds a live row and a row in the trash at the same occurrence; delete the live row, and purge or restore the row in the trash first", owner()), nil
+		return fmt.Sprintf("calendar %q holds a live copy and a copy in the trash at the same occurrence; delete or move the live copy, and purge or restore the trashed copy first", owner()), nil
 	case block.kind == "collision" && block.live > 0:
-		return fmt.Sprintf("calendar %q holds a live row at the same occurrence; delete or move that row first", owner()), nil
+		return fmt.Sprintf("calendar %q holds a live copy at the same occurrence; delete or move that copy first", owner()), nil
 	case block.kind == "collision":
-		return fmt.Sprintf("calendar %q holds a row in the trash at the same occurrence; purge or restore that row first", owner()), nil
+		return fmt.Sprintf("calendar %q holds a copy in the trash at the same occurrence; purge or restore that copy first", owner()), nil
 	case block.kind == "sync_conflict":
 		return fmt.Sprintf("calendar %q holds an open sync conflict of the UID; resolve it with chroncal sync resolve first",
 			CalendarLabel(ctx, q, block.calendarID)), nil

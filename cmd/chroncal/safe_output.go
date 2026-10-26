@@ -21,7 +21,7 @@ func writeAlarmCheckLine(w io.Writer, triggerAt time.Time, action, label string,
 	if isTodo {
 		suffix = " (todo)"
 	}
-	fmt.Fprintf(w, "%s\t%s\t%s%s\n", triggerAt.Local().Format("15:04"), action, safeText(label), suffix)
+	fmt.Fprintf(w, "%s\t%s\t%s%s\n", triggerAt.Local().Format("2006-01-02 15:04"), action, safeText(label), suffix)
 }
 
 func writePendingAlarmLine(w io.Writer, id, triggerLocal, action, title string, isTodo bool, snoozed string) {
