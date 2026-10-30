@@ -92,6 +92,19 @@ func resolveOverlaps(placed []placedEvent) {
 	}
 }
 
+// timeRow gives the grid row of t. Each row holds 60/lph minutes. The time
+// rounds to the nearest row edge, so 15:40 starts on the 15:45 row at four
+// rows an hour. The result can be totalHours*lph for a time near midnight.
+func timeRow(t time.Time, lph int) int {
+	return t.Hour()*lph + (t.Minute()*lph+30)/60
+}
+
+// nowRowFor gives the row of the now line. It uses the rounding of timeRow,
+// so the now line and an event that starts now share one row.
+func nowRowFor(now time.Time, lph int) int {
+	return min(timeRow(now, lph), totalHours*lph-1)
+}
+
 func placeEvents(events []CalendarEvent, colFn func(CalendarEvent) int, lph int) []placedEvent {
 	var placed []placedEvent
 	totalRows := totalHours * lph
@@ -103,10 +116,10 @@ func placeEvents(events []CalendarEvent, colFn func(CalendarEvent) int, lph int)
 		if col < 0 {
 			continue
 		}
-		startRow := ev.StartTime.Hour()*lph + ev.StartTime.Minute()*lph/60
+		startRow := min(timeRow(ev.StartTime, lph), totalRows-1)
 		endRow := startRow + 1
 		if !ev.EndTime.IsZero() {
-			endRow = ev.EndTime.Hour()*lph + ev.EndTime.Minute()*lph/60
+			endRow = timeRow(ev.EndTime, lph)
 		}
 		if endRow <= startRow {
 			endRow = startRow + 1

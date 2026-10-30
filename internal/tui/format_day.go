@@ -53,7 +53,7 @@ func DayGrid(opts DayOptions) string {
 	}
 
 	now := time.Now().Local()
-	nowRow := now.Hour()*lph + now.Minute()*lph/60
+	nowRow := nowRowFor(now, lph)
 	nowTimeLabel := now.Format("15:04")
 	isToday := day.Format("2006-01-02") == now.Format("2006-01-02")
 

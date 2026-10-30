@@ -90,7 +90,7 @@ func WeekGrid(opts WeekOptions) string {
 	}
 
 	now := time.Now().Local()
-	nowRow := now.Hour()*lph + now.Minute()*lph/60
+	nowRow := nowRowFor(now, lph)
 	nowTimeLabel := now.Format("15:04")
 	nowCol := findWeekCol(anchor, now)
 	nowHasLine := nowCol >= 0

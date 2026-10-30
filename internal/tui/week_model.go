@@ -256,7 +256,7 @@ func (m WeekModel) Update(msg tea.Msg) (WeekModel, tea.Cmd) {
 	case key.Matches(keyMsg, m.keys.Today):
 		m.cursor = m.today
 		now := time.Now().Local()
-		targetRow := now.Hour()*m.linesPerHour + now.Minute()*m.linesPerHour/60
+		targetRow := nowRowFor(now, m.linesPerHour)
 		m.scrollOffset = min(max(targetRow-m.viewportHeight()/2, 0), m.maxScroll())
 	case key.Matches(keyMsg, m.keys.Select):
 		return m, func() tea.Msg { return CalendarDaySelectedMsg{Day: m.cursor} }
