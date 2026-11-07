@@ -195,6 +195,21 @@ func multiDayEndDate(ev event.Event) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// NewEventFormModelWithStart creates a form with a slot start time.
+// Start is zero for day only create. A non-zero Start seeds the date
+// and the time range. The end is Start plus 30 min.
+func NewEventFormModelWithStart(day time.Time, start time.Time, calendars map[int64]CalendarInfo, theme Theme, preselect ...int64) (EventFormModel, tea.Cmd) {
+	m, cmd := NewEventFormModel(day, calendars, theme, preselect...)
+	if start.IsZero() {
+		return m, cmd
+	}
+	m.day = start
+	m.dateField = NewDatePickerField(start)
+	m.timeField.SetStartValue(start.Format("15:04"))
+	m.timeField.SetEndValue(start.Add(30 * time.Minute).Format("15:04"))
+	return m, cmd
+}
+
 // NewEventFormModelForEdit creates a form pre-filled with an event's stored data.
 // fallback lists the calendar IDs that the form selects, in priority
 // order, when calendars does not hold the calendar of the event.

@@ -323,12 +323,39 @@ func (m Model) handleEventFormClosed(msg EventFormClosedMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) handlePaletteSelected(msg PaletteSelectedMsg) (tea.Model, tea.Cmd) {
+	if msg.ID == "nav.goto" {
+		date, ok := parseGotoDate(msg.Query)
+		if !ok {
+			return m, nil
+		}
+		m.paletteOpen = false
+		return m, func() tea.Msg { return GoToDateMsg{Date: date} }
+	}
 	m.paletteOpen = false
 	if msg.Action == nil {
 		return m, nil
 	}
 	action := msg.Action
 	return m, func() tea.Msg { return action() }
+}
+
+// parseGotoDate parses goto query text.
+// The query is "goto YYYY-MM-DD" or "goto RFC3339".
+// It returns local midnight for day only text.
+func parseGotoDate(query string) (time.Time, bool) {
+	q := strings.TrimSpace(strings.ToLower(query))
+	q = strings.TrimPrefix(q, "goto")
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return time.Time{}, false
+	}
+	if t, err := time.Parse("2006-01-02", q); err == nil {
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local), true
+	}
+	if t, err := time.Parse(time.RFC3339, q); err == nil {
+		return t.Local(), true
+	}
+	return time.Time{}, false
 }
 
 func (m Model) handleEventCreated(msg eventCreatedMsg) (tea.Model, tea.Cmd) {

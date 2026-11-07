@@ -478,6 +478,9 @@ type Model struct {
 	formOpen        bool
 	palette         PaletteModel
 	paletteOpen     bool
+	shareDialog     ShareDialogModel
+	shareOpen       bool
+	shareOverwrite  bool
 	// pending is the single armed intent behind an open confirm or choice
 	// dialog (see pendingAction). armConfirm and armChoice set it;
 	// clearPending resets it.

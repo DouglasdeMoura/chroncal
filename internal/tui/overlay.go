@@ -24,6 +24,7 @@ const (
 	overlayForm
 	overlayViewDialog
 	overlayDialog
+	overlayShare
 )
 
 // overlayLayer is one active modal. passthrough is true when this layer
@@ -176,6 +177,17 @@ func (m Model) overlayStack() []overlayLayer {
 			update: func(m *Model, msg tea.Msg) tea.Cmd {
 				var cmd tea.Cmd
 				m.palette, cmd = m.palette.Update(msg)
+				return cmd
+			},
+		})
+	}
+	if m.shareOpen {
+		layers = append(layers, overlayLayer{
+			kind:        overlayShare,
+			passthrough: passUnlessInput,
+			update: func(m *Model, msg tea.Msg) tea.Cmd {
+				var cmd tea.Cmd
+				m.shareDialog, cmd = m.shareDialog.Update(msg)
 				return cmd
 			},
 		})

@@ -70,6 +70,54 @@ func (m Model) navigateMainTo(t time.Time) Model {
 	return m
 }
 
+// slotStartFromCursor returns slot start for create prefill.
+// Day and week use the cursor hour on a 30 min grid. Month and agenda
+// use day only. A zero hour returns zero for day only create.
+func slotStartFromCursor(cursor time.Time, mode viewMode) time.Time {
+	if mode == viewDay || mode == viewWeek {
+		if cursor.Hour() == 0 && cursor.Minute() == 0 {
+			return time.Time{}
+		}
+		min := 0
+		if cursor.Minute() >= 30 {
+			min = 30
+		}
+		return time.Date(cursor.Year(), cursor.Month(), cursor.Day(), cursor.Hour(), min, 0, 0, cursor.Location())
+	}
+	return time.Time{}
+}
+
+// nextPrevEventStart returns the next or prev event start time.
+// The events list is scored by local start. Nil means no event.
+func (m Model) nextPrevEventStart(next bool) *time.Time {
+	cursor, _ := m.viewCursorAndToday()
+	best := (*time.Time)(nil)
+	for _, ev := range m.events {
+		start := ev.LocalStart()
+		if start.IsZero() {
+			continue
+		}
+		if next {
+			if !start.After(cursor) {
+				continue
+			}
+			if best == nil || start.Before(*best) {
+				s := start
+				best = &s
+			}
+		} else {
+			if !start.Before(cursor) {
+				continue
+			}
+			if best == nil || start.After(*best) {
+				s := start
+				best = &s
+			}
+		}
+	}
+	return best
+}
+
 // refreshCalendarViews recomputes the per-view CalendarEvent slices from the
 // current m.events using the current m.hiddenCalendars set. Use this after the
 // hidden set changes (no DB round-trip needed).
@@ -249,7 +297,7 @@ func (m Model) onlyDayDialogOpen() bool {
 // entry. Add a new overlay here unless it has no text field at all; then
 // add it to otherKeyOnlyOverlayOpen. anyOverlayOpen covers both lists.
 func (m Model) textEntryActive() bool {
-	return m.paletteOpen || m.formOpen || m.calendarManagerOpen ||
+	return m.paletteOpen || m.formOpen || m.calendarManagerOpen || m.shareOpen ||
 		m.accountRenameOpen || m.accountOAuthConfigOpen || m.accountCredentialsOpen ||
 		m.oauthFlowOpen
 }

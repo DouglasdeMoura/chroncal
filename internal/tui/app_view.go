@@ -327,6 +327,10 @@ func (m Model) View() tea.View {
 		bw, bh := m.palette.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.palette.View(), bw, bh)
 	}
+	if m.shareOpen {
+		bw, bh := m.shareDialog.BoxSize()
+		v.Content = m.compositeOverlay(v.Content, m.shareDialog.View(), bw, bh)
+	}
 	if m.helpDialogOpen {
 		bw, bh := m.helpDialog.BoxSize()
 		v.Content = m.compositeOverlay(v.Content, m.helpDialog.View(), bw, bh)

@@ -47,12 +47,18 @@ type PaletteCommand struct {
 	PrefixChar  string
 	PrefixColor string
 	Action      func() tea.Msg
+	// NeedsArg is true for commands that need a typed argument.
+	// The argument is the palette query text.
+	NeedsArg bool
 }
 
 // PaletteSelectedMsg is emitted when the user picks a command.
 // The app-level Update dispatches Action as a tea.Cmd.
+// ID is the command ID. Query is the typed palette query text.
 type PaletteSelectedMsg struct {
 	Action func() tea.Msg
+	ID     string
+	Query  string
 }
 
 // PaletteClosedMsg is emitted when the user dismisses the palette.
@@ -263,7 +269,7 @@ func (m PaletteModel) Update(msg tea.Msg) (PaletteModel, tea.Cmd) {
 			}
 			picked := m.filtered[idx]
 			return m, func() tea.Msg {
-				return PaletteSelectedMsg{Action: picked.Action}
+				return PaletteSelectedMsg{Action: picked.Action, ID: picked.ID, Query: strings.TrimSpace(m.input.Value())}
 			}
 		case key.Matches(msg, m.keys.Up):
 			m.list.CursorUp()

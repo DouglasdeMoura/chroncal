@@ -43,7 +43,7 @@ func (m Model) dispatchAppMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleCalendarDaySelected(msg)
 
 	case EventCreateMsg:
-		form, cmd := NewEventFormModel(msg.Day, eventFormCalendars(m.calendars), m.theme, m.formDefaultCalendarID())
+		form, cmd := NewEventFormModelWithStart(msg.Day, msg.Start, eventFormCalendars(m.calendars), m.theme, m.formDefaultCalendarID())
 		return m.openEventForm(form, cmd)
 
 	case EventEditMsg:
@@ -78,11 +78,48 @@ func (m Model) dispatchAppMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.paletteOpen = false
 		return m, nil
 
+	case ShareDialogClosedMsg:
+		m.shareOpen = false
+		return m, nil
+
+	case ShareExportRequestedMsg:
+		return m.handleShareExport(msg)
+
+	case ShareExportDoneMsg:
+		m.shareOpen = false
+		if msg.Err != nil {
+			m.err = msg.Err
+		}
+		return m, nil
+
+	case ShareAvailabilityMsg:
+		m.shareDialog = NewShareDialogModel(m.theme)
+		m.shareOpen = true
+		return m, nil
+
 	case SwitchViewMsg:
 		return m.switchToView(msg.Mode)
 
 	case GoToTodayMsg:
 		return m.goToToday()
+
+	case GoToDateMsg:
+		m = m.navigateMainTo(msg.Date)
+		return m, m.loadEvents()
+
+	case NextEventMsg:
+		if start := m.nextPrevEventStart(true); start != nil {
+			m = m.navigateMainTo(*start)
+			return m, m.loadEvents()
+		}
+		return m, nil
+
+	case PrevEventMsg:
+		if start := m.nextPrevEventStart(false); start != nil {
+			m = m.navigateMainTo(*start)
+			return m, m.loadEvents()
+		}
+		return m, nil
 
 	case ToggleSidebarMsg:
 		return m.toggleSidebar()

@@ -15,6 +15,16 @@ type SwitchViewMsg struct{ Mode viewMode }
 // GoToTodayMsg jumps the active view's cursor to today.
 type GoToTodayMsg struct{}
 
+// GoToDateMsg jumps the active view's cursor to a date.
+// Date is the parsed goto target at local midnight.
+type GoToDateMsg struct{ Date time.Time }
+
+// NextEventMsg jumps the active view's cursor to the next event start.
+type NextEventMsg struct{}
+
+// PrevEventMsg jumps the active view's cursor to the prev event start.
+type PrevEventMsg struct{}
+
 // ToggleSidebarMsg toggles the sidebar panel.
 type ToggleSidebarMsg struct{}
 
@@ -28,7 +38,7 @@ type ToggleWeekStartMsg struct{}
 // palette, with bindings to the current app state (cursor, etc.).
 func buildPaletteCommands(m Model) []PaletteCommand {
 	cursor, _ := m.viewCursorAndToday()
-	commands := make([]PaletteCommand, 0, 18)
+	commands := make([]PaletteCommand, 0, 21)
 	commands = append(commands,
 		PaletteCommand{
 			ID:       "nav.today",
@@ -36,6 +46,31 @@ func buildPaletteCommands(m Model) []PaletteCommand {
 			Category: "Navigation",
 			Shortcut: "t",
 			Action:   func() tea.Msg { return GoToTodayMsg{} },
+		},
+		PaletteCommand{
+			ID:       "nav.goto",
+			Title:    "Go to Date (type goto YYYY-MM-DD)",
+			Category: "Navigation",
+			Action:   func() tea.Msg { return nil },
+			NeedsArg: true,
+		},
+		PaletteCommand{
+			ID:       "nav.next",
+			Title:    "Next Event",
+			Category: "Navigation",
+			Action:   func() tea.Msg { return NextEventMsg{} },
+		},
+		PaletteCommand{
+			ID:       "nav.prev",
+			Title:    "Previous Event",
+			Category: "Navigation",
+			Action:   func() tea.Msg { return PrevEventMsg{} },
+		},
+		PaletteCommand{
+			ID:       "share.availability",
+			Title:    "Share Availability",
+			Category: "Share",
+			Action:   func() tea.Msg { return ShareAvailabilityMsg{} },
 		},
 		PaletteCommand{
 			ID:       "event.new",

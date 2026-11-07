@@ -31,8 +31,10 @@ type EventDuplicateMsg struct{ Event event.Event }
 type EventDeleteMsg struct{ Event event.Event }
 
 // EventCreateMsg is emitted when the user requests to create an event on a day.
+// Start is the slot start time. It is zero for day only create.
 type EventCreateMsg struct {
-	Day time.Time
+	Day   time.Time
+	Start time.Time
 }
 
 // EventRSVPMsg is emitted when the user changes their RSVP status.

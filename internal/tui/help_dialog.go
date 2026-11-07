@@ -187,6 +187,7 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"t", "today"},
 				{views, "month / week / day / agenda view"},
 				{"enter (mini calendar)", "jump main view to selected day"},
+				{"palette", "goto date · next / prev event"},
 			},
 		},
 		{
@@ -236,6 +237,8 @@ func (m HelpDialogModel) sections() []helpSection {
 				{"↑↓ · ctrl+k/j", "move selection"},
 				{"pgup · pgdn", "jump by page"},
 				{"enter", "run command"},
+				{"goto YYYY-MM-DD", "go to date"},
+				{"share availability", "export free busy"},
 				{"esc", "close"},
 			},
 		},
