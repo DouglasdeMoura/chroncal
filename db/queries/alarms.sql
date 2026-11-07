@@ -35,7 +35,7 @@ DELETE FROM event_alarms WHERE event_id = ?;
 DELETE FROM event_alarms WHERE id = ?;
 
 -- name: UpdateAlarmUID :exec
-UPDATE event_alarms SET uid = ?, uid_unverified = 0 WHERE id = ?;
+UPDATE event_alarms SET uid = ? WHERE id = ?;
 
 -- name: UpdateAlarmAcknowledged :exec
 UPDATE event_alarms SET acknowledged = ? WHERE id = ? AND event_id = ?;
@@ -47,7 +47,7 @@ SELECT * FROM event_alarms WHERE uid IS NULL;
 UPDATE event_alarms
 SET action = ?, trigger_value = ?, description = ?, summary = ?, repeat = ?,
     duration = ?, related = ?, acknowledged = ?, attach_uri = ?, attach_fmttype = ?,
-    attach_binary = ?, uid_unverified = 0
+    attach_binary = ?
 WHERE id = ? AND event_id = ?;
 
 -- name: ListEventIDsWithAlarms :many
@@ -57,15 +57,3 @@ WHERE id = ? AND event_id = ?;
 -- alarms must not apply (issue #815).
 SELECT DISTINCT event_id FROM event_alarms
 WHERE event_id IN (sqlc.slice(event_ids));
-
--- name: ListEventAlarmUIDsHeldByOtherEvents :many
--- Before migration 063, the store minted a UID for an alarm when an alarm
--- of another event held the UID of the file. model.PairAlarms uses this
--- set as the evidence of such a minted UID (issue #922).
-SELECT DISTINCT uid FROM event_alarms
-WHERE event_id <> sqlc.arg(event_id) AND uid IN (sqlc.slice(uids));
-
--- name: ConfirmAlarmUID :exec
--- A write that pairs the row with an alarm of the same UID confirms the
--- UID, so the mark of migration 063 goes.
-UPDATE event_alarms SET uid_unverified = 0 WHERE id = ?;

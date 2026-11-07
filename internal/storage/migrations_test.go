@@ -1050,12 +1050,16 @@ func TestMigration063UpDown(t *testing.T) {
 	}
 	// Each UID that a build before the migration wrote has the mark. A
 	// new row has no mark.
+	// Migration 065 drops the mark, so this part runs at version 63.
+	if _, err := provider.DownTo(ctx, 63); err != nil {
+		t.Fatalf("down to 63: %v", err)
+	}
 	mustExec(`UPDATE event_alarms SET uid_unverified = 0`)
 	if _, err := provider.DownTo(ctx, 62); err != nil {
 		t.Fatalf("down to 62: %v", err)
 	}
-	if _, err := provider.Up(ctx); err != nil {
-		t.Fatalf("up: %v", err)
+	if _, err := provider.UpTo(ctx, 63); err != nil {
+		t.Fatalf("up to 63: %v", err)
 	}
 	for _, table := range []string{"event_alarms", "todo_alarms"} {
 		uids := count(`SELECT COUNT(*) FROM ` + table + ` WHERE uid IS NOT NULL`)
@@ -1146,5 +1150,51 @@ func TestMigration064UpDown(t *testing.T) {
 	}
 	if n := count(`SELECT COUNT(*) FROM todos WHERE delete_token != 0`); n != 0 {
 		t.Errorf("rows from before the migration have %d tokens, want token 0", n)
+	}
+}
+
+// Verifies migration 065: the mark of migration 063 goes (issue #924). Down
+// brings the column back with no marks.
+func TestMigration065UpDown(t *testing.T) {
+	conn, _, err := Open(t.TempDir() + "/mig.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	mustExec, count := migHelpers(t, ctx, conn)
+	provider := migProvider(t, conn)
+	mustExec(`INSERT INTO events (uid, calendar_id, title, start_time, end_time)
+		VALUES ('e1', 1, 'Mig', '2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')`)
+	mustExec(`INSERT INTO todos (uid, calendar_id, summary) VALUES ('t1', 1, 'Mig')`)
+	if _, err := provider.DownTo(ctx, 64); err != nil {
+		t.Fatalf("down to 64: %v", err)
+	}
+	mustExec(`INSERT INTO event_alarms (event_id, uid, trigger_value, uid_unverified) VALUES (1, 'a', '-PT15M', 1)`)
+	mustExec(`INSERT INTO todo_alarms (todo_id, uid, trigger_value, uid_unverified) VALUES (1, 'a', '-PT15M', 1)`)
+
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	for _, table := range []string{"event_alarms", "todo_alarms"} {
+		if n := count(`SELECT COUNT(*) FROM pragma_table_info('` + table + `') WHERE name = 'uid_unverified'`); n != 0 {
+			t.Errorf("%s keeps uid_unverified after Up", table)
+		}
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE uid = 'a'`); n != 1 {
+			t.Errorf("%s lost the alarm row: %d rows", table, n)
+		}
+	}
+
+	if _, err := provider.DownTo(ctx, 64); err != nil {
+		t.Fatalf("down to 64: %v", err)
+	}
+	for _, table := range []string{"event_alarms", "todo_alarms"} {
+		if n := count(`SELECT COUNT(*) FROM ` + table + ` WHERE uid_unverified != 0`); n != 0 {
+			t.Errorf("%s has %d marks after Down, want none", table, n)
+		}
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("re-up: %v", err)
 	}
 }
