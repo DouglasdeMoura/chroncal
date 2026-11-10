@@ -122,7 +122,6 @@ type EventAlarm struct {
 	AttachUri     *string
 	AttachFmttype *string
 	AttachBinary  []byte
-	UidUnverified int64
 }
 
 type EventAlarmAttendee struct {
@@ -463,7 +462,6 @@ type TodoAlarm struct {
 	AttachUri     *string
 	AttachFmttype *string
 	AttachBinary  []byte
-	UidUnverified int64
 }
 
 type TodoAlarmAttendee struct {

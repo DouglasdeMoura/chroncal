@@ -41,16 +41,3 @@ func Found(err error) (bool, error) {
 		return false, err
 	}
 }
-
-// HeldUIDSet returns the set of the UIDs that a query of the held alarm
-// UIDs returns (ListEventAlarmUIDsHeldByOtherEvents,
-// ListTodoAlarmUIDsHeldByOtherTodos).
-func HeldUIDSet(rows []*string) map[string]bool {
-	set := make(map[string]bool, len(rows))
-	for _, uid := range rows {
-		if uid != nil {
-			set[*uid] = true
-		}
-	}
-	return set
-}
