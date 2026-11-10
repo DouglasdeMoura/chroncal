@@ -6,7 +6,7 @@ toolchain go1.26.10
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.1.0
+	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
@@ -14,7 +14,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-webdav v0.7.0
-	github.com/gen2brain/beeep v0.11.2
+	github.com/gen2brain/beeep v0.11.3
 	github.com/gofrs/flock v0.13.1
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-runewidth v0.0.31
@@ -26,11 +26,11 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/net v0.62.0
-	golang.org/x/sync v0.24.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sync v0.25.0
+	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
-	modernc.org/sqlite v1.60.1
+	modernc.org/sqlite v1.62.0
 )
 
 require (
@@ -72,7 +72,7 @@ require (
 	github.com/xo/terminfo v1.0.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	modernc.org/libc v1.78.0 // indirect
+	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
