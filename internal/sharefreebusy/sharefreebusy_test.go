@@ -9,8 +9,8 @@ import (
 	"github.com/douglasdemoura/chroncal/internal/freebusy"
 )
 
-func utc(year int, month time.Month, day int, hour int, min int) time.Time {
-	return time.Date(year, month, day, hour, min, 0, 0, time.UTC)
+func utc(year int, month time.Month, day int, hour int, minute int) time.Time {
+	return time.Date(year, month, day, hour, minute, 0, 0, time.UTC)
 }
 
 func TestInvertEmptyBusyReturnsFullWindow(t *testing.T) {

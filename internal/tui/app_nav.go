@@ -78,11 +78,11 @@ func slotStartFromCursor(cursor time.Time, mode viewMode) time.Time {
 		if cursor.Hour() == 0 && cursor.Minute() == 0 {
 			return time.Time{}
 		}
-		min := 0
+		minute := 0
 		if cursor.Minute() >= 30 {
-			min = 30
+			minute = 30
 		}
-		return time.Date(cursor.Year(), cursor.Month(), cursor.Day(), cursor.Hour(), min, 0, 0, cursor.Location())
+		return time.Date(cursor.Year(), cursor.Month(), cursor.Day(), cursor.Hour(), minute, 0, 0, cursor.Location())
 	}
 	return time.Time{}
 }
