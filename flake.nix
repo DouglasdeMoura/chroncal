@@ -30,7 +30,7 @@
 
           src = ./.;
           subPackages = [ "cmd/chroncal" ];
-          vendorHash = "sha256-13Gc06POyd3t5whVaapaUdY//jATWMoauLuohhR2NdM=";
+          vendorHash = "sha256-BM+HCP3rSWiYC6oYApihq+b68u2MyFy6T9tNx31J334=";
 
           env.CGO_ENABLED = "0";
 
