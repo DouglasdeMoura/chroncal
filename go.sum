@@ -37,12 +37,11 @@ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSs
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
 github.com/dustin/go-humanize v1.1.0/go.mod h1:hc1CvRkJMsgxqjmjMQF3QNRAZBwY8AXBAzKYoSX9sFI=
-github.com/emersion/go-ical v0.0.0-20240127095438-fc1c9d8fb2b6/go.mod h1:BEksegNspIkjCQfmzWgsgbu6KdeJ/4LwUZs7DMBzjzw=
 github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608 h1:5XWaET4YAcppq3l1/Yh2ay5VmQjUdq6qhJuucdGbmOY=
 github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608/go.mod h1:BEksegNspIkjCQfmzWgsgbu6KdeJ/4LwUZs7DMBzjzw=
-github.com/emersion/go-vcard v0.0.0-20230815062825-8fda7d206ec9/go.mod h1:HMJKR5wlh/ziNp+sHEDV2ltblO4JD2+IdDOWtGcQBTM=
-github.com/emersion/go-webdav v0.7.0 h1:cp6aBWXBf8Sjzguka9VJarr4XTkGc2IHxXI1Gq3TKpA=
-github.com/emersion/go-webdav v0.7.0/go.mod h1:mI8iBx3RAODwX7PJJ7qzsKAKs/vY429YfS2/9wKnDbQ=
+github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff/go.mod h1:HMJKR5wlh/ziNp+sHEDV2ltblO4JD2+IdDOWtGcQBTM=
+github.com/emersion/go-webdav v0.8.0 h1:U0vHdbGJQP3dkCv9NNexbkINZFkldDHymKMO4/+Te3k=
+github.com/emersion/go-webdav v0.8.0/go.mod h1:/CletBm2Vo0CX6I20VQsoRkkX1CzzNCK1PNCqKW//iQ=
 github.com/esiqveland/notify v0.13.3 h1:QCMw6o1n+6rl+oLUfg8P1IIDSFsDEb2WlXvVvIJbI/o=
 github.com/esiqveland/notify v0.13.3/go.mod h1:hesw/IRYTO0x99u1JPweAl4+5mwXJibQVUcP0Iu5ORE=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
