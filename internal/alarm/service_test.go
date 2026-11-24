@@ -582,6 +582,87 @@ func TestCheck_SkipsStaleAlarm(t *testing.T) {
 	}
 }
 
+// Issue #957: a catch-up check after a boot or a resume fires every
+// unfired alarm inside the stale window, even when the instance already
+// ended. The check skips the alarm of the ended instance and keeps the
+// catch-up alarm of the instance that still runs.
+func TestCheck_SkipsCatchUpAlarmOfEndedEvent(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	start := now.Add(-5 * time.Hour)
+	ended, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Finished Meeting",
+		StartTime:  start,
+		EndTime:    start.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ongoing, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Ongoing Workshop",
+		StartTime:  start,
+		EndTime:    now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []event.Event{ended, ongoing} {
+		err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+			{Action: "DISPLAY", TriggerValue: "-PT30M"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	due, _, err := svc.Check(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("got %d due alarms, want 1 (the ongoing event only)", len(due))
+	}
+	if due[0].Event.ID != ongoing.ID {
+		t.Fatalf("due alarm event ID = %d, want the ongoing event %d", due[0].Event.ID, ongoing.ID)
+	}
+}
+
+// A zero-span occurrence has no end to pass, so the catch-up path still
+// applies to it: a reminder of an instant stays useful after the fact.
+func TestCheck_ZeroSpanEventKeepsCatchUpAlarm(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	instant := time.Now().Add(-2 * time.Hour)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Instant",
+		StartTime:  instant,
+		EndTime:    instant,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT30M"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	due, _, err := svc.Check(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("got %d due alarms, want 1", len(due))
+	}
+}
+
 func TestCheck_RefiresSnoozedAlarm(t *testing.T) {
 	svc, evtSvc := newTestServices(t)
 	ctx := context.Background()

@@ -99,6 +99,26 @@ func TestDefaultAlarm_FiresForEventWithoutAlarms(t *testing.T) {
 	}
 }
 
+// Issue #957: the default-alarm path applies the same catch-up rule as
+// stored alarms. An instance that already ended gets no default alarm,
+// and an instance that still runs keeps it.
+func TestDefaultAlarm_SkipsCatchUpOfEndedEvent(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{
+			{Action: "DISPLAY", TriggerValue: "-PT30M"},
+		},
+	})
+	now := time.Now().Truncate(time.Second)
+	start := now.Add(-5 * time.Hour)
+	createEventAt(t, evtSvc, 1, "Finished meeting", start, false)
+
+	due, _, err := svc.Check(context.Background(), now)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	assertTriggers(t, dueTriggers(due) /* no triggers */)
+}
+
 func TestDefaultAlarm_SkipsEventWithAlarms(t *testing.T) {
 	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
 		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},

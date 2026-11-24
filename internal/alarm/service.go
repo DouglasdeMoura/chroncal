@@ -371,6 +371,9 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 	var due []DueAlarm
 
 	for _, expEvt := range expandedEvents {
+		if instanceEnded(expEvt, now) {
+			continue
+		}
 		alarms := alarmMap[expEvt.ID] // nil if no alarms for this event
 
 		for _, a := range alarms {
@@ -455,6 +458,15 @@ func (s *Service) checkTodoAlarms(ctx context.Context, now time.Time) ([]TodoDue
 
 	todoSvc := NewTodoService(s.db, s.q, s.todos)
 	return todoSvc.CheckTodos(ctx, now)
+}
+
+// instanceEnded reports whether the occurrence is over at now. A catch-up
+// alarm of an ended occurrence reports a meeting the user cannot attend
+// anymore, so the check loops skip it (issue #957). A zero-span occurrence
+// has no end to pass, so it keeps the catch-up path.
+func instanceEnded(expEvt recurrence.ExpandedEvent, now time.Time) bool {
+	span := expEvt.Span()
+	return span > 0 && !expEvt.InstanceTime.Add(span).After(now)
 }
 
 // computeTriggerTimeForInstance calculates trigger time for a specific event instance
