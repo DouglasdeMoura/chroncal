@@ -115,6 +115,9 @@ func (s *Service) checkDefaultEventAlarms(
 			if triggerAt.After(now) {
 				continue
 			}
+			if skipEndedInstanceTrigger(cand.Expanded, triggerAt, now) {
+				continue // same ended-instance rule as stored alarms
+			}
 			if now.Sub(triggerAt) > StaleThreshold {
 				continue // same stale rule as stored alarms
 			}

@@ -99,6 +99,71 @@ func TestDefaultAlarm_FiresForEventWithoutAlarms(t *testing.T) {
 	}
 }
 
+// Issue #957: the default-alarm path applies the same catch-up rule as
+// stored alarms. An instance that already ended gets no default alarm,
+// and an instance that still runs keeps it.
+func TestDefaultAlarm_SkipsCatchUpOfEndedEvent(t *testing.T) {
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{
+			{Action: "DISPLAY", TriggerValue: "-PT30M"},
+		},
+	})
+	now := time.Now().Truncate(time.Second)
+	start := now.Add(-5 * time.Hour)
+	createEventAt(t, evtSvc, 1, "Finished meeting", start, false)
+
+	due, _, err := svc.Check(context.Background(), now)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	assertTriggers(t, dueTriggers(due) /* no triggers */)
+}
+
+func TestDefaultAlarm_AllDayWestOfUTCUsesLocalEnd(t *testing.T) {
+	loc, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Skipf("America/Chicago tz unavailable: %v", err)
+	}
+	origLocal := time.Local
+	time.Local = loc
+	defer func() { time.Local = origLocal }()
+
+	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
+		Triggers: []model.DefaultAlarm{
+			{Action: "DISPLAY", TriggerValue: "PT9H"},
+		},
+	})
+	startUTC := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	if _, err := evtSvc.Create(context.Background(), event.CreateParams{
+		CalendarID: 1,
+		Title:      "All-day conference",
+		StartTime:  startUTC,
+		EndTime:    startUTC.Add(24 * time.Hour),
+		AllDay:     true,
+	}); err != nil {
+		t.Fatalf("create all-day event: %v", err)
+	}
+
+	// 20:00 local on June 15 is 01:00 UTC on June 16 (past UTC end, before local end).
+	beforeLocalEnd := time.Date(2026, 6, 15, 20, 0, 0, 0, loc)
+	due, _, err := svc.Check(context.Background(), beforeLocalEnd)
+	if err != nil {
+		t.Fatalf("check before local end: %v", err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("got %d due default alarms before local midnight, want 1", len(due))
+	}
+
+	afterLocalEnd := time.Date(2026, 6, 16, 0, 5, 0, 0, loc)
+	due, _, err = svc.Check(context.Background(), afterLocalEnd)
+	if err != nil {
+		t.Fatalf("check after local end: %v", err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("got %d due default alarms after local midnight, want 0", len(due))
+	}
+}
+
 func TestDefaultAlarm_SkipsEventWithAlarms(t *testing.T) {
 	svc, evtSvc := newDefaultAlarmService(t, DefaultAlarmConfig{
 		Triggers: []model.DefaultAlarm{{Action: "DISPLAY", TriggerValue: "-PT30M"}},

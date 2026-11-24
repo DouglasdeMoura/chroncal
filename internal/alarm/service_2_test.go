@@ -235,12 +235,18 @@ func TestComputeSnooze_RejectsPastEndedEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Trigger was 2h15m ago, still within 24h stale threshold
-	due, _, _ := svc.Check(ctx, time.Now())
-	if len(due) != 1 {
-		t.Fatalf("got %d due, want 1", len(due))
+	// The alarm fired while the event still ran, and the notification is
+	// still unacknowledged. Check no longer returns the alarm of an ended
+	// instance (issue #957), so the test writes the fired state directly.
+	alarms, err := evtSvc.ListAlarms(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := svc.MarkFired(ctx, due[0]); err != nil {
+	if _, err := svc.MarkFired(ctx, DueAlarm{
+		Event:     e,
+		Alarm:     alarms[0],
+		TriggerAt: start.Add(-15 * time.Minute),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	pending, _ := svc.ListPending(ctx)

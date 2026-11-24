@@ -389,6 +389,9 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 				if t.After(now) {
 					continue
 				}
+				if skipEndedInstanceTrigger(expEvt, t, now) {
+					continue
+				}
 				if now.Sub(t) > StaleThreshold {
 					slog.Debug("skipping stale alarm",
 						"alarm_id", a.ID,
@@ -455,6 +458,31 @@ func (s *Service) checkTodoAlarms(ctx context.Context, now time.Time) ([]TodoDue
 
 	todoSvc := NewTodoService(s.db, s.q, s.todos)
 	return todoSvc.CheckTodos(ctx, now)
+}
+
+// instanceEndTime returns the occurrence's end instant and ok=true when the
+// occurrence has a positive span. For all-day events, the stored UTC end date
+// is localized with timeutil.FloatingLocal so the day closes at local midnight
+// across time zones and DST transitions, matching relativeTrigger.
+func instanceEndTime(expEvt recurrence.ExpandedEvent) (time.Time, bool) {
+	span := expEvt.Span()
+	if span <= 0 {
+		return time.Time{}, false
+	}
+	return timeutil.Moment(expEvt.InstanceTime.Add(span), expEvt.AllDay), true
+}
+
+// skipEndedInstanceTrigger reports whether a trigger should be skipped because
+// its occurrence already ended at now (issue #957). Only triggers scheduled
+// before the occurrence end are suppressed; triggers at or after the end
+// (such as RELATED=END with PT0S/PT15M, or a positive START offset past the
+// end) continue through the normal due and stale checks.
+func skipEndedInstanceTrigger(expEvt recurrence.ExpandedEvent, triggerAt, now time.Time) bool {
+	end, ok := instanceEndTime(expEvt)
+	if !ok {
+		return false
+	}
+	return !end.After(now) && triggerAt.Before(end)
 }
 
 // computeTriggerTimeForInstance calculates trigger time for a specific event instance
