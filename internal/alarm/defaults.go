@@ -100,9 +100,6 @@ func (s *Service) checkDefaultEventAlarms(
 
 	var due []DueAlarm
 	for _, cand := range candidates {
-		if instanceEnded(cand.Expanded, now) {
-			continue // same ended-instance rule as stored alarms
-		}
 		instanceEvent := cand.InstanceEvent()
 		for _, spec := range cand.Specs {
 			// Default alarms anchor on the event start and do not repeat.
@@ -117,6 +114,9 @@ func (s *Service) checkDefaultEventAlarms(
 			}
 			if triggerAt.After(now) {
 				continue
+			}
+			if skipEndedInstanceTrigger(cand.Expanded, triggerAt, now) {
+				continue // same ended-instance rule as stored alarms
 			}
 			if now.Sub(triggerAt) > StaleThreshold {
 				continue // same stale rule as stored alarms

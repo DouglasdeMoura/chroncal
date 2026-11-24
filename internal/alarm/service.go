@@ -371,9 +371,6 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 	var due []DueAlarm
 
 	for _, expEvt := range expandedEvents {
-		if instanceEnded(expEvt, now) {
-			continue
-		}
 		alarms := alarmMap[expEvt.ID] // nil if no alarms for this event
 
 		for _, a := range alarms {
@@ -390,6 +387,9 @@ func (s *Service) checkEventAlarms(ctx context.Context, now time.Time) ([]DueAla
 
 			for _, t := range triggers {
 				if t.After(now) {
+					continue
+				}
+				if skipEndedInstanceTrigger(expEvt, t, now) {
 					continue
 				}
 				if now.Sub(t) > StaleThreshold {
@@ -460,13 +460,29 @@ func (s *Service) checkTodoAlarms(ctx context.Context, now time.Time) ([]TodoDue
 	return todoSvc.CheckTodos(ctx, now)
 }
 
-// instanceEnded reports whether the occurrence is over at now. A catch-up
-// alarm of an ended occurrence reports a meeting the user cannot attend
-// anymore, so the check loops skip it (issue #957). A zero-span occurrence
-// has no end to pass, so it keeps the catch-up path.
-func instanceEnded(expEvt recurrence.ExpandedEvent, now time.Time) bool {
+// instanceEndTime returns the occurrence's end instant and ok=true when the
+// occurrence has a positive span. For all-day events, the stored UTC end date
+// is localized with timeutil.FloatingLocal so the day closes at local midnight
+// across time zones and DST transitions, matching relativeTrigger.
+func instanceEndTime(expEvt recurrence.ExpandedEvent) (time.Time, bool) {
 	span := expEvt.Span()
-	return span > 0 && !expEvt.InstanceTime.Add(span).After(now)
+	if span <= 0 {
+		return time.Time{}, false
+	}
+	return timeutil.Moment(expEvt.InstanceTime.Add(span), expEvt.AllDay), true
+}
+
+// skipEndedInstanceTrigger reports whether a trigger should be skipped because
+// its occurrence already ended at now (issue #957). Only triggers scheduled
+// before the occurrence end are suppressed; triggers at or after the end
+// (such as RELATED=END with PT0S/PT15M, or a positive START offset past the
+// end) continue through the normal due and stale checks.
+func skipEndedInstanceTrigger(expEvt recurrence.ExpandedEvent, triggerAt, now time.Time) bool {
+	end, ok := instanceEndTime(expEvt)
+	if !ok {
+		return false
+	}
+	return !end.After(now) && triggerAt.Before(end)
 }
 
 // computeTriggerTimeForInstance calculates trigger time for a specific event instance

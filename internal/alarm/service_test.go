@@ -663,6 +663,105 @@ func TestCheck_ZeroSpanEventKeepsCatchUpAlarm(t *testing.T) {
 	}
 }
 
+// Triggers scheduled at or after the occurrence end (RELATED=END with PT0S
+// or positive offset, or a positive START offset past the end) are not
+// suppressed by the ended-instance catch-up skip and remain governed by
+// the normal due and stale checks.
+func TestCheck_TriggersAtOrAfterEndStillFire(t *testing.T) {
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	now := time.Now().Truncate(time.Second)
+	start := now.Add(-2 * time.Hour)
+	end := now.Add(-1 * time.Hour)
+
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "Wrap-up",
+		StartTime:  start,
+		EndTime:    end,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "-PT15M", Related: "START"}, // before end -> skipped
+		{Action: "DISPLAY", TriggerValue: "PT0S", Related: "END"},     // at end -> fires
+		{Action: "DISPLAY", TriggerValue: "PT15M", Related: "END"},    // after end -> fires
+		{Action: "DISPLAY", TriggerValue: "PT90M", Related: "START"},  // past end -> fires
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	due, _, err := svc.Check(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 3 {
+		t.Fatalf("got %d due alarms, want 3 (triggers at or after end)", len(due))
+	}
+}
+
+// All-day occurrence ends are evaluated at local midnight rather than UTC
+// midnight, so events in zones west of UTC are not treated as ended before
+// the local day closes (including 25-hour DST fall-back days).
+func TestCheck_AllDayOccurrenceEndUsesLocalMidnight(t *testing.T) {
+	loc, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Skipf("America/Chicago tz unavailable: %v", err)
+	}
+	origLocal := time.Local
+	time.Local = loc
+	defer func() { time.Local = origLocal }()
+
+	svc, evtSvc := newTestServices(t)
+	ctx := context.Background()
+
+	// 2026-11-01 is a US fall-back DST day (25 local hours).
+	// Database stores all-day bounds at UTC midnight.
+	startUTC := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	endUTC := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	e, err := evtSvc.Create(ctx, event.CreateParams{
+		CalendarID: 1,
+		Title:      "All-Day DST Event",
+		StartTime:  startUTC,
+		EndTime:    endUTC,
+		AllDay:     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = evtSvc.ReplaceAlarms(ctx, e.ID, []model.Alarm{
+		{Action: "DISPLAY", TriggerValue: "PT9H", Related: "START"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 23:30 local on Nov 1 is 05:30 UTC on Nov 2 (already past endUTC in UTC,
+	// and >24h after local midnight because of DST fall-back, yet still before
+	// local midnight of Nov 2). The alarm must still fire.
+	beforeLocalEnd := time.Date(2026, 11, 1, 23, 30, 0, 0, loc)
+	due, _, err := svc.Check(ctx, beforeLocalEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("at %v (before local midnight): got %d due alarms, want 1", beforeLocalEnd, len(due))
+	}
+
+	// Once local midnight of Nov 2 passes, the ended all-day occurrence is skipped.
+	afterLocalEnd := time.Date(2026, 11, 2, 0, 5, 0, 0, loc)
+	due, _, err = svc.Check(ctx, afterLocalEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("at %v (after local midnight): got %d due alarms, want 0", afterLocalEnd, len(due))
+	}
+}
+
 func TestCheck_RefiresSnoozedAlarm(t *testing.T) {
 	svc, evtSvc := newTestServices(t)
 	ctx := context.Background()
